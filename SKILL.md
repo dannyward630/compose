@@ -44,18 +44,27 @@ Read `.fast-coding/<project>/results/NNN.json` and `git diff main..fast/<project
 Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and poor quality. Merge what is good.
 
 ### 6. Verify
-`fast-coding verify --repo <path> --project <name>` runs `.fast-coding/<project>/verify.json`:
+`fast-coding verify --repo <path> --project <name>` is the local no-mistakes-style pipeline. Nothing is pushed; the only network calls are model APIs. Stages, in order, from `.fast-coding/<project>/verify.json`:
+
 ```json
 {
-  "checks": ["uv run ruff check .", "node --test tests/"],
+  "checks": ["uv run ruff check .", "node --test 'tests/**/*.test.js'"],
+  "docs": ["README.md", "DESIGN.md"],
+  "perspectives": ["correctness", "security", "spec", "docs"],
+  "jev_acceptance": true, "acceptance_threshold": 0.6,
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
-           "assert": "python scripts/check_greenhouse.py"}],
-  "review": true, "review_base": "main"
+           "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
+  "review": true, "review_base": "main", "fix_model": "cerebras/qwen-3.8-27b"
 }
 ```
-- `checks`: lint and unit tests, run in the repo.
-- `e2e`: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check you write that reads the real DOM or run log. A DONE from the model is never the proof.
-- `review`: the merged diff and the plan go to the fast text model configured in `~/code/jev-ultrafast/.env` (Mercury 2.5 by default), which returns pass/fail with concrete issues. Treat its findings as leads to check, not verdicts.
+1. **checks**: lint and unit tests, exact and cheap, run first.
+2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
+3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task file becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities. One request for all criteria, well under a second. A criterion with p(NOT_MET) at or above the threshold fails the stage.
+4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check you write that reads the real DOM or run log. A DONE from the model is never the proof.
+5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. After N rounds it escalates to you with the findings. `--fix 0` reports only.
+
+Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (cerebras for implementers and fixes, openrouter for Mercury reviews and jev's text helper, typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
+
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
 
 ### 7. Escalate and clean
@@ -90,4 +99,4 @@ One paragraph. What to build, where, exact export names.
 - Fresh session per task. Never chain tasks in one session.
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
 - Report honestly: attempts per task, what escalated, what you changed by hand, and the verify output.
-- Always show timing. Paste the CLI's `run start` and `run done` lines and the per-task table into your report, and the `verify` lines with their durations. The user wants to see when it started and how fast it finished every time.
+- Always show timing and cost. Paste the CLI's `run start` and `run done` lines, the per-task table, the `verify` stage lines, and the final `cost` line into your report. The user wants to see when it started, how fast it finished, and what each implement cost, every time.
