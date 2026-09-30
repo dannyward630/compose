@@ -314,7 +314,13 @@ def fast_json(env, system, user, max_tokens=1500):
         out = json.load(r)
     u = out.get("usage", {})
     LEDGER.add("openrouter", u.get("prompt_tokens", 0), u.get("completion_tokens", 0), u.get("cost"))
-    return lenient_json(out["choices"][0]["message"]["content"])
+    content = ((out.get("choices") or [{}])[0].get("message") or {}).get("content")
+    if not content or not str(content).strip():
+        raise EmptyReply("model returned an empty reply")
+    return lenient_json(str(content))
+
+class EmptyReply(Exception):
+    pass
 
 PERSPECTIVES = {
     "correctness": "Find bugs: wrong logic, unhandled inputs, off-by-one, broken edge cases, error paths that lose data. Ignore style.",
@@ -339,6 +345,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
         try:
             issues = fast_json(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
                                user + (f"\n\nDOCS:\n{docs_text[:20000]}" if name == "docs" else "")).get("issues", [])
+        except EmptyReply:
+            issues = [{"file": "-", "severity": "low", "note": f"{name} review returned nothing; perspective not covered this round", "confirmed": False}]
         except Exception as e:  # noqa: BLE001
             issues = [{"file": "-", "severity": "high", "note": f"{name} review call failed: {e}", "confirmed": True}]
         for i in issues:
@@ -421,8 +429,25 @@ def jev_acceptance(cfg, proj, diff, repo=None):
                          "p_not_met": round(probs.get("NOT_MET", 0), 3), "confidence": a.get("confidence")})
     if not rows:
         return {"pass": True, "criteria": [], "failed": [], "note": "no acceptance criteria found"}
-    failed = [r for r in rows if r["p_not_met"] >= threshold]
-    return {"pass": not failed, "criteria": rows, "failed": failed, "model": model}
+    suspects = [r for r in rows if r["p_not_met"] >= threshold]
+    # Jev is a fast classifier; long compound criteria produce false NOT_MET. A second model must quote the violation.
+    def confirm(r):
+        task_files = next((parse_task(t)[0] for t in (proj / "tasks").glob(f"{r['task']}-*.md")), {"files": [], "protected": []})
+        code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in task_files["files"] + task_files["protected"]
+                            if repo and (repo / f).exists())
+        try:
+            v = fast_json(env, "You are verifying whether code VIOLATES one acceptance criterion. Quote the exact lines that prove "
+                          "a violation. If every part of the criterion is satisfied, or you cannot show a concrete violation, "
+                          'answer confirmed=false. Return JSON {"confirmed": bool, "evidence": str}.',
+                          f"CRITERION: {r['criterion']}\n\nCODE:\n{code[:60000]}", max_tokens=500)
+            r["confirmed"], r["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+        except Exception as e:  # noqa: BLE001
+            r["confirmed"], r["evidence"] = False, f"confirm call failed: {e}"
+        return r
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        list(ex.map(confirm, suspects))
+    failed = [r for r in suspects if r.get("confirmed")]
+    return {"pass": not failed, "criteria": rows, "failed": failed, "suspects": suspects, "model": model}
 
 def driver_e2e(case, repo):
     """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
@@ -525,11 +550,12 @@ def run_stages(repo, proj, cfg, a):
         report["acceptance"] = acc
         ok &= acc["pass"]
         n = len(acc.get("criteria", []))
-        say(f"jev    {'ok  ' if acc['pass'] else 'FAIL'} {fmt(acc['seconds']):>8}  {n - len(acc.get('failed', []))}/{n} criteria met"
+        say(f"jev    {'ok  ' if acc['pass'] else 'FAIL'} {fmt(acc['seconds']):>8}  {n - len(acc.get('failed', []))}/{n} criteria met, "
+            f"{len(acc.get('suspects', [])) - len(acc.get('failed', []))} suspect(s) dropped after confirmation"
             + (f"  error={acc['error'][:120]}" if acc.get("error") else ""))
         for r in acc.get("criteria", []):
-            if r in acc.get("failed", []) or r["choice"] == "UNCLEAR":
-                flag = "NOT MET " if r in acc.get("failed", []) else "unclear "
+            if r in acc.get("suspects", []) or r["choice"] == "UNCLEAR":
+                flag = "NOT MET " if r in acc.get("failed", []) else ("dropped " if r in acc.get("suspects", []) else "unclear ")
                 print(f"           {flag} p_met={r['p_met']:.2f} p_not={r['p_not_met']:.2f} [{r['task']}] {r['criterion'][:110]}")
         for r in acc.get("failed", []):
             findings.append(f"[high] acceptance criterion not met (task {r['task']}, p={r['p_not_met']}): {r['criterion']}")
