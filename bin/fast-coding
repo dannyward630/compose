@@ -410,8 +410,35 @@ def jev_acceptance(cfg, proj, diff):
     failed = [r for r in rows if r["p_not_met"] >= threshold]
     return {"pass": not failed, "criteria": rows, "failed": failed, "model": out.get("model")}
 
+def driver_e2e(case, repo):
+    """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
+    env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
+    setup = None
+    if case.get("setup"):
+        setup = subprocess.Popen(case["setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        time.sleep(case.get("setup_wait", 3))
+    try:
+        p = subprocess.run(case["driver"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
+                           timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
+    finally:
+        if setup:
+            import signal
+            try:
+                os.killpg(os.getpgid(setup.pid), signal.SIGTERM)
+            except Exception:  # noqa: BLE001
+                pass
+    r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-4000:], "stderr": p.stderr[-2000:]}
+    m = re.search(r"^E2E_RESULT (\{.*\})$", p.stdout, re.M)
+    if m:
+        r["run"] = json.loads(m.group(1))
+    return r
+
 def jev_e2e(case, repo):
-    """Drive a real browser with jev-ultrafast to a goal, then run the case's independent assert command."""
+    """Drive a real browser with jev-ultrafast to a goal, then run the case's independent assert command.
+    A case with a `driver` key runs that command instead (the project's own browser driver)."""
+    if case.get("driver"):
+        return driver_e2e(case, repo)
     script = ("import json,sys,subprocess\nfrom jev_ultrafast import Agent\n"
               f"with Agent({case['url']!r}, {case['goal']!r}) as a:\n"
               "    last=None\n    for s in a.run(): last=s\n"
@@ -500,7 +527,10 @@ def run_stages(repo, proj, cfg, a):
             ok &= r["exit"] == 0
             run = r.get("run") or {}
             say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
-                f"steps={run.get('steps', '?')} agent={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
+                f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
+            for line in (r.get("stdout") or "").splitlines()[-8:]:
+                if line and not line.startswith("E2E_RESULT"):
+                    print(f"           {line[:160]}")
             if r["exit"]:
                 findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     return ok, report, "\n\n".join(findings)
