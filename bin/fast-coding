@@ -58,7 +58,8 @@ def digests(root, files):
     return {f: hashlib.sha256((root / f).read_bytes()).hexdigest() if (root / f).exists() else None for f in files}
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
-    cmd = ["opencode", "run", "--format", "json", "--model", model] + (["--session", session] if session else []) + [prompt]
+    # --dir is required: with a git worktree, opencode otherwise resolves the project root to the main checkout and edits it.
+    cmd = ["opencode", "run", "--format", "json", "--dir", str(cwd), "--model", model] + (["--session", session] if session else []) + [prompt]
     # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     sid, text, tools = session, [], 0
