@@ -31,9 +31,12 @@ A task is right-sized when all of these hold:
 - it is independent of other pending tasks, or its `after:` lists the ids it needs merged first
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
 
-### 3. Write the tests first
+### 3. Write the tests first (red)
 The acceptance test is yours. List it under `protected:`. The CLI rejects any attempt that changes a protected file.
+It must fail on HEAD; `run` refuses a task whose test already passes.
+Include holdout cases the task file does not list. The implementer is told they exist, so it has to implement the behavior rather than the examples. The deny-list task showed why: given only the listed labels, the fast model wrote one literal regex per label.
 Commit tests and task files before dispatching; worktrees branch from HEAD.
+Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
 `fast-coding run --repo <path> --project <name>` runs every task in parallel, one worktree and one OpenCode session each, feeding test failures back into the same session up to `--attempts` (default 3).
@@ -89,6 +92,11 @@ One paragraph. What to build, where, exact export names.
 
 ## Acceptance criteria
 - One bullet per behavior. Each is checked by the test.
+
+## Test plan
+- How to run: the `test:` command above.
+- Covered: which behaviors the test exercises, in words, not the literal cases.
+- Holdout: state that the test has cases not listed here (do not list them).
 
 ## Constraints
 - No new dependencies. Do not edit protected files.

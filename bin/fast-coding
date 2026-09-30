@@ -121,10 +121,20 @@ def run_task(repo, proj, task_path, attempts):
     sh(["git", "branch", "-D", branch], repo, check=False)
     sh(["git", "worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], repo)
     before = digests(wt, meta["protected"])
+    # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
+    red = sh(meta["test"], wt, timeout=600, check=False)
+    if red.returncode == 0:
+        say(f"{tid} skip    test already passes on HEAD; fix the test or drop the task")
+        result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
+                  "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}
+        (proj / "results").mkdir(exist_ok=True)
+        (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
+        return result
     prompt = (f"You are implementing one small task in this repository.\n\n{body}\n\n"
               f"Files you may edit: {', '.join(meta['files']) or 'as needed'}.\n"
               f"Files you must NOT edit: {', '.join(meta['protected']) or 'none'}.\n"
               f"Done means this command exits 0: {meta['test']}\n"
+              "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Run it yourself before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
