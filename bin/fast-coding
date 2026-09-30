@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""fast-coding: a frontier model plans, parallel OpenCode implementers build, local verification gates. Stdlib only.
+
+Layout inside any repo:
+  .fast-coding/<project>/plan.md        the plan the orchestrator wrote
+  .fast-coding/<project>/tasks/NNN-*.md one small task per file
+  .fast-coding/<project>/verify.json    local verification config
+  .fast-coding/<project>/results/       one JSON per task run, plus verify.json results
+  .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
+"""
+import argparse, hashlib, json, os, re, subprocess, sys, time, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+DEFAULT_MODEL = "cerebras/qwen-3.8-27b"
+JEV_DIR = Path.home() / "code" / "jev-ultrafast"
+
+def sh(cmd, cwd, timeout=None, check=True):
+    p = subprocess.run(cmd, cwd=cwd, shell=isinstance(cmd, str), capture_output=True, text=True,
+                       timeout=timeout, stdin=subprocess.DEVNULL)
+    if check and p.returncode:
+        raise RuntimeError(f"{cmd}\n{p.stdout}\n{p.stderr}")
+    return p
+
+def project_dir(a):
+    root = Path(a.repo).resolve() / ".fast-coding"
+    if a.project:
+        return root / a.project
+    projects = [p for p in root.iterdir() if p.is_dir() and (p / "tasks").exists()] if root.exists() else []
+    if len(projects) != 1:
+        sys.exit(f"pass --project; found {[p.name for p in projects]}")
+    return projects[0]
+
+# ---------- tasks ----------
+
+def parse_task(path):
+    m = re.match(r"---\n(.*?)\n---\n(.*)", path.read_text(), re.S)
+    if not m:
+        raise ValueError(f"{path}: missing frontmatter")
+    meta = {k.strip(): v.strip() for k, v in (l.split(":", 1) for l in m.group(1).splitlines() if ":" in l)}
+    for key in ("files", "protected"):
+        meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
+    meta.setdefault("model", DEFAULT_MODEL)
+    if "test" not in meta or "id" not in meta:
+        raise ValueError(f"{path}: frontmatter needs id and test")
+    return meta, m.group(2).strip()
+
+def digests(root, files):
+    return {f: hashlib.sha256((root / f).read_bytes()).hexdigest() if (root / f).exists() else None for f in files}
+
+def opencode(cwd, model, prompt, session=None, timeout=600):
+    cmd = ["opencode", "run", "--format", "json", "--model", model] + (["--session", session] if session else []) + [prompt]
+    # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    sid, text, tools = session, [], 0
+    for line in p.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sid = sid or ev.get("sessionID")
+        if ev.get("type") == "text":
+            text.append(ev.get("part", {}).get("text", ""))
+        if ev.get("type") == "tool_use":
+            tools += 1
+    if p.returncode and not sid:
+        raise RuntimeError(f"opencode failed: {p.stderr[-2000:]}")
+    return sid, "\n".join(text), tools
+
+def run_task(repo, proj, task_path, attempts):
+    meta, body = parse_task(task_path)
+    tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}"
+    wt = proj / "worktrees" / tid
+    sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
+    sh(["git", "branch", "-D", branch], repo, check=False)
+    sh(["git", "worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], repo)
+    before = digests(wt, meta["protected"])
+    prompt = (f"You are implementing one small task in this repository.\n\n{body}\n\n"
+              f"Files you may edit: {', '.join(meta['files']) or 'as needed'}.\n"
+              f"Files you must NOT edit: {', '.join(meta['protected']) or 'none'}.\n"
+              f"Done means this command exits 0: {meta['test']}\n"
+              "Run it yourself before finishing. Make the smallest change that passes. Do not explain, just edit.")
+    log, session, started, status = [], None, time.time(), "failed"
+    for attempt in range(1, attempts + 1):
+        t0 = time.time()
+        try:
+            session, reply, tools = opencode(wt, meta["model"], prompt, session)
+        except Exception as e:  # noqa: BLE001
+            log.append({"attempt": attempt, "error": str(e)[-2000:]})
+            break
+        test = sh(meta["test"], wt, timeout=600, check=False)
+        tampered = [f for f, d in digests(wt, meta["protected"]).items() if d != before[f]]
+        entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools,
+                 "test_exit": test.returncode, "tampered": tampered, "reply": reply[-1500:],
+                 "test_output": (test.stdout + test.stderr)[-3000:]}
+        log.append(entry)
+        if tampered:
+            status = "rejected_tampered"
+            break
+        if test.returncode == 0:
+            status = "passed"
+            break
+        prompt = (f"The test still fails. Fix it without editing protected files.\nCommand: {meta['test']}\n"
+                  f"Exit code: {test.returncode}\nOutput:\n{entry['test_output']}")
+    if status == "passed":
+        sh(["git", "add", "-A"], wt)
+        sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
+    diff = sh(["git", "diff", "HEAD~1" if status == "passed" else "HEAD", "--stat"], wt, check=False).stdout
+    result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
+              "seconds": round(time.time() - started, 1), "branch": branch, "worktree": str(wt), "diffstat": diff, "log": log}
+    (proj / "results").mkdir(exist_ok=True)
+    (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
+    return result
+
+def cmd_run(a):
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    only = set(a.only.split(",")) if a.only else None
+    tasks = sorted(p for p in (proj / "tasks").glob("*.md") if not only or p.name.split("-")[0] in only)
+    if not tasks:
+        sys.exit(f"no tasks in {proj / 'tasks'}")
+    if sh(["git", "status", "--porcelain"], repo).stdout.strip():
+        sys.exit("repo has uncommitted changes; commit tests and tasks first so worktrees include them")
+    with ThreadPoolExecutor(max_workers=a.parallel) as ex:
+        results = list(ex.map(lambda p: run_task(repo, proj, p, a.attempts), tasks))
+    for r in results:
+        print(f"{r['id']}  {r['status']:18} attempts={r['attempts']} {r['seconds']}s  {r['branch']}")
+    sys.exit(0 if all(r["status"] == "passed" for r in results) else 1)
+
+# ---------- verify ----------
+
+def load_env(path):
+    env = {}
+    for line in Path(path).read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+    return env
+
+def llm_review(cfg, diff, plan):
+    """Ask a fast text model (Mercury by default, via the jev-ultrafast .env) whether the diff matches the plan."""
+    env = {**load_env(cfg.get("env_file", JEV_DIR / ".env")), **os.environ}
+    body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": 1500,
+            "response_format": {"type": "json_object"}, "reasoning": {"enabled": False},
+            "messages": [
+                {"role": "system", "content": "You are a strict code reviewer. Compare the diff against the plan and acceptance criteria. "
+                 "Return JSON {\"pass\": bool, \"issues\": [{\"file\": str, \"severity\": \"high|medium|low\", \"note\": str}]}. "
+                 "Flag: unmet criteria, scope creep, gamed tests, hardcoded site-specific logic, security or data-loss risks. Be concrete."},
+                {"role": "user", "content": f"PLAN AND CRITERIA:\n{plan[:20000]}\n\nDIFF:\n{diff[:60000]}"}]}
+    req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
+                                 data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {env['TEXT_MODEL_API_KEY']}",
+                                                                          "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        out = json.load(r)
+    content = out["choices"][0]["message"]["content"].strip()
+    # Small models sometimes append prose after the JSON; take the first object only.
+    return json.JSONDecoder().raw_decode(content[content.index("{"):])[0]
+
+def jev_e2e(case, repo):
+    """Drive a real browser with jev-ultrafast to a goal, then run the case's independent assert command."""
+    script = ("import json,sys\nfrom jev_ultrafast import Agent\n"
+              f"with Agent({case['url']!r}, {case['goal']!r}) as a:\n"
+              "    last=None\n    for s in a.run(): last=s\n"
+              "    print(json.dumps({'status':last['status'],'elapsed_ms':last['elapsed_ms'],'steps':len(last['history']),'url':last['page']['url']}))\n"
+              "    sys.stdout.flush()\n"
+              f"    import subprocess; sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}))\n")
+    p = sh(["uv", "run", "--env-file", ".env", "python", "-c", script], JEV_DIR, timeout=case.get("timeout", 300), check=False)
+    return {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-3000:], "stderr": p.stderr[-2000:]}
+
+def cmd_verify(a):
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    cfg_path = proj / "verify.json"
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    report, ok = {"checks": [], "e2e": [], "review": None}, True
+    for c in cfg.get("checks", []):
+        p = sh(c, repo, timeout=900, check=False)
+        report["checks"].append({"cmd": c, "exit": p.returncode, "output": (p.stdout + p.stderr)[-3000:]})
+        ok &= p.returncode == 0
+        print(f"check {'ok ' if p.returncode == 0 else 'FAIL'} {c}")
+    if not a.skip_e2e:
+        for case in cfg.get("e2e", []):
+            r = jev_e2e(case, repo)
+            report["e2e"].append(r)
+            ok &= r["exit"] == 0
+            print(f"e2e   {'ok ' if r['exit'] == 0 else 'FAIL'} {case.get('name')}")
+    if not a.skip_review and cfg.get("review", True):
+        base = cfg.get("review_base", "main")
+        diff = sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
+        task_files = sorted((proj / "tasks").glob("*.md"))
+        if not diff.strip():
+            # On the base branch itself there is no range; review the current content of every file the tasks name.
+            named = sorted({f for t in task_files for f in parse_task(t)[0]["files"] + parse_task(t)[0]["protected"]})
+            diff = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in named if (repo / f).exists())
+        plan = (proj / "plan.md").read_text() if (proj / "plan.md").exists() else ""
+        plan += "\n\n" + "\n\n".join(t.read_text() for t in task_files)
+        try:
+            rv = llm_review(cfg, diff, plan)
+        except Exception as e:  # noqa: BLE001
+            rv = {"pass": False, "issues": [{"file": "-", "severity": "high", "note": f"review call failed: {e}"}]}
+        report["review"] = rv
+        ok &= bool(rv.get("pass"))
+        print(f"review {'ok ' if rv.get('pass') else 'FAIL'} {len(rv.get('issues', []))} issue(s)")
+        for i in rv.get("issues", []):
+            print(f"   [{i.get('severity')}] {i.get('file')}: {i.get('note')}")
+    (proj / "results").mkdir(exist_ok=True)
+    (proj / "results" / "verify.json").write_text(json.dumps(report, indent=2))
+    sys.exit(0 if ok else 1)
+
+# ---------- init / clean ----------
+
+def cmd_init(a):
+    proj = Path(a.repo).resolve() / ".fast-coding" / a.project
+    (proj / "tasks").mkdir(parents=True, exist_ok=True)
+    (proj / "results").mkdir(exist_ok=True)
+    if not (proj / "verify.json").exists():
+        (proj / "verify.json").write_text(json.dumps({"checks": [], "e2e": [], "review": True, "review_base": "main"}, indent=2))
+    gi = Path(a.repo).resolve() / ".gitignore"
+    lines = gi.read_text().splitlines() if gi.exists() else []
+    for pat in (".fast-coding/*/worktrees/", ".fast-coding/*/results/"):
+        if pat not in lines:
+            lines.append(pat)
+    gi.write_text("\n".join(lines) + "\n")
+    print(f"initialised {proj}")
+
+def cmd_clean(a):
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    for wt in (proj / "worktrees").glob("*"):
+        sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
+        sh(["git", "branch", "-D", f"fast/{proj.name}/{wt.name}"], repo, check=False)
+    sh(["git", "worktree", "prune"], repo, check=False)
+    print("clean")
+
+def main():
+    ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name, fn, help_ in (("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
+                            ("run", cmd_run, "dispatch tasks to parallel OpenCode implementers"),
+                            ("verify", cmd_verify, "local verification: checks, jev-ultrafast e2e, fast-model review"),
+                            ("clean", cmd_clean, "remove worktrees and branches")):
+        s = sub.add_parser(name, help=help_)
+        s.add_argument("--repo", default=".")
+        s.add_argument("--project", required=(name == "init"))
+        s.set_defaults(fn=fn)
+        if name == "run":
+            s.add_argument("--only", help="comma-separated task ids")
+            s.add_argument("--attempts", type=int, default=3)
+            s.add_argument("--parallel", type=int, default=4)
+        if name == "verify":
+            s.add_argument("--skip-e2e", action="store_true")
+            s.add_argument("--skip-review", action="store_true")
+    a = ap.parse_args()
+    a.fn(a)
+
+if __name__ == "__main__":
+    main()
