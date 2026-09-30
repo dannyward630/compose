@@ -14,6 +14,77 @@ fast-coding verify --repo . --project <name>   # checks, confirmed Mercury revie
 fast-coding clean  --repo . --project <name>
 ```
 
+## How to use it
+
+### With Claude as orchestrator (the normal way)
+
+Open Claude Code in the repo and ask for the skill:
+
+```
+/fast-coding plan and build <feature> from GRILLING.md and DESIGN.md
+```
+
+Claude reads the spec, writes `.fast-coding/<project>/plan.md`, splits it into task files, writes the acceptance tests, dispatches, reviews each diff, runs verify, and reports with timing and cost.
+You review the plan and the results.
+You never call the CLI yourself in this mode.
+
+### Manually
+
+```bash
+cd ~/code/some-repo
+fast-coding init --project my-feature          # creates .fast-coding/my-feature/{tasks,results,verify.json}
+# write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
+fast-coding run --project my-feature           # parallel OpenCode implementers, one worktree each
+fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
+git merge fast/my-feature/001                  # accept what passed review
+fast-coding clean --project my-feature         # remove worktrees and branches
+```
+
+Useful flags: `run --only 003,004`, `run --attempts 4`, `run --parallel 8`, `verify --fix 0` (report only), `verify --skip-e2e`, `verify --skip-review`.
+Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, with every attempt's test output, timing, and cost.
+
+### Before the first run in a new repo
+
+1. Commit everything. `run` refuses a dirty tree because worktrees branch from HEAD.
+2. Add an `opencode.jsonc` in the repo root so headless OpenCode does not block on a permission prompt:
+   ```json
+   { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
+   ```
+3. Make sure the shell has `CEREBRAS_API_KEY` (it is exported in `~/.zshrc`; open a new terminal or `source ~/.zshrc`).
+4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
+5. Add e2e cases only for browser-facing work, each with an `assert` command you wrote.
+
+### Task file
+
+```markdown
+---
+id: 002
+title: Snapshot port
+files: extension/snapshot.js
+protected: tests/snapshot.test.js
+test: node --test 'tests/**/*.test.js'
+model: cerebras/qwen-3.8-27b
+after:
+---
+
+## Goal
+One paragraph. What to build, where, exact export names.
+
+## Acceptance criteria
+- One bullet per behavior. Each is checked by the test.
+
+## Test plan
+- How to run: the `test:` command above.
+- Covered: which behaviors the test exercises, in words.
+- Holdout: the test has cases not listed here.
+
+## Constraints
+- No new dependencies. Do not edit protected files.
+```
+
+Right-sized means one to three files, one test command, under ten criteria, and the test fails on HEAD.
+If you cannot write the test, it is not a task yet.
+
 ## How the loop works
 
 ```
