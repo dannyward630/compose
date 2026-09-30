@@ -53,6 +53,7 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
 3. Make sure the shell has `CEREBRAS_API_KEY` (it is exported in `~/.zshrc`; open a new terminal or `source ~/.zshrc`).
 4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
 5. Add e2e cases only for browser-facing work, each with an `assert` command you wrote.
+6. Run `graft build .` so implementers get a context pack instead of exploring. It is free and git-ignored; the CLI rebuilds it inside each worktree.
 
 ### Task file
 

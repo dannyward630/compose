@@ -106,5 +106,6 @@ One paragraph. What to build, where, exact export names.
 - Tests are the contract. The implementer never edits them.
 - Fresh session per task. Never chain tasks in one session.
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
+- Build a graft graph in the repo (`graft build .`, free, git-ignored). The CLI prepends a `graft ask` context pack with exact `file:line` and source to every implementer and fixer prompt, and tells the model to use `graft ask` and `graft callers` instead of exploring. Without graft the fast model reads whole files and every extra tool call resends the full context at Cerebras prices.
 - Report honestly: attempts per task, what escalated, what you changed by hand, and the verify output.
 - Always show timing and cost. Paste the CLI's `run start` and `run done` lines, the per-task table, the `verify` stage lines, and the final `cost` line into your report. The user wants to see when it started, how fast it finished, and what each implement cost, every time.

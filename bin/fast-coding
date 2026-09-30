@@ -88,7 +88,13 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     # --dir is required: with a git worktree, opencode otherwise resolves the project root to the main checkout and edits it.
     cmd = ["opencode", "run", "--format", "json", "--dir", str(cwd), "--model", model] + (["--session", session] if session else []) + [prompt]
     # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    for attempt in range(4):
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        # Parallel launches race on opencode's shared SQLite file. Back off and retry; nothing has run yet when this happens.
+        if p.returncode and "database is locked" in (p.stdout + p.stderr) and attempt < 3:
+            time.sleep(0.7 * (attempt + 1) + 0.3 * (hash(str(cwd)) % 5) / 5)
+            continue
+        break
     sid, text, tools, usage = session, [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
@@ -131,6 +137,21 @@ def claude_once(cwd, prompt, timeout=900):
     return None, str(out.get("result", ""))[-1500:], out.get("num_turns", 0), {"tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
                                                                                 "cost": 0.0, "reference_cost": out.get("total_cost_usd")}
 
+def graft_pack(wt, query, repo=None, limit=6):
+    """Context pack from a graft graph, $0 and no model. graft/ is git-ignored, so a worktree gets its own graph:
+    the main repo's graph is copied in as a cache and rebuilt from the worktree's files (so a bench reset is not leaked)."""
+    if repo and not (wt / "graft").exists() and (repo / "graft").exists():
+        import shutil
+        shutil.copytree(repo / "graft", wt / "graft")
+        sh(["graft", "build", str(wt)], wt, timeout=600, check=False)
+    if not (wt / "graft").exists():
+        return ""
+    p = sh(["graft", "ask", query, "--source", "-n", str(limit), "--no-refresh", str(wt)], wt, timeout=60, check=False)
+    if p.returncode:
+        return ""
+    lines = [l for l in p.stdout.splitlines() if not l.startswith(("[graft]", "⬆ graft"))]  # drop banners and token-saved notes
+    return "\n".join(lines).strip()[:12000]
+
 def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag=""):
     meta, body = parse_task(task_path)
     if model:
@@ -156,7 +177,12 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
         (proj / "results").mkdir(exist_ok=True)
         (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
         return result
-    prompt = (f"You are implementing one small task in this repository.\n\n{body}\n\n"
+    goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
+    pack = graft_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo)
+    context = (f"CONTEXT PACK from the repo's graft graph (exact file:line, with source). Use it instead of exploring. "
+               f"If you need more, run `graft ask \"<question>\"` or `graft callers <symbol>`; do not open unrelated files.\n{pack}\n\n"
+               if pack else "")
+    prompt = (f"You are implementing one small task in this repository.\n\n{context}{body}\n\n"
               f"Files you may edit: {', '.join(meta['files']) or 'as needed'}.\n"
               f"Files you must NOT edit: {', '.join(meta['protected']) or 'none'}.\n"
               f"Done means this command exits 0: {meta['test']}\n"
@@ -470,7 +496,9 @@ def cmd_verify(a):
         t1 = time.time()
         model = cfg.get("fix_model", DEFAULT_MODEL)
         say(f"fix    start round {rnd + 1}  model={model}")
-        prompt = ("Verification of this repository failed. Fix ONLY the findings below with the smallest change. "
+        pack = graft_pack(repo, findings[:400])
+        prompt = ((f"CONTEXT PACK from graft (exact file:line). Use it instead of exploring.\n{pack}\n\n" if pack else "") +
+                  "Verification of this repository failed. Fix ONLY the findings below with the smallest change. "
                   f"Do not edit these files: {', '.join(protected) or 'none'}. Do not weaken or delete tests. "
                   "Keep behavior the tests already cover. Keep the code simple; do not restructure. "
                   "Run the test commands yourself before finishing. Do not explain, just edit.\n\nFINDINGS:\n" + findings[:30000])
