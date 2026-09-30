@@ -13,6 +13,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_MODEL = "cerebras/qwen-3.8-27b"
+
+def now():
+    return time.strftime("%H:%M:%S")
+
+def fmt(seconds):
+    return f"{seconds:.1f}s" if seconds < 90 else f"{int(seconds // 60)}m{seconds % 60:04.1f}s"
+
+def say(msg):
+    print(f"[{now()}] {msg}", flush=True)
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
 
 def sh(cmd, cwd, timeout=None, check=True):
@@ -83,6 +92,7 @@ def run_task(repo, proj, task_path, attempts):
               f"Done means this command exits 0: {meta['test']}\n"
               "Run it yourself before finishing. Make the smallest change that passes. Do not explain, just edit.")
     log, session, started, status = [], None, time.time(), "failed"
+    say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
     for attempt in range(1, attempts + 1):
         t0 = time.time()
         try:
@@ -96,6 +106,7 @@ def run_task(repo, proj, task_path, attempts):
                  "test_exit": test.returncode, "tampered": tampered, "reply": reply[-1500:],
                  "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
+        say(f"{tid} attempt {attempt} {'pass' if test.returncode == 0 else 'fail'}  {fmt(entry['seconds'])}  tools={tools}")
         if tampered:
             status = "rejected_tampered"
             break
@@ -108,8 +119,11 @@ def run_task(repo, proj, task_path, attempts):
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
     diff = sh(["git", "diff", "HEAD~1" if status == "passed" else "HEAD", "--stat"], wt, check=False).stdout
+    total = round(time.time() - started, 1)
+    say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}")
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
-              "seconds": round(time.time() - started, 1), "branch": branch, "worktree": str(wt), "diffstat": diff, "log": log}
+              "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total,
+              "branch": branch, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
     (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
     return result
@@ -122,11 +136,18 @@ def cmd_run(a):
         sys.exit(f"no tasks in {proj / 'tasks'}")
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit tests and tasks first so worktrees include them")
+    t0 = time.time()
+    say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         results = list(ex.map(lambda p: run_task(repo, proj, p, a.attempts), tasks))
+    total = time.time() - t0
+    print()
+    print(f"{'task':6} {'status':18} {'attempts':8} {'time':>9}  branch")
     for r in results:
-        print(f"{r['id']}  {r['status']:18} attempts={r['attempts']} {r['seconds']}s  {r['branch']}")
-    sys.exit(0 if all(r["status"] == "passed" for r in results) else 1)
+        print(f"{r['id']:6} {r['status']:18} {r['attempts']:<8} {fmt(r['seconds']):>9}  {r['branch']}")
+    passed = sum(r["status"] == "passed" for r in results)
+    say(f"run done   {passed}/{len(results)} passed  wall {fmt(total)}  sum of task time {fmt(sum(r['seconds'] for r in results))}")
+    sys.exit(0 if passed == len(results) else 1)
 
 # ---------- verify ----------
 
@@ -172,18 +193,22 @@ def cmd_verify(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
-    report, ok = {"checks": [], "e2e": [], "review": None}, True
+    report, ok, t0 = {"checks": [], "e2e": [], "review": None}, True, time.time()
+    say(f"verify start project={proj.name}")
     for c in cfg.get("checks", []):
+        t1 = time.time()
         p = sh(c, repo, timeout=900, check=False)
-        report["checks"].append({"cmd": c, "exit": p.returncode, "output": (p.stdout + p.stderr)[-3000:]})
+        report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": (p.stdout + p.stderr)[-3000:]})
         ok &= p.returncode == 0
-        print(f"check {'ok ' if p.returncode == 0 else 'FAIL'} {c}")
+        say(f"check  {'ok  ' if p.returncode == 0 else 'FAIL'} {fmt(time.time() - t1):>8}  {c}")
     if not a.skip_e2e:
         for case in cfg.get("e2e", []):
+            t1 = time.time()
             r = jev_e2e(case, repo)
+            r["seconds"] = round(time.time() - t1, 1)
             report["e2e"].append(r)
             ok &= r["exit"] == 0
-            print(f"e2e   {'ok ' if r['exit'] == 0 else 'FAIL'} {case.get('name')}")
+            say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}")
     if not a.skip_review and cfg.get("review", True):
         base = cfg.get("review_base", "main")
         diff = sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
@@ -194,17 +219,21 @@ def cmd_verify(a):
             diff = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in named if (repo / f).exists())
         plan = (proj / "plan.md").read_text() if (proj / "plan.md").exists() else ""
         plan += "\n\n" + "\n\n".join(t.read_text() for t in task_files)
+        t1 = time.time()
         try:
             rv = llm_review(cfg, diff, plan)
         except Exception as e:  # noqa: BLE001
             rv = {"pass": False, "issues": [{"file": "-", "severity": "high", "note": f"review call failed: {e}"}]}
+        rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
         ok &= bool(rv.get("pass"))
-        print(f"review {'ok ' if rv.get('pass') else 'FAIL'} {len(rv.get('issues', []))} issue(s)")
+        say(f"review {'ok  ' if rv.get('pass') else 'FAIL'} {fmt(rv['seconds']):>8}  {len(rv.get('issues', []))} issue(s)")
         for i in rv.get("issues", []):
             print(f"   [{i.get('severity')}] {i.get('file')}: {i.get('note')}")
     (proj / "results").mkdir(exist_ok=True)
+    report["seconds"] = round(time.time() - t0, 1)
     (proj / "results" / "verify.json").write_text(json.dumps(report, indent=2))
+    say(f"verify {'PASS' if ok else 'FAIL'}  wall {fmt(report['seconds'])}")
     sys.exit(0 if ok else 1)
 
 # ---------- init / clean ----------

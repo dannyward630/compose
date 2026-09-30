@@ -90,3 +90,4 @@ One paragraph. What to build, where, exact export names.
 - Fresh session per task. Never chain tasks in one session.
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
 - Report honestly: attempts per task, what escalated, what you changed by hand, and the verify output.
+- Always show timing. Paste the CLI's `run start` and `run done` lines and the per-task table into your report, and the `verify` lines with their durations. The user wants to see when it started and how fast it finished every time.
