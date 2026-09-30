@@ -113,13 +113,39 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     return sid, "\n".join(text), tools, usage
 
-def run_task(repo, proj, task_path, attempts):
+def claude_once(cwd, prompt, timeout=900):
+    """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
+    # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
+           "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    try:
+        out = json.loads(p.stdout)
+    except json.JSONDecodeError:
+        out = {}
+    if out.get("is_error"):
+        raise RuntimeError(f"claude -p error: {str(out.get('result', ''))[:300]}")
+    usage = out.get("usage", {})
+    tokens_in = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+    LEDGER.add("claude-subscription", tokens_in, usage.get("output_tokens", 0), 0.0)
+    return None, str(out.get("result", ""))[-1500:], out.get("num_turns", 0), {"tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
+                                                                                "cost": 0.0, "reference_cost": out.get("total_cost_usd")}
+
+def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag=""):
     meta, body = parse_task(task_path)
-    tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}"
-    wt = proj / "worktrees" / tid
+    if model:
+        meta["model"] = model
+    tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}{tag}"
+    wt = proj / "worktrees" / (tid + tag)
     sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
     sh(["git", "branch", "-D", branch], repo, check=False)
     sh(["git", "worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], repo)
+    if reset_files:
+        # Benchmark mode: remove the implementation so the frozen test is red again and the model starts from scratch.
+        for f in meta["files"]:
+            if (wt / f).exists():
+                (wt / f).unlink()
+        sh(["git", "commit", "-qam", "bench: reset implementation"], wt, check=False)
     before = digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
     red = sh(meta["test"], wt, timeout=600, check=False)
@@ -135,13 +161,17 @@ def run_task(repo, proj, task_path, attempts):
               f"Files you must NOT edit: {', '.join(meta['protected']) or 'none'}.\n"
               f"Done means this command exits 0: {meta['test']}\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
-              "Run it yourself before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.")
+              "Read only the test file and the files named above; do not explore other docs or directories. "
+              "Run the test command once before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
     for attempt in range(1, attempts + 1):
         t0 = time.time()
         try:
-            session, reply, tools, usage = opencode(wt, meta["model"], prompt, session)
+            if meta["model"] == "claude":
+                session, reply, tools, usage = claude_once(wt, prompt)
+            else:
+                session, reply, tools, usage = opencode(wt, meta["model"], prompt, session)
         except Exception as e:  # noqa: BLE001
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
             break
@@ -468,6 +498,54 @@ def cmd_verify(a):
         print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
     sys.exit(0 if ok else 1)
 
+# ---------- bench ----------
+
+def pct(xs, q):
+    if not xs:
+        return 0.0
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
+
+def cmd_bench(a):
+    """Frozen task set x models. Each task is reset to red in its worktree, then implemented from scratch by each model."""
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    only = set(a.only.split(",")) if a.only else None
+    tasks = sorted(p for p in (proj / "tasks").glob("*.md") if not only or p.name.split("-")[0] in only)
+    if not tasks:
+        sys.exit(f"no tasks in {proj / 'tasks'}")
+    if sh(["git", "status", "--porcelain"], repo).stdout.strip():
+        sys.exit("repo has uncommitted changes; commit first")
+    models = a.models.split(",")
+    t0 = time.time()
+    say(f"bench start project={proj.name} tasks={len(tasks)} models={models} runs={a.runs} attempts={a.attempts}")
+    rows, raw = [], []
+    for model in models:
+        before_cost = LEDGER.total()
+        jobs = [(t, r) for t in tasks for r in range(a.runs)]
+        with ThreadPoolExecutor(max_workers=a.parallel) as ex:
+            results = list(ex.map(lambda j: run_task(repo, proj, j[0], a.attempts, model=model, reset_files=True,
+                                                     tag=f"-bench-{re.sub(r'[^a-z0-9]+', '-', model.lower())}-r{j[1]}"), jobs))
+        raw.extend({**r, "bench_model": model} for r in results)
+        passed = [r for r in results if r["status"] == "passed"]
+        times = [r["seconds"] for r in results]
+        rows.append({"model": model, "tasks_x_runs": len(results), "pass_rate": round(len(passed) / len(results), 3),
+                     "attempts_mean": round(sum(r["attempts"] for r in results) / len(results), 2),
+                     "attempts_max": max(r["attempts"] for r in results),
+                     "p50_s": round(pct(times, 0.5), 1), "p95_s": round(pct(times, 0.95), 1),
+                     "cost_per_task": round((LEDGER.total() - before_cost) / len(results), 5)})
+        for r in results:  # keep branches for inspection, drop worktrees
+            sh(["git", "worktree", "remove", "--force", r["worktree"]], repo, check=False)
+    print()
+    print(f"{'model':28} {'n':>3} {'pass':>6} {'att.mean':>8} {'att.max':>7} {'p50':>8} {'p95':>8} {'$/task':>9}")
+    for r in rows:
+        print(f"{r['model']:28} {r['tasks_x_runs']:>3} {r['pass_rate']:>6.0%} {r['attempts_mean']:>8} {r['attempts_max']:>7} "
+              f"{fmt(r['p50_s']):>8} {fmt(r['p95_s']):>8} {'$' + format(r['cost_per_task'], '.4f'):>9}")
+    say(f"bench done  wall {fmt(time.time() - t0)}")
+    say(LEDGER.line())
+    out = proj / "results" / f"bench-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out.write_text(json.dumps({"summary": rows, "runs": raw, "cost": LEDGER.snapshot(), "seconds": round(time.time() - t0, 1)}, indent=2))
+    print(f"saved {out}")
+
 # ---------- init / clean ----------
 
 def cmd_init(a):
@@ -491,8 +569,9 @@ def cmd_clean(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     for wt in (proj / "worktrees").glob("*"):
         sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
-        sh(["git", "branch", "-D", f"fast/{proj.name}/{wt.name}"], repo, check=False)
     sh(["git", "worktree", "prune"], repo, check=False)
+    for b in sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split():
+        sh(["git", "branch", "-D", b], repo, check=False)
     print("clean")
 
 def main():
@@ -501,6 +580,7 @@ def main():
     for name, fn, help_ in (("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
                             ("run", cmd_run, "dispatch tasks to parallel OpenCode implementers"),
                             ("verify", cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
+                            ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("clean", cmd_clean, "remove worktrees and branches")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -508,6 +588,13 @@ def main():
         s.set_defaults(fn=fn)
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
+            s.add_argument("--attempts", type=int, default=3)
+            s.add_argument("--parallel", type=int, default=4)
+        if name == "bench":
+            s.add_argument("--models", default="cerebras/qwen-3.8-27b,cerebras/gpt-oss-120b,claude",
+                           help="comma-separated OpenCode model ids; 'claude' = Claude Code one-shot on the subscription")
+            s.add_argument("--only", help="comma-separated task ids")
+            s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
         if name == "verify":
