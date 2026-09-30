@@ -117,7 +117,19 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     if p.returncode and not sid:
         raise RuntimeError(f"opencode failed: {p.stderr[-2000:]}")
     LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
-    return sid, "\n".join(text), tools, usage
+    reply = "\n".join(text)
+    # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
+    # That session is unusable afterwards; the caller must wait for the window to reset and start a fresh one.
+    if RATE_LIMIT_MARK in reply or "Tokens per minute" in (p.stderr or ""):
+        raise RateLimited(usage)
+    return sid, reply, tools, usage
+
+RATE_LIMIT_MARK = "exceeded the provider's size limit"
+
+class RateLimited(Exception):
+    def __init__(self, usage):
+        super().__init__("provider rate limit hit; session compacted")
+        self.usage = usage
 
 def claude_once(cwd, prompt, timeout=900):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
@@ -190,14 +202,32 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
               "Read only the test file and the files named above; do not explore other docs or directories. "
               "Run the test command once before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
+    original_prompt = prompt
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
-    for attempt in range(1, attempts + 1):
+    rate_waits = 0
+    attempt = 0
+    while attempt < attempts:
+        attempt += 1
         t0 = time.time()
         try:
             if meta["model"] == "claude":
                 session, reply, tools, usage = claude_once(wt, prompt)
             else:
                 session, reply, tools, usage = opencode(wt, meta["model"], prompt, session)
+        except RateLimited as e:
+            cost += e.usage["cost"]
+            rate_waits += 1
+            if rate_waits > 4:
+                log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
+                break
+            wait = 20 * rate_waits
+            say(f"{tid} rate-limited by provider; fresh session in {wait}s (wait {rate_waits}/4)")
+            log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
+            session = None  # the compacted session is dead; restart from the original prompt
+            prompt = original_prompt
+            attempt -= 1
+            time.sleep(wait)
+            continue
         except Exception as e:  # noqa: BLE001
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
             break
@@ -504,6 +534,13 @@ def cmd_verify(a):
                   "Run the test commands yourself before finishing. Do not explain, just edit.\n\nFINDINGS:\n" + findings[:30000])
         try:
             _, reply, tools, usage = opencode(repo, model, prompt)
+        except RateLimited as e:
+            say("fix    rate-limited by provider; waiting 30s and retrying once")
+            time.sleep(30)
+            try:
+                _, reply, tools, usage = opencode(repo, model, prompt)
+            except Exception as e2:  # noqa: BLE001
+                reply, tools, usage = f"fix call failed: {e2}", 0, {"cost": 0.0}
         except Exception as e:  # noqa: BLE001
             reply, tools, usage = f"fix call failed: {e}", 0, {"cost": 0.0}
         tampered = [f for f, d in digests(repo, protected).items() if d != before[f]]
@@ -623,7 +660,7 @@ def main():
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)
-            s.add_argument("--parallel", type=int, default=4)
+            s.add_argument("--parallel", type=int, default=3)
         if name == "bench":
             s.add_argument("--models", default="cerebras/qwen-3.8-27b,cerebras/gpt-oss-120b,claude",
                            help="comma-separated OpenCode model ids; 'claude' = Claude Code one-shot on the subscription")
