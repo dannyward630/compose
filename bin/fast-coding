@@ -159,7 +159,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}{tag}"
     wt = proj / "worktrees" / (tid + tag)
     sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
-    sh(["git", "branch", "-D", branch], repo, check=False)
+    sh(["git", "branch", "-D", branch], repo, check=False)  # a re-run replaces the previous attempt; merge before re-running to keep it
     sh(["git", "worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], repo)
     if reset_files:
         # Benchmark mode: remove the implementation so the frozen test is red again and the model starts from scratch.
@@ -594,13 +594,19 @@ def cmd_init(a):
     print(f"initialised {proj}")
 
 def cmd_clean(a):
+    """Remove worktrees always; remove task branches only when merged into HEAD, unless --all. Unmerged passes are work."""
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     for wt in (proj / "worktrees").glob("*"):
         sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
     sh(["git", "worktree", "prune"], repo, check=False)
+    merged = set(sh(["git", "branch", "--merged", "HEAD", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split())
+    kept = []
     for b in sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split():
-        sh(["git", "branch", "-D", b], repo, check=False)
-    print("clean")
+        if a.all or b in merged:
+            sh(["git", "branch", "-D", b], repo, check=False)
+        else:
+            kept.append(b)
+    print("clean" + (f"  kept unmerged: {', '.join(kept)}" if kept else ""))
 
 def main():
     ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -625,6 +631,8 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
+        if name == "clean":
+            s.add_argument("--all", action="store_true", help="also delete unmerged task branches")
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")
