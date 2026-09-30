@@ -172,7 +172,8 @@ If you cannot write the test, it is not a task yet.
     CLI                 red check, protected-file guard, timing, cost ledger
 ```
 
-Implementer model: `cerebras/qwen-3.8-27b` through OpenCode, configured in `~/.config/opencode/opencode.jsonc`.
+Implementer model: `cerebras/qwen-3.8-27b` through OpenCode, configured in `~/.config/opencode/opencode.jsonc` with `reasoningEffort: low`.
+With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
 Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
 Browser e2e: jev-ultrafast's `Agent`, with an independent `assert` command per case.
 Acceptance review: Jev (TypeSafe) answers one MET/NOT_MET/UNCLEAR question per acceptance criterion.
