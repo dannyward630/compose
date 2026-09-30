@@ -1,6 +1,6 @@
 ---
 name: fast-coding
-description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (Qwen 3.8 27B on Cerebras), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
+description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b on Cerebras), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
 ---
 
 # fast-coding
@@ -57,7 +57,7 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
   "jev_acceptance": true, "acceptance_threshold": 0.6,
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
            "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
-  "review": true, "review_base": "main", "fix_model": "cerebras/qwen-3.8-27b"
+  "review": true, "review_base": "main", "fix_model": "cerebras/gpt-oss-120b"
 }
 ```
 1. **checks**: lint and unit tests, exact and cheap, run first.
@@ -83,7 +83,7 @@ title: Submit deny list
 files: extension/deny_list.js
 protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
-model: cerebras/qwen-3.8-27b
+model: cerebras/gpt-oss-120b
 after:
 ---
 
