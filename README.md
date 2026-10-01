@@ -179,6 +179,6 @@ Browser e2e: jev-ultrafast's `Agent`, with an independent `assert` command per c
 Acceptance review: Jev (TypeSafe) answers one MET/NOT_MET/UNCLEAR question per acceptance criterion.
 Every run and verify ends with a cost line per provider and a total.
 
-Each task runs in a separate shared-object clone, not a git worktree: OpenCode links worktrees to the main checkout as project copies and writes edits of existing files there. A clone has its own `.git`, so nothing can leak; the dispatcher still reverts and flags any write into the main checkout as a safety net.
+Each task runs in a separate shared-object clone. The prompt states the clone's absolute root and lists editable files as absolute paths, because a project's own docs often name the original checkout's absolute paths and the model will edit those instead of its working directory. The dispatcher still reverts and flags any write into the main checkout as a safety net.
 
 First real run: the submit deny list in `~/code/jev-autofill-test`, passed on attempt 2 in 11.7 seconds.
