@@ -247,6 +247,14 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             break
         prompt = (f"The test still fails. Fix it without editing protected files.\nCommand: {meta['test']}\n"
                   f"Exit code: {test.returncode}\nOutput:\n{entry['test_output']}")
+    # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
+    # revert those files and record it; the task's own result lives in its worktree branch.
+    leaked = sh(["git", "status", "--porcelain"], repo, check=False).stdout.strip()
+    if leaked:
+        sh(["git", "checkout", "--", "."], repo, check=False)
+        sh(["git", "clean", "-fdq", "--exclude=.fast-coding", "--exclude=node_modules"], repo, check=False)
+        say(f"{tid} WARNING implementer wrote into the main checkout; reverted: {' '.join(l.split()[-1] for l in leaked.splitlines())[:200]}")
+        log.append({"leak_reverted": leaked.splitlines()})
     if status == "passed":
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
