@@ -394,8 +394,9 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
             return i
         try:
             v = fast_json(env, "You are verifying one code-review claim against the actual code. Quote the exact lines that "
-                          "prove it. If the claim is wrong, speculative, contradicted by passing tests, or about style, reject it. "
-                          'Return JSON {"confirmed": bool, "evidence": str}.',
+                          "prove it. If the claim is wrong, speculative, contradicted by passing tests, contradicted by the design context, "
+                          'or about style, reject it. Return JSON {"confirmed": bool, "evidence": str}.',
+                          (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
                           f"CLAIM: [{i['severity']}] {i['file']}: {i['note']}\n\nCODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n"
                           + ("The tests currently pass." if tests_pass else ""), max_tokens=500)
             i["confirmed"], i["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
@@ -542,6 +543,9 @@ def review_inputs(repo, proj, cfg):
         diff = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in named if (repo / f).exists())
     plan = (proj / "plan.md").read_text() if (proj / "plan.md").exists() else ""
     plan += "\n\n" + "\n\n".join(t.read_text() for t in task_files)
+    if cfg.get("review_context"):
+        # Design intent reviewers must not contradict (for example: test credentials come from env by design).
+        plan = "DESIGN CONTEXT FROM THE PROJECT (authoritative; do not report these as findings):\n" + str(cfg["review_context"]) + "\n\n" + plan
     docs = "\n\n".join(f"==== {d} ====\n{(repo / d).read_text()}" for d in cfg.get("docs", []) if (repo / d).exists())
     protected = sorted({f for t in task_files for f in parse_task(t)[0]["protected"]})
     return diff, plan, docs, protected

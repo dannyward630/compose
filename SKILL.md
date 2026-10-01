@@ -58,7 +58,8 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
   "e2e_setup": "cd ... && python -m server.server", "e2e_setup_wait": 3, "e2e_env": {"API_KEY": "..."},
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
            "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
-  "review": true, "review_base": "main", "fix_model": "cerebras/gpt-oss-120b"
+  "review": true, "review_base": "main", "fix_model": "cerebras/gpt-oss-120b",
+  "review_context": "Design facts reviewers must respect, e.g. test credentials come from env by design and never reach the server."
 }
 ```
 1. **checks**: lint and unit tests, exact and cheap, run first.
