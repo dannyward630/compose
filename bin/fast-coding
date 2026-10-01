@@ -265,12 +265,19 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
                   f"Exit code: {test.returncode}\nOutput:\n{entry['test_output']}")
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
-    leaked = sh(["git", "status", "--porcelain"], repo, check=False).stdout.strip()
-    if leaked:
-        sh(["git", "checkout", "--", "."], repo, check=False)
-        sh(["git", "clean", "-fdq", "--exclude=.fast-coding", "--exclude=node_modules"], repo, check=False)
-        say(f"{tid} WARNING implementer wrote into the main checkout; reverted: {' '.join(l.split()[-1] for l in leaked.splitlines())[:200]}")
-        log.append({"leak_reverted": leaked.splitlines()})
+    # Only this task's own files are reverted: the orchestrator may be editing other files in the main checkout meanwhile.
+    dirty = [l.split()[-1] for l in sh(["git", "status", "--porcelain"], repo, check=False).stdout.splitlines()]
+    mine = [f for f in dirty if f in meta["files"] or f in meta["protected"]]
+    others = [f for f in dirty if f not in mine]
+    if mine:
+        sh(["git", "checkout", "--"] + [f for f in mine if (repo / f).exists() and sh(["git", "ls-files", "--error-unmatch", f], repo, check=False).returncode == 0], repo, check=False)
+        for f in mine:
+            if sh(["git", "ls-files", "--error-unmatch", f], repo, check=False).returncode != 0 and (repo / f).exists():
+                (repo / f).unlink()
+        say(f"{tid} WARNING implementer wrote into the main checkout; reverted its task files: {', '.join(mine)}")
+        log.append({"leak_reverted": mine})
+    if others:
+        say(f"{tid} note: main checkout has other uncommitted changes (left alone): {', '.join(others)[:160]}")
     if status == "passed":
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
