@@ -170,9 +170,18 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
         meta["model"] = model
     tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}{tag}"
     wt = proj / "worktrees" / (tid + tag)
-    sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
+    # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
+    # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
+    import shutil
+    if wt.exists():
+        shutil.rmtree(wt)
+    sh(["git", "worktree", "prune"], repo, check=False)
     sh(["git", "branch", "-D", branch], repo, check=False)  # a re-run replaces the previous attempt; merge before re-running to keep it
-    sh(["git", "worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], repo)
+    sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
+    sh(["git", "checkout", "-q", "-b", branch], wt)
+    for name in ("opencode.jsonc", "opencode.json"):  # untracked local config the implementer needs
+        if (repo / name).exists() and not (wt / name).exists():
+            shutil.copy(repo / name, wt / name)
     if reset_files:
         # Benchmark mode: remove the implementation so the frozen test is red again and the model starts from scratch.
         for f in meta["files"]:
@@ -258,6 +267,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     if status == "passed":
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
+        sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo for review and merge
     diff = sh(["git", "diff", "HEAD~1" if status == "passed" else "HEAD", "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
@@ -677,8 +687,9 @@ def cmd_bench(a):
                      "attempts_max": max(r["attempts"] for r in results),
                      "p50_s": round(pct(times, 0.5), 1), "p95_s": round(pct(times, 0.95), 1),
                      "cost_per_task": round((LEDGER.total() - before_cost) / len(results), 5)})
-        for r in results:  # keep branches for inspection, drop worktrees
-            sh(["git", "worktree", "remove", "--force", r["worktree"]], repo, check=False)
+        for r in results:  # keep branches for inspection, drop the clones
+            import shutil
+            shutil.rmtree(r["worktree"], ignore_errors=True)
     print()
     print(f"{'model':28} {'n':>3} {'pass':>6} {'att.mean':>8} {'att.max':>7} {'p50':>8} {'p95':>8} {'$/task':>9}")
     for r in rows:
@@ -712,8 +723,11 @@ def cmd_init(a):
 def cmd_clean(a):
     """Remove worktrees always; remove task branches only when merged into HEAD, unless --all. Unmerged passes are work."""
     repo, proj = Path(a.repo).resolve(), project_dir(a)
+    import shutil
     for wt in (proj / "worktrees").glob("*"):
         sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
+        if wt.exists():
+            shutil.rmtree(wt, ignore_errors=True)
     sh(["git", "worktree", "prune"], repo, check=False)
     merged = set(sh(["git", "branch", "--merged", "HEAD", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split())
     kept = []
