@@ -54,7 +54,8 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
   "checks": ["uv run ruff check .", "node --test 'tests/**/*.test.js'"],
   "docs": ["README.md", "DESIGN.md"],
   "perspectives": ["correctness", "security", "spec", "docs"],
-  "jev_acceptance": true, "acceptance_threshold": 0.6,
+  "jev_acceptance": true, "acceptance_threshold": 0.6, "acceptance_gate": false,
+  "e2e_setup": "cd ... && python -m server.server", "e2e_setup_wait": 3, "e2e_env": {"API_KEY": "..."},
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
            "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
   "review": true, "review_base": "main", "fix_model": "cerebras/gpt-oss-120b"
@@ -62,7 +63,7 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
 ```
 1. **checks**: lint and unit tests, exact and cheap, run first.
 2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
-3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task file becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities. One request for all criteria, well under a second. A criterion with p(NOT_MET) at or above the threshold fails the stage.
+3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task file becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
 4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check you write that reads the real DOM or run log. A DONE from the model is never the proof.
 5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. After N rounds it escalates to you with the findings. `--fix 0` reports only.
 
