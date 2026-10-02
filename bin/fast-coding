@@ -542,7 +542,22 @@ def review_inputs(repo, proj, cfg):
     named = sorted({f for t in task_files for f in parse_task(t)[0]["files"] + parse_task(t)[0]["protected"]})
     if not diff.strip():
         # On the base branch itself there is no range; review the current content of every file the tasks name.
-        diff = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in named if (repo / f).exists())
+        # Whole files only, up to the budget: a file cut mid-line reads as a syntax error to a small reviewer.
+        budget, parts, omitted = 140000, [], []
+        for f in named:
+            if not (repo / f).exists():
+                continue
+            text = (repo / f).read_text()
+            block = f"==== {f} ====\n{text}"
+            if sum(len(x) for x in parts) + len(block) > budget:
+                omitted.append(f)
+                continue
+            parts.append(block)
+        if omitted:
+            parts.append("==== NOT INCLUDED IN THIS PACK (too large; not a finding) ====\n" + "\n".join(omitted))
+        diff = "\n\n".join(parts)
+    elif len(diff) > 150000:
+        diff = diff[:150000] + "\n\n==== PACK TRUNCATED HERE BY THE TOOL (not a finding) ===="
     plan = (proj / "plan.md").read_text() if (proj / "plan.md").exists() else ""
     plan += "\n\n" + "\n\n".join(t.read_text() for t in task_files)
     if cfg.get("review_context"):
