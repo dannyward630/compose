@@ -32,7 +32,7 @@ Secrets never live in this repo or in task files: pi and OpenCode read their aut
 
 ```bash
 fast-coding init   --repo . --project <name>   # .fast-coding/<name>/{tasks,results,verify.json}
-fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; registers gh stacks
+fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; one gh stack on your branch
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
@@ -146,7 +146,7 @@ If you cannot write the test, it is not a task yet.
                      ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
   │  DISPATCH   one clone + one pi session per task; `after:` tasks         │
-  │             start on their base task's branch as the next stack layer    │
+  │             start on their base task's branch; trunk = your branch       │
   │                                                                          │
   │   task 001              task 002              task 003                   │
   │   ┌────────────┐        ┌────────────┐        ┌────────────┐            │
@@ -179,7 +179,8 @@ If you cannot write the test, it is not a task yet.
   │  ORCHESTRATOR REVIEW   git diff main..fast/NNN                           │
   │     accept ──▶ git merge        reject / exhausted ──▶ fix by hand       │
   │     every attempt: test, protected files untouched, ≤350 changed lines,  │
-  │     no new documents; passed chains ──▶ gh stack init (local, no push)   │
+  │     no new documents, only `files:` touched; passed branches ──▶ one     │
+  │     linear gh stack on your branch, built in a CLI worktree (no push)    │
   └──────────────────┬───────────────────────────────────────────────────────┘
                      │  fast-coding verify        (all local, nothing pushed)
                      ▼

@@ -37,9 +37,10 @@ A task is right-sized when all of these hold:
 - the whole task plus the files it touches fits comfortably in 40K tokens
 - its branch will change at most 350 lines (added plus deleted). The CLI rejects a bigger branch, so size the task for it
 - it adds no documents. Implementers never create .md, .txt, .rst, or docs/ files; the CLI rejects a branch that does. Docs are the orchestrator's, edited by hand after merge, only when the user asked for them
-- it is independent of other pending tasks, or its `after:` names the task it builds on. A task with `after:` becomes the next layer of that task's stack: it branches from the lower task's tip and its PR shows only its own diff
+- it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
+- it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
-Design chains the way `gh stack` wants them: foundational code at the bottom, code that depends on it above, one concern per layer, strictly linear. Two tasks that both need the same lower task are siblings; only one can stack on it, the other waits for the merge.
+One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them.
 
 ### 3. Write the tests first (red)
 The acceptance test is yours. List it under `protected:`. The CLI rejects any attempt that changes a protected file.
@@ -49,8 +50,10 @@ Commit tests and task files before dispatching; independent tasks branch from HE
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
-`fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one implementer session (pi by default) each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, or a new document are fed back into the same session up to `--attempts` (default 3).
-Use `--only 003,004` for a subset. When the run ends, every chain of passed branches is registered as a `gh stack` (`(main) <- fast/<project>/001 <- fast/<project>/002`), printed on a `stack ok` line. `--no-stack` skips that, `--trunk` changes the base.
+`fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one implementer session (pi by default) each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, a new document, or a change outside `files:` are fed back into the same session up to `--attempts` (default 3).
+The trunk is the branch the user is on when you run it (`--trunk` overrides). That checkout is never switched: clones are separate repos, and every `gh stack` operation runs in a CLI-owned detached worktree under `.fast-coding/<project>/worktrees/.stackroot`, with the stack state mirrored into the user's `.git` so `gh stack view` works from a task branch there.
+When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration.
+Use `--only 003,004` for a subset.
 Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, which pushes every branch and opens draft PRs: run it only when the user has explicitly asked for that push.
 
 ### 5. Review

@@ -270,16 +270,19 @@ def graft_pack(wt, query, repo=None, limit=6):
     lines = [l for l in p.stdout.splitlines() if not l.startswith(("[graft]", "⬆ graft"))]  # drop banners and token-saved notes
     return "\n".join(lines).strip()[:12000]
 
-def branch_budget(wt, base):
-    """(lines changed vs base counting the working tree, new document files). Both are hard limits for an implementer."""
+def branch_budget(wt, base, allowed=None):
+    """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
+    All three are hard limits for an implementer: size, no documents, and scope."""
     sh(["git", "add", "-A"], wt, check=False)
     lines = 0
     for row in sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
         a, d = row.split("\t")[:2]
         lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
+    changed = sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     new_docs = [f for f in sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
                 if DOC_RE.search(f)]
-    return lines, new_docs
+    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs]
+    return lines, new_docs, stray
 
 def task_base(repo, proj, meta):
     """The branch a task builds on. A task whose `after:` names unmerged task branches stacks on top of them (they must form one
@@ -354,8 +357,9 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
               "Run the test command once before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.\n"
-              f"Hard limits: the whole change must stay under {MAX_DIFF_LINES} changed lines (added plus deleted), and you must not "
-              "create any document file (.md, .txt, .rst, docs/). A change over the limit or with a new document is rejected.")
+              f"Hard limits: the whole change must stay under {MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
+              "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
+              "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
@@ -395,15 +399,16 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
         cost += usage["cost"]
         test = sh(meta["test"], wt, timeout=600, check=False)
         tampered = [f for f, d in digests(wt, meta["protected"]).items() if d != before[f]]
-        lines, new_docs = branch_budget(wt, base)
+        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
         entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
-                 "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "reply": reply[-1500:],
-                 "test_output": (test.stdout + test.stderr)[-3000:]}
+                 "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
         over = lines > MAX_DIFF_LINES
-        verdict = "pass" if test.returncode == 0 and not over and not new_docs else "fail"
+        verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray else "fail"
         say(f"{tid} attempt {attempt} {verdict}  {fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
-            + (f"  OVER {MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else ""))
+            + (f"  OVER {MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
+            + (f"  outside files: {', '.join(stray)}" if stray else ""))
         if tampered:
             status = "rejected_tampered"
             break
@@ -418,7 +423,11 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
                             "unrelated edits, drop new files that are not named in the task, remove long comments and duplication.")
         if new_docs:
             problems.append("Delete these document files; implementers never add documents: " + ", ".join(new_docs))
-        status = "rejected_size" if test.returncode == 0 and over else "rejected_docs" if test.returncode == 0 else status
+        if stray:
+            problems.append("Revert every change to these files, they are outside this task (another task owns them; the test for "
+                            "this task must pass with only the named files changed): " + ", ".join(stray)
+                            + f"\nFiles you may change: {', '.join(meta['files'])}")
+        status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else status) if test.returncode == 0 else status
         prompt = "\n\n".join(problems) + "\nFix it without editing protected files."
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
@@ -465,77 +474,116 @@ def task_branches(repo, proj):
         out[b] = base if base in branches else None
     return out
 
-def stack_chains(repo, proj):
-    """Linear chains bottom to top: each unmerged task branch sits on trunk or on the task branch it was built from."""
+def stack_order(repo, proj):
+    """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
+    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time."""
     bases = task_branches(repo, proj)
-    children = {b: [c for c, p in bases.items() if p == b] for b in bases}
-    chains = []
-    for root in sorted(b for b, p in bases.items() if p is None):
-        chain = [root]
-        while children.get(chain[-1]):
-            chain.append(sorted(children[chain[-1]])[0])  # one child per layer; a second child starts its own stack below
-        chains.append(chain)
-    for b, p in bases.items():
-        if p and len(children.get(p, [])) > 1 and b not in {x for c in chains for x in c}:
-            chains.append([b])  # a sibling layer cannot share a linear stack; it is registered alone on top of its base's tip
-    return chains
-
-def register_stacks(repo, proj, trunk, submit=False):
-    """Adopt each chain of task branches as a gh stack. `gh stack init` checks out the stack's top, so the tree must be clean and the
-    original branch is restored right after. Nothing is pushed unless submit=True (the user's explicit --submit)."""
-    if sh(["git", "status", "--porcelain"], repo).stdout.strip():
-        say("stack  skip  repo has uncommitted changes; commit first (gh stack init switches branches)")
-        return []
-    current = sh(["git", "branch", "--show-current"], repo).stdout.strip() or sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    done = []
-    gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    try:
-        for chain in stack_chains(repo, proj):
-            # `init` refuses while the current branch, or any branch in the chain, is already in a stack. A chain that grew since
-            # the last run (resume, a later wave) is rebuilt: unstack locally from its bottom branch, keeping the GitHub side, then init.
-            sh(["git", "checkout", "-q", chain[0]], repo, check=False)
-            if gh("view", "--json").returncode == 0:
-                gh("unstack", "--local")
-            sh(["git", "checkout", "-q", current], repo, check=False)
-            p = gh("init", "--base", trunk, *chain)
-            if p.returncode:
-                say(f"stack  FAIL  {' <- '.join(chain)}: {(p.stderr or p.stdout).strip()[-300:]}")
-                sh(["git", "checkout", "-q", current], repo, check=False)
+    metas = {m["id"]: m for m in (parse_task(t)[0] for t in (proj / "tasks").glob("*.md"))}
+    ids = sorted(b.rsplit("/", 1)[1] for b in bases)
+    order, placed = [], set()
+    while len(order) < len(ids):
+        progressed = False
+        for tid in ids:
+            if tid in placed:
                 continue
-            say(f"stack  ok    ({trunk}) <- {' <- '.join(chain)}")
-            if submit:
-                q = gh("submit", "--auto")
-                say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {chain[-1]}: {(q.stdout + q.stderr).strip()[-400:]}")
-            done.append(chain)
-            sh(["git", "checkout", "-q", current], repo, check=False)  # init leaves the repo on the stack's top; next init needs trunk
-    finally:
-        sh(["git", "checkout", "-q", current], repo, check=False)
-    return done
+            deps = [d.strip() for d in str(metas.get(tid, {}).get("after") or "").split(",") if d.strip() in ids]
+            if all(d in placed for d in deps):
+                order.append(tid)
+                placed.add(tid)
+                progressed = True
+        if not progressed:  # a dependency cycle in `after:`; fall back to id order for the rest
+            order += [t for t in ids if t not in placed]
+            break
+    return [f"fast/{proj.name}/{t}" for t in order]
+
+def stack_worktree(repo, proj, trunk):
+    """A detached worktree the CLI owns for every gh stack operation, so the user's checkout is never switched.
+    Detached because a branch checked out in the user's tree cannot be checked out again elsewhere."""
+    wt = proj / "worktrees" / ".stackroot"
+    if not (wt / ".git").exists():
+        sh(["git", "worktree", "prune"], repo, check=False)
+        sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
+    else:
+        sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    return wt
+
+def mirror_stack_state(repo, wt):
+    """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
+    file so `gh stack view` works from the user's tree too; stacks sharing a branch are replaced, others kept."""
+    src = Path(sh(["git", "rev-parse", "--git-dir"], wt).stdout.strip()) / "gh-stack"
+    if not src.is_absolute():
+        src = wt / src
+    dst = Path(sh(["git", "rev-parse", "--git-common-dir"], repo).stdout.strip()) / "gh-stack"
+    if not dst.is_absolute():
+        dst = repo / dst
+    if not src.exists():
+        return
+    mine = json.loads(src.read_text())
+    theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
+    names = {b["branch"] for st in mine.get("stacks", []) for b in st.get("branches", [])}
+    kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
+    theirs["stacks"] = kept + mine.get("stacks", [])
+    dst.write_text(json.dumps(theirs, indent=2))
+
+def linearize(repo, proj, trunk, wt):
+    """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
+    worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
+    chain = stack_order(repo, proj)
+    linear, prev = [], trunk
+    for b in chain:
+        if sh(["git", "merge-base", "--is-ancestor", prev, b], repo, check=False).returncode != 0:
+            sh(["git", "checkout", "-q", b], wt)
+            r = sh(["git", "rebase", "-q", prev], wt, check=False)
+            if r.returncode:
+                sh(["git", "rebase", "--abort"], wt, check=False)
+                sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+                say(f"stack  STOP  {b} conflicts when rebased onto {prev}; the layers below it are kept. Resolve by hand: "
+                    f"git checkout {b} && git rebase {prev}")
+                break
+        linear.append(b)
+        prev = b
+    sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    return linear
+
+def register_stack(repo, proj, trunk, submit=False):
+    """Make the project's passed task branches one linear gh stack on `trunk`, layer by layer, without touching the user's
+    checkout. Branches built in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is
+    normally clean; a conflict stops the chain there and is reported). Nothing is pushed unless submit=True."""
+    if not stack_order(repo, proj):
+        return []
+    wt = stack_worktree(repo, proj, trunk)
+    gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    linear = linearize(repo, proj, trunk, wt)
+    if not linear:
+        return []
+    # A stack from an earlier wave is rebuilt with the grown chain: unstack locally (GitHub side untouched), then init.
+    sh(["git", "checkout", "-q", linear[0]], wt, check=False)
+    if gh("view", "--json").returncode == 0:
+        gh("unstack", "--local")
+    sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    p = gh("init", "--base", trunk, *linear)
+    if p.returncode:
+        say(f"stack  FAIL  {' <- '.join(linear)}: {(p.stderr or p.stdout).strip()[-300:]}")
+        sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        return []
+    say(f"stack  ok    ({trunk}) <- {' <- '.join(linear)}")
+    if submit:
+        sh(["git", "checkout", "-q", linear[-1]], wt, check=False)
+        q = gh("submit", "--auto")
+        say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {(q.stdout + q.stderr).strip()[-400:]}")
+    sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
+    mirror_stack_state(repo, wt)
+    return [linear]
 
 def cmd_stack(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
-    chains = register_stacks(repo, proj, a.trunk, submit=a.submit)
-    if not chains:
+    trunk = a.trunk or current_branch(repo)
+    if not register_stack(repo, proj, trunk, submit=a.submit):
         print("stack  nothing to register: no unmerged task branches")
 
-def payment_halt(repo, proj, command, remaining, args, err):
-    """Save what is left to do, tell the user where to top up, exit 3. `fast-coding resume` picks it up."""
-    state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
-             "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
-    (proj / "results").mkdir(exist_ok=True)
-    (proj / "results" / "resume.json").write_text(json.dumps(state, indent=2))
-    key = next((k for k in TOP_UP if k in err.provider.lower()), None)
-    print()
-    print(f"PAYMENT REQUIRED  provider: {err.provider}")
-    print(f"  {err.message}")
-    if key:
-        print(f"  top up at: {TOP_UP[key]}")
-    if command == "run":
-        print(f"  stopped with {len(remaining)} task(s) left: {', '.join(remaining)}. Passed tasks keep their branches.")
-    else:
-        print("  stopped during verify; completed task branches are untouched.")
-    print(f"  then continue where it stopped:  fast-coding resume --repo {repo} --project {proj.name}")
-    sys.exit(3)
+def current_branch(repo):
+    """The branch the user is on: the stack's trunk. A detached HEAD falls back to main."""
+    return sh(["git", "branch", "--show-current"], repo).stdout.strip() or "main"
 
 def cmd_run(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
@@ -548,6 +596,11 @@ def cmd_run(a):
     run_tasks(repo, proj, tasks, a)
 
 def run_tasks(repo, proj, tasks, a):
+    a.trunk = a.trunk or current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
+    if stack_order(repo, proj):
+        # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
+        # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
+        linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
     t0 = time.time()
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
@@ -594,7 +647,7 @@ def run_tasks(repo, proj, tasks, a):
     say(f"run done   {passed}/{len(results)} passed  wall {fmt(total)}  sum of task time {fmt(sum(r['seconds'] for r in results))}")
     say(LEDGER.line())
     if passed and not a.no_stack:
-        register_stacks(repo, proj, a.trunk)
+        register_stack(repo, proj, a.trunk)
     if halt:
         done_ids = {r["id"] for r in results if r["status"] in ("passed", "already_green")}
         remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
@@ -1158,10 +1211,10 @@ def main():
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=3)
-            s.add_argument("--trunk", default="main", help="trunk branch the stacks target")
+            s.add_argument("--trunk", default=None, help="trunk branch the stack targets (default: the branch you are on)")
             s.add_argument("--no-stack", action="store_true", help="do not register passed branches with gh stack")
         if name == "stack":
-            s.add_argument("--trunk", default="main")
+            s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes branches and opens draft PRs")
         if name == "bench":
             s.add_argument("--models", default="pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,openrouter/openai/gpt-oss-120b,claude",
