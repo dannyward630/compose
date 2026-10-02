@@ -298,10 +298,13 @@ def task_base(repo, proj, meta):
             unmerged.append(b)
     if not unmerged:
         return "HEAD", head
-    tops = [b for b in unmerged if all(sh(["git", "merge-base", "--is-ancestor", o, b], repo, check=False).returncode == 0 for o in unmerged)]
-    if not tops:
-        raise RuntimeError(f"after: {', '.join(unmerged)} are unmerged and not one chain; merge them or chain them first")
-    return tops[0], sh(["git", "rev-parse", tops[0]], repo).stdout.strip()
+    # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
+    trunk = current_branch(repo)
+    chain = linearize(repo, proj, trunk, stack_worktree(repo, proj, trunk))
+    missing = [b for b in unmerged if b not in chain]
+    if missing:
+        raise RuntimeError(f"after: {', '.join(missing)} could not be chained (rebase conflict); resolve it, then re-run this task")
+    return chain[-1], sh(["git", "rev-parse", chain[-1]], repo).stdout.strip()
 
 def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag=""):
     meta, body = parse_task(task_path)
