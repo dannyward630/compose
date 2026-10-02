@@ -41,8 +41,30 @@ The speed and cost figures in this file come from small benchmark tasks and one 
 ## Projects
 
 A project is one feature: `.fast-coding/<project>/` holds its plan, its numbered tasks, its verify config and results, and it becomes one gh stack on the branch it was started from.
-The skill picks the project the moment you invoke it: it reuses the project a request continues, or creates a new one named for the feature in your words.
-`fast-coding projects` lists them, `fast-coding status` shows every task of every project, `fast-coding status --project <name>` one project, `--watch` follows a run.
+
+Grouping is automatic and happens before anything else.
+When you invoke `fast-coding <task>`, the skill first runs `fast-coding projects` on the repo.
+If the request continues a feature that already has a project, by spec, by area of the code, or because you name it, the new tasks join that project with the next ids and become new layers of its stack.
+Otherwise it creates a project named for the feature in your words, kebab-case (`custom-dropdowns`, `workday-login`), and tells you the name in its first reply.
+One feature never spans two projects and two features never share one; a request that is really two features becomes two projects, and the skill says so.
+
+Three views:
+
+```bash
+fast-coding projects --repo .                   # every feature: done/total, last activity, title, states
+fast-coding status --repo .                     # every project with all its tasks
+fast-coding status --repo . --project <name>    # one project
+fast-coding status --repo . --watch             # follow a run live, redrawn every 2 s
+```
+
+```
+project          done   last activity     title / states
+jev-autofill     31/31  2026-10-02 17:21  Jev Autofill Prototype Implementation Plan  [31 merged]
+```
+
+The title is the plan's first heading, so a project with a plan is self-describing.
+A payment halt shows on its project line with the resume hint.
+Projects live in the repository, so these views are per repo; there is no cross-repo view yet.
 
 ## Pieces
 
