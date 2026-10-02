@@ -76,10 +76,16 @@ def all_projects(repo):
     found = {}
     for wt in worktrees(repo):
         root = wt / ".fast-coding"
-        if root.exists():
-            for p in sorted(root.iterdir()):
-                if p.is_dir() and (p / "tasks").exists() and p.name not in found:
-                    found[p.name] = (wt, p)
+        if not root.exists():
+            continue
+        on_branch = sh(["git", "branch", "--show-current"], wt, check=False).stdout.strip()
+        for p in sorted(root.iterdir()):
+            if not (p.is_dir() and (p / "tasks").exists()):
+                continue
+            # Once a project branch is merged, its folder shows up in other checkouts too; the project's own worktree
+            # (checked out on fast-coding/<name>) wins, so clean and status keep pointing at the right place.
+            if p.name not in found or on_branch == f"fast-coding/{p.name}":
+                found[p.name] = (wt, p)
     return found
 
 def project_dir(a):
@@ -1499,7 +1505,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     if sh(["git", "remote"], repo, check=False).stdout.strip():
         sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = current_branch(repo)
-    for w in (proj / "worktrees").glob("*"):
+    for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
         sh(["git", "worktree", "remove", "--force", str(w)], repo, check=False)
         if w.exists():
             shutil.rmtree(w, ignore_errors=True)
@@ -1507,6 +1513,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
     kept = []
     for b in sh(["git", "branch", "--list", f"fast/{name}/*"], repo, check=False).stdout.split():
+        if "-bench-" in b:  # bench runs are measurements, never work to keep
+            sh(["git", "branch", "-D", b], repo, check=False)
+            continue
         if merged_into(repo, b, targets) or delete_unmerged:
             if delete_unmerged and not merged_into(repo, b, targets):
                 print(f"clean  deleting UNMERGED layer {b} (--delete-unmerged); any PR for it on GitHub is unaffected")
