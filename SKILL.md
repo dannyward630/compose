@@ -16,7 +16,14 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ## Workflow
 
-### 0. Grill first when the decisions are not written down
+### 0a. Put the work in a project
+A project is one feature: one folder `.fast-coding/<project>/`, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
+- Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
+- Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. Tell the user the project name in your first reply.
+- Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
+`fast-coding status --repo <path>` shows every project with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
+
+### 0b. Grill first when the decisions are not written down
 Look for a settled spec in the repo: `GRILLING.md` or `DESIGN.md` (or any file a grilling session produced, such as `docs/decisions/` from `grill-with-docs`).
 If none exists for this piece of work, do not plan yet: invoke the `grilling` skill (or `grill-with-docs` when the user wants ADRs and a glossary as a by-product) and interview the user until the decision tree is resolved, one question at a time, with your recommendation on each.
 Record the outcome in `GRILLING.md` in the repo, with absolute paths for every folder it names, then continue to step 1.

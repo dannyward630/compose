@@ -1147,6 +1147,38 @@ def render_status(repo, projects):
         out.append("")
     return "\n".join(out)
 
+def project_summary(repo, proj):
+    """One line per project: name, title from plan.md, task counts by state, trunk, last activity."""
+    tasks = [parse_task(t)[0] for t in sorted((proj / "tasks").glob("*.md"))]
+    trunk_head = sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    counts = {}
+    for m in tasks:
+        st = task_state(repo, proj, m, trunk_head)["state"].split(" ")[0]
+        counts[st] = counts.get(st, 0) + 1
+    plan = proj / "plan.md"
+    title = ""
+    if plan.exists():
+        title = next((l.lstrip("# ").strip() for l in plan.read_text().splitlines() if l.startswith("# ")), "")
+    stamps = [f.stat().st_mtime for f in (proj / "results").glob("*.json")] if (proj / "results").exists() else []
+    last = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(stamps))) if stamps else "never run"
+    done = counts.get("merged", 0) + counts.get("passed", 0) + counts.get("hand_done", 0) + counts.get("already_green", 0)
+    halted = (proj / "results" / "resume.json").exists()
+    return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted}
+
+def cmd_projects(a):
+    """Every project (feature) under .fast-coding with its task progress; `status --project <name>` drills into one."""
+    repo = Path(a.repo).resolve()
+    root = repo / ".fast-coding"
+    projects = sorted(p for p in root.glob("*") if (p / "tasks").is_dir()) if root.exists() else []
+    if not projects:
+        sys.exit(f"no fast-coding projects under {root}; `fast-coding init --project <name>` creates one")
+    print(f"{'project':24} {'done':>9}  {'last activity':17} title / states")
+    for proj in projects:
+        ps = project_summary(repo, proj)
+        states = ", ".join(f"{n} {k}" for k, n in sorted(ps["counts"].items(), key=lambda kv: -kv[1]))
+        flag = "  HALTED (payment) -> fast-coding resume" if ps["halted"] else ""
+        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {ps['title'] or '-'}  [{states}]{flag}")
+
 def cmd_status(a):
     """Projects under .fast-coding with every task's state. --watch redraws every 2 s while runs write their progress."""
     repo = Path(a.repo).resolve()
@@ -1304,6 +1336,7 @@ def main():
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", cmd_done, "record tasks the orchestrator finished by hand: --only ids --note why"),
+                            ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches")):

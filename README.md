@@ -38,6 +38,12 @@ A task that fails three attempts is re-split into smaller tasks, not typed by ha
 
 The speed and cost figures in this file come from small benchmark tasks and one prototype; every real run prints its own, and those are the ones to trust.
 
+## Projects
+
+A project is one feature: `.fast-coding/<project>/` holds its plan, its numbered tasks, its verify config and results, and it becomes one gh stack on the branch it was started from.
+The skill picks the project the moment you invoke it: it reuses the project a request continues, or creates a new one named for the feature in your words.
+`fast-coding projects` lists them, `fast-coding status` shows every task of every project, `fast-coding status --project <name>` one project, `--watch` follows a run.
+
 ## Pieces
 
 ## Requirements
@@ -72,7 +78,8 @@ fast-coding run    --repo . --project <name>   # one clone + one pi session per 
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
-fast-coding status --repo . [--project <name>] [--watch]   # projects, their tasks, state, attempts, time, cost, stack layer; --watch refreshes
+fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
+fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
 fast-coding clean  --repo . --project <name>
 ```
 
