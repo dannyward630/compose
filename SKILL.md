@@ -54,6 +54,10 @@ The acceptance test is yours. List it under `protected:`. The CLI rejects any at
 It must fail on HEAD; `run` refuses a task whose test already passes.
 Include holdout cases the task file does not list. The implementer is told they exist, so it has to implement the behavior rather than the examples. The deny-list task showed why: given only the listed labels, the fast model wrote one literal regex per label.
 Commit tests and task files before dispatching; independent tasks branch from HEAD, stacked tasks from their lower layer.
+
+### 3b. The user reviews the tasks before anything runs
+Run `fast-coding tasks --repo <path> --project <name>` and show the user its output: every task's id, title, the files it owns, what it builds on, and its test, in stack order, with a warning for any file two tasks claim. Add one line per task saying what its holdout cases cover, in words.
+Then stop and wait. The user may merge tasks, split them, reorder the stack, change file ownership, or drop one. Apply the changes, re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch

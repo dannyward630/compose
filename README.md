@@ -31,7 +31,8 @@ Do not use it for one-line fixes or exploratory debugging, where the overhead be
 
 Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
 With no `GRILLING.md`, it grills you one question at a time with a recommendation on each until the decisions are settled, then writes the plan and the tasks with their tests and shows you the plan.
-It dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
+It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can merge, split, reorder, or drop tasks first.
+Then it dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
 You read the stack and say what to merge; it merges bottom up, or `stack --submit` opens the draft PRs when you ask.
 A provider out of credit halts the run with the top-up link, and `resume` continues where it stopped.
 A task that fails three attempts is re-split into smaller tasks, not typed by hand.
@@ -100,6 +101,7 @@ fast-coding run    --repo . --project <name>   # one clone + one pi session per 
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
+fast-coding tasks    --repo . --project <name>   # the task list to review before dispatch: files owned, after, tests; warns on shared files
 fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
 fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
 fast-coding clean  --repo . --project <name>

@@ -1165,6 +1165,27 @@ def project_summary(repo, proj):
     halted = (proj / "results" / "resume.json").exists()
     return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted}
 
+def cmd_tasks(a):
+    """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    tasks = [parse_task(t)[0] for t in sorted((proj / "tasks").glob("*.md"))]
+    if not tasks:
+        sys.exit(f"no tasks in {proj / 'tasks'}")
+    print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(m['id'] for m in tasks)}")
+    print(f"  {'id':4} {'title':40} {'after':10} files | protected | test")
+    for m in tasks:
+        after = str(m.get("after") or "").strip() or "-"
+        print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {', '.join(m['files']) or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
+    shared = {}
+    for m in tasks:
+        for f in m["files"]:
+            shared.setdefault(f, []).append(m["id"])
+    clashes = {f: ids for f, ids in shared.items() if len(ids) > 1}
+    if clashes:
+        print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
+        for f, ids in clashes.items():
+            print(f"    {f}: {', '.join(ids)}")
+
 def cmd_projects(a):
     """Every project (feature) under .fast-coding with its task progress; `status --project <name>` drills into one."""
     repo = Path(a.repo).resolve()
@@ -1336,6 +1357,7 @@ def main():
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", cmd_done, "record tasks the orchestrator finished by hand: --only ids --note why"),
+                            ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
