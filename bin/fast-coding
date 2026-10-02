@@ -573,10 +573,12 @@ def register_stack(repo, proj, trunk, submit=False):
     linear = linearize(repo, proj, trunk, wt)
     if not linear:
         return []
-    # A stack from an earlier wave is rebuilt with the grown chain: unstack locally (GitHub side untouched), then init.
-    sh(["git", "checkout", "-q", linear[0]], wt, check=False)
-    if gh("view", "--json").returncode == 0:
-        gh("unstack", "--local")
+    # A stack from an earlier wave is rebuilt with the grown chain: every existing stack that holds any of these branches is
+    # unstacked locally (GitHub side untouched), then one init registers the whole chain.
+    for b in linear:
+        sh(["git", "checkout", "-q", b], wt, check=False)
+        if gh("view", "--json").returncode == 0:
+            gh("unstack", "--local")
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     p = gh("init", "--base", trunk, *linear)
     if p.returncode:
