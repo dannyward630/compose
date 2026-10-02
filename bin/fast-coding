@@ -62,14 +62,40 @@ def sh(cmd, cwd, timeout=None, check=True):
         raise RuntimeError(f"{cmd}\n{p.stdout}\n{p.stderr}")
     return p
 
+def worktrees(repo):
+    """Every checkout of this repository (main plus linked worktrees), as paths."""
+    out = []
+    for line in sh(["git", "worktree", "list", "--porcelain"], repo, check=False).stdout.splitlines():
+        if line.startswith("worktree "):
+            out.append(Path(line[len("worktree "):]))
+    return out or [Path(repo).resolve()]
+
+def all_projects(repo):
+    """{project name: (worktree path, project dir)} over every worktree. A project lives in its own worktree
+    (`fast-coding-<name>` on branch `fast-coding/<name>`), created by `init`; older projects may sit in the main checkout."""
+    found = {}
+    for wt in worktrees(repo):
+        root = wt / ".fast-coding"
+        if root.exists():
+            for p in sorted(root.iterdir()):
+                if p.is_dir() and (p / "tasks").exists() and p.name not in found:
+                    found[p.name] = (wt, p)
+    return found
+
 def project_dir(a):
-    root = Path(a.repo).resolve() / ".fast-coding"
+    """Resolve --project to its directory, and point a.repo at the worktree that holds it, so every git command runs there."""
+    repo = Path(a.repo).resolve()
+    projects = all_projects(repo)
     if a.project:
-        return root / a.project
-    projects = [p for p in root.iterdir() if p.is_dir() and (p / "tasks").exists()] if root.exists() else []
-    if len(projects) != 1:
-        sys.exit(f"pass --project; found {[p.name for p in projects]}")
-    return projects[0]
+        if a.project not in projects:
+            sys.exit(f"no project {a.project!r}; `fast-coding init --project {a.project}` creates one. Known: {sorted(projects)}")
+        wt, proj = projects[a.project]
+    else:
+        if len(projects) != 1:
+            sys.exit(f"pass --project; found {sorted(projects)}")
+        wt, proj = next(iter(projects.values()))
+    a.repo = str(wt)
+    return proj
 
 # ---------- tasks ----------
 
@@ -539,17 +565,21 @@ def mirror_stack_state(repo, wt):
     src = Path(sh(["git", "rev-parse", "--git-dir"], wt).stdout.strip()) / "gh-stack"
     if not src.is_absolute():
         src = wt / src
-    dst = Path(sh(["git", "rev-parse", "--git-common-dir"], repo).stdout.strip()) / "gh-stack"
-    if not dst.is_absolute():
-        dst = repo / dst
     if not src.exists():
         return
     mine = json.loads(src.read_text())
-    theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
     names = {b["branch"] for st in mine.get("stacks", []) for b in st.get("branches", [])}
-    kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
-    theirs["stacks"] = kept + mine.get("stacks", [])
-    dst.write_text(json.dumps(theirs, indent=2))
+    targets = set()
+    for flag in ("--git-common-dir", "--git-dir"):  # the main checkout and the project worktree both get to see the stack
+        d = Path(sh(["git", "rev-parse", flag], repo).stdout.strip())
+        targets.add((d if d.is_absolute() else repo / d) / "gh-stack")
+    for dst in targets:
+        if dst.resolve() == src.resolve():
+            continue
+        theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
+        kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
+        theirs["stacks"] = kept + mine.get("stacks", [])
+        dst.write_text(json.dumps(theirs, indent=2))
 
 def chain_order(repo, proj, trunk):
     """Branches bottom to top. Ancestry wins: a branch whose history already contains another sits above it (a rebase can never
@@ -613,7 +643,7 @@ def register_stack(repo, proj, trunk, submit=False):
     return [linear]
 
 def cmd_stack(a):
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or current_branch(repo)
     if not register_stack(repo, proj, trunk, submit=a.submit):
         print("stack  nothing to register: no unmerged task branches")
@@ -642,7 +672,7 @@ def payment_halt(repo, proj, command, remaining, args, err):
     sys.exit(3)
 
 def cmd_run(a):
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
     tasks = sorted(p for p in (proj / "tasks").glob("*.md") if not only or p.name.split("-")[0] in only)
     if not tasks:
@@ -1084,7 +1114,7 @@ def verify_root(repo, proj, cfg):
     return wt, trunk, wt
 
 def cmd_verify(a):
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     t0 = time.time()
@@ -1093,8 +1123,9 @@ def cmd_verify(a):
     root, base, wt = verify_root(repo, proj, cfg)
     cfg = {**cfg, "review_base": base}
     if root != repo:
-        # e2e commands and setup name the main checkout by absolute path; run them against the worktree's files instead.
-        swap = lambda c: c.replace(str(repo), str(root)) if isinstance(c, str) else c
+        # e2e commands and setup may name the main checkout or the project worktree by absolute path; run them against the stack top.
+        main_path = str(worktrees(repo)[0])
+        swap = lambda c: c.replace(str(repo), str(root)).replace(main_path, str(root)) if isinstance(c, str) else c
         cfg["e2e"] = [{**case, "driver": swap(case.get("driver")), "assert": swap(case.get("assert"))} for case in cfg.get("e2e", [])]
         cfg["e2e_setup"] = swap(cfg.get("e2e_setup"))
         cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
@@ -1246,7 +1277,7 @@ def project_summary(repo, proj):
 
 def cmd_tasks(a):
     """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     tasks = [parse_task(t)[0] for t in sorted((proj / "tasks").glob("*.md"))]
     if not tasks:
         sys.exit(f"no tasks in {proj / 'tasks'}")
@@ -1269,28 +1300,28 @@ def cmd_tasks(a):
             print(f"    {f}: {', '.join(ids)}")
 
 def cmd_projects(a):
-    """Every project (feature) under .fast-coding with its task progress; `status --project <name>` drills into one."""
+    """Every project (feature) across this repository's worktrees with its task progress; `status --project <name>` drills in."""
     repo = Path(a.repo).resolve()
-    root = repo / ".fast-coding"
-    projects = sorted(p for p in root.glob("*") if (p / "tasks").is_dir()) if root.exists() else []
+    projects = all_projects(repo)
     if not projects:
-        sys.exit(f"no fast-coding projects under {root}; `fast-coding init --project <name>` creates one")
-    print(f"{'project':24} {'done':>9}  {'last activity':17} title / states")
-    for proj in projects:
-        ps = project_summary(repo, proj)
+        sys.exit("no fast-coding projects in this repository; `fast-coding init --project <name>` creates one")
+    print(f"{'project':24} {'done':>9}  {'last activity':17} {'worktree':34} title / states")
+    for name, (wt, proj) in projects.items():
+        ps = project_summary(wt, proj)
         states = ", ".join(f"{n} {k}" for k, n in sorted(ps["counts"].items(), key=lambda kv: -kv[1]))
         flag = "  HALTED (payment) -> fast-coding resume" if ps["halted"] else ""
-        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {ps['title'] or '-'}  [{states}]{flag}")
+        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{flag}")
 
 def cmd_status(a):
-    """Projects under .fast-coding with every task's state. --watch redraws every 2 s while runs write their progress."""
+    """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress."""
     repo = Path(a.repo).resolve()
-    root = repo / ".fast-coding"
-    projects = [root / a.project] if a.project else sorted(p for p in root.glob("*") if (p / "tasks").is_dir()) if root.exists() else []
+    projects = all_projects(repo)
+    if a.project:
+        projects = {a.project: projects[a.project]} if a.project in projects else {}
     if not projects:
-        sys.exit(f"no fast-coding projects under {root}")
+        sys.exit("no fast-coding projects in this repository")
     while True:
-        text = render_status(repo, projects)
+        text = "\n".join(render_status(wt, [proj]) for wt, proj in projects.values())
         if a.watch:
             sys.stdout.write("\x1b[2J\x1b[H" + f"fast-coding status  {now()}  (ctrl-c to stop)\n\n" + text)
             sys.stdout.flush()
@@ -1305,7 +1336,7 @@ def cmd_status(a):
 
 def cmd_done(a):
     """Record that the orchestrator finished tasks by hand (status hand_done) so `status` tells the truth. Requires a reason."""
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",") if x.strip()]
     (proj / "results").mkdir(exist_ok=True)
     for tid in ids:
@@ -1324,7 +1355,7 @@ def cmd_done(a):
 
 def cmd_resume(a):
     """Continue a run or verify that stopped on PAYMENT REQUIRED, from the saved state in results/resume.json."""
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     path = proj / "results" / "resume.json"
     if not path.exists():
         sys.exit("nothing to resume: no payment halt is recorded for this project")
@@ -1354,7 +1385,7 @@ def pct(xs, q):
 
 def cmd_bench(a):
     """Frozen task set x models. Each task is reset to red in its worktree, then implemented from scratch by each model."""
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
     tasks = sorted(p for p in (proj / "tasks").glob("*.md") if not only or p.name.split("-")[0] in only)
     if not tasks:
@@ -1396,7 +1427,27 @@ def cmd_bench(a):
 # ---------- init / clean ----------
 
 def cmd_init(a):
-    proj = Path(a.repo).resolve() / ".fast-coding" / a.project
+    """Create the project's worktree `../fast-coding-<name>` on branch `fast-coding/<name>` (from the branch the user is on),
+    with the `.fast-coding/<name>/` skeleton committed there. The user's checkout is never touched again by this project."""
+    here = Path(a.repo).resolve()
+    name = a.project
+    branch = f"fast-coding/{name}"
+    existing = all_projects(here).get(name)
+    if existing:
+        wt, proj = existing
+        print(f"project {name} already exists at {wt}")
+    elif a.here:
+        wt, proj = here, here / ".fast-coding" / name
+    else:
+        base = current_branch(here)
+        wt = here.parent / f"fast-coding-{name}"
+        if wt.exists():
+            sys.exit(f"{wt} exists already; remove it or pass --here")
+        if sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
+            sh(["git", "branch", branch, "HEAD"], here)
+        sh(["git", "worktree", "add", "-q", str(wt), branch], here)
+        proj = wt / ".fast-coding" / name
+        print(f"worktree {wt}  branch {branch} (from {base})")
     (proj / "tasks").mkdir(parents=True, exist_ok=True)
     (proj / "results").mkdir(exist_ok=True)
     if not (proj / "verify.json").exists():
@@ -1404,17 +1455,20 @@ def cmd_init(a):
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": "main", "fix_model": DEFAULT_MODEL}, indent=2))
-    gi = Path(a.repo).resolve() / ".gitignore"
+    gi = wt / ".gitignore"
     lines = gi.read_text().splitlines() if gi.exists() else []
     for pat in (".fast-coding/*/worktrees/", ".fast-coding/*/results/"):
         if pat not in lines:
             lines.append(pat)
     gi.write_text("\n".join(lines) + "\n")
-    print(f"initialised {proj}")
+    (proj / ".gitkeep").write_text("")
+    sh(["git", "add", "-A", ".fast-coding", ".gitignore"], wt, check=False)
+    sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
+    print(f"initialised {proj}\nwork in {wt} from now on: plan, tests, tasks, every command with --repo {wt} (or any checkout with --project {name})")
 
 def cmd_clean(a):
     """Remove worktrees always; remove task branches only when merged into HEAD, unless --all. Unmerged passes are work."""
-    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    proj = project_dir(a); repo = Path(a.repo).resolve()
     import shutil
     for wt in (proj / "worktrees").glob("*"):
         sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
@@ -1450,6 +1504,8 @@ def main():
         s.add_argument("--repo", default=".")
         s.add_argument("--project", required=(name == "init"))
         s.set_defaults(fn=fn)
+        if name == "init":
+            s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)

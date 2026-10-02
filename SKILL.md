@@ -16,12 +16,14 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ## Workflow
 
-### 0a. Put the work in a project
-A project is one feature: one folder `.fast-coding/<project>/`, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
+### 0a. Put the work in a project, in its own worktree
+A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
-- Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. Tell the user the project name in your first reply.
+- Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
+- From then on everything you do for this project happens in that worktree: GRILLING.md additions, the plan, task files, acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
+- The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
 - Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
-`fast-coding status --repo <path>` shows every project with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
+`fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
 
 ### 0b. Grill first when the decisions are not written down
 Look for a settled spec in the repo: `GRILLING.md` or `DESIGN.md` (or any file a grilling session produced, such as `docs/decisions/` from `grill-with-docs`).
@@ -31,7 +33,7 @@ If a spec exists, read it and do not reopen its decisions. Grill only the decisi
 
 ### 1. Plan from the spec
 Input is `GRILLING.md`, `DESIGN.md`, a ticket, a PRD, whatever step 0 left or the repo already had.
-Read all of it. Then invoke `superpowers:writing-plans` and write the plan to `.fast-coding/<project>/plan.md` (run `fast-coding init --project <name>` first).
+Read all of it. Then invoke `superpowers:writing-plans` and write the plan to `.fast-coding/<project>/plan.md` inside the project's worktree, committed on `fast-coding/<project>`.
 `<project>` is a short slug for this piece of work, one repo can hold several.
 The plan follows writing-plans conventions: numbered steps, each with files touched, the test that proves it, and explicit dependencies.
 Decisions already made in the spec are not reopened.

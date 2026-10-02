@@ -41,7 +41,10 @@ The speed and cost figures in this file come from small benchmark tasks and one 
 
 ## Projects
 
-A project is one feature: `.fast-coding/<project>/` holds its plan, its numbered tasks, its verify config and results, and it becomes one gh stack on the branch it was started from.
+A project is one feature in its own worktree: `fast-coding init --project <name>` creates branch `fast-coding/<name>` from the branch you are on and checks it out at `../fast-coding-<name>` next to the repo, with `.fast-coding/<name>/` (plan, numbered tasks, verify config, results) committed there.
+The orchestrator does all of the feature's work in that worktree, so your checkout and branch are never touched, and several features can run at once, each with its own stack.
+The stack's trunk is the project branch; its PRs target that branch, and one final PR brings the project branch to yours.
+Every command accepts `--project <name>` from any checkout of the repository and resolves it to the right worktree.
 
 Grouping is automatic and happens before anything else.
 When you invoke `fast-coding <task>`, the skill first runs `fast-coding projects` on the repo.
@@ -65,7 +68,7 @@ jev-autofill     31/31  2026-10-02 17:21  Jev Autofill Prototype Implementation 
 
 The title is the plan's first heading, so a project with a plan is self-describing.
 A payment halt shows on its project line with the resume hint.
-Projects live in the repository, so these views are per repo; there is no cross-repo view yet.
+The views cover every worktree of the repository (the listing shows each project's worktree); there is no cross-repository view yet.
 
 ## Pieces
 
@@ -96,7 +99,7 @@ Secrets never live in this repo or in task files: pi and OpenCode read their aut
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
 
 ```bash
-fast-coding init   --repo . --project <name>   # .fast-coding/<name>/{tasks,results,verify.json}
+fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ committed (--here: in this checkout)
 fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; one gh stack on your branch
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
@@ -127,7 +130,7 @@ You never call the CLI yourself in this mode.
 
 ```bash
 cd ~/code/some-repo
-fast-coding init --project my-feature          # creates .fast-coding/my-feature/{tasks,results,verify.json}
+fast-coding init --project my-feature          # worktree ../fast-coding-my-feature on branch fast-coding/my-feature; work there from now on
 # write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
 fast-coding run --project my-feature           # parallel pi implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
