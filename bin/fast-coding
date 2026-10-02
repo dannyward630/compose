@@ -318,7 +318,14 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     if wt.exists():
         shutil.rmtree(wt)
     sh(["git", "worktree", "prune"], repo, check=False)
-    sh(["git", "branch", "-D", branch], repo, check=False)  # a re-run replaces the previous attempt; merge before re-running to keep it
+    if not tag and sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0 \
+            and sh(["git", "merge-base", "--is-ancestor", branch, "HEAD"], repo, check=False).returncode != 0 \
+            and (proj / "results" / f"{tid}.json").exists() and json.loads((proj / "results" / f"{tid}.json").read_text()).get("status") == "passed" \
+            and not os.environ.get("FAST_CODING_REDO"):
+        # A passed layer may already have a PR. Never replace it silently; `--redo` says the user wants it rebuilt.
+        say(f"{tid} keep    passed branch {branch} exists and is unmerged; pass --redo to rebuild it")
+        return json.loads((proj / "results" / f"{tid}.json").read_text())
+    sh(["git", "branch", "-D", branch], repo, check=False)  # a re-run (or --redo) replaces the previous attempt
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
@@ -457,7 +464,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     if status == "passed":
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
-        sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo for review and merge
+        sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
     diff = sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
@@ -595,6 +602,25 @@ def current_branch(repo):
     """The branch the user is on: the stack's trunk. A detached HEAD falls back to main."""
     return sh(["git", "branch", "--show-current"], repo).stdout.strip() or "main"
 
+def payment_halt(repo, proj, command, remaining, args, err):
+    """Save what is left to do, tell the user where to top up, exit 3. `fast-coding resume` picks it up."""
+    state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
+             "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    (proj / "results").mkdir(exist_ok=True)
+    (proj / "results" / "resume.json").write_text(json.dumps(state, indent=2))
+    key = next((k for k in TOP_UP if k in err.provider.lower()), None)
+    print()
+    print(f"PAYMENT REQUIRED  provider: {err.provider}")
+    print(f"  {err.message}")
+    if key:
+        print(f"  top up at: {TOP_UP[key]}")
+    if command == "run":
+        print(f"  stopped with {len(remaining)} task(s) left: {', '.join(remaining)}. Passed tasks keep their branches.")
+    else:
+        print("  stopped during verify; task branches are untouched.")
+    print(f"  then continue where it stopped:  fast-coding resume --repo {repo} --project {proj.name}")
+    sys.exit(3)
+
 def cmd_run(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     only = set(a.only.split(",")) if a.only else None
@@ -603,6 +629,8 @@ def cmd_run(a):
         sys.exit(f"no tasks in {proj / 'tasks'}")
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit tests and tasks first so worktrees include them")
+    if getattr(a, "redo", False):
+        os.environ["FAST_CODING_REDO"] = "1"
     run_tasks(repo, proj, tasks, a)
 
 def run_tasks(repo, proj, tasks, a):
@@ -1020,6 +1048,21 @@ def run_stages(repo, proj, cfg, a):
                 findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     return ok, report, "\n\n".join(findings)
 
+def verify_root(repo, proj, cfg):
+    """Where verify runs. Task branches are never merged locally, so with unmerged layers verify runs in the CLI worktree
+    checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
+    base is the trunk. With no open layers it runs on the user's checkout against `review_base`."""
+    trunk = current_branch(repo)
+    if not stack_order(repo, proj):
+        return repo, cfg.get("review_base", trunk), None
+    wt = stack_worktree(repo, proj, trunk)
+    chain = linearize(repo, proj, trunk, wt)
+    if not chain:
+        return repo, cfg.get("review_base", trunk), None
+    sh(["git", "checkout", "-q", chain[-1]], wt)
+    say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
+    return wt, trunk, wt
+
 def cmd_verify(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     cfg_path = proj / "verify.json"
@@ -1027,10 +1070,22 @@ def cmd_verify(a):
     t0 = time.time()
     say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
+    root, base, wt = verify_root(repo, proj, cfg)
+    cfg = {**cfg, "review_base": base}
+    if root != repo:
+        # e2e commands and setup name the main checkout by absolute path; run them against the worktree's files instead.
+        swap = lambda c: c.replace(str(repo), str(root)) if isinstance(c, str) else c
+        cfg["e2e"] = [{**case, "driver": swap(case.get("driver")), "assert": swap(case.get("assert"))} for case in cfg.get("e2e", [])]
+        cfg["e2e_setup"] = swap(cfg.get("e2e_setup"))
+        cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
     try:
-        verify_rounds(repo, proj, cfg, a, rounds, t0)
+        verify_rounds(root, proj, cfg, a, rounds, t0)
     except PaymentRequired as e:
         payment_halt(repo, proj, "verify", [], {"fix": a.fix, "skip_e2e": a.skip_e2e, "skip_review": a.skip_review}, e)
+    finally:
+        if wt is not None:
+            sh(["git", "checkout", "-q", "--detach", current_branch(repo)], wt, check=False)  # free the top branch again
+            mirror_stack_state(repo, wt)
 
 def verify_rounds(repo, proj, cfg, a, rounds, t0):
     for rnd in range(a.fix + 1):
@@ -1083,6 +1138,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         if changed:
             sh(["git", "add", "-A"], repo)
             sh(["git", "commit", "-qm", f"fast-coding verify fix round {rnd + 1} ({proj.name})"], repo, check=False)
+            say("fix    committed on " + (sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
         else:
             break
     final = {"rounds": rounds, "passed": ok, "seconds": round(time.time() - t0, 1), "cost": LEDGER.snapshot()}
@@ -1348,7 +1404,9 @@ def cmd_clean(a):
     merged = set(sh(["git", "branch", "--merged", "HEAD", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split())
     kept = []
     for b in sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split():
-        if a.all or b in merged:
+        if a.delete_unmerged and b not in merged:
+            print(f"clean  deleting UNMERGED layer {b} (--delete-unmerged); any PR for it on GitHub is unaffected")
+        if a.delete_unmerged or b in merged:
             sh(["git", "branch", "-D", b], repo, check=False)
         else:
             kept.append(b)
@@ -1378,6 +1436,7 @@ def main():
             s.add_argument("--parallel", type=int, default=3)
             s.add_argument("--trunk", default=None, help="trunk branch the stack targets (default: the branch you are on)")
             s.add_argument("--no-stack", action="store_true", help="do not register passed branches with gh stack")
+            s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
         if name == "done":
             s.add_argument("--only", required=True, help="comma-separated task ids")
             s.add_argument("--note", required=True, help="why it was done by hand, e.g. 'provider out of credit'")
@@ -1394,7 +1453,7 @@ def main():
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
         if name == "clean":
-            s.add_argument("--all", action="store_true", help="also delete unmerged task branches")
+            s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")

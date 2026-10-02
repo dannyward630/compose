@@ -31,9 +31,9 @@ Do not use it for one-line fixes or exploratory debugging, where the overhead be
 
 Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
 With no `GRILLING.md`, it grills you one question at a time with a recommendation on each until the decisions are settled, then writes the plan and the tasks with their tests and shows you the plan.
-It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can merge, split, reorder, or drop tasks first.
+It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can combine, split, reorder, or drop tasks first.
 Then it dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
-You read the stack and say what to merge; it merges bottom up, or `stack --submit` opens the draft PRs when you ask.
+You read the stack; when you say so, `stack --submit` pushes it and opens one draft PR per layer. A human reviewer reads them bottom-up on GitHub and decides whether the stack merges. fast-coding never merges.
 A provider out of credit halts the run with the top-up link, and `resume` continues where it stopped.
 A task that fails three attempts is re-split into smaller tasks, not typed by hand.
 
@@ -104,8 +104,10 @@ fast-coding resume --repo . --project <name>   # continue a run or verify that s
 fast-coding tasks    --repo . --project <name>   # the task list to review before dispatch: files owned, after, tests; warns on shared files
 fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
 fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
-fast-coding clean  --repo . --project <name>
+fast-coding clean  --repo . --project <name>   # worktrees and merged task branches only
 ```
+
+Merging is a human decision on GitHub: `stack --submit` opens one draft PR per layer, the reviewer merges the stack or not. Nothing in fast-coding merges, locally or remotely.
 
 ## How to use it
 
@@ -129,7 +131,7 @@ fast-coding init --project my-feature          # creates .fast-coding/my-feature
 # write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
 fast-coding run --project my-feature           # parallel pi implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
-git merge fast/my-feature/001                  # accept what passed review, bottom layer first (or gh stack merge <pr> --yes once submitted)
+fast-coding stack --project my-feature --submit   # when asked: push the stack, one draft PR per layer; a reviewer merges on GitHub
 fast-coding clean --project my-feature         # remove worktrees and branches
 ```
 
@@ -245,7 +247,7 @@ If you cannot write the test, it is not a task yet.
                      ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
   │  ORCHESTRATOR REVIEW   git diff main..fast/NNN                           │
-  │     accept ──▶ git merge        reject / exhausted ──▶ fix by hand       │
+  │     accept ──▶ layer stays      reject / exhausted ──▶ re-split, re-run  │
   │     every attempt: test, protected files untouched, ≤350 changed lines,  │
   │     no new documents, only `files:` touched; passed branches ──▶ one     │
   │     linear gh stack on your branch, built in a CLI worktree (no push)    │
@@ -278,7 +280,7 @@ If you cannot write the test, it is not a task yet.
   └──────────────────────────────────────────────────────────────────────────┘
 
   Who decides what
-    frontier (Claude)   plan, tests, review, merge, refactor, escalations
+    frontier (Claude)   plan, tests, review, refactor, escalations; never merges
     fast (Qwen)         green only, one task, one session, never tests
     Mercury             raise findings, then confirm or drop them
     Jev                 score acceptance criteria, drive the browser

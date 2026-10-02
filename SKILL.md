@@ -10,7 +10,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 | Who | Does | Never does |
 |---|---|---|
-| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, merge, re-split escalated tasks into smaller ones | Type implementation a task file covers, including an escalated one, unless the blocker is infrastructure |
+| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
 | Implementer (fast model via pi or OpenCode) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
 
@@ -43,7 +43,7 @@ A task is right-sized when all of these hold:
 - no open design choices; every "how" is stated or obvious from the named files
 - the whole task plus the files it touches fits comfortably in 40K tokens
 - its branch will change at most 350 lines (added plus deleted). The CLI rejects a bigger branch, so size the task for it
-- it adds no documents. Implementers never create .md, .txt, .rst, or docs/ files; the CLI rejects a branch that does. Docs are the orchestrator's, edited by hand after merge, only when the user asked for them
+- it adds no documents. Implementers never create .md, .txt, .rst, or docs/ files; the CLI rejects a branch that does. Docs are the orchestrator's, edited by hand after the reviewer has merged the PRs, only when the user asked for them
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
 - it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
@@ -57,7 +57,7 @@ Commit tests and task files before dispatching; independent tasks branch from HE
 
 ### 3b. The user reviews the tasks before anything runs
 Run `fast-coding tasks --repo <path> --project <name>` and show the user its output: every task's id, title, the files it owns, what it builds on, and its test, in stack order, with a warning for any file two tasks claim. Add one line per task saying what its holdout cases cover, in words.
-Then stop and wait. The user may merge tasks, split them, reorder the stack, change file ownership, or drop one. Apply the changes, re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
+Then stop and wait. The user may combine tasks, split them, reorder the stack, change file ownership, or drop one. Apply the changes, re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
@@ -69,7 +69,9 @@ Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, w
 
 ### 5. Review
 Read `.fast-coding/<project>/results/NNN.json` and the layer's own diff: `git diff <base>..fast/<project>/NNN`, where `base` is in the result (`HEAD` or the lower task's branch). `gh stack view --json` from a task branch shows the chain.
-Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and poor quality. Merge what is good, bottom layer first; `gh stack merge <pr> --yes` merges a PR and everything below it once PRs exist.
+Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and poor quality; a rejected layer is re-split or fixed, then re-run. You never merge, locally or on GitHub. When the user says so, `fast-coding stack --submit` pushes the stack and opens one draft PR per layer; a human reviewer reads them bottom-up and decides on GitHub whether the stack merges. `gh stack merge` is the reviewer's tool, not yours.
+
+Verify runs at the top of the stack, in the CLI's worktree, since layers are never merged locally; its fix commits land on the top layer and are reviewed like everything else.
 
 ### 6. Verify
 `fast-coding verify --repo <path> --project <name>` is the local no-mistakes-style pipeline. Nothing is pushed; the only network calls are model APIs. Stages, in order, from `.fast-coding/<project>/verify.json`:
@@ -101,7 +103,7 @@ Fix what fails, re-run. Only then tell the user it is done, with the verify outp
 A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed.
 Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. When you do, record it: `fast-coding done --project <name> --only 024,025 --note "provider out of credit"`, so `fast-coding status` shows the truth, and say so in the report.
 `fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory.
-`fast-coding clean --project <name>` removes worktrees and branches after merging. Stacks registered for merged branches disappear with them; `gh stack sync --prune` tidies the GitHub side if PRs were submitted.
+`fast-coding clean --project <name>` removes worktrees and the task branches the reviewer has merged (never unmerged layers unless `--delete-unmerged`). `gh stack sync --prune` tidies the GitHub side after PRs merge.
 
 ## Task file format
 
