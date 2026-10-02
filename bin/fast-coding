@@ -116,6 +116,11 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
             usage["cost"] += part.get("cost") or 0.0
     if p.returncode and not sid:
         raise RuntimeError(f"opencode failed: {p.stderr[-2000:]}")
+    if not text and not tools and not usage["tokens_in"]:
+        # The model never ran: opencode prints the provider's refusal (bad key, payment required, model missing) to stdout.
+        err = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr)
+        err = " ".join(l.strip() for l in err.splitlines() if l.strip() and not l.startswith("{"))
+        raise RuntimeError(f"provider refused the request: {err[-400:] or 'empty reply with no usage'}")
     LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     reply = "\n".join(text)
     # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
@@ -245,6 +250,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             time.sleep(wait)
             continue
         except Exception as e:  # noqa: BLE001
+            say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
             break
         cost += usage["cost"]
