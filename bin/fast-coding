@@ -304,7 +304,9 @@ def task_base(repo, proj, meta):
     missing = [b for b in unmerged if b not in chain]
     if missing:
         raise RuntimeError(f"after: {', '.join(missing)} could not be chained (rebase conflict); resolve it, then re-run this task")
-    return chain[-1], sh(["git", "rev-parse", chain[-1]], repo).stdout.strip()
+    # Base on the highest dependency, not the chain top: layers ordered after this task must stay above it in history.
+    base = max(unmerged, key=chain.index)
+    return base, sh(["git", "rev-parse", base], repo).stdout.strip()
 
 def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag=""):
     meta, body = parse_task(task_path)
@@ -549,10 +551,19 @@ def mirror_stack_state(repo, wt):
     theirs["stacks"] = kept + mine.get("stacks", [])
     dst.write_text(json.dumps(theirs, indent=2))
 
+def chain_order(repo, proj, trunk):
+    """Branches bottom to top. Ancestry wins: a branch whose history already contains another sits above it (a rebase can never
+    move a commit below history it contains). Ties, i.e. branches not on one line yet, follow stack_order (deps, then id)."""
+    order = stack_order(repo, proj)
+    rank = {b: i for i, b in enumerate(order)}
+    def depth(b):
+        return int(sh(["git", "rev-list", "--count", f"{trunk}..{b}"], repo, check=False).stdout.strip() or 0)
+    return sorted(order, key=lambda b: (depth(b), rank[b]))
+
 def linearize(repo, proj, trunk, wt):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
-    chain = stack_order(repo, proj)
+    chain = chain_order(repo, proj, trunk)
     linear, prev = [], trunk
     for b in chain:
         if sh(["git", "merge-base", "--is-ancestor", prev, b], repo, check=False).returncode != 0:
