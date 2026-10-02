@@ -9,7 +9,8 @@ Verification is local.
 
 ```bash
 fast-coding init   --repo . --project <name>   # .fast-coding/<name>/{tasks,results,verify.json}
-fast-coding run    --repo . --project <name>   # one worktree + one OpenCode session per task, in parallel
+fast-coding run    --repo . --project <name>   # one clone + one OpenCode session per task; dependency order; registers gh stacks
+fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding clean  --repo . --project <name>
 ```
@@ -34,9 +35,9 @@ You never call the CLI yourself in this mode.
 cd ~/code/some-repo
 fast-coding init --project my-feature          # creates .fast-coding/my-feature/{tasks,results,verify.json}
 # write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
-fast-coding run --project my-feature           # parallel OpenCode implementers, one worktree each
+fast-coding run --project my-feature           # parallel OpenCode implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
-git merge fast/my-feature/001                  # accept what passed review
+git merge fast/my-feature/001                  # accept what passed review, bottom layer first (or gh stack merge <pr> --yes once submitted)
 fast-coding clean --project my-feature         # remove worktrees and branches
 ```
 
@@ -45,7 +46,8 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
 
 ### Before the first run in a new repo
 
-1. Commit everything. `run` refuses a dirty tree because worktrees branch from HEAD.
+1. Commit everything. `run` refuses a dirty tree because branches start from HEAD and `gh stack init` switches branches while registering.
+   Install `gh extension install github/gh-stack` and set `git config rerere.enabled true`.
 2. Add an `opencode.jsonc` in the repo root so headless OpenCode does not block on a permission prompt:
    ```json
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
@@ -65,7 +67,7 @@ files: extension/snapshot.js
 protected: tests/snapshot.test.js
 test: node --test 'tests/**/*.test.js'
 model: openrouter/openai/gpt-oss-120b
-after:
+after:            # id of the task this one builds on; it becomes the next layer of that task's stack
 ---
 
 ## Goal
@@ -104,7 +106,8 @@ If you cannot write the test, it is not a task yet.
                      │  fast-coding run
                      ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │  DISPATCH   one worktree + one OpenCode session per task, in parallel    │
+  │  DISPATCH   one clone + one OpenCode session per task; `after:` tasks    │
+  │             start on their base task's branch as the next stack layer    │
   │                                                                          │
   │   task 001              task 002              task 003                   │
   │   ┌────────────┐        ┌────────────┐        ┌────────────┐            │
@@ -136,6 +139,8 @@ If you cannot write the test, it is not a task yet.
   ┌──────────────────────────────────────────────────────────────────────────┐
   │  ORCHESTRATOR REVIEW   git diff main..fast/NNN                           │
   │     accept ──▶ git merge        reject / exhausted ──▶ fix by hand       │
+  │     every attempt: test, protected files untouched, ≤350 changed lines,  │
+  │     no new documents; passed chains ──▶ gh stack init (local, no push)   │
   └──────────────────┬───────────────────────────────────────────────────────┘
                      │  fast-coding verify        (all local, nothing pushed)
                      ▼

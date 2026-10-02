@@ -28,23 +28,27 @@ A task is right-sized when all of these hold:
 - one to three files, one test command, under ten acceptance criteria
 - no open design choices; every "how" is stated or obvious from the named files
 - the whole task plus the files it touches fits comfortably in 40K tokens
-- it is independent of other pending tasks, or its `after:` lists the ids it needs merged first
+- its branch will change at most 350 lines (added plus deleted). The CLI rejects a bigger branch, so size the task for it
+- it adds no documents. Implementers never create .md, .txt, .rst, or docs/ files; the CLI rejects a branch that does. Docs are the orchestrator's, edited by hand after merge, only when the user asked for them
+- it is independent of other pending tasks, or its `after:` names the task it builds on. A task with `after:` becomes the next layer of that task's stack: it branches from the lower task's tip and its PR shows only its own diff
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
+Design chains the way `gh stack` wants them: foundational code at the bottom, code that depends on it above, one concern per layer, strictly linear. Two tasks that both need the same lower task are siblings; only one can stack on it, the other waits for the merge.
 
 ### 3. Write the tests first (red)
 The acceptance test is yours. List it under `protected:`. The CLI rejects any attempt that changes a protected file.
 It must fail on HEAD; `run` refuses a task whose test already passes.
 Include holdout cases the task file does not list. The implementer is told they exist, so it has to implement the behavior rather than the examples. The deny-list task showed why: given only the listed labels, the fast model wrote one literal regex per label.
-Commit tests and task files before dispatching; worktrees branch from HEAD.
+Commit tests and task files before dispatching; independent tasks branch from HEAD, stacked tasks from their lower layer.
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
-`fast-coding run --repo <path> --project <name>` runs every task in parallel, one worktree and one OpenCode session each, feeding test failures back into the same session up to `--attempts` (default 3).
-Use `--only 003,004` for a subset. Run `after:`-dependent tasks in a later wave once their prerequisites are merged.
+`fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one OpenCode session each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, or a new document are fed back into the same session up to `--attempts` (default 3).
+Use `--only 003,004` for a subset. When the run ends, every chain of passed branches is registered as a `gh stack` (`(main) <- fast/<project>/001 <- fast/<project>/002`), printed on a `stack ok` line. `--no-stack` skips that, `--trunk` changes the base.
+Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, which pushes every branch and opens draft PRs: run it only when the user has explicitly asked for that push.
 
 ### 5. Review
-Read `.fast-coding/<project>/results/NNN.json` and `git diff main..fast/<project>/NNN`.
-Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and poor quality. Merge what is good.
+Read `.fast-coding/<project>/results/NNN.json` and the layer's own diff: `git diff <base>..fast/<project>/NNN`, where `base` is in the result (`HEAD` or the lower task's branch). `gh stack view --json` from a task branch shows the chain.
+Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and poor quality. Merge what is good, bottom layer first; `gh stack merge <pr> --yes` merges a PR and everything below it once PRs exist.
 
 ### 6. Verify
 `fast-coding verify --repo <path> --project <name>` is the local no-mistakes-style pipeline. Nothing is pushed; the only network calls are model APIs. Stages, in order, from `.fast-coding/<project>/verify.json`:
@@ -74,7 +78,7 @@ Fix what fails, re-run. Only then tell the user it is done, with the verify outp
 
 ### 7. Escalate and clean
 A task that exhausts its attempts comes back with its full log. Fix it yourself using that log; do not re-dispatch it unchanged.
-`fast-coding clean --project <name>` removes worktrees and branches after merging.
+`fast-coding clean --project <name>` removes worktrees and branches after merging. Stacks registered for merged branches disappear with them; `gh stack sync --prune` tidies the GitHub side if PRs were submitted.
 
 ## Task file format
 
@@ -86,7 +90,7 @@ files: extension/deny_list.js
 protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
 model: openrouter/openai/gpt-oss-120b
-after:
+after:            # id of the task this one builds on; it becomes the next layer of that task's stack
 ---
 
 ## Goal
@@ -106,6 +110,8 @@ One paragraph. What to build, where, exact export names.
 
 ## Rules
 - Tests are the contract. The implementer never edits them.
+- A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
+- Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.
 - Fresh session per task. Never chain tasks in one session.
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
 - Build a graft graph in the repo (`graft build .`, free, git-ignored). The CLI prepends a `graft ask` context pack with exact `file:line` and source to every implementer and fixer prompt, and tells the model to use `graft ask` and `graft callers` instead of exploring. Without graft the fast model reads whole files and every extra tool call resends the full context at Cerebras prices.
