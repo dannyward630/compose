@@ -95,7 +95,7 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
             time.sleep(0.7 * (attempt + 1) + 0.3 * (hash(str(cwd)) % 5) / 5)
             continue
         break
-    sid, text, tools, usage = session, [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+    sid, text, tools, usage, errors = session, [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, []
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
             continue
@@ -105,7 +105,10 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
             continue
         sid = sid or ev.get("sessionID")
         part = ev.get("part", {})
-        if ev.get("type") == "text":
+        if ev.get("type") == "error":
+            err = ev.get("error") or {}
+            errors.append(str((err.get("data") or {}).get("message") or err.get("name") or err))
+        elif ev.get("type") == "text":
             text.append(part.get("text", ""))
         elif ev.get("type") == "tool_use":
             tools += 1
@@ -116,11 +119,9 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
             usage["cost"] += part.get("cost") or 0.0
     if p.returncode and not sid:
         raise RuntimeError(f"opencode failed: {p.stderr[-2000:]}")
-    if not text and not tools and not usage["tokens_in"]:
-        # The model never ran: opencode prints the provider's refusal (bad key, payment required, model missing) to stdout.
-        err = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr)
-        err = " ".join(l.strip() for l in err.splitlines() if l.strip() and not l.startswith("{"))
-        raise RuntimeError(f"provider refused the request: {err[-400:] or 'empty reply with no usage'}")
+    if errors and not text and not tools:
+        # The model never ran: the provider refused (bad key, payment required, model missing). Retrying is pointless.
+        raise RuntimeError(f"provider refused the request: {'; '.join(errors)[-400:]}")
     LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     reply = "\n".join(text)
     # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
