@@ -1482,25 +1482,61 @@ def cmd_init(a):
     sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
     print(f"initialised {proj}\nwork in {wt} from now on: plan, tests, tasks, every command with --repo {wt} (or any checkout with --project {name})")
 
-def cmd_clean(a):
-    """Remove worktrees always; remove task branches only when merged into HEAD, unless --all. Unmerged passes are work."""
-    proj = project_dir(a); repo = Path(a.repo).resolve()
+def merged_into(repo, branch, targets):
+    """True when `branch` is contained in any of `targets` (local or remote refs that exist)."""
+    for t in targets:
+        if sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode == 0 \
+                and sh(["git", "merge-base", "--is-ancestor", branch, t], repo, check=False).returncode == 0:
+            return True
+    return False
+
+def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
+    """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
+    worktree always; task branches merged into the project branch (locally or on the remote); and, once every layer and the
+    project branch itself are merged, the project worktree and branch. Unmerged work is kept and named."""
     import shutil
-    for wt in (proj / "worktrees").glob("*"):
-        sh(["git", "worktree", "remove", "--force", str(wt)], repo, check=False)
-        if wt.exists():
-            shutil.rmtree(wt, ignore_errors=True)
+    repo = wt
+    if sh(["git", "remote"], repo, check=False).stdout.strip():
+        sh(["git", "fetch", "-q", "--prune"], repo, check=False)
+    trunk = current_branch(repo)
+    for w in (proj / "worktrees").glob("*"):
+        sh(["git", "worktree", "remove", "--force", str(w)], repo, check=False)
+        if w.exists():
+            shutil.rmtree(w, ignore_errors=True)
     sh(["git", "worktree", "prune"], repo, check=False)
-    merged = set(sh(["git", "branch", "--merged", "HEAD", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split())
+    targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
     kept = []
-    for b in sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split():
-        if a.delete_unmerged and b not in merged:
-            print(f"clean  deleting UNMERGED layer {b} (--delete-unmerged); any PR for it on GitHub is unaffected")
-        if a.delete_unmerged or b in merged:
+    for b in sh(["git", "branch", "--list", f"fast/{name}/*"], repo, check=False).stdout.split():
+        if merged_into(repo, b, targets) or delete_unmerged:
+            if delete_unmerged and not merged_into(repo, b, targets):
+                print(f"clean  deleting UNMERGED layer {b} (--delete-unmerged); any PR for it on GitHub is unaffected")
             sh(["git", "branch", "-D", b], repo, check=False)
         else:
             kept.append(b)
-    print("clean" + (f"  kept unmerged: {', '.join(kept)}" if kept else ""))
+    line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
+    project_branch = f"fast-coding/{name}"
+    if wt != main_repo and not kept and trunk == project_branch:
+        if merged_into(main_repo, project_branch, ["main", "origin/main", "master", "origin/master", current_branch(main_repo)]):
+            sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
+            if wt.exists():
+                shutil.rmtree(wt, ignore_errors=True)
+            sh(["git", "worktree", "prune"], main_repo, check=False)
+            sh(["git", "branch", "-D", project_branch], main_repo, check=False)
+            line += f"; project branch merged: removed worktree {wt} and branch {project_branch}"
+        else:
+            line += f"; project branch {project_branch} not merged yet: worktree kept"
+    print(line)
+
+def cmd_clean(a):
+    main_repo = Path(a.repo).resolve()
+    main_repo = worktrees(main_repo)[0]
+    projects = all_projects(main_repo)
+    if a.project:
+        projects = {a.project: projects[a.project]} if a.project in projects else {}
+    if not projects:
+        sys.exit("no projects to clean")
+    for name, (wt, proj) in projects.items():
+        clean_project(main_repo, name, wt, proj, delete_unmerged=a.delete_unmerged)
 
 def main():
     ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

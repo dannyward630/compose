@@ -107,7 +107,7 @@ fast-coding resume --repo . --project <name>   # continue a run or verify that s
 fast-coding tasks    --repo . --project <name>   # the task list to review before dispatch: files owned, after, tests; warns on shared files
 fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
 fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
-fast-coding clean  --repo . --project <name>   # worktrees and merged task branches only
+fast-coding clean  --repo . [--project <name>]  # post-merge: fetch, drop merged layers; remove a project's worktree+branch once fully merged
 ```
 
 Merging is a human decision on GitHub: `stack --submit` opens one draft PR per layer, the reviewer merges the stack or not. Nothing in fast-coding merges, locally or remotely.
@@ -135,7 +135,7 @@ fast-coding init --project my-feature          # worktree ../fast-coding-my-feat
 fast-coding run --project my-feature           # parallel pi implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
 fast-coding stack --project my-feature --submit   # when asked: push the stack, one draft PR per layer; a reviewer merges on GitHub
-fast-coding clean --project my-feature         # remove worktrees and branches
+fast-coding clean --project my-feature         # after the PRs merged: removes what is merged, keeps what is not
 ```
 
 ### When a provider stops for billing
