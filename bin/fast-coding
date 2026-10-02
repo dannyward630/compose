@@ -141,7 +141,7 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
 
 RATE_LIMIT_MARK = "exceeded the provider's size limit"
 
-def pi_turn(cwd, model, prompt, session=None, timeout=600):
+def pi_turn(cwd, model, prompt, session=None, timeout=300):
     """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
     OpenCode's ~12K. Same contract as opencode(): (session, reply_text, tool_calls, usage). The session lives outside the
     task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras."""
@@ -402,6 +402,13 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             prompt = original_prompt
             attempt -= 1
             time.sleep(wait)
+            continue
+        except subprocess.TimeoutExpired:
+            # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
+            say(f"{tid} attempt {attempt} timeout  implementer produced nothing for {fmt(time.time() - t0)}; fresh session")
+            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
+            session = None
+            prompt = original_prompt
             continue
         except PaymentRequired as e:
             say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
