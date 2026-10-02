@@ -1176,8 +1176,11 @@ def cmd_tasks(a):
     for m in tasks:
         after = str(m.get("after") or "").strip() or "-"
         print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {', '.join(m['files']) or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
+    # Only tasks still to run can clash; a later wave may legitimately touch a file an already-merged task owned.
+    trunk_head = sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    open_tasks = [m for m in tasks if task_state(repo, proj, m, trunk_head)["state"].split(" ")[0] not in ("merged", "hand_done", "already_green")]
     shared = {}
-    for m in tasks:
+    for m in open_tasks:
         for f in m["files"]:
             shared.setdefault(f, []).append(m["id"])
     clashes = {f: ids for f, ids in shared.items() if len(ids) > 1}
