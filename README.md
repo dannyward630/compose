@@ -52,7 +52,9 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
    ```json
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
    ```
-3. Make sure the shell has `CEREBRAS_API_KEY` (it is exported in `~/.zshrc`; open a new terminal or `source ~/.zshrc`).
+3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key the jev-ultrafast `.env` uses as `TEXT_MODEL_API_KEY`.
+   pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `openai/gpt-oss-120b:nitro`, OpenRouter's fastest-host routing, priced at the Cerebras rate so the ledger is honest.
+   OpenCode pins the host explicitly instead: `~/.config/opencode/opencode.jsonc` sets `options.provider.order: ["cerebras", "groq"]` with fallbacks off.
 4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
 5. Add e2e cases only for browser-facing work, each with an `assert` command you wrote.
 6. Run `graft build .` so implementers get a context pack instead of exploring. It is free and git-ignored; the CLI rebuilds it inside each worktree.
@@ -177,7 +179,7 @@ If you cannot write the test, it is not a task yet.
     CLI                 red check, protected-file guard, timing, cost ledger
 ```
 
-Implementer model: `openrouter/openai/gpt-oss-120b` through OpenCode, pinned to Groq with Cerebras as the only fallback (default since 2026-10-02).
+Implementer model: `openrouter/openai/gpt-oss-120b` through OpenCode, pinned to Cerebras with Groq as the only fallback (default since 2026-10-02). `pi:openrouter-fast/openai/gpt-oss-120b:nitro` runs the same model through the pi harness, whose fixed context per turn is about 1K tokens against OpenCode's 12K; pick it per task with `model:` or bench both.
 Groq measures 342 t/s at 0.16 s latency with prompt caching at $0.15/$0.60 per M; Cerebras direct was 538 t/s at $0.35/$0.75 with no caching and a 150K tokens-per-minute dev-tier limit, which is what made Qwen 3.8 27B cost about $10 for one prototype build.
 With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
 Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.

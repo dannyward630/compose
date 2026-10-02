@@ -1,22 +1,29 @@
 ---
 name: fast-coding
-description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b via OpenRouter, pinned to Cerebras), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
+description: The full fast loop for a feature, from first question to verified stacked branches. Grill the user until the decisions are settled (GRILLING.md), plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers on a fast cheap model (gpt-oss-120b on OpenRouter's fastest host, through pi or OpenCode), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # fast-coding
 
-You are the orchestrator. OpenCode on a fast model is the implementer. Verification is local; nothing is pushed.
+You are the orchestrator. A fast cheap model inside a lean harness is the implementer. Verification is local; nothing is pushed.
+This skill is the whole flow: the moment the user invokes it with a task, start at step 0 and carry it through to verified, stacked branches.
 
 | Who | Does | Never does |
 |---|---|---|
-| You (frontier) | Read the spec, write the plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, merge, take over escalated tasks | Type implementation a task file covers |
-| OpenCode (fast) | One task file, the named files, until its test passes | Edit protected files, plan, touch other tasks |
+| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, merge, take over escalated tasks | Type implementation a task file covers |
+| Implementer (fast model via pi or OpenCode) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
 
+### 0. Grill first when the decisions are not written down
+Look for a settled spec in the repo: `GRILLING.md` or `DESIGN.md` (or any file a grilling session produced, such as `docs/decisions/` from `grill-with-docs`).
+If none exists for this piece of work, do not plan yet: invoke the `grilling` skill (or `grill-with-docs` when the user wants ADRs and a glossary as a by-product) and interview the user until the decision tree is resolved, one question at a time, with your recommendation on each.
+Record the outcome in `GRILLING.md` in the repo, with absolute paths for every folder it names, then continue to step 1.
+If a spec exists, read it and do not reopen its decisions. Grill only the decisions it leaves open that the plan needs.
+
 ### 1. Plan from the spec
-Input is whatever the repo has: `GRILLING.md`, `DESIGN.md`, a ticket, a PRD.
+Input is `GRILLING.md`, `DESIGN.md`, a ticket, a PRD, whatever step 0 left or the repo already had.
 Read all of it. Then invoke `superpowers:writing-plans` and write the plan to `.fast-coding/<project>/plan.md` (run `fast-coding init --project <name>` first).
 `<project>` is a short slug for this piece of work, one repo can hold several.
 The plan follows writing-plans conventions: numbered steps, each with files touched, the test that proves it, and explicit dependencies.
@@ -81,6 +88,8 @@ A task that exhausts its attempts comes back with its full log. Fix it yourself 
 `fast-coding clean --project <name>` removes worktrees and branches after merging. Stacks registered for merged branches disappear with them; `gh stack sync --prune` tidies the GitHub side if PRs were submitted.
 
 ## Task file format
+
+`model:` is an OpenCode model id, `pi:<provider/model>` for the pi harness (lean: ~1K tokens of fixed context per turn), or `claude`. Omit it for the CLI default.
 
 ```markdown
 ---

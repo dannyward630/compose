@@ -15,6 +15,9 @@ from pathlib import Path
 
 DEFAULT_MODEL = "openrouter/openai/gpt-oss-120b"  # pinned to Cerebras, Groq fallback, in ~/.config/opencode/opencode.jsonc
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
+# Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
+# the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
+PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b:nitro": (0.35, 0.75)}
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents
 
@@ -124,6 +127,8 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     if errors and not text and not tools:
         # The model never ran: the provider refused (bad key, payment required, model missing). Retrying is pointless.
         raise RuntimeError(f"provider refused the request: {'; '.join(errors)[-400:]}")
+    if model in PRICES:
+        usage["cost"] = (usage["tokens_in"] * PRICES[model][0] + usage["tokens_out"] * PRICES[model][1]) / 1e6
     LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     reply = "\n".join(text)
     # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
@@ -133,6 +138,62 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     return sid, reply, tools, usage
 
 RATE_LIMIT_MARK = "exceeded the provider's size limit"
+
+def pi_turn(cwd, model, prompt, session=None, timeout=600):
+    """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
+    OpenCode's ~12K. Same contract as opencode(): (session, reply_text, tool_calls, usage). The session lives outside the
+    task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/openai/gpt-oss-120b:nitro."""
+    sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
+    sdir.mkdir(exist_ok=True)
+    import uuid
+    sid = session or str(uuid.uuid4())  # --session-id must be a UUID
+    env = dict(os.environ)
+    if "OPENROUTER_API_KEY" not in env and (JEV_DIR / ".env").exists():  # pi's custom providers read the key from env
+        env["OPENROUTER_API_KEY"] = load_env(JEV_DIR / ".env").get("TEXT_MODEL_API_KEY", "").strip('"')
+    cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
+           "--no-prompt-templates", "--thinking", "low", "--model", model, prompt]
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+    text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
+    for line in p.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = ev.get("type")
+        if t == "tool_execution_start":
+            tools += 1
+        elif t == "message_update" and ev.get("usage"):
+            last = ev["usage"]  # cumulative within the current assistant message
+        elif t == "message_end" and (ev.get("message") or {}).get("role") == "assistant":
+            for part in ev["message"].get("content") or []:
+                if part.get("type") == "text":
+                    text.append(part.get("text", ""))
+            if last:
+                usage["tokens_in"] += last.get("input", 0) + last.get("cacheRead", 0) + last.get("cacheWrite", 0)
+                usage["tokens_out"] += last.get("output", 0) + last.get("reasoning", 0)
+                usage["cost"] += (last.get("cost") or {}).get("total") or 0.0
+                last = None
+        elif t == "error" or ev.get("error"):
+            errors.append(str(ev.get("error") or ev)[:300])
+    if p.returncode and not text and not tools:
+        real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]
+        raise RuntimeError(f"pi failed: {' '.join(real)[-400:] or p.stdout.strip()[-400:]}")
+    if not text and not tools and not usage["tokens_in"]:
+        raise RuntimeError(f"provider refused the request: {'; '.join(errors) or p.stderr.strip()[-400:] or 'empty reply with no usage'}")
+    if model in PRICES:
+        usage["cost"] = (usage["tokens_in"] * PRICES[model][0] + usage["tokens_out"] * PRICES[model][1]) / 1e6
+    LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
+    if "429" in (p.stderr or "") or any("rate" in e.lower() and "limit" in e.lower() for e in errors):
+        raise RateLimited(usage)
+    return sid, "\n".join(text), tools, usage
+
+def implementer(cwd, model, prompt, session=None):
+    """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi, anything else runs OpenCode."""
+    if model.startswith("pi:"):
+        return pi_turn(cwd, model[3:], prompt, session)
+    return opencode(cwd, model, prompt, session)
 
 class RateLimited(Exception):
     def __init__(self, usage):
@@ -270,7 +331,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             if meta["model"] == "claude":
                 session, reply, tools, usage = claude_once(wt, prompt)
             else:
-                session, reply, tools, usage = opencode(wt, meta["model"], prompt, session)
+                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session)
         except RateLimited as e:
             cost += e.usage["cost"]
             rate_waits += 1
@@ -836,12 +897,12 @@ def cmd_verify(a):
                   "Keep behavior the tests already cover. Keep the code simple; do not restructure. "
                   "Run the test commands yourself before finishing. Do not explain, just edit.\n\nFINDINGS:\n" + findings[:30000])
         try:
-            _, reply, tools, usage = opencode(repo, model, prompt)
+            _, reply, tools, usage = implementer(repo, model, prompt)
         except RateLimited as e:
             say("fix    rate-limited by provider; waiting 30s and retrying once")
             time.sleep(30)
             try:
-                _, reply, tools, usage = opencode(repo, model, prompt)
+                _, reply, tools, usage = implementer(repo, model, prompt)
             except Exception as e2:  # noqa: BLE001
                 reply, tools, usage = f"fix call failed: {e2}", 0, {"cost": 0.0}
         except Exception as e:  # noqa: BLE001
@@ -980,8 +1041,8 @@ def main():
             s.add_argument("--trunk", default="main")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes branches and opens draft PRs")
         if name == "bench":
-            s.add_argument("--models", default="openrouter/openai/gpt-oss-120b,cerebras/gpt-oss-120b,claude",
-                           help="comma-separated OpenCode model ids; 'claude' = Claude Code one-shot on the subscription")
+            s.add_argument("--models", default="openrouter/openai/gpt-oss-120b,pi:openrouter-fast/openai/gpt-oss-120b:nitro,claude",
+                           help="comma-separated model ids: OpenCode ids, 'pi:<provider/model>' for the pi harness, 'claude' = Claude Code one-shot")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
