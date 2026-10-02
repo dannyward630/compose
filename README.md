@@ -1,15 +1,38 @@
 # fast-coding
 
-A frontier model plans and reviews.
-Parallel OpenCode instances on a fast model implement.
-Verification is local.
+A frontier model grills, plans, writes the tests, and reviews.
+Parallel pi instances on gpt-oss-120b, pinned to Cerebras, implement one tiny task each.
+Verification is local, and passed branches are registered as gh stacks. Nothing is pushed without an explicit `--submit`.
+
+## Requirements
+
+Everything the CLI shells out to, and where each one is used. Install the required rows once per machine; the optional rows unlock one stage each.
+
+| Tool | Needed for | Install | Required |
+|---|---|---|---|
+| Python 3.9+ | `bin/fast-coding` itself, stdlib only | macOS ships it | yes |
+| git 2.30+ | task clones (`git clone --shared`), branches, diffs | Xcode CLT or Homebrew | yes |
+| Node 22.19+ | pi, and `node --test` in repos that use it | `brew install node` | yes |
+| pi | default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | yes |
+| OpenRouter account and key | every implementer, fixer, and reviewer call | key in `~/.pi/agent/auth.json` (`openrouter`, `openrouter-fast`) and in `~/code/jev-ultrafast/.env` as `TEXT_MODEL_API_KEY` | yes |
+| OpenRouter preset `gpt-oss-120b-cerebras` | pins the implementer to Cerebras from the model string | dashboard, Settings > Presets: model `openai/gpt-oss-120b`, provider order Cerebras, fallbacks off, nothing else included | yes |
+| `~/.pi/agent/models.json` | declares provider `openrouter-fast` (base `https://openrouter.ai/api/v1`, api `openai-completions`, key `$OPENROUTER_API_KEY` or the auth store) with model `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` priced 0.35/0.75 per M | written by hand once | yes |
+| gh CLI + gh-stack | `run` registers passed chains as stacks; `stack --submit` opens PRs | `brew install gh && gh extension install github/gh-stack`; `git config rerere.enabled true` | yes for stacks; `run --no-stack` without |
+| jev-ultrafast checkout at `~/code/jev-ultrafast` with `.env` | `verify`: Mercury review (`TEXT_MODEL*`), Jev acceptance (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`), browser e2e (`jev_ultrafast.Agent`) | clone it, fill `.env`, `uv sync` | yes for `verify` |
+| uv | runs jev-ultrafast and the Python test commands in verify.json | `brew install uv` | yes for `verify` |
+| Chrome plus browser-harness | `verify` e2e cases drive a real browser | installed by jev-ultrafast; `uv run browser-harness --doctor` there | only with e2e cases |
+| OpenCode | alternative implementer, `model: openrouter/openai/gpt-oss-120b`; bench column | `curl -fsSL https://opencode.ai/install \| bash`; key in `~/.local/share/opencode/auth.json`; `~/.config/opencode/opencode.jsonc` pins `options.provider.order: ["cerebras", "groq"]` | optional |
+| Claude Code | `model: claude` baseline through the subscription (`claude -p`) | already installed if you are reading this from it | optional |
+| graft | `graft build .` gives implementers a `file:line` context pack instead of exploring | `brew install graft` (or the project's installer); free, git-ignored | optional, recommended |
+
+Secrets never live in this repo or in task files: pi and OpenCode read their auth stores, verify reads the jev-ultrafast `.env`.
 
 - `SKILL.md` is the orchestrator's instructions, linked into `~/.claude/skills/fast-coding`.
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
 
 ```bash
 fast-coding init   --repo . --project <name>   # .fast-coding/<name>/{tasks,results,verify.json}
-fast-coding run    --repo . --project <name>   # one clone + one OpenCode session per task; dependency order; registers gh stacks
+fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; registers gh stacks
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding clean  --repo . --project <name>
@@ -35,7 +58,7 @@ You never call the CLI yourself in this mode.
 cd ~/code/some-repo
 fast-coding init --project my-feature          # creates .fast-coding/my-feature/{tasks,results,verify.json}
 # write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
-fast-coding run --project my-feature           # parallel OpenCode implementers, one clone each; `after:` tasks stack on their base
+fast-coding run --project my-feature           # parallel pi implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
 git merge fast/my-feature/001                  # accept what passed review, bottom layer first (or gh stack merge <pr> --yes once submitted)
 fast-coding clean --project my-feature         # remove worktrees and branches
@@ -48,7 +71,7 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
 
 1. Commit everything. `run` refuses a dirty tree because branches start from HEAD and `gh stack init` switches branches while registering.
    Install `gh extension install github/gh-stack` and set `git config rerere.enabled true`.
-2. Add an `opencode.jsonc` in the repo root so headless OpenCode does not block on a permission prompt:
+2. Only if a task will use OpenCode: add an `opencode.jsonc` in the repo root so headless OpenCode does not block on a permission prompt (pi runs tools without prompts):
    ```json
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
    ```
@@ -108,7 +131,7 @@ If you cannot write the test, it is not a task yet.
                      │  fast-coding run
                      ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │  DISPATCH   one clone + one OpenCode session per task; `after:` tasks    │
+  │  DISPATCH   one clone + one pi session per task; `after:` tasks         │
   │             start on their base task's branch as the next stack layer    │
   │                                                                          │
   │   task 001              task 002              task 003                   │

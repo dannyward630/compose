@@ -1,11 +1,11 @@
 ---
 name: fast-coding
-description: The full fast loop for a feature, from first question to verified stacked branches. Grill the user until the decisions are settled (GRILLING.md), plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers on a fast cheap model (gpt-oss-120b on OpenRouter's fastest host, through pi or OpenCode), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
+description: The full fast loop for a feature, from first question to verified stacked branches. Grill the user until the decisions are settled (GRILLING.md), plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # fast-coding
 
-You are the orchestrator. A fast cheap model inside a lean harness is the implementer. Verification is local; nothing is pushed.
+You are the orchestrator. The implementer is pi running gpt-oss-120b on Cerebras (through the OpenRouter preset `gpt-oss-120b-cerebras`); OpenCode or Claude can take a task via `model:`. Verification is local; nothing is pushed.
 This skill is the whole flow: the moment the user invokes it with a task, start at step 0 and carry it through to verified, stacked branches.
 
 | Who | Does | Never does |
