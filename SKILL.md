@@ -10,7 +10,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 | Who | Does | Never does |
 |---|---|---|
-| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, merge, take over escalated tasks | Type implementation a task file covers |
+| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, merge, re-split escalated tasks into smaller ones | Type implementation a task file covers, including an escalated one, unless the blocker is infrastructure |
 | Implementer (fast model via pi or OpenCode) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
 
@@ -84,7 +84,8 @@ Every line prints its clock time and duration. The last line is the cost ledger:
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
 
 ### 7. Escalate and clean
-A task that exhausts its attempts comes back with its full log. Fix it yourself using that log; do not re-dispatch it unchanged.
+A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed.
+Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. Say in the report which tasks you hand-implemented and why.
 `fast-coding clean --project <name>` removes worktrees and branches after merging. Stacks registered for merged branches disappear with them; `gh stack sync --prune` tidies the GitHub side if PRs were submitted.
 
 ## Task file format
