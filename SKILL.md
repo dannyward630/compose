@@ -1,6 +1,6 @@
 ---
 name: fast-coding
-description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b on Cerebras), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
+description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b via OpenRouter, pinned to Groq), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
 ---
 
 # fast-coding
@@ -58,7 +58,7 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
   "e2e_setup": "cd ... && python -m server.server", "e2e_setup_wait": 3, "e2e_env": {"API_KEY": "..."},
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
            "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
-  "review": true, "review_base": "main", "fix_model": "cerebras/gpt-oss-120b",
+  "review": true, "review_base": "main", "fix_model": "openrouter/openai/gpt-oss-120b",
   "review_context": "Design facts reviewers must respect, e.g. test credentials come from env by design and never reach the server."
 }
 ```
@@ -68,7 +68,7 @@ Passing is not done. Reject scope creep, gamed tests, site-specific hacks, and p
 4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check you write that reads the real DOM or run log. A DONE from the model is never the proof.
 5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. After N rounds it escalates to you with the findings. `--fix 0` reports only.
 
-Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (cerebras for implementers and fixes, openrouter for Mercury reviews and jev's text helper, typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
+Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (openrouter for implementers, fixes, Mercury reviews, and jev's text helper; cerebras when a task pins it; typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
 
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
 
@@ -85,7 +85,7 @@ title: Submit deny list
 files: extension/deny_list.js
 protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
-model: cerebras/gpt-oss-120b
+model: openrouter/openai/gpt-oss-120b
 after:
 ---
 

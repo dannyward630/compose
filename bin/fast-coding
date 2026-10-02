@@ -13,7 +13,7 @@ import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-DEFAULT_MODEL = "cerebras/gpt-oss-120b"
+DEFAULT_MODEL = "openrouter/openai/gpt-oss-120b"  # pinned to Groq, Cerebras fallback, in ~/.config/opencode/opencode.jsonc
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
 
 # ---------- output and cost ledger ----------
@@ -832,7 +832,7 @@ def main():
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=3)
         if name == "bench":
-            s.add_argument("--models", default="cerebras/gpt-oss-120b,cerebras/qwen-3.8-27b,claude",
+            s.add_argument("--models", default="openrouter/openai/gpt-oss-120b,cerebras/gpt-oss-120b,claude",
                            help="comma-separated OpenCode model ids; 'claude' = Claude Code one-shot on the subscription")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")

@@ -64,7 +64,7 @@ title: Snapshot port
 files: extension/snapshot.js
 protected: tests/snapshot.test.js
 test: node --test 'tests/**/*.test.js'
-model: cerebras/gpt-oss-120b
+model: openrouter/openai/gpt-oss-120b
 after:
 ---
 
@@ -172,7 +172,8 @@ If you cannot write the test, it is not a task yet.
     CLI                 red check, protected-file guard, timing, cost ledger
 ```
 
-Implementer model: `cerebras/gpt-oss-120b` through OpenCode (default since 2026-10-01; Qwen 3.8 27B cost about 4x more per token and Cerebras has no prompt caching, so every tool call resends the full context).
+Implementer model: `openrouter/openai/gpt-oss-120b` through OpenCode, pinned to Groq with Cerebras as the only fallback (default since 2026-10-02).
+Groq measures 342 t/s at 0.16 s latency with prompt caching at $0.15/$0.60 per M; Cerebras direct was 538 t/s at $0.35/$0.75 with no caching and a 150K tokens-per-minute dev-tier limit, which is what made Qwen 3.8 27B cost about $10 for one prototype build.
 With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
 Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
 Browser e2e: jev-ultrafast's `Agent`, with an independent `assert` command per case.
