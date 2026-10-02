@@ -1,6 +1,6 @@
 ---
 name: fast-coding
-description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b via OpenRouter, pinned to Groq), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
+description: Plan with a frontier model, implement with parallel OpenCode instances on a fast model (gpt-oss-120b via OpenRouter, pinned to Cerebras), verify locally with jev-ultrafast browser runs and a Mercury review. Use when the user says "fast-coding", "fast loop", "fan out to opencode", or wants a spec such as GRILLING.md and DESIGN.md turned into a plan and tiny numbered tasks that cheap fast models implement while Claude plans, tests, reviews, and verifies. Works in any repo.
 ---
 
 # fast-coding

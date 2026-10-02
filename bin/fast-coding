@@ -850,6 +850,11 @@ def cmd_verify(a):
         if tampered:
             sh(["git", "checkout", "--"] + tampered, repo, check=False)
             say(f"fix    reverted protected files the fixer touched: {', '.join(tampered)}")
+        new_docs = [f for f in sh(["git", "ls-files", "--others", "--exclude-standard"], repo, check=False).stdout.split() if DOC_RE.search(f)]
+        for f in new_docs:  # fixers, like implementers, never add documents
+            (repo / f).unlink()
+        if new_docs:
+            say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
         changed = sh(["git", "status", "--porcelain"], repo).stdout.strip()
         say(f"fix    done  {fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
         if changed:
