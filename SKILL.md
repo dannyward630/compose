@@ -49,7 +49,7 @@ Commit tests and task files before dispatching; independent tasks branch from HE
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
-`fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one OpenCode session each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, or a new document are fed back into the same session up to `--attempts` (default 3).
+`fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one implementer session (pi by default) each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, or a new document are fed back into the same session up to `--attempts` (default 3).
 Use `--only 003,004` for a subset. When the run ends, every chain of passed branches is registered as a `gh stack` (`(main) <- fast/<project>/001 <- fast/<project>/002`), printed on a `stack ok` line. `--no-stack` skips that, `--trunk` changes the base.
 Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, which pushes every branch and opens draft PRs: run it only when the user has explicitly asked for that push.
 
