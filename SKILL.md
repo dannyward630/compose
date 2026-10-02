@@ -120,6 +120,7 @@ One paragraph. What to build, where, exact export names.
 
 ## Rules
 - Tests are the contract. The implementer never edits them.
+- A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.
 - Fresh session per task. Never chain tasks in one session.

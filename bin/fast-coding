@@ -9,7 +9,7 @@ Layout inside any repo:
   .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib.request
+import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -112,7 +112,9 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
         part = ev.get("part", {})
         if ev.get("type") == "error":
             err = ev.get("error") or {}
-            errors.append(str((err.get("data") or {}).get("message") or err.get("name") or err))
+            data = err.get("data") or {}
+            payment_check("cerebras/groq via OpenRouter (OpenCode)", data.get("message") or json.dumps(err), data.get("statusCode"))
+            errors.append(str(data.get("message") or err.get("name") or err))
         elif ev.get("type") == "text":
             text.append(part.get("text", ""))
         elif ev.get("type") == "tool_use":
@@ -176,9 +178,11 @@ def pi_turn(cwd, model, prompt, session=None, timeout=600):
                 usage["cost"] += (last.get("cost") or {}).get("total") or 0.0
                 last = None
         elif t == "error" or ev.get("error"):
+            payment_check("openrouter (pi)", json.dumps(ev.get("error") or ev))
             errors.append(str(ev.get("error") or ev)[:300])
     if p.returncode and not text and not tools:
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]
+        payment_check("openrouter (pi)", " ".join(real))
         raise RuntimeError(f"pi failed: {' '.join(real)[-400:] or p.stdout.strip()[-400:]}")
     if not text and not tools and not usage["tokens_in"]:
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or p.stderr.strip()[-400:] or 'empty reply with no usage'}")
@@ -191,9 +195,42 @@ def pi_turn(cwd, model, prompt, session=None, timeout=600):
 
 def implementer(cwd, model, prompt, session=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi, anything else runs OpenCode."""
+    fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
+    if fake and os.environ.get("FAST_CODING_FAKE_402_MATCH", "") in prompt:
+        raise PaymentRequired(fake, "Payment required to access this resource (simulated)")
     if model.startswith("pi:"):
         return pi_turn(cwd, model[3:], prompt, session)
     return opencode(cwd, model, prompt, session)
+
+class PaymentRequired(Exception):
+    """A provider refused for billing reasons. Nothing retries this: the run halts, the state is saved, the user tops up, `resume` continues."""
+    def __init__(self, provider, message):
+        super().__init__(f"{provider}: {message}")
+        self.provider, self.message = provider, message
+
+PAY_RE = re.compile(r"payment required|insufficient[ _](credits?|quota|funds|balance)|credit balance|out of credits?|exceeded your current quota|"
+                    r"billing|\b402\b|account (is )?(suspended|disabled|past due)|top up", re.I)
+TOP_UP = {"openrouter": "https://openrouter.ai/settings/credits", "cerebras": "https://cloud.cerebras.ai (Billing)",
+          "typesafe": "https://typesafe.ai dashboard (Billing)", "groq": "https://console.groq.com (Billing)"}
+
+def payment_check(provider, text, status=None):
+    """Raise PaymentRequired when an HTTP status or an error message says the account cannot pay."""
+    if status == 402 or (text and PAY_RE.search(str(text))):
+        raise PaymentRequired(provider, str(text)[:300].strip() or f"HTTP {status}")
+
+def http_json(req, provider, timeout=90):
+    """urlopen that turns a 402 (or a 200 carrying a billing error) into PaymentRequired instead of a stack trace."""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")[:500]
+        payment_check(provider, body, e.code)
+        raise
+    err = out.get("error") if isinstance(out, dict) else None
+    if err:
+        payment_check(provider, json.dumps(err), (err.get("code") if isinstance(err, dict) else None))
+    return out
 
 class RateLimited(Exception):
     def __init__(self, usage):
@@ -346,6 +383,11 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             attempt -= 1
             time.sleep(wait)
             continue
+        except PaymentRequired as e:
+            say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
+            log.append({"attempt": attempt, "payment_required": {"provider": e.provider, "message": e.message}})
+            status = "payment_required"
+            break
         except Exception as e:  # noqa: BLE001
             say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
@@ -446,17 +488,26 @@ def register_stacks(repo, proj, trunk, submit=False):
         return []
     current = sh(["git", "branch", "--show-current"], repo).stdout.strip() or sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     done = []
+    gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     try:
         for chain in stack_chains(repo, proj):
-            p = subprocess.run(["gh", "stack", "init", "--base", trunk] + chain, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            # `init` refuses while the current branch, or any branch in the chain, is already in a stack. A chain that grew since
+            # the last run (resume, a later wave) is rebuilt: unstack locally from its bottom branch, keeping the GitHub side, then init.
+            sh(["git", "checkout", "-q", chain[0]], repo, check=False)
+            if gh("view", "--json").returncode == 0:
+                gh("unstack", "--local")
+            sh(["git", "checkout", "-q", current], repo, check=False)
+            p = gh("init", "--base", trunk, *chain)
             if p.returncode:
                 say(f"stack  FAIL  {' <- '.join(chain)}: {(p.stderr or p.stdout).strip()[-300:]}")
+                sh(["git", "checkout", "-q", current], repo, check=False)
                 continue
             say(f"stack  ok    ({trunk}) <- {' <- '.join(chain)}")
             if submit:
-                q = subprocess.run(["gh", "stack", "submit", "--auto"], cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                q = gh("submit", "--auto")
                 say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {chain[-1]}: {(q.stdout + q.stderr).strip()[-400:]}")
             done.append(chain)
+            sh(["git", "checkout", "-q", current], repo, check=False)  # init leaves the repo on the stack's top; next init needs trunk
     finally:
         sh(["git", "checkout", "-q", current], repo, check=False)
     return done
@@ -467,6 +518,25 @@ def cmd_stack(a):
     if not chains:
         print("stack  nothing to register: no unmerged task branches")
 
+def payment_halt(repo, proj, command, remaining, args, err):
+    """Save what is left to do, tell the user where to top up, exit 3. `fast-coding resume` picks it up."""
+    state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
+             "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    (proj / "results").mkdir(exist_ok=True)
+    (proj / "results" / "resume.json").write_text(json.dumps(state, indent=2))
+    key = next((k for k in TOP_UP if k in err.provider.lower()), None)
+    print()
+    print(f"PAYMENT REQUIRED  provider: {err.provider}")
+    print(f"  {err.message}")
+    if key:
+        print(f"  top up at: {TOP_UP[key]}")
+    if command == "run":
+        print(f"  stopped with {len(remaining)} task(s) left: {', '.join(remaining)}. Passed tasks keep their branches.")
+    else:
+        print("  stopped during verify; completed task branches are untouched.")
+    print(f"  then continue where it stopped:  fast-coding resume --repo {repo} --project {proj.name}")
+    sys.exit(3)
+
 def cmd_run(a):
     repo, proj = Path(a.repo).resolve(), project_dir(a)
     only = set(a.only.split(",")) if a.only else None
@@ -475,6 +545,9 @@ def cmd_run(a):
         sys.exit(f"no tasks in {proj / 'tasks'}")
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit tests and tasks first so worktrees include them")
+    run_tasks(repo, proj, tasks, a)
+
+def run_tasks(repo, proj, tasks, a):
     t0 = time.time()
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
@@ -482,15 +555,17 @@ def cmd_run(a):
     metas = {p: parse_task(p)[0] for p in tasks}
     ids = {m["id"] for m in metas.values()}
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
-    results, pending, failed_ids = [], dict(deps), set()
+    results, pending, failed_ids, halt = [], dict(deps), set(), None
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
         while pending or running:
-            ready = [p for p, d in pending.items() if not d and p not in running.values()]
+            ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values()]
             for p in ready:
                 del pending[p]
                 running[ex.submit(run_task, repo, proj, p, a.attempts)] = p
+            if halt and not running:
+                break  # a payment halt: leave the rest pending, do not mark them blocked
             if not running:
                 for p in pending:  # every remaining task waits on something that failed
                     results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
@@ -502,6 +577,9 @@ def cmd_run(a):
                 r = f.result()
                 results.append(r)
                 tid = metas[p]["id"]
+                if r["status"] == "payment_required":
+                    pay = next(x["payment_required"] for x in r["log"] if "payment_required" in x)
+                    halt = halt or PaymentRequired(pay["provider"], pay["message"])
                 if r["status"] != "passed":
                     failed_ids.add(tid)
                 for q in pending:
@@ -517,6 +595,11 @@ def cmd_run(a):
     say(LEDGER.line())
     if passed and not a.no_stack:
         register_stacks(repo, proj, a.trunk)
+    if halt:
+        done_ids = {r["id"] for r in results if r["status"] in ("passed", "already_green")}
+        remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
+        payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
+    (proj / "results" / "resume.json").unlink(missing_ok=True)
     (proj / "results" / "run-cost.json").write_text(json.dumps(LEDGER.snapshot(), indent=2))
     sys.exit(0 if passed == len(results) else 1)
 
@@ -547,8 +630,7 @@ def fast_json(env, system, user, max_tokens=1500):
     req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
                                  data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {env['TEXT_MODEL_API_KEY']}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=90) as r:
-        out = json.load(r)
+    out = http_json(req, "openrouter (Mercury review)")
     u = out.get("usage", {})
     LEDGER.add("openrouter", u.get("prompt_tokens", 0), u.get("completion_tokens", 0), u.get("cost"))
     content = ((out.get("choices") or [{}])[0].get("message") or {}).get("content")
@@ -586,6 +668,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
             # Small models sometimes return the issues array bare, or something else entirely; never let that crash the stage.
             issues = out.get("issues", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
             issues = [i for i in issues if isinstance(i, dict)]
+        except PaymentRequired:
+            raise
         except Exception as e:  # noqa: BLE001
             # A reviewer that fails to answer is a coverage gap to report, not a defect in the code under review.
             issues = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}]
@@ -607,6 +691,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
                           f"CLAIM: [{i['severity']}] {i['file']}: {i['note']}\n\nCODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n"
                           + ("The tests currently pass." if tests_pass else ""), max_tokens=500)
             i["confirmed"], i["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+        except PaymentRequired:
+            raise
         except Exception as e:  # noqa: BLE001
             i["confirmed"], i["evidence"] = False, f"confirm call failed: {e}"
         return i
@@ -656,8 +742,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
                                                       "state": {"task": meta.get("title", ""), "code": code[:150000]},
                                                       "questions": questions}).encode(),
                                      headers={"Authorization": f"Bearer {env['TYPESAFE_API_KEY']}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=90) as r:
-            out = json.load(r)
+        out = http_json(req, "typesafe (Jev acceptance)")
         model = out.get("model", model)
         u = out.get("usage", {}) or {}
         price = (cfg.get("prices") or {}).get("typesafe_per_call")
@@ -682,6 +767,8 @@ def jev_acceptance(cfg, proj, diff, repo=None):
                           'answer confirmed=false. Return JSON {"confirmed": bool, "evidence": str}.',
                           f"CRITERION: {r['criterion']}\n\nCODE:\n{code[:60000]}", max_tokens=500)
             r["confirmed"], r["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+        except PaymentRequired:
+            raise
         except Exception as e:  # noqa: BLE001
             r["confirmed"], r["evidence"] = False, f"confirm call failed: {e}"
         return r
@@ -708,6 +795,8 @@ def driver_e2e(case, repo):
                 os.killpg(os.getpgid(setup.pid), signal.SIGTERM)
             except Exception:  # noqa: BLE001
                 pass
+    if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
+        raise PaymentRequired("jev-ultrafast e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
     r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-4000:], "stderr": p.stderr[-2000:]}
     m = re.search(r"^E2E_RESULT (\{.*\})$", p.stdout, re.M)
     if m:
@@ -875,6 +964,12 @@ def cmd_verify(a):
     t0 = time.time()
     say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
+    try:
+        verify_rounds(repo, proj, cfg, a, rounds, t0)
+    except PaymentRequired as e:
+        payment_halt(repo, proj, "verify", [], {"fix": a.fix, "skip_e2e": a.skip_e2e, "skip_review": a.skip_review}, e)
+
+def verify_rounds(repo, proj, cfg, a, rounds, t0):
     for rnd in range(a.fix + 1):
         ok, report, findings = run_stages(repo, proj, cfg, a)
         rounds.append(report)
@@ -903,8 +998,12 @@ def cmd_verify(a):
             time.sleep(30)
             try:
                 _, reply, tools, usage = implementer(repo, model, prompt)
+            except PaymentRequired:
+                raise
             except Exception as e2:  # noqa: BLE001
                 reply, tools, usage = f"fix call failed: {e2}", 0, {"cost": 0.0}
+        except PaymentRequired:
+            raise
         except Exception as e:  # noqa: BLE001
             reply, tools, usage = f"fix call failed: {e}", 0, {"cost": 0.0}
         tampered = [f for f, d in digests(repo, protected).items() if d != before[f]]
@@ -926,11 +1025,34 @@ def cmd_verify(a):
     final = {"rounds": rounds, "passed": ok, "seconds": round(time.time() - t0, 1), "cost": LEDGER.snapshot()}
     (proj / "results").mkdir(exist_ok=True)
     (proj / "results" / "verify.json").write_text(json.dumps(final, indent=2))
+    (proj / "results" / "resume.json").unlink(missing_ok=True)
     say(f"verify {'PASS' if ok else 'FAIL'}  wall {fmt(final['seconds'])}  rounds={len(rounds)}")
     say(LEDGER.line())
     if not ok:
         print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
     sys.exit(0 if ok else 1)
+
+def cmd_resume(a):
+    """Continue a run or verify that stopped on PAYMENT REQUIRED, from the saved state in results/resume.json."""
+    repo, proj = Path(a.repo).resolve(), project_dir(a)
+    path = proj / "results" / "resume.json"
+    if not path.exists():
+        sys.exit("nothing to resume: no payment halt is recorded for this project")
+    state = json.loads(path.read_text())
+    say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
+    ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
+    if state["command"] == "run":
+        if sh(["git", "status", "--porcelain"], repo).stdout.strip():
+            sys.exit("repo has uncommitted changes; commit first")
+        tasks = sorted(p for p in (proj / "tasks").glob("*.md") if p.name.split("-")[0] in set(state["remaining"]))
+        if not tasks:
+            path.unlink()
+            sys.exit("nothing left to run; cleared the halt")
+        say(f"resume {len(tasks)} task(s): {', '.join(state['remaining'])}")
+        run_tasks(repo, proj, tasks, ns)
+    else:
+        ns.fix, ns.skip_e2e, ns.skip_review = state["args"]["fix"], state["args"]["skip_e2e"], state["args"]["skip_review"]
+        cmd_verify(ns)
 
 # ---------- bench ----------
 
@@ -1025,6 +1147,7 @@ def main():
                             ("run", cmd_run, "dispatch tasks to parallel OpenCode implementers"),
                             ("verify", cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
+                            ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches")):
         s = sub.add_parser(name, help=help_)

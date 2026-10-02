@@ -35,6 +35,7 @@ fast-coding init   --repo . --project <name>   # .fast-coding/<name>/{tasks,resu
 fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; registers gh stacks
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
+fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
 fast-coding clean  --repo . --project <name>
 ```
 
@@ -63,6 +64,19 @@ fast-coding verify --project my-feature        # checks, review, jev acceptance,
 git merge fast/my-feature/001                  # accept what passed review, bottom layer first (or gh stack merge <pr> --yes once submitted)
 fast-coding clean --project my-feature         # remove worktrees and branches
 ```
+
+### When a provider stops for billing
+
+Any provider call can come back with payment required: OpenRouter credits (implementers, fixer, Mercury reviews), Cerebras or Groq through OpenCode, TypeSafe (Jev acceptance), or the jev-ultrafast e2e driver's own calls.
+`run` and `verify` treat that as a halt, not a failure: no attempt is consumed, nothing is retried, running tasks finish, no new task starts, and the state goes to `.fast-coding/<project>/results/resume.json`.
+The banner names the provider, quotes its message, prints the top-up link, and lists what is left. Exit code is 3.
+
+```bash
+fast-coding resume --repo . --project <name>   # after topping up: runs the remaining tasks, or reruns the halted verify
+```
+
+Passed tasks keep their branches and are not rerun. A halted verify reruns from its first stage, since the stages are cheap and idempotent.
+`FAST_CODING_FAKE_402=openrouter` (optionally `FAST_CODING_FAKE_402_MATCH=<text in the task prompt>`) simulates the stop for testing.
 
 Useful flags: `run --only 003,004`, `run --attempts 4`, `run --parallel 8`, `verify --fix 0` (report only), `verify --skip-e2e`, `verify --skip-review`.
 Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, with every attempt's test output, timing, and cost.
