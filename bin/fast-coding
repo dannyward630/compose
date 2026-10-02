@@ -13,11 +13,11 @@ import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-DEFAULT_MODEL = "openrouter/openai/gpt-oss-120b"  # pinned to Cerebras, Groq fallback, in ~/.config/opencode/opencode.jsonc
+DEFAULT_MODEL = "pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras"  # pi harness; the OpenRouter preset pins Cerebras
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
-PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b:nitro": (0.35, 0.75)}
+PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75)}
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents
 
@@ -142,7 +142,7 @@ RATE_LIMIT_MARK = "exceeded the provider's size limit"
 def pi_turn(cwd, model, prompt, session=None, timeout=600):
     """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
     OpenCode's ~12K. Same contract as opencode(): (session, reply_text, tool_calls, usage). The session lives outside the
-    task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/openai/gpt-oss-120b:nitro."""
+    task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras."""
     sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
     sdir.mkdir(exist_ok=True)
     import uuid
@@ -1041,7 +1041,7 @@ def main():
             s.add_argument("--trunk", default="main")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes branches and opens draft PRs")
         if name == "bench":
-            s.add_argument("--models", default="openrouter/openai/gpt-oss-120b,pi:openrouter-fast/openai/gpt-oss-120b:nitro,claude",
+            s.add_argument("--models", default="pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,openrouter/openai/gpt-oss-120b,claude",
                            help="comma-separated model ids: OpenCode ids, 'pi:<provider/model>' for the pi harness, 'claude' = Claude Code one-shot")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")

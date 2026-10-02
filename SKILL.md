@@ -89,7 +89,7 @@ A task that exhausts its attempts comes back with its full log. Fix it yourself 
 
 ## Task file format
 
-`model:` is an OpenCode model id, `pi:<provider/model>` for the pi harness (lean: ~1K tokens of fixed context per turn), or `claude`. Omit it for the CLI default.
+`model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, which pins gpt-oss-120b to Cerebras through the OpenRouter preset `gpt-oss-120b-cerebras`.
 
 ```markdown
 ---
@@ -98,7 +98,7 @@ title: Submit deny list
 files: extension/deny_list.js
 protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
-model: openrouter/openai/gpt-oss-120b
+model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
 after:            # id of the task this one builds on; it becomes the next layer of that task's stack
 ---
 

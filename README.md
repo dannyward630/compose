@@ -53,7 +53,7 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
    ```
 3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key the jev-ultrafast `.env` uses as `TEXT_MODEL_API_KEY`.
-   pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `openai/gpt-oss-120b:nitro`, OpenRouter's fastest-host routing, priced at the Cerebras rate so the ledger is honest.
+   pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras`: an OpenRouter preset (dashboard, Settings > Presets) that pins provider order to Cerebras with fallbacks off, so a harness with no request-body options still gets the pinned host. Priced at the Cerebras rate so the ledger is honest.
    OpenCode pins the host explicitly instead: `~/.config/opencode/opencode.jsonc` sets `options.provider.order: ["cerebras", "groq"]` with fallbacks off.
 4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
 5. Add e2e cases only for browser-facing work, each with an `assert` command you wrote.
@@ -179,7 +179,7 @@ If you cannot write the test, it is not a task yet.
     CLI                 red check, protected-file guard, timing, cost ledger
 ```
 
-Implementer model: `openrouter/openai/gpt-oss-120b` through OpenCode, pinned to Cerebras with Groq as the only fallback (default since 2026-10-02). `pi:openrouter-fast/openai/gpt-oss-120b:nitro` runs the same model through the pi harness, whose fixed context per turn is about 1K tokens against OpenCode's 12K; pick it per task with `model:` or bench both.
+Implementer model: `pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` (default since 2026-10-02): gpt-oss-120b through the pi harness, with the OpenRouter preset `gpt-oss-120b-cerebras` pinning the host to Cerebras, fallbacks off. Bench on the frozen deny-list task, same host: pi 4.2 to 6.5 s (p50 5.0 s) at ~32K input tokens per task; OpenCode `openrouter/openai/gpt-oss-120b` (pinned in its own config) 8.5 to 11 s at ~100K, because its fixed context is ~12K tokens per turn against pi's ~1K. Both pass 100%. OpenCode stays available per task via `model:`.
 Groq measures 342 t/s at 0.16 s latency with prompt caching at $0.15/$0.60 per M; Cerebras direct was 538 t/s at $0.35/$0.75 with no caching and a 150K tokens-per-minute dev-tier limit, which is what made Qwen 3.8 27B cost about $10 for one prototype build.
 With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
 Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
