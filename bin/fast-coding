@@ -1353,6 +1353,22 @@ def cmd_done(a):
         res.write_text(json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
 
+def cmd_top(a):
+    """Check out the project's stack top in the CLI worktree and print its path, for manual testing of the whole feature
+    (nothing is merged, so the user's checkout never contains it). `--detach` returns the worktree to the trunk."""
+    proj = project_dir(a); repo = Path(a.repo).resolve()
+    trunk = current_branch(repo)
+    wt = stack_worktree(repo, proj, trunk)
+    if a.detach:
+        sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        print(f"{wt} detached at {trunk}")
+        return
+    chain = linearize(repo, proj, trunk, wt)
+    if not chain:
+        sys.exit("no unmerged layers; the trunk already is the top")
+    sh(["git", "checkout", "-q", "--detach", chain[-1]], wt)
+    print(f"stack top {chain[-1]} ({len(chain)} layers on {trunk}) checked out at:\n{wt}")
+
 def cmd_resume(a):
     """Continue a run or verify that stopped on PAYMENT REQUIRED, from the saved state in results/resume.json."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
@@ -1498,6 +1514,7 @@ def main():
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
+                            ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches")):
         s = sub.add_parser(name, help=help_)
@@ -1516,6 +1533,8 @@ def main():
         if name == "done":
             s.add_argument("--only", required=True, help="comma-separated task ids")
             s.add_argument("--note", required=True, help="why it was done by hand, e.g. 'provider out of credit'")
+        if name == "top":
+            s.add_argument("--detach", action="store_true")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":
