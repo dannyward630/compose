@@ -1,8 +1,44 @@
 # fast-coding
 
-A frontier model grills, plans, writes the tests, and reviews.
-Parallel pi instances on gpt-oss-120b, pinned to Cerebras, implement one tiny task each.
-Verification is local, and passed branches are registered as gh stacks. Nothing is pushed without an explicit `--submit`.
+fast-coding turns a feature idea into a reviewed, verified stack of small branches in one sitting.
+A frontier model does the thinking once, up front: it interviews you until the decisions are written down, plans, and writes a failing test for every tiny task.
+Then cheap fast models type the code in parallel, each boxed into one task, one test, a few named files, and 350 lines.
+A local pipeline checks, reviews, and drives a real browser before anything reaches you.
+You get a gh stack on your branch, one layer per task, each readable in a minute.
+
+## Why
+
+The expensive part of software is deciding and checking, not typing.
+fast-coding spends the frontier model only on deciding and checking, and makes the typing nearly free: about a cent per task on the prototype that built it.
+
+Against a single Claude session:
+
+- **Cheaper and parallel.** One Claude session is one worker on a subscription with rate limits. fast-coding runs eight implementers at once for cents and leaves the subscription for the planning and review only a frontier model does well.
+- **Tests before code, by construction.** The test exists and fails before an implementer starts, with holdout cases it cannot see. A lone model tends to write code, then tests that fit the code.
+- **Scope cannot creep.** Each task is physically fenced: named files only, protected tests untouched, under 350 changed lines, no documents. A long single session drifts; this cannot.
+- **Review-sized output.** One stack per feature, one layer per task, in dependency order. A 2,000-line branch becomes ten 100-line layers.
+- **Verification that is not the model's opinion.** Four parallel fast-model reviews with a confirmation pass that must quote the code, Jev acceptance over every criterion, a real browser run with an independent assertion you wrote, and a fix loop. A "done" from any model is never the proof.
+- **Honest accounting.** Every run ends with wall time per task and dollars per provider at the real pinned rate.
+
+## When
+
+Use it for features that decompose into independent small pieces with clear tests: new endpoints, a module plus its callers, a fixture plus the code that handles it, a batch of related fixes, a prototype you may throw away.
+Use it for anything you want to review as a stack rather than a blob.
+
+Do not use it for one-line fixes or exploratory debugging, where the overhead beats the benefit; for work where the test cannot be written first, which means it is not a task yet; or for changes to one hot file every task would need, since tasks never share files.
+
+## How
+
+Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
+With no `GRILLING.md`, it grills you one question at a time with a recommendation on each until the decisions are settled, then writes the plan and the tasks with their tests and shows you the plan.
+It dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
+You read the stack and say what to merge; it merges bottom up, or `stack --submit` opens the draft PRs when you ask.
+A provider out of credit halts the run with the top-up link, and `resume` continues where it stopped.
+A task that fails three attempts is re-split into smaller tasks, not typed by hand.
+
+The speed and cost figures in this file come from small benchmark tasks and one prototype; every real run prints its own, and those are the ones to trust.
+
+## Pieces
 
 ## Requirements
 
@@ -36,6 +72,7 @@ fast-coding run    --repo . --project <name>   # one clone + one pi session per 
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
+fast-coding status --repo . [--project <name>] [--watch]   # projects, their tasks, state, attempts, time, cost, stack layer; --watch refreshes
 fast-coding clean  --repo . --project <name>
 ```
 

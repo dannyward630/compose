@@ -88,7 +88,8 @@ Fix what fails, re-run. Only then tell the user it is done, with the verify outp
 
 ### 7. Escalate and clean
 A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed.
-Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. Say in the report which tasks you hand-implemented and why.
+Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. When you do, record it: `fast-coding done --project <name> --only 024,025 --note "provider out of credit"`, so `fast-coding status` shows the truth, and say so in the report.
+`fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory.
 `fast-coding clean --project <name>` removes worktrees and branches after merging. Stacks registered for merged branches disappear with them; `gh stack sync --prune` tidies the GitHub side if PRs were submitted.
 
 ## Task file format
