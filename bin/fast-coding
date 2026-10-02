@@ -1488,13 +1488,28 @@ def cmd_init(a):
     sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
     print(f"initialised {proj}\nwork in {wt} from now on: plan, tests, tasks, every command with --repo {wt} (or any checkout with --project {name})")
 
-def merged_into(repo, branch, targets):
-    """True when `branch` is contained in any of `targets` (local or remote refs that exist)."""
+def merge_evidence(repo, branch, targets, has_remote):
+    """Why a branch counts as merged, or None. Two independent signals, either suffices:
+    git ancestry (fast-forward and merge-commit merges), or a merged pull request for the branch on GitHub (covers squash
+    and rebase merges, where the commits are rewritten and ancestry says nothing). Any doubt means not merged."""
     for t in targets:
         if sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode == 0 \
                 and sh(["git", "merge-base", "--is-ancestor", branch, t], repo, check=False).returncode == 0:
-            return True
-    return False
+            return f"contained in {t}"
+    if has_remote:
+        p = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "merged", "--json", "number,mergedAt", "--limit", "1"],
+                           cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if p.returncode == 0:
+            try:
+                prs = json.loads(p.stdout or "[]")
+            except json.JSONDecodeError:
+                prs = []
+            if prs:
+                return f"PR #{prs[0]['number']} merged {str(prs[0].get('mergedAt', ''))[:10]}"
+    return None
+
+def merged_into(repo, branch, targets, has_remote=False):
+    return merge_evidence(repo, branch, targets, has_remote) is not None
 
 def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
@@ -1502,7 +1517,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     project branch itself are merged, the project worktree and branch. Unmerged work is kept and named."""
     import shutil
     repo = wt
-    if sh(["git", "remote"], repo, check=False).stdout.strip():
+    has_remote = bool(sh(["git", "remote"], repo, check=False).stdout.strip())
+    if has_remote:
         sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = current_branch(repo)
     for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
@@ -1516,22 +1532,23 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
         if "-bench-" in b:  # bench runs are measurements, never work to keep
             sh(["git", "branch", "-D", b], repo, check=False)
             continue
-        if merged_into(repo, b, targets) or delete_unmerged:
-            if delete_unmerged and not merged_into(repo, b, targets):
-                print(f"clean  deleting UNMERGED layer {b} (--delete-unmerged); any PR for it on GitHub is unaffected")
+        why = merge_evidence(repo, b, targets, has_remote)
+        if why or delete_unmerged:
+            print(f"clean  {b}: {why if why else 'UNMERGED, deleted on --delete-unmerged; any PR on GitHub is unaffected'}")
             sh(["git", "branch", "-D", b], repo, check=False)
         else:
             kept.append(b)
     line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
     project_branch = f"fast-coding/{name}"
     if wt != main_repo and not kept and trunk == project_branch:
-        if merged_into(main_repo, project_branch, ["main", "origin/main", "master", "origin/master", current_branch(main_repo)]):
+        why = merge_evidence(main_repo, project_branch, ["main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
+        if why:
             sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists():
                 shutil.rmtree(wt, ignore_errors=True)
             sh(["git", "worktree", "prune"], main_repo, check=False)
             sh(["git", "branch", "-D", project_branch], main_repo, check=False)
-            line += f"; project branch merged: removed worktree {wt} and branch {project_branch}"
+            line += f"; project branch {why}: removed worktree {wt} and branch {project_branch}"
         else:
             line += f"; project branch {project_branch} not merged yet: worktree kept"
     print(line)
