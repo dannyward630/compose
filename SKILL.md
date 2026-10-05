@@ -1,6 +1,6 @@
 ---
 name: fast-coding
-description: The full fast loop for a feature, from first question to verified stacked branches. Grill the user until the decisions are settled (GRILLING.md), plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
+description: The full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until the decisions are settled, as tickets on the repo's Linear project, plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack, and keep every task's Linear issue in step. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # fast-coding
@@ -10,29 +10,41 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 | Who | Does | Never does |
 |---|---|---|
-| You (orchestrator) | Grill the user, write the spec and plan, split into tasks, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
+| You (orchestrator) | Find the way with the user (wayfinder), write the spec and plan, split into tasks, mirror the feature and every task on Linear and move them through its states, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
 | Implementer (fast model via pi or OpenCode) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
 
+### 0. Know the repo's Linear project
+Everything that would be a ticket lives on Linear, never as files in the repo: the feature, its decision tickets, its tasks.
+Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
+If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another), and commit it on the user's branch before anything else.
+All Linear reads and writes are yours, through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`). The CLI never talks to Linear.
+
 ### 0a. Put the work in a project, in its own worktree
 A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
+- Every project has one **feature issue** on Linear: a top-level issue in the repo's Linear project, title in the user's words, labelled `wayfinder:map`, holding the wayfinder map body. Create it when you create the project and record its identifier (`ENG-123`) in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Decision tickets and tasks are its sub-issues, so the whole feature reads as one tree in Linear.
 - From then on everything you do for this project happens in that worktree: GRILLING.md additions, the plan, task files, acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
 - The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
 - Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
 `fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
 
-### 0b. Grill first when the decisions are not written down
-Look for a settled spec in the repo: `GRILLING.md` or `DESIGN.md` (or any file a grilling session produced, such as `docs/decisions/` from `grill-with-docs`).
-If none exists for this piece of work, do not plan yet: invoke the `grilling` skill (or `grill-with-docs` when the user wants ADRs and a glossary as a by-product) and interview the user until the decision tree is resolved, one question at a time, with your recommendation on each.
-Record the outcome in `GRILLING.md` in the repo, with absolute paths for every folder it names, then continue to step 1.
-If a spec exists, read it and do not reopen its decisions. Grill only the decisions it leaves open that the plan needs.
+### 0b. Find the way first when the decisions are not written down
+A settled spec is a feature issue whose map says the way is clear: no open decision sub-issues, and `## Not yet specified` empty. A repo file (`DESIGN.md`, a PRD) counts too when the user points at it.
+If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the feature issue as the map. Wayfinder's tracker is Linear here, and this is how its operations map:
+- the **map** is the feature issue; its description is the map body (Destination, Notes, Decisions so far, Not yet specified, Out of scope)
+- a **ticket** is a sub-issue of the feature issue, labelled `wayfinder:<type>` (`research`, `prototype`, `grilling`, `task`), body `## Question`
+- **blocking** is Linear's native "blocked by" relation (`save_issue` with `blockedBy`), so the frontier shows in Linear's own UI
+- the **frontier** is `list_issues` on the feature's sub-issues: open, no unresolved blockers, unassigned
+- **claim** by assigning the ticket to the user; **resolve** by posting the answer as a comment, setting the state to Done, and appending the one-line gist to the map's Decisions so far
+Wayfinder resolves one ticket per session, with the user, one question at a time and your recommendation on each; the grilling it runs is HITL, never answer for the user. When it reports no fog (the way is already clear in one sitting), its grilling is the spec: write the decisions into the map's Decisions so far and continue to step 1.
+If a spec exists, read it and do not reopen its decisions. Open a decision ticket only for what it leaves open that the plan needs.
 
 ### 1. Plan from the spec
-Input is `GRILLING.md`, `DESIGN.md`, a ticket, a PRD, whatever step 0 left or the repo already had.
+Input is the feature issue's map and resolved tickets, plus `DESIGN.md`, a PRD, whatever the repo already had.
 Read all of it. Then invoke `superpowers:writing-plans` and write the plan to `.fast-coding/<project>/plan.md` inside the project's worktree, committed on `fast-coding/<project>`.
 `<project>` is a short slug for this piece of work, one repo can hold several.
 The plan follows writing-plans conventions: numbered steps, each with files touched, the test that proves it, and explicit dependencies.
@@ -49,6 +61,7 @@ A task is right-sized when all of these hold:
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
 - it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
+Each task is also a **task issue** on Linear: a sub-issue of the feature issue, labelled `fast-coding:task`, state Todo, title equal to the task's title, description equal to the task file body (Goal, Acceptance criteria, Test plan, Constraints), with `blockedBy` set to the `after:` task's issue. Create it with `save_issue` when you write the task file and put its identifier in the file's `linear:` field. The task file is the CLI's contract; the issue is where humans watch it. Keep both saying the same thing: edit one, edit the other.
 One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them.
 
 ### 3. Write the tests first (red)
@@ -59,7 +72,7 @@ Commit tests and task files before dispatching; independent tasks branch from HE
 
 ### 3b. The user reviews the tasks before anything runs
 Run `fast-coding tasks --repo <path> --project <name>` and show the user its output: every task's id, title, the files it owns, what it builds on, and its test, in stack order, with a warning for any file two tasks claim. Add one line per task saying what its holdout cases cover, in words.
-Then stop and wait. The user may combine tasks, split them, reorder the stack, change file ownership, or drop one. Apply the changes, re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
+Then stop and wait. The user may combine tasks, split them, reorder the stack, change file ownership, or drop one, here or in Linear. Apply the changes to the task files and their issues (a dropped task's issue is Canceled), re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
@@ -67,6 +80,7 @@ Green is the implementer's job. Refactor is yours, through review and the verify
 The trunk is the branch the user is on when you run it (`--trunk` overrides). That checkout is never switched: clones are separate repos, and every `gh stack` operation runs in a CLI-owned detached worktree under `.fast-coding/<project>/worktrees/.stackroot`, with the stack state mirrored into the user's `.git` so `gh stack view` works from a task branch there.
 When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration.
 Use `--only 003,004` for a subset.
+Linear follows the run from your side, since the CLI does not talk to it: right before `run`, move every task you are dispatching to In Progress. When `run` ends, read `results/NNN.json` and move each passed task to In Review with a comment naming its branch, attempts, and cost; a failed task stays In Progress with a comment that gives the failure in one paragraph (step 7 decides what happens to it). A user looking at the feature issue in Linear sees the stack's state without asking you.
 Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, which pushes every branch and opens draft PRs: run it only when the user has explicitly asked for that push.
 
 ### 5. Review
@@ -102,10 +116,10 @@ Every line prints its clock time and duration. The last line is the cost ledger:
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
 
 ### 7. Escalate and clean
-A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed.
+A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed. The exhausted task's issue is Canceled with a comment pointing at the issues that replace it; the new tasks get their own issues, blocked by whatever the old one was blocked by.
 Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. When you do, record it: `fast-coding done --project <name> --only 024,025 --note "provider out of credit"`, so `fast-coding status` shows the truth, and say so in the report.
 `fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory.
-`fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature.
+`fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature. Then move each merged task's issue to Done, and the feature issue to Done once every layer and the project branch are merged. A task you did by hand (`fast-coding done`) goes to Done with the same note.
 
 ## Task file format
 
@@ -120,6 +134,7 @@ protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
 model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
 after:            # id of the task this one builds on; it becomes the next layer of that task's stack
+linear: ENG-124   # this task's Linear issue, a sub-issue of the feature issue, blocked by `after:`'s issue
 ---
 
 ## Goal
@@ -139,6 +154,7 @@ One paragraph. What to build, where, exact export names.
 
 ## Rules
 - Tests are the contract. The implementer never edits them.
+- Linear is the ticket tracker. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step: Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.

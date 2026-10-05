@@ -1288,10 +1288,11 @@ def cmd_tasks(a):
     if not tasks:
         sys.exit(f"no tasks in {proj / 'tasks'}")
     print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(m['id'] for m in tasks)}")
-    print(f"  {'id':4} {'title':40} {'after':10} files | protected | test")
+    print(f"  {'id':4} {'title':40} {'after':10} {'linear':9} files | protected | test")
     for m in tasks:
         after = str(m.get("after") or "").strip() or "-"
-        print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {', '.join(m['files']) or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
+        linear = str(m.get("linear") or "").strip() or "-"
+        print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {linear:9} {', '.join(m['files']) or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
     # Only tasks still to run can clash; a later wave may legitimately touch a file an already-merged task owned.
     trunk_head = sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     open_tasks = [m for m in tasks if task_state(repo, proj, m, trunk_head)["state"].split(" ")[0] not in ("merged", "hand_done", "already_green")]

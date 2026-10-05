@@ -30,7 +30,9 @@ Do not use it for one-line fixes or exploratory debugging, where the overhead be
 ## How
 
 Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
-With no `GRILLING.md`, it grills you one question at a time with a recommendation on each until the decisions are settled, then writes the plan and the tasks with their tests and shows you the plan.
+It first asks for the repo's Linear project link once (kept in `.fast-coding/linear.json`) and opens one feature issue there per project.
+With no settled spec, it runs wayfinder: the open decisions become sub-issues of the feature issue, worked with you one question at a time with a recommendation on each, until the way is clear; then it writes the plan and the tasks with their tests and shows you the plan.
+Every task is a sub-issue of the feature issue too, moved to In Progress when dispatched, In Review when its layer passes, and Done when its PR merges, so the feature's progress is visible in Linear without asking.
 It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can combine, split, reorder, or drop tasks first.
 Then it dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
 You read the stack; when you say so, `stack --submit` pushes it and opens one draft PR per layer. A human reviewer reads them bottom-up on GitHub and decides whether the stack merges. fast-coding never merges.
@@ -119,7 +121,7 @@ Merging is a human decision on GitHub: `stack --submit` opens one draft PR per l
 Open Claude Code in the repo and ask for the skill:
 
 ```
-/fast-coding plan and build <feature> from GRILLING.md and DESIGN.md
+/fast-coding plan and build <feature> from ENG-123 and DESIGN.md
 ```
 
 Claude reads the spec, writes `.fast-coding/<project>/plan.md`, splits it into task files, writes the acceptance tests, dispatches, reviews each diff, runs verify, and reports with timing and cost.
@@ -205,7 +207,7 @@ If you cannot write the test, it is not a task yet.
 ```
                           ORCHESTRATOR  (Claude, frontier)
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │  spec (GRILLING.md, DESIGN.md, ticket)                                   │
+  │  spec (Linear feature issue + wayfinder tickets, DESIGN.md, PRD)         │
   │     │                                                                    │
   │     ▼                                                                    │
   │  plan.md ──▶ tasks/001.md 002.md 003.md ...   (goal, ACs, test plan)     │
