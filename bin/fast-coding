@@ -225,12 +225,15 @@ def pi_turn(cwd, model, prompt, session=None, timeout=300):
         raise RateLimited(usage)
     return sid, "\n".join(text), tools, usage
 
-def implementer(cwd, model, prompt, session=None):
-    """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi, anything else runs OpenCode."""
+def implementer(cwd, model, prompt, session=None, task=None):
+    """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
+    is inside herdr and `task` names the project's space), anything else runs OpenCode."""
     fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
     if fake and os.environ.get("FAST_CODING_FAKE_402_MATCH", "") in prompt:
         raise PaymentRequired(fake, "Payment required to access this resource (simulated)")
     if model.startswith("pi:"):
+        if herdr_env() and task and task.get("space"):
+            return herdr_pi(cwd, model[3:], prompt, session, task)
         return pi_turn(cwd, model[3:], prompt, session)
     return opencode(cwd, model, prompt, session)
 
@@ -286,6 +289,214 @@ def claude_once(cwd, prompt, timeout=900):
     LEDGER.add("claude-subscription", tokens_in, usage.get("output_tokens", 0), 0.0)
     return None, str(out.get("result", ""))[-1500:], out.get("num_turns", 0), {"tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
                                                                                 "cost": 0.0, "reference_cost": out.get("total_cost_usd")}
+
+# ---------- herdr ----------
+# Inside herdr (HERDR_ENV=1) the fleet is visible: one space per project, a `status` tab, one tab per task holding a named
+# interactive pi agent the orchestrator can steer with `herdr agent prompt`, and a verify tab of stage panes. Every call
+# here is best-effort: outside herdr, or when herdr refuses, the run continues exactly as the headless path would.
+
+HERDR_SPACES = {}  # project name -> workspace id, filled by herdr_space
+PI_HERDR_EXT = Path.home() / ".pi" / "agent" / "extensions" / "herdr-agent-state.ts"
+
+def herdr_env():
+    return os.environ.get("HERDR_ENV") == "1" and bool(os.environ.get("HERDR_SOCKET_PATH"))
+
+def herdr(*args, check=False, timeout=120):
+    """One herdr CLI call. Returns the JSON `result`, or None when not inside herdr or the call failed (raises if check)."""
+    if not herdr_env():
+        return None
+    try:
+        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        if check:
+            raise RuntimeError(f"herdr {' '.join(map(str, args[:2]))}: {e}")
+        return None
+    try:
+        out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        out = {}
+    if p.returncode or "error" in out:
+        if check:
+            raise RuntimeError(f"herdr {' '.join(map(str, args[:2]))}: {(out.get('error') or {}).get('code') or p.stderr.strip()[-200:]}")
+        return None
+    return out.get("result", out)
+
+def herdr_error(*args, timeout=120):
+    """Like herdr() but returns the error code string on failure ("timeout", "agent_blocked", ...) instead of None."""
+    p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    try:
+        out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        out = {}
+    if p.returncode or "error" in out:
+        return None, ((out.get("error") or {}).get("code") or p.stderr.strip()[-200:] or "error")
+    return out.get("result", out), None
+
+def agent_name(slug, tid):
+    """herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents. `<slug>-<id>`, slug trimmed to fit."""
+    s = re.sub(r"[^a-z0-9_-]+", "-", slug.lower()).strip("-")
+    if not re.match(r"[a-z]", s):
+        s = "fc-" + s
+    return f"{s[:32 - len(tid) - 1]}-{tid}"
+
+def parse_pi_session(path, seen):
+    """Read the pi session JSONL from line `seen` on: assistant text, tool calls, usage, and provider errors of the new turns.
+    Same accounting as pi_turn, so the ledger and cost line do not depend on which path ran the task."""
+    text, tools, usage, errors = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, []
+    lines = Path(path).read_text().splitlines() if Path(path).exists() else []
+    for ln in lines[seen:]:
+        try:
+            ev = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        m = ev.get("message") or {}
+        if ev.get("type") != "message" or m.get("role") != "assistant":
+            continue
+        for part in m.get("content") or []:
+            if part.get("type") == "text":
+                text.append(part.get("text", ""))
+            elif part.get("type") == "toolCall":
+                tools += 1
+        u = m.get("usage") or {}
+        usage["tokens_in"] += u.get("input", 0) + u.get("cacheRead", 0) + u.get("cacheWrite", 0)
+        usage["tokens_out"] += u.get("output", 0) + u.get("reasoning", 0)
+        usage["cost"] += (u.get("cost") or {}).get("total") or 0.0
+        if m.get("stopReason") == "error":
+            err = str(m.get("errorMessage") or "provider error")
+            payment_check("openrouter (pi)", err)
+            errors.append(err[:300])
+    return len(lines), "\n".join(text), tools, usage, errors
+
+def herdr_main_repo(wt):
+    common = sh(["git", "rev-parse", "--git-common-dir"], wt, check=False).stdout.strip()
+    return str(Path(wt, common).resolve().parent) if common else str(wt)
+
+def herdr_find_space(wt):
+    """The workspace id showing this checkout: a worktree workspace by path, else any workspace whose cwd is the path."""
+    wt = str(Path(wt).resolve())
+    for w in (herdr("worktree", "list", "--cwd", wt) or {}).get("worktrees", []) or []:
+        if str(Path(w.get("path") or w.get("worktree_path") or "").resolve() if (w.get("path") or w.get("worktree_path")) else "") == wt:
+            return w.get("workspace_id") or (w.get("workspace") or {}).get("workspace_id")
+    for w in (herdr("workspace", "list") or {}).get("workspaces", []):
+        got = herdr("workspace", "get", w["workspace_id"]) or {}
+        cwd = (got.get("workspace") or got).get("cwd") or ""
+        if cwd and str(Path(cwd).resolve()) == wt:
+            return w["workspace_id"]
+    return None
+
+def herdr_space(wt, slug):
+    """Open the project's worktree as its own herdr space labelled `<slug>`, grouped under the repo's space. Idempotent."""
+    if not herdr_env():
+        return None
+    if slug in HERDR_SPACES:
+        return HERDR_SPACES[slug]
+    wt = Path(wt).resolve()
+    space = herdr_find_space(wt)
+    if not space:
+        r = herdr("worktree", "open", "--cwd", herdr_main_repo(wt), "--path", str(wt), "--label", slug, "--no-focus") or {}
+        space = (r.get("workspace") or {}).get("workspace_id") or r.get("workspace_id")
+    if not space:
+        r = herdr("workspace", "create", "--cwd", str(wt), "--label", slug, "--no-focus") or {}
+        space = (r.get("workspace") or {}).get("workspace_id")
+    if space:
+        HERDR_SPACES[slug] = space
+        herdr("workspace", "rename", space, slug)
+        herdr_status_tab(space, wt, slug)
+    return space
+
+def herdr_tabs(space):
+    return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
+
+def herdr_status_tab(space, wt, slug):
+    """A `status` tab running `fast-coding status --watch`, so the captain sees every task's state without asking."""
+    if "status" in herdr_tabs(space):
+        return
+    r = herdr("tab", "create", "--workspace", space, "--label", "status", "--cwd", str(wt), "--no-focus") or {}
+    pane = (r.get("root_pane") or {}).get("pane_id")
+    if pane:
+        me = str(Path(sys.argv[0]).resolve())
+        herdr("pane", "run", pane, f"clear; {me} status --repo {wt} --project {slug} --watch")
+
+def herdr_label(session, label, cost, state="working"):
+    """Display-only pane metadata: the state label the captain reads next to the agent, and the running cost."""
+    if session and session.get("pane"):
+        herdr("pane", "report-metadata", session["pane"], "--source", "fast-coding", "--state-label", f"{state}={label}",
+              "--state-label", f"done={label}", "--token", f"cost=${cost:.4f}")
+
+def herdr_pi(cwd, model, prompt, session, task, timeout=300):
+    """One turn of an interactive pi running as a named herdr agent in its own tab of the project's space.
+    Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
+    and the pi session file the turn's text and usage are read from. The orchestrator steers the same agent with
+    `herdr agent prompt <name> ...` between the CLI's own prompts."""
+    meta, proj = task["meta"], task["proj"]
+    tid, name = meta["id"], agent_name(proj.name, meta["id"])
+    title = f"{tid} {meta.get('title', '')}".strip()[:60]
+    if session is None:
+        old = herdr("agent", "get", name)
+        if old:  # a previous run's agent for this task: its tab goes, the name is reused
+            herdr("tab", "close", (old.get("agent") or old).get("tab_id"))
+        env = dict(os.environ)
+        if "OPENROUTER_API_KEY" not in env and (JEV_DIR / ".env").exists():
+            env["OPENROUTER_API_KEY"] = load_env(JEV_DIR / ".env").get("TEXT_MODEL_API_KEY", "").strip('"')
+        tab = herdr("tab", "create", "--workspace", task["space"], "--label", title, "--cwd", str(cwd),
+                    *(["--env", f"OPENROUTER_API_KEY={env['OPENROUTER_API_KEY']}"] if env.get("OPENROUTER_API_KEY") else []), "--no-focus", check=True)
+        pane = tab["root_pane"]["pane_id"]
+        sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
+        sdir.mkdir(exist_ok=True)
+        import uuid
+        args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []),
+                "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
+        started = herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args, check=True, timeout=90)
+        sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
+        session = {"name": name, "pane": pane, "tab": tab["tab"]["tab_id"], "sfile": sfile, "seen": 0}
+        herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
+    for attempt in range(2):
+        result, err = herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
+        if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
+            herdr("agent", "send-keys", session["name"], "esc")
+            time.sleep(1)
+            continue
+        break
+    if err == "timeout" or err == "agent_prompt_stalled":
+        herdr("agent", "send-keys", session["name"], "esc")
+        herdr("tab", "close", session["tab"])
+        raise subprocess.TimeoutExpired("herdr agent prompt", timeout)
+    if err:
+        raise RuntimeError(f"herdr agent prompt {session['name']}: {err}")
+    if not session.get("sfile"):
+        got = herdr("agent", "get", session["name"]) or {}
+        session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
+    session["seen"], text, tools, usage, errors = parse_pi_session(session["sfile"] or "", session["seen"])
+    if not text and not tools and not usage["tokens_in"]:
+        raise RuntimeError(f"provider refused the request: {'; '.join(errors) or 'empty turn with no usage'}")
+    if model in PRICES:
+        usage["cost"] = (usage["tokens_in"] * PRICES[model][0] + usage["tokens_out"] * PRICES[model][1]) / 1e6
+    LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
+    if any("rate" in e.lower() and "limit" in e.lower() for e in errors):
+        raise RateLimited(usage)
+    return session, text, tools, usage
+
+def herdr_verify_panes(space, wt, names):
+    """A `verify HH:MM` tab with one pane per stage, each a plain shell the CLI reports states for. {name: pane_id}."""
+    if not space or not names:
+        return {}
+    r = herdr("tab", "create", "--workspace", space, "--label", f"verify {time.strftime('%H:%M')}", "--cwd", str(wt), "--no-focus") or {}
+    pane = (r.get("root_pane") or {}).get("pane_id")
+    if not pane:
+        return {}
+    panes, prev = {names[0]: pane}, pane
+    for n in names[1:]:
+        s = herdr("pane", "split", prev, "--direction", "down", "--cwd", str(wt), "--no-focus") or {}
+        prev = (s.get("pane") or {}).get("pane_id") or prev
+        panes[n] = prev
+    for n, pid in panes.items():
+        herdr("pane", "rename", pid, n)
+        herdr_stage(panes, n, "idle", "pending")
+    return panes
+
+def herdr_stage(panes, name, state, message=""):
+    if panes.get(name):
+        herdr("pane", "report-agent", panes[name], "--source", "fast-coding", "--agent", name, "--state", state, "--message", message, "--seq", str(time.time_ns()))
 
 def graft_pack(wt, query, repo=None, limit=6):
     """Context pack from a graft graph, $0 and no model. graft/ is git-ignored, so a worktree gets its own graph:
@@ -422,7 +633,7 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             if meta["model"] == "claude":
                 session, reply, tools, usage = claude_once(wt, prompt)
             else:
-                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session)
+                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)})
         except RateLimited as e:
             cost += e.usage["cost"]
             rate_waits += 1
@@ -462,6 +673,8 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
         progress("running")
+        if isinstance(session, dict):
+            herdr_label(session, f"attempt {attempt}/{attempts}", cost)
         over = lines > MAX_DIFF_LINES
         verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray else "fail"
         say(f"{tid} attempt {attempt} {verdict}  {fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
@@ -509,6 +722,8 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     diff = sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
+    if isinstance(session, dict):
+        herdr_label(session, status, cost, state="idle")
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
@@ -695,6 +910,7 @@ def run_tasks(repo, proj, tasks, a):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
+    herdr_space(repo, proj.name)
     t0 = time.time()
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
@@ -1011,6 +1227,11 @@ def review_inputs(repo, proj, cfg):
 def run_stages(repo, proj, cfg, a):
     """One pass: checks (cheap, exact), then e2e (strongest signal, before the model-call burst), then review, then acceptance."""
     report, ok, findings = {"checks": [], "e2e": [], "review": None, "acceptance": None}, True, []
+    e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
+    stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
+        + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
+    panes = herdr_verify_panes(herdr_space(repo, proj.name), repo, stages)
+    herdr_stage(panes, "checks", "working")
     for c in cfg.get("checks", []):
         t1 = time.time()
         p = sh(c, repo, timeout=900, check=False)
@@ -1021,6 +1242,7 @@ def run_stages(repo, proj, cfg, a):
         if p.returncode:
             findings.append(f"Command failed: {c}\n{out}")
     checks_pass = all(c["exit"] == 0 for c in report["checks"])
+    herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
     if not a.skip_e2e and cfg.get("e2e"):
         stage_setup = None
         if cfg.get("e2e_setup"):
@@ -1030,12 +1252,15 @@ def run_stages(repo, proj, cfg, a):
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             time.sleep(cfg.get("e2e_setup_wait", 3))
         try:
-            for case in cfg.get("e2e", []):
+            for i, case in enumerate(cfg.get("e2e", [])):
                 t1 = time.time()
+                stage = f"e2e {case.get('name', i)}"[:40]
+                herdr_stage(panes, stage, "working")
                 r = jev_e2e({**case, "env": {**(cfg.get("e2e_env") or {}), **(case.get("env") or {})}}, repo)
                 r["seconds"] = round(time.time() - t1, 1)
                 report["e2e"].append(r)
                 ok &= r["exit"] == 0
+                herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", "ok" if r["exit"] == 0 else "FAIL")
                 run = r.get("run") or {}
                 say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
                     f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
@@ -1053,11 +1278,13 @@ def run_stages(repo, proj, cfg, a):
                     pass
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
+        herdr_stage(panes, "review", "working")
         diff, plan, docs, _ = review_inputs(repo, proj, cfg)
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
         ok &= rv["pass"]
+        herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
         say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "dropped  "
@@ -1066,6 +1293,7 @@ def run_stages(repo, proj, cfg, a):
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
     if not a.skip_review and cfg.get("jev_acceptance", True):
         t1 = time.time()
+        herdr_stage(panes, "jev", "working")
         diff, _, _, _ = review_inputs(repo, proj, cfg)
         try:
             acc = jev_acceptance(cfg, proj, diff, repo=repo)
@@ -1077,6 +1305,7 @@ def run_stages(repo, proj, cfg, a):
         if gate:
             ok &= acc["pass"]
         n = len(acc.get("criteria", []))
+        herdr_stage(panes, "jev", "idle" if acc["pass"] or not gate else "blocked", f"{n - len(acc.get('failed', []))}/{n} met")
         say(f"jev    {'ok  ' if acc['pass'] else ('FAIL' if gate else 'warn')} {fmt(acc['seconds']):>8}  {n - len(acc.get('failed', []))}/{n} criteria met, "
             f"{len(acc.get('suspects', [])) - len(acc.get('failed', []))} suspect(s) dropped after confirmation"
             + (f"  error={acc['error'][:120]}" if acc.get("error") else ""))
@@ -1087,21 +1316,6 @@ def run_stages(repo, proj, cfg, a):
         for r in acc.get("failed", []):
             if gate:
                 findings.append(f"[high] acceptance criterion not met (task {r['task']}, p={r['p_not_met']}): {r['criterion']}")
-    if False:
-        for case in []:
-            t1 = time.time()
-            r = jev_e2e(case, repo)
-            r["seconds"] = round(time.time() - t1, 1)
-            report["e2e"].append(r)
-            ok &= r["exit"] == 0
-            run = r.get("run") or {}
-            say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
-                f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
-            for line in (r.get("stdout") or "").splitlines()[-8:]:
-                if line and not line.startswith("E2E_RESULT"):
-                    print(f"           {line[:160]}")
-            if r["exit"]:
-                findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     return ok, report, "\n\n".join(findings)
 
 def verify_root(repo, proj, cfg):
@@ -1487,6 +1701,8 @@ def cmd_init(a):
     (proj / ".gitkeep").write_text("")
     sh(["git", "add", "-A", ".fast-coding", ".gitignore"], wt, check=False)
     sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
+    if herdr_space(wt, name):
+        print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: plan, tests, tasks, every command with --repo {wt} (or any checkout with --project {name})")
 
 def merge_evidence(repo, branch, targets, has_remote):
@@ -1546,6 +1762,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
         if why:
             sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists():
+                space = herdr_find_space(wt)
+                if space:
+                    herdr("workspace", "close", space)
                 shutil.rmtree(wt, ignore_errors=True)
             sh(["git", "worktree", "prune"], main_repo, check=False)
             sh(["git", "branch", "-D", project_branch], main_repo, check=False)
