@@ -1,6 +1,6 @@
 ---
 name: fast-coding
-description: The full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until the decisions are settled, as tickets on the repo's Linear project, plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack, and keep every task's Linear issue in step. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
+description: The full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until the decisions are settled, as tickets on the repo's Linear project, plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack, keep every task's Linear issue in step, and inside herdr run the implementers as named agents in a per-project space that the orchestrator steers. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # fast-coding
@@ -11,7 +11,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 | Who | Does | Never does |
 |---|---|---|
 | You (orchestrator) | Find the way with the user (wayfinder), write the spec and plan, split into tasks, mirror the feature and every task on Linear and move them through its states, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
-| Implementer (fast model via pi or OpenCode) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks |
+| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own tab) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
@@ -21,6 +21,17 @@ Everything that would be a ticket lives on Linear, never as files in the repo: t
 Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another), and commit it on the user's branch before anything else.
 All Linear reads and writes are yours, through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`). The CLI never talks to Linear.
+
+### 0h. Inside herdr, the fleet is visible and steerable
+You are inside herdr when `HERDR_ENV=1` (herdr also sets `HERDR_SOCKET_PATH`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`). Then invoke the `herdr` skill; it carries the safety rules for panes and agents.
+`herdr agent get $HERDR_PANE_ID` tells which harness you are (`claude` under Claude Code, which also sets `CLAUDECODE=1`; `pi`; ...). The flow is the same for any orchestrator; only the harness-specific tools differ.
+The CLI builds the topology by itself, named so the captain reads it at a glance:
+- **space** `<slug>`: the project's worktree, opened as a herdr worktree workspace grouped under the repo's space (`init` and `run` create it)
+- tab **`status`**: `fast-coding status --watch` running live; tab **`shell`**: a shell in the project worktree
+- one tab per task, **`NNN <title>`**, holding the task's implementer: an interactive pi agent named **`<slug>-NNN`**, with state labels (`attempt 2/3`, `passed`, `rejected_size`) and tokens (`model`, `cost`) on its pane
+- tab **`verify HH:MM`** per verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
+Your own pane stays where the captain started you. Name it: `herdr agent rename $HERDR_PANE_ID <slug>-orchestrator` and `herdr pane rename $HERDR_PANE_ID "<slug> orchestrator"`.
+Outside herdr the same commands run headless and nothing is shown; the skill is identical.
 
 ### 0a. Put the work in a project, in its own worktree
 A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
@@ -80,6 +91,12 @@ Green is the implementer's job. Refactor is yours, through review and the verify
 The trunk is the branch the user is on when you run it (`--trunk` overrides). That checkout is never switched: clones are separate repos, and every `gh stack` operation runs in a CLI-owned detached worktree under `.fast-coding/<project>/worktrees/.stackroot`, with the stack state mirrored into the user's `.git` so `gh stack view` works from a task branch there.
 When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration.
 Use `--only 003,004` for a subset.
+Inside herdr, run it in the background (`run_in_background`) and steer the fleet while it works; this is your job during a run, not typing code:
+- `herdr agent list` is the wake signal: `working` is fine, `blocked` means pi is asking something, `done` means its turn ended. A status is a wake event, not truth: the truth is `fast-coding status`, `results/NNN.json`, and the diff.
+- Read before you act: `herdr agent read <slug>-NNN --source recent-unwrapped --lines 80`.
+- Steer with one specific instruction: `herdr agent prompt <slug>-NNN "<what to change, which file, which test>"`. The CLI's own re-prompts and yours go to the same agent, so keep yours short and concrete, and never contradict the task file; if the task is wrong, fix the task and re-run it.
+- A stalled agent (working, no output change for a few minutes) gets one nudge, then `fast-coding` times it out into a fresh session by itself; do not kill panes.
+- Log each steer as a comment on the task's Linear issue, one line, so the trail is in the ticket and not only in a terminal.
 Linear follows the run from your side, since the CLI does not talk to it: right before `run`, move every task you are dispatching to In Progress. When `run` ends, read `results/NNN.json` and move each passed task to In Review with a comment naming its branch, attempts, and cost; a failed task stays In Progress with a comment that gives the failure in one paragraph (step 7 decides what happens to it). A user looking at the feature issue in Linear sees the stack's state without asking you.
 Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, which pushes every branch and opens draft PRs: run it only when the user has explicitly asked for that push.
 
@@ -154,6 +171,7 @@ One paragraph. What to build, where, exact export names.
 
 ## Rules
 - Tests are the contract. The implementer never edits them.
+- You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
 - Linear is the ticket tracker. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step: Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.

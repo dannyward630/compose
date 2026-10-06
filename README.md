@@ -41,6 +41,23 @@ A task that fails three attempts is re-split into smaller tasks, not typed by ha
 
 The speed and cost figures in this file come from small benchmark tasks and one prototype; every real run prints its own, and those are the ones to trust.
 
+## In herdr
+
+Inside [herdr](https://herdr.dev) (`HERDR_ENV=1`) the fleet is visible and steerable; outside it the same commands run headless.
+
+| herdr | fast-coding | label |
+|---|---|---|
+| space | one project (its worktree, grouped under the repo's space) | `<slug>` |
+| tab | the live `fast-coding status --watch` | `status` |
+| tab | one task, holding its implementer | `NNN <title>` |
+| agent | the task's interactive pi, steerable with `herdr agent prompt` | `<slug>-NNN` |
+| tab | one verify run, one pane per stage | `verify HH:MM` |
+| the orchestrator's pane | stays where you started it | `<slug> orchestrator` |
+
+Each task pane carries state labels (`attempt 2/3`, `passed`) and tokens (`model`, `cost`); verify panes go `working`, then `idle` ok or `blocked` FAIL.
+The orchestrator steers a working or blocked agent with one specific instruction through `herdr agent prompt <slug>-NNN "..."`, which lands in the same pi session the CLI is driving.
+`clean` closes the project's space with its worktree.
+
 ## Projects
 
 A project is one feature in its own worktree: `fast-coding init --project <name>` creates branch `fast-coding/<name>` from the branch you are on and checks it out at `../fast-coding-<name>` next to the repo, with `.fast-coding/<name>/` (plan, numbered tasks, verify config, results) committed there.

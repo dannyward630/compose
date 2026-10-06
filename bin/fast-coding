@@ -372,25 +372,26 @@ def herdr_main_repo(wt):
     return str(Path(wt, common).resolve().parent) if common else str(wt)
 
 def herdr_find_space(wt):
-    """The workspace id showing this checkout: a worktree workspace by path, else any workspace whose cwd is the path."""
+    """The workspace id whose checkout is this path (`worktree.checkout_path` in `workspace list`)."""
     wt = str(Path(wt).resolve())
-    for w in (herdr("worktree", "list", "--cwd", wt) or {}).get("worktrees", []) or []:
-        if str(Path(w.get("path") or w.get("worktree_path") or "").resolve() if (w.get("path") or w.get("worktree_path")) else "") == wt:
-            return w.get("workspace_id") or (w.get("workspace") or {}).get("workspace_id")
     for w in (herdr("workspace", "list") or {}).get("workspaces", []):
-        got = herdr("workspace", "get", w["workspace_id"]) or {}
-        cwd = (got.get("workspace") or got).get("cwd") or ""
-        if cwd and str(Path(cwd).resolve()) == wt:
+        cp = (w.get("worktree") or {}).get("checkout_path")
+        if cp and str(Path(cp).resolve()) == wt:
             return w["workspace_id"]
     return None
 
-def herdr_space(wt, slug):
-    """Open the project's worktree as its own herdr space labelled `<slug>`, grouped under the repo's space. Idempotent."""
+def project_worktree(proj):
+    """The project's own checkout: proj is `<worktree>/.fast-coding/<name>`."""
+    return Path(proj).resolve().parents[1]
+
+def herdr_space(proj):
+    """Open the project's worktree as its own herdr space labelled `<name>`, grouped under the repo's space. Idempotent.
+    Keyed on the project's worktree, never on where a command happens to run (verify runs in the CLI's stack worktree)."""
     if not herdr_env():
         return None
+    slug, wt = Path(proj).name, project_worktree(proj)
     if slug in HERDR_SPACES:
         return HERDR_SPACES[slug]
-    wt = Path(wt).resolve()
     space = herdr_find_space(wt)
     if not space:
         r = herdr("worktree", "open", "--cwd", herdr_main_repo(wt), "--path", str(wt), "--label", slug, "--no-focus") or {}
@@ -401,6 +402,9 @@ def herdr_space(wt, slug):
     if space:
         HERDR_SPACES[slug] = space
         herdr("workspace", "rename", space, slug)
+        for label, t in herdr_tabs(space).items():
+            if label and label.isdigit():  # the tab herdr opened with the space: a shell in the project worktree
+                herdr("tab", "rename", t["tab_id"], "shell")
         herdr_status_tab(space, wt, slug)
     return space
 
@@ -910,7 +914,7 @@ def run_tasks(repo, proj, tasks, a):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
-    herdr_space(repo, proj.name)
+    herdr_space(proj)
     t0 = time.time()
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
@@ -1230,7 +1234,7 @@ def run_stages(repo, proj, cfg, a):
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
     stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
-    panes = herdr_verify_panes(herdr_space(repo, proj.name), repo, stages)
+    panes = herdr_verify_panes(herdr_space(proj), repo, stages)
     herdr_stage(panes, "checks", "working")
     for c in cfg.get("checks", []):
         t1 = time.time()
@@ -1701,7 +1705,7 @@ def cmd_init(a):
     (proj / ".gitkeep").write_text("")
     sh(["git", "add", "-A", ".fast-coding", ".gitignore"], wt, check=False)
     sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
-    if herdr_space(wt, name):
+    if herdr_space(proj):
         print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: plan, tests, tasks, every command with --repo {wt} (or any checkout with --project {name})")
 
