@@ -883,6 +883,7 @@ def payment_halt(repo, proj, command, remaining, args, err):
              "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     (proj / "results").mkdir(exist_ok=True)
     (proj / "results" / "resume.json").write_text(json.dumps(state, indent=2))
+    (proj / "results" / "run.json").unlink(missing_ok=True)
     key = next((k for k in TOP_UP if k in err.provider.lower()), None)
     print()
     print(f"PAYMENT REQUIRED  provider: {err.provider}")
@@ -916,6 +917,9 @@ def run_tasks(repo, proj, tasks, a):
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
     herdr_space(proj)
     t0 = time.time()
+    (proj / "results").mkdir(exist_ok=True)
+    (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "tasks": [p.name.split("-")[0] for p in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}}, indent=2))
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
@@ -967,6 +971,7 @@ def run_tasks(repo, proj, tasks, a):
         remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
         payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
     (proj / "results" / "resume.json").unlink(missing_ok=True)
+    (proj / "results" / "run.json").unlink(missing_ok=True)
     (proj / "results" / "run-cost.json").write_text(json.dumps(LEDGER.snapshot(), indent=2))
     sys.exit(0 if passed == len(results) else 1)
 
@@ -1426,6 +1431,24 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
     sys.exit(0 if ok else 1)
 
+def run_marker(proj):
+    f = proj / "results" / "run.json"
+    try:
+        return json.loads(f.read_text()) if f.exists() else None
+    except json.JSONDecodeError:
+        return None
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+def run_alive(proj):
+    m = run_marker(proj)
+    return bool(m and pid_alive(m.get("pid")))
+
 def task_state(repo, proj, meta, trunk_head):
     """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk."""
     tid = meta["id"]
@@ -1435,9 +1458,8 @@ def task_state(repo, proj, meta, trunk_head):
     has_branch = sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0
     merged = has_branch and sh(["git", "merge-base", "--is-ancestor", branch, trunk_head], repo, check=False).returncode == 0
     state = r.get("status") or "pending"
-    if state == "running" and r.get("started_at"):
-        if time.time() - time.mktime(time.strptime(r["started_at"], "%Y-%m-%d %H:%M:%S")) > 3600:
-            state = "stale"  # a run that died without writing a final state
+    if state == "running" and not run_alive(proj):
+        state = "interrupted"  # the run died without writing a final state; `fast-coding resume` re-runs it
     elif state in ("passed", "already_green") and (merged or not has_branch):
         state = "merged"
     elif state == "hand_done":
@@ -1470,8 +1492,11 @@ def render_status(repo, projects):
         if halt.exists():
             hd = json.loads(halt.read_text())
             htxt = f"  HALTED {hd['halted_at'][11:16]} payment required at {hd['provider']} ({len(hd.get('remaining', []))} task(s) left) -> fast-coding resume"
+        m = run_marker(proj)
+        rtxt = f"  run live since {m['started_at'][11:16]} (pid {m['pid']})" if m and pid_alive(m.get("pid")) else \
+               (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> fast-coding resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
-        out.append(f"project {proj.name}   trunk {trunk}   {len(rows)} tasks: {summary}{vtxt}{htxt}")
+        out.append(f"project {proj.name}   trunk {trunk}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
@@ -1523,6 +1548,71 @@ def cmd_tasks(a):
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
         for f, ids in clashes.items():
             print(f"    {f}: {', '.join(ids)}")
+
+# ---------- watch ----------
+FINAL_STATES = ("passed", "already_green", "failed", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
+
+def watch_snapshot(repo, proj):
+    """Everything an orchestrator decides on: each task's state, each herdr agent's status, run and verify markers."""
+    tasks = [parse_task(t)[0] for t in sorted((proj / "tasks").glob("*.md"))]
+    trunk_head = sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    snap = {"tasks": {}, "agents": {}, "run": bool(run_marker(proj)), "verify": None}
+    for m in tasks:
+        r = task_state(repo, proj, m, trunk_head)
+        snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
+    for ag in (herdr("agent", "list") or {}).get("agents", []):
+        n = ag.get("name") or ""
+        if n.startswith(agent_name(proj.name, "")[:-1]):
+            snap["agents"][n] = ag.get("agent_status")
+    v = proj / "results" / "verify.json"
+    if v.exists():
+        try:
+            snap["verify"] = (int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed")))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return snap
+
+def watch_events(before, after):
+    """The actionable differences between two snapshots, one line each. Attempt counts and idle/done flaps are not events."""
+    ev = []
+    for tid, t in after["tasks"].items():
+        b = before["tasks"].get(tid, {})
+        if t["state"] != b.get("state") and (t["state"] in FINAL_STATES or t["state"] == "running"):
+            ev.append(f"event task={tid} state={t['state']} attempts={t['attempts']} cost=${t['cost']:.4f}"
+                      + (f" branch={t['note']}" if t["note"] else "") + (f" linear={t['linear']}" if t["linear"] else "") + f" title={t['title']!r}")
+    for n, st in after["agents"].items():
+        if st == "blocked" and before["agents"].get(n) != "blocked":
+            ev.append(f"event agent={n} status=blocked  (read: herdr agent read {n} --lines 60; steer: herdr agent prompt {n} \"...\")")
+    if before["run"] and not after["run"]:
+        passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
+        ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}")
+    if after["verify"] and after["verify"] != before["verify"]:
+        ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
+    return ev
+
+def cmd_watch(a):
+    """Sleep on the project until something an orchestrator must act on happens, print it, exit. Zero tokens while waiting:
+    run it in the background and let its exit wake you. `--now` prints the current state as events and exits."""
+    proj = project_dir(a); repo = Path(a.repo).resolve()
+    before = watch_snapshot(repo, proj)
+    if a.now:
+        empty = {"tasks": {}, "agents": {}, "run": before["run"], "verify": None}
+        for line in watch_events(empty, before) or ["event idle  nothing running"]:
+            print(line)
+        return
+    deadline = time.time() + a.timeout if a.timeout else None
+    while True:
+        time.sleep(a.interval)
+        after = watch_snapshot(repo, proj)
+        ev = watch_events(before, after)
+        if ev:
+            for line in ev:
+                print(f"[{now()}] {line}")
+            return
+        before = after
+        if deadline and time.time() > deadline:
+            print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}; " + ("run still live" if after["run"] else "no run live"))
+            sys.exit(2)
 
 def cmd_projects(a):
     """Every project (feature) across this repository's worktrees with its task progress; `status --project <name>` drills in."""
@@ -1599,8 +1689,14 @@ def cmd_resume(a):
     proj = project_dir(a); repo = Path(a.repo).resolve()
     path = proj / "results" / "resume.json"
     if not path.exists():
-        sys.exit("nothing to resume: no payment halt is recorded for this project")
-    state = json.loads(path.read_text())
+        m = run_marker(proj)
+        if not m or pid_alive(m.get("pid")):
+            sys.exit("nothing to resume: no payment halt and no interrupted run recorded for this project" + (" (a run is live)" if m else ""))
+        done = {t for t in m["tasks"] if (json.loads((proj / "results" / f"{t}.json").read_text()).get("status") if (proj / "results" / f"{t}.json").exists() else "") in ("passed", "already_green")}
+        state = {"command": "run", "remaining": [t for t in m["tasks"] if t not in done], "args": m["args"], "halted_at": m["started_at"], "provider": "interrupted run"}
+        (proj / "results" / "run.json").unlink(missing_ok=True)
+    else:
+        state = json.loads(path.read_text())
     say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
     ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
     if state["command"] == "run":
@@ -1608,7 +1704,7 @@ def cmd_resume(a):
             sys.exit("repo has uncommitted changes; commit first")
         tasks = sorted(p for p in (proj / "tasks").glob("*.md") if p.name.split("-")[0] in set(state["remaining"]))
         if not tasks:
-            path.unlink()
+            path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
         say(f"resume {len(tasks)} task(s): {', '.join(state['remaining'])}")
         run_tasks(repo, proj, tasks, ns)
@@ -1800,6 +1896,7 @@ def main():
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
+                            ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches")):
@@ -1821,6 +1918,10 @@ def main():
             s.add_argument("--note", required=True, help="why it was done by hand, e.g. 'provider out of credit'")
         if name == "top":
             s.add_argument("--detach", action="store_true")
+        if name == "watch":
+            s.add_argument("--now", action="store_true", help="print the current state as events and exit (session-start reconcile)")
+            s.add_argument("--timeout", type=float, default=0, help="seconds to wait before exiting 2 with a timeout event (0 = forever)")
+            s.add_argument("--interval", type=float, default=2.0)
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":

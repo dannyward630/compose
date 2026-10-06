@@ -58,6 +58,10 @@ Each task pane carries state labels (`attempt 2/3`, `passed`) and tokens (`model
 The orchestrator steers a working or blocked agent with one specific instruction through `herdr agent prompt <slug>-NNN "..."`, which lands in the same pi session the CLI is driving.
 `clean` closes the project's space with its worktree.
 
+Supervision is event-driven: `fast-coding watch --project <slug>` sleeps until a task reaches a final state, an agent blocks, the run ends, or verify finishes, prints one `event ...` line (with the task's Linear id and branch), and exits.
+The orchestrator runs it in the background and is woken by its exit, so waiting costs no tokens.
+Every run leaves `results/run.json` with its pid; a run that dies shows as `interrupted` in `status`, and `fast-coding resume` re-runs what did not pass, keeping passed layers.
+
 ## Projects
 
 A project is one feature in its own worktree: `fast-coding init --project <name>` creates branch `fast-coding/<name>` from the branch you are on and checks it out at `../fast-coding-<name>` next to the repo, with `.fast-coding/<name>/` (plan, numbered tasks, verify config, results) committed there.
