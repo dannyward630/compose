@@ -22,6 +22,30 @@ Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project 
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another), and commit it on the user's branch before anything else.
 All Linear reads and writes are yours, through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`). The CLI never talks to Linear.
 
+### 0i. The levels: project, epic, feature, story, task
+Linear has projects, issues, sub-issues, and labels; these five levels are how fast-coding uses them. Labels `Epic`, `Feature`, `Story`, `Task` live on the Engineering team (`Feature` exists; create the others once with `create_issue_label` if `list_issue_labels` does not show them).
+
+| level | in Linear | in fast-coding | holds |
+|---|---|---|---|
+| **project** | the Linear project from `.fast-coding/linear.json` | the repo | epics and features; set once, never created by you |
+| **epic** | top-level issue, label `Epic`; its description is the wayfinder map | a wayfinder map | decision tickets (`wayfinder:<type>`) and features, as sub-issues |
+| **feature** | label `Feature`; sub-issue of its epic, or top-level when there is no epic | one fast-coding project: worktree, plan, one stack | stories; its description is the settled spec (or the map, when the feature is small enough to be its own map) |
+| **story** | label `Story`; sub-issue of its feature | a contiguous group of layers in the feature's stack | tasks; its description is one user-visible slice with acceptance criteria |
+| **task** | label `Task`; sub-issue of its story | one task file, one stack layer | goal, acceptance criteria, test plan |
+
+A feature with one obvious slice still gets one story, so tasks always have the same parent shape. A bug or improvement is a feature with one story. Fewer levels is always right when the work is small: an epic exists only when wayfinder finds fog (more than one feature's worth of open decisions).
+
+### 0j. What you were given decides where you start
+Fast-coding accepts a Linear project link, an issue (epic, feature, story, or task, by URL or identifier such as `ENG-123`), a loose idea, or a loose idea plus the level the user names ("this is a story"). Resolve the level from the issue's label, else from its parent chain, else from the user's word; when none of these settle it, ask. Then:
+- **project link, nothing else**: list its open epics and features and ask which one, or whether this is new work.
+- **epic**: work the map (wayfinder "work through the map"): resolve the next decision ticket with the user, graduate features out of the fog. When a feature's way is clear, create its fast-coding project (step 0a) and continue with it as a feature. One ticket per session; the epic itself is never implemented.
+- **feature**: if its map is not clear, wayfinder it (step 0b). If it has no stories, write them with the user: one issue per user-visible slice, acceptance criteria in the description, in the order they should ship. Then plan (step 1) and split (step 2) under each story.
+- **story**: its feature is the parent; use or create that project. Write tasks for this story only; other stories' tasks are not touched.
+- **task**: it belongs to a story that belongs to a feature; dispatch that task alone (`run --only NNN`) after the go.
+- **loose idea**: wayfinder names the destination. No fog means it is a feature: create the feature issue (top-level) and continue. Fog means it is an epic: create the epic, chart it, stop.
+- **user names the level**: create the issue at that level with the user's words as the title. A story needs a feature and a feature may need an epic: ask for the parent link, or create the parent too if the user says it is new. Then proceed as above.
+Everything you create is a Linear issue in the project from step 0, labelled, parented, in state Todo or Backlog, before any file is written.
+
 ### 0h. Inside herdr, the fleet is visible and steerable
 You are inside herdr when `HERDR_ENV=1` (herdr also sets `HERDR_SOCKET_PATH`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`). Then invoke the `herdr` skill; it carries the safety rules for panes and agents.
 `herdr agent get $HERDR_PANE_ID` tells which harness you are (`claude` under Claude Code, which also sets `CLAUDECODE=1`; `pi`; ...). The flow is the same for any orchestrator; only the harness-specific tools differ.
@@ -37,17 +61,17 @@ Outside herdr the same commands run headless and nothing is shown; the skill is 
 A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
-- Every project has one **feature issue** on Linear: a top-level issue in the repo's Linear project, title in the user's words, labelled `wayfinder:map`, holding the wayfinder map body. Create it when you create the project and record its identifier (`ENG-123`) in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Decision tickets and tasks are its sub-issues, so the whole feature reads as one tree in Linear.
+- Every project is one **feature issue** on Linear (label `Feature`, title in the user's words, under its epic when there is one). Create it if the user did not hand you one, and record its identifier in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Its stories, their tasks, and any decision tickets are its sub-issues, so the whole feature reads as one tree in Linear.
 - From then on everything you do for this project happens in that worktree: GRILLING.md additions, the plan, task files, acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
 - The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
 - Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
 `fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
 
 ### 0b. Find the way first when the decisions are not written down
-A settled spec is a feature issue whose map says the way is clear: no open decision sub-issues, and `## Not yet specified` empty. A repo file (`DESIGN.md`, a PRD) counts too when the user points at it.
-If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the feature issue as the map. Wayfinder's tracker is Linear here, and this is how its operations map:
-- the **map** is the feature issue; its description is the map body (Destination, Notes, Decisions so far, Not yet specified, Out of scope)
-- a **ticket** is a sub-issue of the feature issue, labelled `wayfinder:<type>` (`research`, `prototype`, `grilling`, `task`), body `## Question`
+A settled spec is a feature issue whose description says the way is clear: no open decision sub-issues, and `## Not yet specified` empty. A repo file (`DESIGN.md`, a PRD) counts too when the user points at it.
+If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the epic (or the feature, when it is its own map) as the map. Wayfinder's tracker is Linear here, and this is how its operations map:
+- the **map** is the epic issue, or the feature issue when there is no epic; its description is the map body (Destination, Notes, Decisions so far, Not yet specified, Out of scope)
+- a **ticket** is a sub-issue of the map, labelled `wayfinder:<type>` (`research`, `prototype`, `grilling`, `task`), body `## Question`
 - **blocking** is Linear's native "blocked by" relation (`save_issue` with `blockedBy`), so the frontier shows in Linear's own UI
 - the **frontier** is `list_issues` on the feature's sub-issues: open, no unresolved blockers, unassigned
 - **claim** by assigning the ticket to the user; **resolve** by posting the answer as a comment, setting the state to Done, and appending the one-line gist to the map's Decisions so far
@@ -80,7 +104,7 @@ A task is right-sized when all of these hold:
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
 - it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
-Each task is also a **task issue** on Linear: a sub-issue of the feature issue, labelled `fast-coding:task`, state Todo, title equal to the task's title, description equal to the task file body (Goal, Acceptance criteria, Test plan, Constraints), with `blockedBy` set to the `after:` task's issue. Create it with `save_issue` when you write the task file and put its identifier in the file's `linear:` field. The task file is the CLI's contract; the issue is where humans watch it. Keep both saying the same thing: edit one, edit the other.
+Each task is also a **task issue** on Linear: a sub-issue of its story, labelled `Task`, state Todo, title equal to the task's title, description equal to the task file body (Goal, Acceptance criteria, Test plan, Constraints), with `blockedBy` set to the `after:` task's issue. Create it with `save_issue` when you write the task file and put its identifier in the file's `linear:` field. The task file is the CLI's contract; the issue is where humans watch it. Keep both saying the same thing: edit one, edit the other.
 One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them.
 
 ### 3. Write the tests first (red)
@@ -160,7 +184,7 @@ Any browser exploration or testing in this loop, by you or by an implementer, us
 A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed. The exhausted task's issue is Canceled with a comment pointing at the issues that replace it; the new tasks get their own issues, blocked by whatever the old one was blocked by.
 Implement by hand only when the blocker is not the task: the provider is down or out of credit, the task cannot be made smaller than one function, or the fix is a one-line change in a file you are already editing. When you do, record it: `fast-coding done --project <name> --only 024,025 --note "provider out of credit"`, so `fast-coding status` shows the truth, and say so in the report.
 `fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory. `fast-coding watch` is how you wait for it to change.
-`fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature. Then move each merged task's issue to Done, and the feature issue to Done once every layer and the project branch are merged. A task you did by hand (`fast-coding done`) goes to Done with the same note.
+`fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature. Then move each merged task's issue to Done, a story to Done when all its tasks are, and the feature issue to Done once every layer and the project branch are merged. A task you did by hand (`fast-coding done`) goes to Done with the same note.
 
 ## Task file format
 
@@ -175,7 +199,7 @@ protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
 model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
 after:            # id of the task this one builds on; it becomes the next layer of that task's stack
-linear: ENG-124   # this task's Linear issue, a sub-issue of the feature issue, blocked by `after:`'s issue
+linear: ENG-124   # this task's Linear issue, a sub-issue of its story, blocked by `after:`'s issue
 ---
 
 ## Goal
@@ -194,6 +218,7 @@ One paragraph. What to build, where, exact export names.
 ```
 
 ## Rules
+- Nothing is implemented until the user says so. Intake, wayfinder, stories, plan, task files, tests, and their Linear issues are all preparation; `fast-coding run` is the first implementing action and it waits for an explicit go on the task list (step 3b), every time, for every wave, even when the user handed you a single task. "Build it" at intake is not that go; the go comes after the user has seen the tasks.
 - Tests are the contract. The implementer never edits them.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
 - Linear is the ticket tracker. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step: Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split.
