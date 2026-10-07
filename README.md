@@ -32,6 +32,7 @@ Do not use it for one-line fixes or exploratory debugging, where the overhead be
 Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
 It first asks for the repo's Linear project link once (kept in `.fast-coding/linear.json`) and opens one feature issue there per project.
 With no settled spec, it runs wayfinder: the open decisions become sub-issues of the feature issue, worked with you one question at a time with a recommendation on each, until the way is clear; then it writes the plan and the tasks with their tests and shows you the plan.
+Wayfinder prototype tickets about screens or flows are drawn as low-fi wireframes in Frame0 through its MCP server and attached to the ticket as images.
 Every task is a sub-issue of the feature issue too, moved to In Progress when dispatched, In Review when its layer passes, and Done when its PR merges, so the feature's progress is visible in Linear without asking.
 It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can combine, split, reorder, or drop tasks first.
 Then it dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
