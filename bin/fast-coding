@@ -55,9 +55,9 @@ class Ledger:
 
 LEDGER = Ledger()
 
-def sh(cmd, cwd, timeout=None, check=True):
+def sh(cmd, cwd, timeout=None, check=True, env=None):
     p = subprocess.run(cmd, cwd=cwd, shell=isinstance(cmd, str), capture_output=True, text=True,
-                       timeout=timeout, stdin=subprocess.DEVNULL)
+                       timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     if check and p.returncode:
         raise RuntimeError(f"{cmd}\n{p.stdout}\n{p.stderr}")
     return p
@@ -1189,7 +1189,10 @@ def jev_e2e(case, repo):
               "    print('JEV_RESULT '+json.dumps({'status':last['status'],'elapsed_ms':last['elapsed_ms'],'steps':len(last['history']),'url':last['page']['url'],'usage':usage}))\n"
               "    sys.stdout.flush()\n"
               f"    sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}))\n")
-    p = sh(["uv", "run", "--env-file", ".env", "python", "-c", script], JEV_DIR, timeout=case.get("timeout", 300), check=False)
+    # case["env"] (verify.json e2e_env merged with the case's env) reaches jev: set BU_CDP_URL/BU_NAME there to point
+    # browser-harness at a `bp`-launched Chromium that has the extension under test loaded.
+    env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
+    p = sh(["uv", "run", "--env-file", ".env", "python", "-c", script], JEV_DIR, timeout=case.get("timeout", 300), check=False, env=env)
     r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-3000:], "stderr": p.stderr[-2000:]}
     m = re.search(r"^JEV_RESULT (\{.*\})$", p.stdout, re.M)
     if m:

@@ -12,7 +12,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 |---|---|---|
 | You (orchestrator) | Find the way with the user (wayfinder), write the spec and plan, split into tasks, mirror the feature and every task on Linear and move them through its states, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
 | Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own tab) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
-| `fast-coding verify` | Checks, jev-ultrafast browser e2e, Mercury diff review | Push, open PRs, run CI |
+| `fast-coding verify` | Checks, jev-ultrafast browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
 
@@ -139,6 +139,21 @@ Verify runs at the top of the stack, in the CLI's worktree, since layers are nev
 Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (openrouter for implementers, fixes, Mercury reviews, and jev's text helper; cerebras when a task pins it; typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
 
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
+
+### 6a. Browser work goes through `bp` (browser-probe)
+Any browser exploration or testing in this loop, by you or by an implementer, uses `bp` from `/Users/reggie-jobscan/code/browser-probe` (skill `browser-probe`, rules in its `AGENTS.md`). Not the user's real Chrome, not ad hoc Playwright scripts.
+- **Exploring** (what does the panel show, did the fill work, record a flow): `bp launch --ext <dir>`, `bp list`, `bp hosts`, `bp snap`, `bp clicktext`, `bp form`, `bp record`. Screenshots land in `shots/` with an `index.md` line each.
+- **Driving toward a goal with the model**: `bp goal <url> "<goal> … stop before Submit"`. Same jev policy as verify's e2e, same Chromium.
+- **Verify e2e for an extension**: launch the extension's Chromium in `e2e_setup` and point jev at it with `e2e_env`, so `jev_e2e` attaches to that browser instead of the default Chrome:
+  ```json
+  "e2e_setup": "BP_PORT=9333 bp launch about:blank --ext /path/to/extension/dist --profile /tmp/bp-profile-verify",
+  "e2e_setup_wait": 4,
+  "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:9333", "BU_NAME": "bp9333"},
+  "e2e": [{"name": "greenhouse fill", "url": "https://job-boards.greenhouse.io/...", "goal": "Open the Jobscan panel, click Autofill, wait for the checklist, stop before Submit.",
+           "assert": "bp form greenhouse.io | grep -q 'filled [1-9]'"}]
+  ```
+  A scripted check with no model is a `driver` case: `{"name": "panel renders", "driver": "bp hosts greenhouse.io --min 50 | grep -q Autofill", "env": {"BP_PORT": "9333"}}`.
+- One port per extension build. Never let a goal or driver click a real employer Submit; assert on `bp form` output and a screenshot.
 
 ### 7. Escalate and clean
 A task that exhausts its attempts comes back with its full log. Read the log, then split: write two or three smaller, more specific tasks that each name the exact function, file, and behavior the log shows the implementer missed, give each its own red test, and dispatch those. Never re-dispatch the same task unchanged, and do not pick up the keyboard yourself just because an attempt failed. The exhausted task's issue is Canceled with a comment pointing at the issues that replace it; the new tasks get their own issues, blocked by whatever the old one was blocked by.

@@ -112,6 +112,7 @@ Everything the CLI shells out to, and where each one is used. Install the requir
 | jev-ultrafast checkout at `~/code/jev-ultrafast` with `.env` | `verify`: Mercury review (`TEXT_MODEL*`), Jev acceptance (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`), browser e2e (`jev_ultrafast.Agent`) | clone it, fill `.env`, `uv sync` | yes for `verify` |
 | uv | runs jev-ultrafast and the Python test commands in verify.json | `brew install uv` | yes for `verify` |
 | Chrome plus browser-harness | `verify` e2e cases drive a real browser | installed by jev-ultrafast; `uv run browser-harness --doctor` there | only with e2e cases |
+| `bp` (browser-probe) | every browser exploration and extension e2e: launches a Chromium with the extension, `e2e_env` points jev at it | `cd ~/code/browser-probe && npm link` | yes for extension work |
 | OpenCode | alternative implementer, `model: openrouter/openai/gpt-oss-120b`; bench column | `curl -fsSL https://opencode.ai/install \| bash`; key in `~/.local/share/opencode/auth.json`; `~/.config/opencode/opencode.jsonc` pins `options.provider.order: ["cerebras", "groq"]` | optional |
 | Claude Code | `model: claude` baseline through the subscription (`claude -p`) | already installed if you are reading this from it | optional |
 | graft | `graft build .` gives implementers a `file:line` context pack instead of exploring | `brew install graft` (or the project's installer); free, git-ignored | optional, recommended |
