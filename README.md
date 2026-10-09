@@ -47,6 +47,26 @@ The speed and cost figures in this file come from small benchmark tasks and one 
 
 Inside [herdr](https://herdr.dev) (`HERDR_ENV=1`) the fleet is visible and steerable; outside it the same commands run headless.
 
+Three roles, after [firstmate](https://github.com/kunchenguid/firstmate); you are the captain:
+
+| Role | Who | Where |
+|---|---|---|
+| first mate | the Claude session you started: takes your request, creates the project, then only relays | stays in the pane you started it in |
+| orchestrator | a Claude session that runs the project from wayfinder to a verified stack | tab `orchestrator` in the project's space, agent `<slug>-orchestrator` |
+| crew | wayfinder question agents (one per independent question, at most three at once), helpers, implementers | one tab each in the project's space |
+
+You talk to the first mate. A question agent grills you in its own tab; answer there, or tell the first mate, who forwards it. You can type into any crew tab directly.
+Crew report upward with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`); `watch` turns each report into a wake event, so a session that is waiting costs nothing.
+
+```bash
+fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt   # first mate, after init
+fast-coding crew start --project <slug> --role q-ENG-12 --title "Payment provider" --brief - < brief.txt  # orchestrator, per independent question
+fast-coding crew list  --project <slug>                       # every crew session with its last report and herdr status
+fast-coding crew stop  --project <slug> --role q-ENG-12       # close its tab once its done is handled
+fast-coding report --project <slug> --as <slug>-q-eng-12 needs-user "Stripe or Adyen? I recommend Stripe"   # what crew run
+fast-coding watch --project <slug> --from orchestrator        # the first mate wakes only on the orchestrator's reports
+```
+
 | herdr | fast-coding | label |
 |---|---|---|
 | space | one project (its worktree, grouped under the repo's space) | `<slug>` |
@@ -54,13 +74,15 @@ Inside [herdr](https://herdr.dev) (`HERDR_ENV=1`) the fleet is visible and steer
 | tab | one task, holding its implementer | `NNN <title>` |
 | agent | the task's interactive pi, steerable with `herdr agent prompt` | `<slug>-NNN` |
 | tab | one verify run, one pane per stage | `verify HH:MM` |
-| the orchestrator's pane | stays where you started it | `<slug> orchestrator` |
+| tab | the project's orchestrator, a Claude session | `orchestrator`, agent `<slug>-orchestrator` |
+| tab | one crew session: a wayfinder question, a helper | its title, agent `<slug>-<role>` |
+| the first mate's pane | stays where you started it | yours |
 
 Each task pane carries state labels (`attempt 2/3`, `passed`) and tokens (`model`, `cost`); verify panes go `working`, then `idle` ok or `blocked` FAIL.
 The orchestrator steers a working or blocked agent with one specific instruction through `herdr agent prompt <slug>-NNN "..."`, which lands in the same pi session the CLI is driving.
 `clean` closes the project's space with its worktree.
 
-Supervision is event-driven: `fast-coding watch --project <slug>` sleeps until a task reaches a final state, an agent blocks, the run ends, or verify finishes, prints one `event ...` line (with the task's Linear id and branch), and exits.
+Supervision is event-driven: `fast-coding watch --project <slug>` sleeps until a task reaches a final state, an agent blocks, a crew session reports, the run ends, or verify finishes, prints one `event ...` line (with the task's Linear id and branch), and exits.
 The orchestrator runs it in the background and is woken by its exit, so waiting costs no tokens.
 Every run leaves `results/run.json` with its pid; a run that dies shows as `interrupted` in `status`, and `fast-coding resume` re-runs what did not pass, keeping passed layers.
 
@@ -136,6 +158,8 @@ fast-coding tasks    --repo . --project <name>   # the task list to review befor
 fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
 fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
 fast-coding clean  --repo . [--project <name>]  # post-merge: fetch, drop layers proven merged (ancestry or merged PR); remove a project's worktree+branch once fully merged
+fast-coding crew   start|list|stop --project <name> [--role <role>]   # Claude sessions in the project's herdr space (see In herdr)
+fast-coding report --project <name> --as <agent> <state> <message>     # a crew session reports up: working | needs-user | blocked | done
 fast-coding workspace [<name> | add <name> | key <name> | remove <name>]   # list, switch, or manage workspaces (OpenRouter key and models per account)
 ```
 

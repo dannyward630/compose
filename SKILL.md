@@ -5,7 +5,7 @@ description: The full fast loop for a feature, from first question to verified s
 
 # fast-coding
 
-You are the orchestrator. The implementer is pi running gpt-oss-120b on Cerebras (through the OpenRouter preset `gpt-oss-120b-cerebras`); OpenCode or Claude can take a task via `model:`. Verification is local; nothing is pushed.
+You are the orchestrator, or, inside herdr, the first mate who hands the project to one (0h). The implementer is pi running gpt-oss-120b on Cerebras (through the OpenRouter preset `gpt-oss-120b-cerebras`); OpenCode or Claude can take a task via `model:`. Verification is local; nothing is pushed.
 This skill is the whole flow: the moment the user invokes it with a task, start at step 0 and carry it through to verified, stacked branches.
 
 | Who | Does | Never does |
@@ -72,19 +72,24 @@ The CLI builds the topology by itself, named so the captain reads it at a glance
 - tab **`status`**: `fast-coding status --watch` running live; tab **`shell`**: a shell in the project worktree
 - one tab per task, **`NNN <title>`**, holding the task's implementer: an interactive pi agent named **`<slug>-NNN`**, with state labels (`attempt 2/3`, `passed`, `rejected_size`) and tokens (`model`, `cost`) on its pane
 - tab **`verify HH:MM`** per verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
-Your own pane stays where the captain started you. Name it: `herdr agent rename $HERDR_PANE_ID <slug>-orchestrator` and `herdr pane rename $HERDR_PANE_ID "<slug> orchestrator"`.
 `<slug>` is the project's (0a); until a project exists it is a kebab-case name for the map in the user's words.
-Helpers you fan out yourself (research readers, writers, reviewers: anything `run` and `verify` do not start) are herdr agents too, one tab each, so the captain sees and steers them like the implementers.
+**Three roles, like firstmate** (github.com/kunchenguid/firstmate). The captain is the user.
+- **First mate**: the session the captain started. It stays in the pane it was started in and is the captain's one point of contact. It takes the intake (0, 0j) and creates the project (0a), then hands the project to an orchestrator and only relays from then on. It never moves, and one first mate can run several projects.
+- **Orchestrator**: a Claude session in the project's space, started by the first mate right after `init`: `fast-coding crew start --repo <wt> --project <slug> --role orchestrator --title orchestrator --brief -` with a brief on stdin naming the project, the worktree, the feature issue, what the captain asked, and "invoke the fast-coding skill and continue from 0b". It runs everything from 0b on. It reports up with `fast-coding report`, and the captain can also type into its pane directly.
+- **Crew**: sessions the orchestrator starts in the same space: wayfinder question agents (0b), helpers (researchers, writers, reviewers), and the implementers `run` starts.
+The first mate's loop: `fast-coding watch --repo <wt> --project <slug> --from orchestrator` in the background; on each `event crew=<slug>-orchestrator` line, tell the captain the outcome in one or two sentences (needs-user: the question and its recommendation, and that the captain may answer here or in the orchestrator's tab); forward the captain's answer with `herdr agent prompt <slug>-orchestrator "<answer>"`; start `watch` again. Read the orchestrator with `herdr agent read <slug>-orchestrator --source recent-unwrapped --lines 80` before relaying anything unclear. Do not do the orchestrator's work yourself.
+The orchestrator reports at every point the captain should hear about: `needs-user` for the task review gate (3b), any question it must ask itself, and a payment halt; `working` when a run starts and when it ends; `done` when the stack is verified, with the stack, cost, and decision needed.
+The orchestrator watches its own crew: plain `fast-coding watch` wakes on every task, run, verify, and crew event except its own reports.
+Every crew session is started with `fast-coding crew start --role <role> --title "<tab label>" --brief -`: its own tab in the project's space, a Claude session named `<slug>-<role>`, briefed with how to report. `fast-coding crew list` shows each with its last report; `fast-coding crew stop --role <role>` closes the tab once its `done` is handled.
 The harness's in-process subagent tool (Claude's `Agent`) has no pane, so herdr cannot show it: inside herdr it is not used.
-Per helper: `herdr tab create --workspace $HERDR_WORKSPACE_ID --label "<what it does>" --cwd <repo> --no-focus` (the project's space instead, found by its `<slug>` label in `herdr workspace list`, once `init` has created it), `herdr agent start <slug>-<role> --kind claude --pane <root_pane.pane_id> -- --permission-mode auto`, then `herdr agent prompt <slug>-<role> "<the task, the files to read, the one file to write>"`.
-Prompt them all, then `herdr agent wait <name> --timeout 600000` each; read the file each wrote; `herdr tab close <tab_id>` once you have.
 Names match `[a-z][a-z0-9_-]{0,31}` and are unique among live agents.
-Outside herdr the same CLI commands run headless and nothing is shown, and helpers are the harness's own subagents; the skill is identical.
+Outside herdr there is no first mate: the session the captain started is the orchestrator, the CLI commands run headless, wayfinder questions are asked one at a time in this session, and helpers are the harness's own subagents.
 
 ### 0a. Put the work in a project, in its own worktree
 A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
+- Inside herdr, right after `init` and the feature issue exist, hand the project to its orchestrator (0h) and become the first mate. The rest of this skill is the orchestrator's.
 - Every project is one **feature issue** on Linear (label `Feature`, title in the user's words, under its epic when there is one). Create it if the user did not hand you one, and record its identifier in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Its stories, their tasks, and any decision tickets are its sub-issues, so the whole feature reads as one tree in Linear.
 - From then on everything you do in code for this project happens in that worktree: acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). Everything written in words (grilling notes, the plan, tasks, decisions) goes to Linear, never to a file (Rules). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
 - The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
@@ -101,7 +106,15 @@ If none exists for this piece of work, do not plan yet: invoke the `wayfinder` s
 - **claim** by assigning the ticket to the user; **resolve** by posting the answer as a comment, setting the state to Done, and appending the one-line gist to the map's Decisions so far
 - a **file** wayfinder or a skill it loads would write (`GRILLING.md`, research notes, a findings summary, a decision log) is a **Linear document** in the repo's project instead (`save_document` with the project from `.fast-coding/linear.json`), titled after its map and purpose (`<map>: grilling`), linked from the map's Notes; add to it with `save_document` rather than writing anything to disk. A file the user hands you stays where it is and is linked as a project resource.
 - a **prototype** ticket about how a screen or a flow should look is drawn in Frame0 through the `frame0` MCP server (low-fi wireframes: `create_frame` with the device kind, text, rectangles, icons from `search_icons`, `create_connector` between frames for a flow, one page per ticket named after the ticket). Frame0 must be running with its API server on (Settings > API Server > Run on start); if the tools fail to connect, say so and wait rather than describing the design in words. Export the page with `export_page_as_image`, attach the image to the ticket (`prepare_attachment_upload` then `create_attachment_from_upload`), and walk the user through it in the grilling; the resolution comment names the Frame0 page. Logic or stub prototypes still go in code on a throwaway branch.
-Wayfinder resolves one ticket per session, with the user, one question at a time and your recommendation on each; the grilling it runs is HITL, never answer for the user. When it reports no fog (the way is already clear in one sitting), its grilling is the spec: write the decisions into the map's Decisions so far and continue to step 1.
+Wayfinder resolves one ticket per session, with the user, one question at a time and your recommendation on each; the grilling it runs is HITL, never answer for the user.
+Inside herdr, frontier tickets that do not block each other are asked in parallel, one question agent each:
+1. Chart the map yourself. The frontier is every open ticket with no unresolved blocker.
+2. Per frontier ticket: `fast-coding crew start --role q-<ticket id> --title "<ticket title>" --brief -`, briefed with the ticket id and link, the map's id, the 0b Linear lookup rules, and: "invoke wayfinder for this one ticket; grill the captain in this pane, one question at a time with your recommendation; when resolved, comment the answer on the ticket, set it Done, and append its one-line gist to the map's Decisions so far with a `save_issue` patch append, never a whole-description write; then report done."
+3. Start at most three at once, so the captain is never juggling more; queue the rest.
+4. Each question agent reports `needs-user` as it starts asking; relay that up as one `needs-user` naming every open question tab, so the captain knows where to answer.
+5. On each `done`: `crew stop` it, re-read the map, recompute the frontier (a resolved ticket can unblock others), and start the next. A ticket whose answer changes another open ticket's question: tell that agent with `herdr agent prompt`.
+6. When the frontier is empty and Not yet specified is empty, the way is clear: continue to step 1.
+A ticket that blocks another is never asked in parallel with it. Research and prototype tickets are crew too, without the grilling. When it reports no fog (the way is already clear in one sitting), its grilling is the spec: write the decisions into the map's Decisions so far and continue to step 1.
 Before any question reaches the user (charting, grilling, story writing), look for its answer in Linear first:
 1. the map's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand
 2. the resolution comments of Done tickets under the map (`list_issues` with the map as parent, then `list_comments`)
@@ -120,6 +133,8 @@ Everything is on disk, so a restart is a non-event. At the start of a session on
 - `run INTERRUPTED` or a task `interrupted`: the previous run died with you. `fast-coding resume` re-runs what did not pass, in fresh agents, keeping passed layers. Reconcile Linear from the `--now` lines first, so the issues say what the disk says, parents included (0s).
 - `HALTED ... payment required`: the user's stop; say so and wait for the word to `resume`.
 - `run live`: another orchestrator session owns it. Supervise with `watch`, do not start a second run.
+- Inside herdr, as the first mate: `fast-coding crew list --project <slug>`. A live `<slug>-orchestrator` owns the project: resume the relay loop (0h) and do nothing else. None, or its tab is closed: start it again with `crew start --role orchestrator`, briefed to continue from 0r.
+- As the orchestrator: `crew list` too; live question agents and helpers keep their work, so watch them rather than starting duplicates.
 - Herdr agents of a dead run are closed by the next run of their task; do not close them by hand.
 
 ### 1. Plan from the spec
