@@ -21,6 +21,12 @@ Everything that would be a ticket lives on Linear, never as files in the repo: t
 Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another), and commit it on the user's branch before anything else.
 All Linear reads and writes are yours, through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`). The CLI never talks to Linear.
+Confirm the file points at a real project before any other Linear call: `get_project` with its URL must return a project on its team.
+Scope every Linear read, search, and write to that project and team; when a project is in play, its feature comes from `.fast-coding/<slug>/linear.json`.
+Stop and ask the user, never guess, when any of these happen:
+- a Linear MCP call fails (auth, connection, timeout): say which call and its error, and wait; do not carry on as if Linear were empty
+- the file's project or team is not found, or the user hands you an issue that lives in another project
+- you cannot tell which epic, feature, story, or ticket the work belongs to, or a search returns more than one plausible match
 
 ### 0i. The levels: project, epic, feature, story, task
 Linear has projects, issues, sub-issues, and labels; these five levels are how fast-coding uses them. Labels `Epic`, `Feature`, `Story`, `Task` live on the Engineering team (`Feature` exists; create the others once with `create_issue_label` if `list_issue_labels` does not show them).
@@ -55,7 +61,13 @@ The CLI builds the topology by itself, named so the captain reads it at a glance
 - one tab per task, **`NNN <title>`**, holding the task's implementer: an interactive pi agent named **`<slug>-NNN`**, with state labels (`attempt 2/3`, `passed`, `rejected_size`) and tokens (`model`, `cost`) on its pane
 - tab **`verify HH:MM`** per verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
 Your own pane stays where the captain started you. Name it: `herdr agent rename $HERDR_PANE_ID <slug>-orchestrator` and `herdr pane rename $HERDR_PANE_ID "<slug> orchestrator"`.
-Outside herdr the same commands run headless and nothing is shown; the skill is identical.
+`<slug>` is the project's (0a); until a project exists it is a kebab-case name for the map in the user's words.
+Helpers you fan out yourself (research readers, writers, reviewers: anything `run` and `verify` do not start) are herdr agents too, one tab each, so the captain sees and steers them like the implementers.
+The harness's in-process subagent tool (Claude's `Agent`) has no pane, so herdr cannot show it: inside herdr it is not used.
+Per helper: `herdr tab create --workspace $HERDR_WORKSPACE_ID --label "<what it does>" --cwd <repo> --no-focus` (the project's space instead, found by its `<slug>` label in `herdr workspace list`, once `init` has created it), `herdr agent start <slug>-<role> --kind claude --pane <root_pane.pane_id> -- --permission-mode auto`, then `herdr agent prompt <slug>-<role> "<the task, the files to read, the one file to write>"`.
+Prompt them all, then `herdr agent wait <name> --timeout 600000` each; read the file each wrote; `herdr tab close <tab_id>` once you have.
+Names match `[a-z][a-z0-9_-]{0,31}` and are unique among live agents.
+Outside herdr the same CLI commands run headless and nothing is shown, and helpers are the harness's own subagents; the skill is identical.
 
 ### 0a. Put the work in a project, in its own worktree
 A project is one feature: its own git worktree and branch, one plan, one set of tasks, one gh stack. The moment the user invokes you with a task, decide which project it belongs to before anything else:
@@ -69,7 +81,7 @@ A project is one feature: its own git worktree and branch, one plan, one set of 
 
 ### 0b. Find the way first when the decisions are not written down
 A settled spec is a feature issue whose description says the way is clear: no open decision sub-issues, and `## Not yet specified` empty. A repo file (`DESIGN.md`, a PRD) counts too when the user points at it.
-If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the epic (or the feature, when it is its own map) as the map. Wayfinder's tracker is Linear here, and this is how its operations map:
+If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the epic (or the feature, when it is its own map) as the map (it is user-invocable only; when the Skill tool does not list it, read `~/.claude/skills/wayfinder/SKILL.md` and follow it). Wayfinder's tracker is Linear here, and this is how its operations map:
 - the **map** is the epic issue, or the feature issue when there is no epic; its description is the map body (Destination, Notes, Decisions so far, Not yet specified, Out of scope)
 - a **ticket** is a sub-issue of the map, labelled `wayfinder:<type>` (`research`, `prototype`, `grilling`, `task`), body `## Question`
 - **blocking** is Linear's native "blocked by" relation (`save_issue` with `blockedBy`), so the frontier shows in Linear's own UI
@@ -77,6 +89,17 @@ If none exists for this piece of work, do not plan yet: invoke the `wayfinder` s
 - **claim** by assigning the ticket to the user; **resolve** by posting the answer as a comment, setting the state to Done, and appending the one-line gist to the map's Decisions so far
 - a **prototype** ticket about how a screen or a flow should look is drawn in Frame0 through the `frame0` MCP server (low-fi wireframes: `create_frame` with the device kind, text, rectangles, icons from `search_icons`, `create_connector` between frames for a flow, one page per ticket named after the ticket). Frame0 must be running with its API server on (Settings > API Server > Run on start); if the tools fail to connect, say so and wait rather than describing the design in words. Export the page with `export_page_as_image`, attach the image to the ticket (`prepare_attachment_upload` then `create_attachment_from_upload`), and walk the user through it in the grilling; the resolution comment names the Frame0 page. Logic or stub prototypes still go in code on a throwaway branch.
 Wayfinder resolves one ticket per session, with the user, one question at a time and your recommendation on each; the grilling it runs is HITL, never answer for the user. When it reports no fog (the way is already clear in one sitting), its grilling is the spec: write the decisions into the map's Decisions so far and continue to step 1.
+Before any question reaches the user (charting, grilling, story writing), look for its answer in Linear first:
+1. the map's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand
+2. the resolution comments of Done tickets under the map (`list_issues` with the map as parent, then `list_comments`)
+3. a `list_issues` search, scoped to the project in `.fast-coding/linear.json`, for the question's key terms, since another epic or feature may have decided it
+A decision found there is settled: state it with its ticket's name and link, build on it, and do not ask again.
+Ask only when Linear is silent, or when two recorded decisions conflict; then quote both and ask which one stands.
+"We need to make decisions" from the user is fog, whatever deliverables the same request lists: a PRD, epics, user flows or a tech doc asked for up front are what the map and its resolved tickets become after the grilling, not drafts written around decisions you picked.
+When the user cannot answer (a harness note says so, or no reply comes): chart the map, post the first question on its ticket, say so, and stop; the session ends at the question and 0r resumes it.
+An autonomous mode is never a mandate to decide for the user.
+Helpers in this phase read research, draft ticket Questions, or draw a prototype whose decision is settled; none writes a document that carries an open decision.
+Research the user points at (notes, a folder of findings) feeds the map's Notes; it is not the spec.
 If a spec exists, read it and do not reopen its decisions. Open a decision ticket only for what it leaves open that the plan needs.
 
 ### 0r. Pick up where the last session stopped
@@ -222,7 +245,7 @@ One paragraph. What to build, where, exact export names.
 - Tests are the contract. The implementer never edits them.
 - Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, stories, tasks, steers), `plan.md`, task files, GRILLING.md, and the docs you edit after merge. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
-- Linear is the ticket tracker. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step: Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split.
+- Linear is the source of truth and the ticket tracker. What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it, so the next session finds it. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step: Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.
