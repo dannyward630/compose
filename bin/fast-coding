@@ -14,12 +14,115 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_MODEL = "pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras"  # pi harness; the OpenRouter preset pins Cerebras
+# Takes over when a gpt-oss attempt errors, times out, is rate-limited, or misses. The preset pins Together, then CoreWeave.
+FALLBACK_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast"
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
-PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75)}
+PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75),
+          "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast": (0.15, 0.50)}
+CONFIG_PATH = Path(os.environ.get("FAST_CODING_CONFIG", Path.home() / ".fast-coding" / "config.json"))
+OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents
+
+# ---------- global config and workspaces ----------
+# ~/.fast-coding/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
+#   {"workspace": "work",
+#    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:..."},
+#    "env": {"TYPESAFE_API_KEY": "..."},
+#    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
+# `default` is the top level itself; it always exists and is active when `workspace` is unset.
+
+def read_config():
+    return json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+
+def write_config(cfg):
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    CONFIG_PATH.chmod(0o600)  # it holds API keys
+
+def settings(cfg):
+    """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep."""
+    name = cfg.get("workspace") or "default"
+    if name != "default" and name not in cfg.get("workspaces", {}):
+        sys.exit(f"{CONFIG_PATH}: active workspace {name!r} is not under \"workspaces\"")
+    ws = cfg.get("workspaces", {}).get(name, {})
+    out = {k: v for k, v in cfg.items() if k not in ("workspace", "workspaces")}
+    for k, v in ws.items():
+        out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return name, out
+
+def apply_config():
+    """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
+    OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY
+    name, st = settings(read_config())
+    models = st.get("models", {})
+    DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
+    FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
+    if "fix" in models:
+        os.environ["FAST_CODING_FIX_MODEL"] = models["fix"]
+    os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
+    if "openrouter_api_key" in st:
+        if not st["openrouter_api_key"]:
+            sys.exit(f"{CONFIG_PATH}: workspace {name!r} has an empty openrouter_api_key")
+        OPENROUTER_KEY = st["openrouter_api_key"]
+        os.environ["OPENROUTER_API_KEY"] = os.environ["TEXT_MODEL_API_KEY"] = OPENROUTER_KEY
+        os.environ["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": OPENROUTER_KEY}}}})
+    return name
+
+WORKSPACE_ACTIONS = ("add", "key", "remove")
+
+def read_key(name):
+    """The key from piped stdin (`pbpaste | fast-coding workspace key personal`) or a hidden prompt; never an argument,
+    so it stays out of shell history, the process list, and chat."""
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+    import getpass
+    return getpass.getpass(f"OpenRouter API key for {name} (empty to set later): ").strip()
+
+def cmd_workspace(a):
+    """`workspace` lists, `workspace <name>` switches, `workspace add|key|remove <name>` manages. `default` always exists:
+    it is the config's top level, with no overrides."""
+    cfg = read_config()
+    spaces = cfg.setdefault("workspaces", {})
+    action, name = (a.name, a.target) if a.name in WORKSPACE_ACTIONS else (None, a.name)
+    if action and not name:
+        sys.exit(f"usage: fast-coding workspace {action} <name>")
+    if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        sys.exit(f"workspace names are letters, digits, - and _: {name!r}")
+    if name and name != "default" and action != "add" and name not in spaces:
+        sys.exit(f"no workspace {name!r}; have: {', '.join(['default', *spaces])}. Create it: fast-coding workspace add {name}")
+    if action == "add":
+        if name == "default" or name in WORKSPACE_ACTIONS or name in spaces:
+            sys.exit(f"workspace {name!r} already exists" if name in spaces or name == "default" else f"{name!r} is a reserved word")
+        spaces[name] = {"openrouter_api_key": read_key(name)}  # empty fails loudly on use instead of billing another account
+        print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | fast-coding workspace key {name}"))
+    elif action == "key":
+        key = read_key(name)
+        if not key:
+            sys.exit("no key read; copy it, then: pbpaste | fast-coding workspace key " + name)
+        (cfg if name == "default" else spaces[name])["openrouter_api_key"] = key
+    elif action == "remove":
+        if name == "default":
+            sys.exit("default always exists; clear its key in the config's top level instead")
+        del spaces[name]
+        if cfg.get("workspace") == name:
+            cfg["workspace"] = "default"
+            print(f"removed the active workspace {name}; now on default")
+    elif name:
+        cfg["workspace"] = name
+    if action or name:
+        write_config(cfg)
+    current = cfg.get("workspace") or "default"
+    for n, entry in [("default", cfg), *spaces.items()]:
+        key = entry.get("openrouter_api_key")
+        state = "…" + key[-4:] if key else "not set" if "openrouter_api_key" in entry else "harness auth stores" if n == "default" else "inherits default"
+        print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}")
+    _, st = settings(cfg)
+    m = st.get("models", {})
+    print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
 
 # ---------- output and cost ledger ----------
 
@@ -185,7 +288,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=300):
     if "OPENROUTER_API_KEY" not in env and (JEV_DIR / ".env").exists():  # pi's custom providers read the key from env
         env["OPENROUTER_API_KEY"] = load_env(JEV_DIR / ".env").get("TEXT_MODEL_API_KEY", "").strip('"')
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
-           "--no-prompt-templates", "--thinking", "low", "--model", model, prompt]
+           "--no-prompt-templates", "--thinking", "low", "--model", model, *(["--api-key", OPENROUTER_KEY] if OPENROUTER_KEY else []), prompt]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
     for line in p.stdout.splitlines():
@@ -224,6 +327,10 @@ def pi_turn(cwd, model, prompt, session=None, timeout=300):
     if "429" in (p.stderr or "") or any("rate" in e.lower() and "limit" in e.lower() for e in errors):
         raise RateLimited(usage)
     return sid, "\n".join(text), tools, usage
+
+def fallback_for(model):
+    """The model to switch to after a miss, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
+    return FALLBACK_MODEL if FALLBACK_MODEL and model not in (FALLBACK_MODEL, "claude") else None
 
 def implementer(cwd, model, prompt, session=None, task=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -449,7 +556,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []),
-                "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
+                "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model,
+                *(["--api-key", OPENROUTER_KEY] if OPENROUTER_KEY else [])]
         started = herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args, check=True, timeout=90)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "tab": tab["tab"]["tab_id"], "sfile": sfile, "seen": 0}
@@ -630,6 +738,13 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
     rate_waits = 0
     attempt = 0
+    fall = lambda: None if reset_files else fallback_for(meta["model"])  # bench measures the named model alone
+    def switch(why, next_prompt):  # hand the task to the fallback model in a fresh session (a session is bound to its model)
+        nonlocal session, prompt
+        model = fall()
+        say(f"{tid} fallback {meta['model']} {why}; switching to {model}")
+        log[-1]["fallback"] = {"from": meta["model"], "to": model, "why": why}  # on the attempt that triggered it
+        meta["model"], session, prompt = model, None, next_prompt
     while attempt < attempts:
         attempt += 1
         t0 = time.time()
@@ -640,6 +755,11 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
                 session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)})
         except RateLimited as e:
             cost += e.usage["cost"]
+            if fall():
+                log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
+                switch(f"rate-limited by provider", original_prompt)
+                attempt -= 1
+                continue
             rate_waits += 1
             if rate_waits > 4:
                 log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
@@ -658,6 +778,8 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
             session = None
             prompt = original_prompt
+            if fall():
+                switch("timed out", original_prompt)
             continue
         except PaymentRequired as e:
             say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
@@ -667,6 +789,9 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
         except Exception as e:  # noqa: BLE001
             say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
+            if fall():
+                switch("errored", original_prompt)
+                continue
             break
         cost += usage["cost"]
         test = sh(meta["test"], wt, timeout=600, check=False)
@@ -704,6 +829,8 @@ def run_task(repo, proj, task_path, attempts, model=None, reset_files=False, tag
                             + f"\nFiles you may change: {', '.join(meta['files'])}")
         status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else status) if test.returncode == 0 else status
         prompt = "\n\n".join(problems) + "\nFix it without editing protected files."
+        if fall():  # the fresh session starts from the task, the edits left in the clone, and what went wrong
+            switch("missed", original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt)
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
     # Only this task's own files are reverted: the orchestrator may be editing other files in the main checkout meanwhile.
@@ -1383,7 +1510,9 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         _, _, _, protected = review_inputs(repo, proj, cfg)
         before = digests(repo, protected)
         t1 = time.time()
-        model = cfg.get("fix_model", DEFAULT_MODEL)
+        model = cfg.get("fix_model") or os.environ.get("FAST_CODING_FIX_MODEL") or DEFAULT_MODEL
+        if rnd and fallback_for(model):  # the gpt-oss fix did not clear the findings; the fallback takes later rounds
+            model = fallback_for(model)
         say(f"fix    start round {rnd + 1}  model={model}")
         pack = graft_pack(repo, findings[:400])
         prompt = (f"REPOSITORY ROOT: {repo}\nEvery edit must be under that root.\n\n" +
@@ -1395,10 +1524,11 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         try:
             _, reply, tools, usage = implementer(repo, model, prompt)
         except RateLimited as e:
-            say("fix    rate-limited by provider; waiting 30s and retrying once")
-            time.sleep(30)
+            say("fix    rate-limited by provider; " + (f"retrying on {fallback_for(model)}" if fallback_for(model) else "waiting 30s and retrying once"))
+            if not fallback_for(model):
+                time.sleep(30)
             try:
-                _, reply, tools, usage = implementer(repo, model, prompt)
+                _, reply, tools, usage = implementer(repo, fallback_for(model) or model, prompt)
             except PaymentRequired:
                 raise
             except Exception as e2:  # noqa: BLE001
@@ -1407,6 +1537,14 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
             raise
         except Exception as e:  # noqa: BLE001
             reply, tools, usage = f"fix call failed: {e}", 0, {"cost": 0.0}
+            if fallback_for(model):
+                say(f"fix    {model} errored; retrying on {fallback_for(model)}")
+                try:
+                    _, reply, tools, usage = implementer(repo, fallback_for(model), prompt)
+                except PaymentRequired:
+                    raise
+                except Exception as e2:  # noqa: BLE001
+                    reply, tools, usage = f"fix call failed: {e2}", 0, {"cost": 0.0}
         tampered = [f for f, d in digests(repo, protected).items() if d != before[f]]
         if tampered:
             sh(["git", "checkout", "--"] + tampered, repo, check=False)
@@ -1794,7 +1932,7 @@ def cmd_init(a):
         (proj / "verify.json").write_text(json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
-            "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": "main", "fix_model": DEFAULT_MODEL}, indent=2))
+            "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": "main"}, indent=2))
     gi = wt / ".gitignore"
     lines = gi.read_text().splitlines() if gi.exists() else []
     for pat in (".fast-coding/*/worktrees/", ".fast-coding/*/results/"):
@@ -1902,7 +2040,8 @@ def main():
                             ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
-                            ("clean", cmd_clean, "remove worktrees and branches")):
+                            ("clean", cmd_clean, "remove worktrees and branches"),
+                            ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
         s.add_argument("--project", required=(name == "init"))
@@ -1937,6 +2076,9 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
+        if name == "workspace":
+            s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
+            s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
         if name == "clean":
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
@@ -1944,6 +2086,10 @@ def main():
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
     a = ap.parse_args()
+    if a.fn is not cmd_workspace:
+        ws = apply_config()  # "default" when no workspace is chosen
+        if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
+            say(f"workspace {ws}")
     a.fn(a)
 
 if __name__ == "__main__":

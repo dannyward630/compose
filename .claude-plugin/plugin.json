@@ -1,0 +1,7 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "fast-coding",
+  "version": "0.1.0",
+  "description": "The fast loop: plan, fan tiny tasks out to parallel fast implementers, verify locally, stack the branches.",
+  "skills": ["./"]
+}

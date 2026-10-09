@@ -212,6 +212,8 @@ Implement by hand only when the blocker is not the task: the provider is down or
 ## Task file format
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, which pins gpt-oss-120b to Cerebras through the OpenRouter preset `gpt-oss-120b-cerebras`.
+When a gpt-oss attempt errors, times out, is rate-limited, or misses, the task moves to `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast` (Together, then CoreWeave) in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
+Models, the fallback, and the OpenRouter key come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
 
 ```markdown
 ---
