@@ -55,6 +55,8 @@ Three roles, after [firstmate](https://github.com/kunchenguid/firstmate); you ar
 | orchestrator | a Claude session that runs the project from wayfinder to a verified stack | tab `orchestrator` in the project's space, agent `<slug>-orchestrator` |
 | crew | wayfinder question agents (one per independent question, at most three at once), helpers, implementers | one tab each in the project's space |
 
+The first mate and the orchestrator write no code, not one line: tests, groundwork, escalated work, conflict fixes, and docs are crew work, and tasks go to `run`.
+For the orchestrator this is enforced: `crew start` marks its tab `FAST_CODING_ROLE=orchestrator`, and the plugin's PreToolUse hook (`hooks/hooks.json` runs `fast-coding guard`) denies its Write and Edit calls inside a repository, except the CLI's JSON under `.fast-coding/`. Other sessions are untouched.
 You talk to the first mate. A question agent grills you in its own tab; answer there, or tell the first mate, who forwards it. You can type into any crew tab directly.
 Crew report upward with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`); `watch` turns each report into a wake event, so a session that is waiting costs nothing.
 
