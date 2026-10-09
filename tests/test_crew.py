@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, os, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -56,6 +56,7 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "get"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
+        self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the orchestrator's tab is marked for the guard
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
@@ -93,3 +94,33 @@ class Crew(unittest.TestCase):
         fc.write_report(self.proj, "shop-q-1", "done", "Resolved NEB-12")
         stop(False)
         self.assertEqual(closed, [("tab", "close", "w9:t3")])
+
+
+class Guard(unittest.TestCase):
+    """The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are crew work."""
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        fc.sh(["git", "init", "-q"], self.repo)
+        (self.repo / ".fast-coding" / "shop").mkdir(parents=True)
+
+    def test_orchestrator_cannot_edit_repo_files(self):
+        for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".fast-coding/shop/notes.md"):
+            self.assertIsNotNone(fc.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
+
+    def test_orchestrator_keeps_its_own_files(self):
+        for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
+            self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
+        self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
+
+    def test_crew_and_unmarked_sessions_are_untouched(self):
+        for role in ("crew", None, ""):
+            self.assertIsNone(fc.guard_decision("Edit", str(self.repo / "src/app.go"), role))
+        self.assertIsNone(fc.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
+
+    def test_hook_output_denies(self):
+        ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), mock.patch.object(fc.sys, "stdin", io.StringIO(ev)), \
+                mock.patch.object(fc.sys, "stdout", out):
+            fc.cmd_guard(None)
+        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")

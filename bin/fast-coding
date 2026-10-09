@@ -631,7 +631,9 @@ def cmd_crew(a):
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
     space = herdr_space(proj)
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(wt), "--no-focus", check=True)
+    role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
+    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(wt), "--env", f"FAST_CODING_ROLE={role}",
+                "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
@@ -640,6 +642,33 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
     print(f"crew {name} started in tab {title!r} of space {slug}; it reports with `fast-coding report`, `watch` wakes on it")
+
+GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config
+
+def guard_decision(tool, path, role):
+    """None to allow, else why not. The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are crew work."""
+    if role != "orchestrator" or tool not in GUARDED_TOOLS or not path:
+        return None
+    p = Path(path).expanduser().resolve()
+    if CLI_FILE.search(str(p)):
+        return None
+    d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
+    if sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
+        return None  # scratch outside any repository, e.g. a brief in /tmp
+    return (f"The orchestrator never edits code, tests, config, or docs ({p.name}). Hand it to crew: "
+            f"`fast-coding crew start --role <job> --brief -`, or put it in a task issue for `run`.")
+
+def cmd_guard(a):
+    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the orchestrator's file edits inside a repository."""
+    try:
+        ev = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return
+    ti = ev.get("tool_input") or {}
+    why = guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), os.environ.get("FAST_CODING_ROLE"))
+    if why:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 
 def write_report(proj, name, state, message):
     with open(crew_dir(proj) / f"{name}.status", "a") as f:
@@ -2208,6 +2237,7 @@ def main():
                             ("clean", cmd_clean, "remove worktrees and branches"),
                             ("crew", cmd_crew, "start | list | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
+                            ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -2264,7 +2294,7 @@ def main():
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
     a = ap.parse_args()
-    if a.fn is not cmd_workspace:
+    if a.fn not in (cmd_workspace, cmd_guard):  # guard runs on every edit in every session: no config, no output
         ws = apply_config()  # "default" when no workspace is chosen
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             say(f"workspace {ws}")
