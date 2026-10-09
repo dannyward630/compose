@@ -10,8 +10,8 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 | Who | Does | Never does |
 |---|---|---|
-| You (orchestrator) | Find the way with the user (wayfinder), write the spec and plan, split into tasks, mirror the feature and every task on Linear and move them through its states, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
-| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own tab) | One task file, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
+| You (orchestrator) | Find the way with the user (wayfinder), write the spec, the plan, and every task as Linear issues and move them through its states, write each acceptance test, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Type implementation a task file covers (unless the blocker is infrastructure); merge anything: a human reviewer merges the PRs on GitHub |
+| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own tab) | One task issue's brief, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
@@ -37,7 +37,7 @@ Linear has projects, issues, sub-issues, and labels; these five levels are how f
 | **epic** | top-level issue, label `Epic`; its description is the wayfinder map | a wayfinder map | decision tickets (`wayfinder:<type>`) and features, as sub-issues |
 | **feature** | label `Feature`; sub-issue of its epic, or top-level when there is no epic | one fast-coding project: worktree, plan, one stack | stories; its description is the settled spec (or the map, when the feature is small enough to be its own map) |
 | **story** | label `Story`; sub-issue of its feature | a contiguous group of layers in the feature's stack | tasks; its description is one user-visible slice with acceptance criteria |
-| **task** | label `Task`; sub-issue of its story | one task file, one stack layer | goal, acceptance criteria, test plan |
+| **task** | label `Task`; sub-issue of its story | one task issue (with its `fast-coding` block), one stack layer | goal, acceptance criteria, test plan |
 
 A feature with one obvious slice still gets one story, so tasks always have the same parent shape. A bug or improvement is a feature with one story. Fewer levels is always right when the work is small: an epic exists only when wayfinder finds fog (more than one feature's worth of open decisions).
 
@@ -86,7 +86,7 @@ A project is one feature: its own git worktree and branch, one plan, one set of 
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
 - Every project is one **feature issue** on Linear (label `Feature`, title in the user's words, under its epic when there is one). Create it if the user did not hand you one, and record its identifier in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Its stories, their tasks, and any decision tickets are its sub-issues, so the whole feature reads as one tree in Linear.
-- From then on everything you do for this project happens in that worktree: GRILLING.md additions, the plan, task files, acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
+- From then on everything you do in code for this project happens in that worktree: acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). Everything written in words (grilling notes, the plan, tasks, decisions) goes to Linear, never to a file (Rules). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
 - The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
 - Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
 `fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
@@ -99,6 +99,7 @@ If none exists for this piece of work, do not plan yet: invoke the `wayfinder` s
 - **blocking** is Linear's native "blocked by" relation (`save_issue` with `blockedBy`), so the frontier shows in Linear's own UI
 - the **frontier** is `list_issues` on the feature's sub-issues: open, no unresolved blockers, unassigned
 - **claim** by assigning the ticket to the user; **resolve** by posting the answer as a comment, setting the state to Done, and appending the one-line gist to the map's Decisions so far
+- a **file** wayfinder or a skill it loads would write (`GRILLING.md`, research notes, a findings summary, a decision log) is a **Linear document** in the repo's project instead (`save_document` with the project from `.fast-coding/linear.json`), titled after its map and purpose (`<map>: grilling`), linked from the map's Notes; add to it with `save_document` rather than writing anything to disk. A file the user hands you stays where it is and is linked as a project resource.
 - a **prototype** ticket about how a screen or a flow should look is drawn in Frame0 through the `frame0` MCP server (low-fi wireframes: `create_frame` with the device kind, text, rectangles, icons from `search_icons`, `create_connector` between frames for a flow, one page per ticket named after the ticket). Frame0 must be running with its API server on (Settings > API Server > Run on start); if the tools fail to connect, say so and wait rather than describing the design in words. Export the page with `export_page_as_image`, attach the image to the ticket (`prepare_attachment_upload` then `create_attachment_from_upload`), and walk the user through it in the grilling; the resolution comment names the Frame0 page. Logic or stub prototypes still go in code on a throwaway branch.
 Wayfinder resolves one ticket per session, with the user, one question at a time and your recommendation on each; the grilling it runs is HITL, never answer for the user. When it reports no fog (the way is already clear in one sitting), its grilling is the spec: write the decisions into the map's Decisions so far and continue to step 1.
 Before any question reaches the user (charting, grilling, story writing), look for its answer in Linear first:
@@ -123,13 +124,13 @@ Everything is on disk, so a restart is a non-event. At the start of a session on
 
 ### 1. Plan from the spec
 Input is the feature issue's map and resolved tickets, plus `DESIGN.md`, a PRD, whatever the repo already had.
-Read all of it. Then invoke `superpowers:writing-plans` and write the plan to `.fast-coding/<project>/plan.md` inside the project's worktree, committed on `fast-coding/<project>`.
-`<project>` is a short slug for this piece of work, one repo can hold several.
+Read all of it. Then invoke `superpowers:writing-plans` for how to write the plan, but not where: the plan is a `## Plan` section in the feature issue's description (`save_issue`), never a file. Writing-plans' own save path does not apply.
+`<project>` is a short slug for this piece of work, one repo can hold several; `.fast-coding/<project>/linear.json` holds `{"feature": "<feature issue id>"}` and is how the CLI finds the plan and the tasks.
 The plan follows writing-plans conventions: numbered steps, each with files touched, the test that proves it, and explicit dependencies.
 Decisions already made in the spec are not reopened.
 
 ### 2. Split into tasks
-Turn each plan step into `.fast-coding/<project>/tasks/NNN-slug.md` (format below).
+Turn each plan step into a task issue on Linear (format below). There is no task file: the CLI reads the issue.
 A task is right-sized when all of these hold:
 - one to three files, one test command, under ten acceptance criteria
 - no open design choices; every "how" is stated or obvious from the named files
@@ -139,18 +140,18 @@ A task is right-sized when all of these hold:
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
 - it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
-Each task is also a **task issue** on Linear: a sub-issue of its story, labelled `Task`, state Todo, title equal to the task's title, description equal to the task file body (Goal, Acceptance criteria, Test plan, Constraints), with `blockedBy` set to the `after:` task's issue. Create it with `save_issue` when you write the task file and put its identifier in the file's `linear:` field. The task file is the CLI's contract; the issue is where humans watch it. Keep both saying the same thing: edit one, edit the other.
+A task is a **task issue** on Linear: a sub-issue of its story, labelled `Task`, state Todo, its title the task's title, its description the brief (Goal, Acceptance criteria, Test plan, Constraints) ending with the `fast-coding` block, and `blockedBy` set to the issue of each task it builds on. That one issue is the CLI's contract, the implementer's brief, and where humans watch and edit the work: `fast-coding sync` (which `run`, `verify`, and `tasks` do first) reads it as it is now, so an edit in Linear is an edit to the task.
 One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them.
 
 ### 3. Write the tests first (red)
 The acceptance test is yours. List it under `protected:`. The CLI rejects any attempt that changes a protected file.
 It must fail on HEAD; `run` refuses a task whose test already passes.
-Include holdout cases the task file does not list. The implementer is told they exist, so it has to implement the behavior rather than the examples. The deny-list task showed why: given only the listed labels, the fast model wrote one literal regex per label.
-Commit tests and task files before dispatching; independent tasks branch from HEAD, stacked tasks from their lower layer.
+Include holdout cases the task issue does not list. The implementer is told they exist, so it has to implement the behavior rather than the examples. The deny-list task showed why: given only the listed labels, the fast model wrote one literal regex per label.
+Commit the tests before dispatching; independent tasks branch from HEAD, stacked tasks from their lower layer.
 
 ### 3b. The user reviews the tasks before anything runs
 Run `fast-coding tasks --repo <path> --project <name>` and show the user its output: every task's id, title, the files it owns, what it builds on, and its test, in stack order, with a warning for any file two tasks claim. Add one line per task saying what its holdout cases cover, in words.
-Then stop and wait. The user may combine tasks, split them, reorder the stack, change file ownership, or drop one, here or in Linear. Apply the changes to the task files and their issues (a dropped task's issue is Canceled), re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
+Then stop and wait. The user may combine tasks, split them, reorder the stack, change file ownership, or drop one, here or in Linear. Apply the changes to the task issues (a dropped task's issue is Canceled and loses its `fast-coding` block), re-run `fast-coding tasks`, and only dispatch after an explicit go. Skip this gate only when the user has said in this conversation to run without review.
 Green is the implementer's job. Refactor is yours, through review and the verify fix loop, never the implementer refactoring its own green code.
 
 ### 4. Dispatch
@@ -162,7 +163,7 @@ Run it in the background (`run_in_background`); your job during a run is supervi
 - Start `fast-coding watch --repo <wt> --project <slug>` in the background too. It sleeps until something you must act on happens, prints one `event ...` line, and exits; its exit wakes you. Act on the line, then start `watch` again. Never loop on `status` or `herdr agent list` yourself.
 - The event lines, and what you do with each: `task=NNN state=running` moves its Linear issue (the `linear=` field is on the line) to In Progress, with its story and feature (0s); `state=passed` moves it to In Review with a comment naming `branch=`, attempts, and cost, and rolls its story up; `state=failed` or `state=rejected_*` leaves it In Progress with the failure in a comment and goes to step 7; `agent=<name> status=blocked` means read it and steer; `run=ended` means review the stack; `verify=PASS|FAIL` means report, and PASS with every story In Review moves the feature to In Review. A status line is a wake event, not current state: before a decision, confirm with `fast-coding status` and the result file.
 - Read before you act: `herdr agent read <slug>-NNN --source recent-unwrapped --lines 80`.
-- Steer with one specific instruction: `herdr agent prompt <slug>-NNN "<what to change, which file, which test>"`. The CLI's own re-prompts and yours go to the same agent, so keep yours short and concrete, and never contradict the task file; if the task is wrong, fix the task and re-run it.
+- Steer with one specific instruction: `herdr agent prompt <slug>-NNN "<what to change, which file, which test>"`. The CLI's own re-prompts and yours go to the same agent, so keep yours short and concrete, and never contradict the task issue; if the task is wrong, fix the task and re-run it.
 - A stalled agent (working, no output change for a few minutes) gets one nudge, then `fast-coding` times it out into a fresh session by itself; do not kill panes.
 - Log each steer as a comment on the task's Linear issue, one line, so the trail is in the ticket and not only in a terminal.
 Linear follows the run from your side, since the CLI does not talk to it: right before `run`, move every task you are dispatching to In Progress, and with it its story and the feature (0s). When `run` ends, read `results/NNN.json` and move each passed task to In Review with a comment naming its branch, attempts, and cost; a failed task stays In Progress with a comment that gives the failure in one paragraph (step 7 decides what happens to it). Then roll the stories and the feature up (0s). A user looking at the feature issue in Linear sees the stack's state without asking you.
@@ -192,7 +193,7 @@ Verify runs at the top of the stack, in the CLI's worktree, since layers are nev
 ```
 1. **checks**: lint and unit tests, exact and cheap, run first.
 2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
-3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task file becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
+3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task issue becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
 4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check you write that reads the real DOM or run log. A DONE from the model is never the proof.
 5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. After N rounds it escalates to you with the findings. `--fix 0` reports only.
 
@@ -221,24 +222,15 @@ Implement by hand only when the blocker is not the task: the provider is down or
 `fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory. `fast-coding watch` is how you wait for it to change.
 `fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature. Then move each merged task's issue to Done and roll its story, feature, and epic up (0s): the feature is Done once every layer and the project branch are merged. A task you did by hand (`fast-coding done`) goes to Done with the same note.
 
-## Task file format
+## Task issue format
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, which pins gpt-oss-120b to Cerebras through the OpenRouter preset `gpt-oss-120b-cerebras`.
 When a gpt-oss attempt errors, times out, is rate-limited, or misses, the task moves to `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast` (Together, then CoreWeave) in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
-Models, the fallback, and the OpenRouter key come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
+Models, the fallback, and the OpenRouter and Linear keys come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
 
-```markdown
----
-id: 001
-title: Submit deny list
-files: extension/deny_list.js
-protected: tests/deny_list.test.js
-test: node --test tests/deny_list.test.js
-model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
-after:            # id of the task this one builds on; it becomes the next layer of that task's stack
-linear: ENG-124   # this task's Linear issue, a sub-issue of its story, blocked by `after:`'s issue
----
+The issue's title is the task's title. Its description is the brief, then the block the CLI reads, last:
 
+````markdown
 ## Goal
 One paragraph. What to build, where, exact export names.
 
@@ -246,20 +238,32 @@ One paragraph. What to build, where, exact export names.
 - One bullet per behavior. Each is checked by the test.
 
 ## Test plan
-- How to run: the `test:` command above.
+- How to run: the `test:` command below.
 - Covered: which behaviors the test exercises, in words, not the literal cases.
 - Holdout: state that the test has cases not listed here (do not list them).
 
 ## Constraints
 - No new dependencies. Do not edit protected files.
+
+```fast-coding
+id: 001
+files: extension/deny_list.js
+protected: tests/deny_list.test.js
+test: node --test tests/deny_list.test.js
+model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
 ```
+````
+
+- `id` is the stack order a reviewer reads in; ids are unique within the feature.
+- `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on.
+- An issue under the feature without the block is not a task (stories, decision tickets): the CLI ignores it.
 
 ## Rules
-- Nothing is implemented until the user says so. Intake, wayfinder, stories, plan, task files, tests, and their Linear issues are all preparation; `fast-coding run` is the first implementing action and it waits for an explicit go on the task list (step 3b), every time, for every wave, even when the user handed you a single task. "Build it" at intake is not that go; the go comes after the user has seen the tasks.
+- Nothing is implemented until the user says so. Intake, wayfinder, stories, the plan, task issues, and tests are all preparation; `fast-coding run` is the first implementing action and it waits for an explicit go on the task list (step 3b), every time, for every wave, even when the user handed you a single task. "Build it" at intake is not that go; the go comes after the user has seen the tasks.
 - Tests are the contract. The implementer never edits them.
-- Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, stories, tasks, steers), `plan.md`, task files, GRILLING.md, and the docs you edit after merge. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
+- Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, plans, stories, tasks, grilling notes, steers), and the docs you edit after merge. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task issue format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
-- Linear is the source of truth and the ticket tracker. What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it, so the next session finds it. No ticket, map, decision, or task list is ever written as a file in the repo beyond the task files the CLI needs; everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step, at every level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
+- Linear is the source of truth and the ticket tracker. What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it, so the next session finds it. Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.fast-coding/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and git-ignored `results/`); everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step, at every level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.

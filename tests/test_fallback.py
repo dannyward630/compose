@@ -17,8 +17,8 @@ class Fallback(unittest.TestCase):
         git("init", "-q", "-b", "main")
         (repo / "a.txt").write_text("no\n")
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-        task = proj / "001-answer.md"
-        task.write_text("---\nid: 001\ntitle: answer\nfiles: a.txt\ntest: grep -q yes a.txt\n---\n## Goal\nWrite yes.\n")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": fc.DEFAULT_MODEL, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         calls = []
         def impl(cwd, model, prompt, session=None, task=None):
             calls.append(model)
@@ -48,9 +48,9 @@ class Fallback(unittest.TestCase):
         self.assertIsNone(fc.fallback_for("claude"))
 
 
-def ws(name=None, target=None, stdin=""):
+def ws(name=None, target=None, stdin="", kind=None):
     with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
-        fc.cmd_workspace(type("A", (), {"name": name, "target": target}))
+        fc.cmd_workspace(type("A", (), {"name": name, "target": target, "kind": kind}))
 
 
 class Workspaces(unittest.TestCase):
@@ -125,3 +125,10 @@ class Workspaces(unittest.TestCase):
         for bad in (("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
             with self.assertRaises(SystemExit):
                 ws(*bad)
+
+    def test_linear_key_per_workspace(self):
+        ws("key", "personal", stdin="lin_api_home", kind="linear")
+        ws("personal")
+        fc.apply_config()
+        self.assertEqual(os.environ["LINEAR_API_KEY"], "lin_api_home")
+        self.assertEqual(fc.read_config()["workspaces"]["personal"]["openrouter_api_key"], "sk-home")  # untouched

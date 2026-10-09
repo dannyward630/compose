@@ -107,6 +107,7 @@ Everything the CLI shells out to, and where each one is used. Install the requir
 | git 2.30+ | task clones (`git clone --shared`), branches, diffs | Xcode CLT or Homebrew | yes |
 | Node 22.19+ | pi, and `node --test` in repos that use it | `brew install node` | yes |
 | pi | default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | yes |
+| Linear personal API key | `sync`, which `run`, `verify`, `resume`, `bench`, and `tasks` do first: the plan and the tasks are read from Linear | linear.app/settings/account/security, then `pbpaste \| fast-coding workspace key <workspace> linear` | yes |
 | OpenRouter account and key | every implementer, fixer, and reviewer call | key in `~/.pi/agent/auth.json` (`openrouter`, `openrouter-fast`) and in `~/code/jev-ultrafast/.env` as `TEXT_MODEL_API_KEY` | yes |
 | OpenRouter preset `gpt-oss-120b-cerebras` | pins the implementer to Cerebras from the model string | dashboard, Settings > Presets: model `openai/gpt-oss-120b`, provider order Cerebras, fallbacks off, nothing else included | yes |
 | OpenRouter preset `glm-5.3-flash-fast` | the fallback: takes a task (or a later fix round) when a gpt-oss attempt errors, times out, is rate-limited, or misses | dashboard, Settings > Presets: model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, fallbacks off, nothing else included | yes |
@@ -120,7 +121,7 @@ Everything the CLI shells out to, and where each one is used. Install the requir
 | Claude Code | `model: claude` baseline through the subscription (`claude -p`) | already installed if you are reading this from it | optional |
 | graft | `graft build .` gives implementers a `file:line` context pack instead of exploring | `brew install graft` (or the project's installer); free, git-ignored | optional, recommended |
 
-Secrets never live in this repo or in task files: the active workspace's key comes from `~/.fast-coding/config.json` (see [Workspaces](#workspaces)); without one, pi and OpenCode read their auth stores and verify reads the jev-ultrafast `.env`.
+Secrets never live in this repo or on Linear issues: the active workspace's key comes from `~/.fast-coding/config.json` (see [Workspaces](#workspaces)); without one, pi and OpenCode read their auth stores and verify reads the jev-ultrafast `.env`.
 
 - `SKILL.md` is the orchestrator's instructions, linked into `~/.claude/skills/fast-coding`.
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
@@ -131,6 +132,7 @@ fast-coding run    --repo . --project <name>   # one clone + one pi session per 
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
 fast-coding resume --repo . --project <name>   # continue a run or verify that stopped on PAYMENT REQUIRED
+fast-coding sync     --repo . --project <name>   # pull the feature (plan) and its task issues from Linear into results/tasks.json
 fast-coding tasks    --repo . --project <name>   # the task list to review before dispatch: files owned, after, tests; warns on shared files
 fast-coding projects --repo .                  # every project (feature): done/total, last activity, title, states
 fast-coding status --repo . [--project <name>] [--watch]   # all projects with every task, or one; state, attempts, time, cost, stack layer; --watch refreshes
@@ -150,7 +152,7 @@ Open Claude Code in the repo and ask for the skill:
 /fast-coding plan and build <feature> from ENG-123 and DESIGN.md
 ```
 
-Claude reads the spec, writes `.fast-coding/<project>/plan.md`, splits it into task files, writes the acceptance tests, dispatches, reviews each diff, runs verify, and reports with timing and cost.
+Claude reads the spec, writes the plan into the feature issue on Linear, splits it into task issues, writes the acceptance tests, dispatches, reviews each diff, runs verify, and reports with timing and cost.
 You review the plan and the results.
 You never call the CLI yourself in this mode.
 
@@ -159,7 +161,9 @@ You never call the CLI yourself in this mode.
 ```bash
 cd ~/code/some-repo
 fast-coding init --project my-feature          # worktree ../fast-coding-my-feature on branch fast-coding/my-feature; work there from now on
-# write .fast-coding/my-feature/tasks/001-slug.md and its test, commit both
+# on Linear: the feature issue (its description holds the plan) and one task issue per task, each ending with a fast-coding block
+# echo '{"feature": "ENG-123"}' > .fast-coding/my-feature/linear.json; write each task's test; commit
+fast-coding sync --project my-feature          # pull the feature and its tasks from Linear; run and verify do this themselves
 fast-coding run --project my-feature           # parallel pi implementers, one clone each; `after:` tasks stack on their base
 fast-coding verify --project my-feature        # checks, review, jev acceptance, e2e, fix loop
 fast-coding stack --project my-feature --submit   # when asked: push the stack, one draft PR per layer; a reviewer merges on GitHub
@@ -176,7 +180,8 @@ fast-coding workspace                              # list workspaces (* = active
 fast-coding workspace personal                     # switch to personal; run and verify print `workspace <name>` first
 fast-coding workspace default                      # switch back to default
 pbpaste | fast-coding workspace add client-x       # create a workspace with the key on the clipboard (no pipe: hidden prompt, empty = set later)
-pbpaste | fast-coding workspace key client-x       # set or rotate a workspace's key (`key default` sets the top-level one)
+pbpaste | fast-coding workspace key client-x       # set or rotate a workspace's OpenRouter key (`key default` sets the top-level one)
+pbpaste | fast-coding workspace key client-x linear   # its Linear personal API key, for `sync`
 fast-coding workspace remove client-x              # delete it; removing the active one switches to default
 ```
 
@@ -200,8 +205,8 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
  "models": {"implementer": "pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras",
             "fallback": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast", "fix": "<optional, default: implementer>"},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
- "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
-                "personal": {"openrouter_api_key": "sk-or-...", "models": {"fallback": null}}}}
+ "workspaces": {"work": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_..."},
+                "personal": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_...", "models": {"fallback": null}}}}
 ```
 
 The workspace key goes to pi (`--api-key`, which beats its auth store), OpenCode (`OPENCODE_CONFIG_CONTENT`), the Mercury review, and jev's e2e text helper (`TEXT_MODEL_API_KEY`), so every OpenRouter call bills that account.
@@ -239,24 +244,17 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
 3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key the jev-ultrafast `.env` uses as `TEXT_MODEL_API_KEY`.
    pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras`: an OpenRouter preset (dashboard, Settings > Presets) that pins provider order to Cerebras with fallbacks off, so a harness with no request-body options still gets the pinned host. Priced at the Cerebras rate so the ledger is honest.
    OpenCode pins the host explicitly instead: `~/.config/opencode/opencode.jsonc` sets `options.provider.order: ["cerebras", "groq"]` with fallbacks off.
-   Workspaces override all of that per account: see [Workspaces](#workspaces).
+   Workspaces override all of that per account, and hold the Linear key too: see [Workspaces](#workspaces).
 4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
 5. Add e2e cases only for browser-facing work, each with an `assert` command you wrote.
 6. Run `graft build .` so implementers get a context pack instead of exploring. It is free and git-ignored; the CLI rebuilds it inside each worktree.
 
-### Task file
+### Task issue
 
-```markdown
----
-id: 002
-title: Snapshot port
-files: extension/snapshot.js
-protected: tests/snapshot.test.js
-test: node --test 'tests/**/*.test.js'
-model: openrouter/openai/gpt-oss-120b
-after:            # id of the task this one builds on; it becomes the next layer of that task's stack
----
+A task is a Linear issue under the project's feature (directly or under a story).
+Its title is the task's title; its description is the implementer's brief and ends with the block the CLI reads:
 
+````markdown
 ## Goal
 One paragraph. What to build, where, exact export names.
 
@@ -264,13 +262,26 @@ One paragraph. What to build, where, exact export names.
 - One bullet per behavior. Each is checked by the test.
 
 ## Test plan
-- How to run: the `test:` command above.
+- How to run: the `test:` command below.
 - Covered: which behaviors the test exercises, in words.
 - Holdout: the test has cases not listed here.
 
 ## Constraints
 - No new dependencies. Do not edit protected files.
+
+```fast-coding
+id: 002
+files: extension/snapshot.js
+protected: tests/snapshot.test.js
+test: node --test 'tests/**/*.test.js'
+model: openrouter/openai/gpt-oss-120b
 ```
+````
+
+`after` is the issue's "blocked by" links to other tasks of the same feature: each becomes the layer this task stacks on.
+Issues without the block (stories, decision tickets) are not tasks.
+The plan is the feature issue's description; nothing about the work is written to a file in the repo.
+`.fast-coding/<project>/` holds only the CLI's JSON: `linear.json` (`{"feature": "ENG-123"}`), `verify.json`, and the git-ignored `results/` (with `tasks.json`, the cache `sync` writes for `status` and `watch`).
 
 Right-sized means one to three files, one test command, under ten criteria, and the test fails on HEAD.
 If you cannot write the test, it is not a task yet.
@@ -283,7 +294,7 @@ If you cannot write the test, it is not a task yet.
   │  spec (Linear feature issue + wayfinder tickets, DESIGN.md, PRD)         │
   │     │                                                                    │
   │     ▼                                                                    │
-  │  plan.md ──▶ tasks/001.md 002.md 003.md ...   (goal, ACs, test plan)     │
+  │  Linear: plan in the feature ──▶ task issues 001 002 003 (+ CLI block)   │
   │                  │                                                       │
   │                  ▼                                                       │
   │  write tests/*.test.js  (RED on HEAD, holdout cases inside, protected)   │
