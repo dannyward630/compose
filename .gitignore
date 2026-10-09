@@ -1,1 +1,15 @@
 __pycache__/
+.pytest_cache/
+.DS_Store
+
+# graft's local graph cache - regenerable, not committed (run `graft build`).
+/graft/
+
+# graft's per-machine agent wiring (written by `graft init`): it points at the ignored /graft/ cache and runs local hooks.
+/.claude/
+/.gemini/
+/.mcp.json
+/opencode.json
+/AGENTS.md
+/GEMINI.md
+/.ignore

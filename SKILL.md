@@ -166,7 +166,7 @@ Every line prints its clock time and duration. The last line is the cost ledger:
 Fix what fails, re-run. Only then tell the user it is done, with the verify output.
 
 ### 6a. Browser work goes through `bp` (browser-probe)
-Any browser exploration or testing in this loop, by you or by an implementer, uses `bp` from `/Users/reggie-jobscan/code/browser-probe` (skill `browser-probe`, rules in its `AGENTS.md`). Not the user's real Chrome, not ad hoc Playwright scripts.
+Any browser exploration or testing in this loop, by you or by an implementer, uses `bp` from `~/code/browser-probe` (skill `browser-probe`, rules in its `AGENTS.md`). Not the user's real Chrome, not ad hoc Playwright scripts.
 - **Exploring** (what does the panel show, did the fill work, record a flow): `bp launch --ext <dir>`, `bp list`, `bp hosts`, `bp snap`, `bp clicktext`, `bp form`, `bp record`. Screenshots land in `shots/` with an `index.md` line each.
 - **Driving toward a goal with the model**: `bp goal <url> "<goal> … stop before Submit"`. Same jev policy as verify's e2e, same Chromium.
 - **Verify e2e for an extension**: launch the extension's Chromium in `e2e_setup` and point jev at it with `e2e_env`, so `jev_e2e` attaches to that browser instead of the default Chrome:
