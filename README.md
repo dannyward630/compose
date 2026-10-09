@@ -62,7 +62,7 @@ Crew report upward with `fast-coding report` (`working`, `needs-user`, `blocked`
 fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt   # first mate, after init
 fast-coding crew start --project <slug> --role q-ENG-12 --title "Payment provider" --brief - < brief.txt  # orchestrator, per independent question
 fast-coding crew list  --project <slug>                       # every crew session with its last report and herdr status
-fast-coding crew stop  --project <slug> --role q-ENG-12       # close its tab once its done is handled
+fast-coding crew stop  --project <slug> --role q-ENG-12       # close its tab; refused until it reported done (--force overrides)
 fast-coding report --project <slug> --as <slug>-q-eng-12 needs-user "Stripe or Adyen? I recommend Stripe"   # what crew run
 fast-coding watch --project <slug> --from orchestrator        # the first mate wakes only on the orchestrator's reports
 ```

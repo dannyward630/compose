@@ -73,3 +73,23 @@ class Crew(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
                 self.assertRaises(SystemExit):
             fc.cmd_crew(a)
+
+    def test_stop_waits_for_done_unless_forced(self):
+        (fc.crew_dir(self.proj) / "shop-q-1.json").write_text('{"tab": "w9:t3"}')
+        fc.write_report(self.proj, "shop-q-1", "needs-user", "Which one?")
+        closed = []
+        def stop(force):
+            a = type("A", (), {"action": "stop", "role": "q-1", "force": force})
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+                    mock.patch.object(fc, "herdr", lambda *args, **kw: closed.append(args)):
+                fc.cmd_crew(a)
+        with self.assertRaises(SystemExit) as e:
+            stop(False)
+        self.assertIn("needs-user", str(e.exception))
+        self.assertEqual(closed, [])
+        stop(True)
+        self.assertEqual(closed, [("tab", "close", "w9:t3")])
+        closed.clear()
+        fc.write_report(self.proj, "shop-q-1", "done", "Resolved NEB-12")
+        stop(False)
+        self.assertEqual(closed, [("tab", "close", "w9:t3")])

@@ -615,6 +615,10 @@ def cmd_crew(a):
     if a.action == "stop":
         if not rec.exists():
             sys.exit(f"no crew {name}")
+        last = (crew_reports(proj, name) or [{}])[-1]
+        if last.get("state") != "done" and not a.force:  # closing mid-conversation loses what the captain was saying there
+            sys.exit(f"{name} has not reported done (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); "
+                     f"read it with `herdr agent read {name} --lines 60`, or pass --force to close it anyway")
         herdr("tab", "close", json.loads(rec.read_text())["tab"])
         print(f"crew {name} stopped")
         return
@@ -2245,6 +2249,7 @@ def main():
             s.add_argument("--role", help="orchestrator, q-<ticket>, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
+            s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done")
