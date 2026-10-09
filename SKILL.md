@@ -140,7 +140,13 @@ A task is right-sized when all of these hold:
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
 - it is independent of other pending tasks, or its `after:` names the task whose code it needs. An `after:` task branches from that task's tip, so its code is there
 If you cannot write its test, it is not a task yet. Split further or do it yourself.
-A task is a **task issue** on Linear: a sub-issue of its story, labelled `Task`, state Todo, its title the task's title, its description the brief (Goal, Acceptance criteria, Test plan, Constraints) ending with the `fast-coding` block, and `blockedBy` set to the issue of each task it builds on. That one issue is the CLI's contract, the implementer's brief, and where humans watch and edit the work: `fast-coding sync` (which `run`, `verify`, and `tasks` do first) reads it as it is now, so an edit in Linear is an edit to the task.
+A task is a **task issue** on Linear: a sub-issue of its story, labelled `Task`, state Todo, its title the task's title, its description the brief (Goal, Acceptance criteria, Test plan, Constraints) ending with the `fast-coding` block, and `blockedBy` set to the issue of each task it builds on. That one issue is the CLI's contract, the implementer's brief, and where humans watch and edit the work.
+The CLI never calls Linear; you hand it what Linear says. **Sync** right before every `tasks`, `run`, `resume`, and `verify`, so an edit anyone made in Linear is what runs:
+1. `get_issue` on the feature (from `.fast-coding/<project>/linear.json`) for its id, title, and description.
+2. `list_issues` with the feature as `parentId`, then with each story as `parentId`, for the ids only: `list_issues` truncates descriptions, and the block is at the end.
+3. `get_issue` on every one of those issues with fields `id`, `title`, `description`, `status`, `relations`.
+4. Pipe it in: `fast-coding sync --repo <wt> --project <slug> <<'EOF'` then `{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "blockedBy": <relations.blockedBy as returned>}]}` then `EOF`. Pass every description whole, exactly as `get_issue` returned it; the CLI hands it to the implementer as the brief.
+The commands refuse to start without a sync, and `sync` refuses a feature other than `linear.json`'s.
 One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them.
 
 ### 3. Write the tests first (red)
@@ -226,7 +232,7 @@ Implement by hand only when the blocker is not the task: the provider is down or
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, which pins gpt-oss-120b to Cerebras through the OpenRouter preset `gpt-oss-120b-cerebras`.
 When a gpt-oss attempt errors, times out, is rate-limited, or misses, the task moves to `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast` (Together, then CoreWeave) in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
-Models, the fallback, and the OpenRouter and Linear keys come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
+Models, the fallback, and the OpenRouter key come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
 
 The issue's title is the task's title. Its description is the brief, then the block the CLI reads, last:
 

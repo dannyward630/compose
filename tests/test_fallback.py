@@ -48,9 +48,9 @@ class Fallback(unittest.TestCase):
         self.assertIsNone(fc.fallback_for("claude"))
 
 
-def ws(name=None, target=None, stdin="", kind=None):
+def ws(name=None, target=None, stdin=""):
     with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
-        fc.cmd_workspace(type("A", (), {"name": name, "target": target, "kind": kind}))
+        fc.cmd_workspace(type("A", (), {"name": name, "target": target}))
 
 
 class Workspaces(unittest.TestCase):
@@ -125,10 +125,3 @@ class Workspaces(unittest.TestCase):
         for bad in (("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
             with self.assertRaises(SystemExit):
                 ws(*bad)
-
-    def test_linear_key_per_workspace(self):
-        ws("key", "personal", stdin="lin_api_home", kind="linear")
-        ws("personal")
-        fc.apply_config()
-        self.assertEqual(os.environ["LINEAR_API_KEY"], "lin_api_home")
-        self.assertEqual(fc.read_config()["workspaces"]["personal"]["openrouter_api_key"], "sk-home")  # untouched

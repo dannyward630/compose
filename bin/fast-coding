@@ -4,7 +4,7 @@
 Layout inside any repo:
   .fast-coding/<project>/linear.json    {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
   .fast-coding/<project>/verify.json    local verification config
-  .fast-coding/<project>/results/       tasks.json (the Linear cache), one JSON per task run, verify results (git-ignored)
+  .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results (git-ignored)
   .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
 Nothing is pushed. The only network calls are the model APIs.
 """
@@ -63,8 +63,6 @@ def apply_config():
     if "fix" in models:
         os.environ["FAST_CODING_FIX_MODEL"] = models["fix"]
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
-    if st.get("linear_api_key"):
-        os.environ["LINEAR_API_KEY"] = st["linear_api_key"]
     if "openrouter_api_key" in st:
         if not st["openrouter_api_key"]:
             sys.exit(f"{CONFIG_PATH}: workspace {name!r} has an empty openrouter_api_key")
@@ -101,11 +99,10 @@ def cmd_workspace(a):
         spaces[name] = {"openrouter_api_key": read_key(name)}  # empty fails loudly on use instead of billing another account
         print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | fast-coding workspace key {name}"))
     elif action == "key":
-        kind = a.kind or "openrouter"
-        key = read_key(f"{name} ({kind})")
+        key = read_key(name)
         if not key:
-            sys.exit(f"no key read; copy it, then: pbpaste | fast-coding workspace key {name} {kind}")
-        (cfg if name == "default" else spaces[name])[f"{kind}_api_key"] = key
+            sys.exit("no key read; copy it, then: pbpaste | fast-coding workspace key " + name)
+        (cfg if name == "default" else spaces[name])["openrouter_api_key"] = key
     elif action == "remove":
         if name == "default":
             sys.exit("default always exists; clear its key in the config's top level instead")
@@ -121,9 +118,7 @@ def cmd_workspace(a):
     for n, entry in [("default", cfg), *spaces.items()]:
         key = entry.get("openrouter_api_key")
         state = "…" + key[-4:] if key else "not set" if "openrouter_api_key" in entry else "harness auth stores" if n == "default" else "inherits default"
-        lin = entry.get("linear_api_key")
-        lstate = "…" + lin[-4:] if lin else "not set" if n == "default" else "inherits default"
-        print(f"{'*' if n == current else ' '} {n:16} openrouter key {state:20} linear key {lstate}")
+        print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}")
     _, st = settings(cfg)
     m = st.get("models", {})
     print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
@@ -212,39 +207,21 @@ def project_dir(a):
 
 # ---------- tasks ----------
 
-# Linear is the record humans and agents share; the CLI reads it and keeps a git-ignored cache in results/tasks.json.
-# A task is any issue under the project's feature (directly or under a story) whose description ends with this block:
+# Linear is the record humans and agents share. The CLI never calls it: the orchestrator reads the feature and its tasks
+# through its Linear MCP tools and pipes them to `fast-coding sync`, which keeps them in the git-ignored results/tasks.json.
+# A task is any issue under the feature (directly or under a story) whose description ends with this block:
 #   ```fast-coding
 #   id: 001
 #   files: server/graph/validate.go
 #   protected: server/graph/validate_test.go
 #   test: cd server && go test ./graph/ -run TestValidateAnswers
 #   ```
-# Everything above the block is the implementer's brief. `after:` is Linear's own "blocked by" between the feature's tasks.
-LINEAR_API = "https://api.linear.app/graphql"
+# Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks.
 TASK_BLOCK = re.compile(r"\n*```fast-coding[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
-ISSUE_FIELDS = "identifier title description state { name } inverseRelations(first: 50) { nodes { type issue { identifier } } }"
-FEATURE_QUERY = ("query($id: String!) { issue(id: $id) { " + ISSUE_FIELDS +
-                 # ponytail: 100 stories x 100 tasks per feature, no pagination; a feature that big should be split anyway
-                 " children(first: 100) { nodes { " + ISSUE_FIELDS + " children(first: 100) { nodes { " + ISSUE_FIELDS + " } } } } } }")
+SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "blockedBy": ["<issue id>"]}]}'
+              ": every issue under the feature, its stories' children included")
 
-def linear_query(query, variables):
-    key = os.environ.get("LINEAR_API_KEY")
-    if not key:
-        sys.exit("no Linear API key: create one at https://linear.app/settings/account/security, copy it, then "
-                 "`pbpaste | fast-coding workspace key <workspace> linear`")
-    req = urllib.request.Request(LINEAR_API, data=json.dumps({"query": query, "variables": variables}).encode(),
-                                 headers={"Authorization": key, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            out = json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        sys.exit(f"Linear refused the request ({e.code}): {e.read().decode(errors='replace')[:300]}")
-    if out.get("errors"):
-        sys.exit(f"Linear: {'; '.join(err.get('message', '') for err in out['errors'])[:300]}")
-    return out["data"]
-
-def task_from_issue(issue, blockers):
+def task_from_issue(issue):
     """A task meta (with its brief under "body") from a Linear issue whose description carries the fast-coding block, else None."""
     desc = issue.get("description") or ""
     m = TASK_BLOCK.search(desc)
@@ -252,26 +229,26 @@ def task_from_issue(issue, blockers):
         return None
     meta = {k.strip(): v.strip() for k, v in (l.split(":", 1) for l in m.group(1).splitlines() if ":" in l)}
     if "id" not in meta or "test" not in meta:
-        sys.exit(f"{issue['identifier']}: its fast-coding block needs id and test")
+        sys.exit(f"{issue['id']}: its fast-coding block needs id and test")
     for key in ("files", "protected"):
         meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
     meta.setdefault("model", DEFAULT_MODEL)
-    meta.update({"title": issue["title"], "linear": issue["identifier"], "linear_state": (issue.get("state") or {}).get("name", ""),
-                 "blocked_by": blockers, "body": TASK_BLOCK.sub("\n", desc).strip()})
+    meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
+                 "blocked_by": [b["id"] if isinstance(b, dict) else b for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
+                 "body": TASK_BLOCK.sub("\n", desc).strip()})
     return meta
 
-def sync_tasks(proj):
-    """Pull the feature and its tasks from Linear into results/tasks.json. Returns the tasks, sorted by id."""
+def sync_tasks(proj, data):
+    """Store the feature and its tasks, as the orchestrator read them from Linear, in results/tasks.json. Returns the tasks."""
     link = proj / "linear.json"
     feature = json.loads(link.read_text()).get("feature") if link.exists() else None
     if not feature:
-        sys.exit(f"{link}: needs {{\"feature\": \"<issue id, e.g. ENG-123>\"}}, the Linear feature this project builds")
-    root = linear_query(FEATURE_QUERY, {"id": feature})["issue"]
-    if not root:
-        sys.exit(f"Linear has no issue {feature} (or this workspace's key cannot see it)")
-    issues = [root] + [c for story in root["children"]["nodes"] for c in [story] + story.get("children", {}).get("nodes", [])]
-    blockers = {i["identifier"]: [r["issue"]["identifier"] for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks"] for i in issues}
-    tasks = [t for t in (task_from_issue(i, blockers[i["identifier"]]) for i in issues) if t]
+        sys.exit(f'{link}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
+    if not isinstance(data, dict) or not isinstance(data.get("feature"), dict) or not isinstance(data.get("issues"), list):
+        sys.exit(f"sync reads JSON on stdin shaped {SYNC_SHAPE}")
+    if data["feature"].get("id") != feature:
+        sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
+    tasks = [t for t in (task_from_issue(i) for i in data["issues"]) if t]
     ids = [t["id"] for t in tasks]
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     if dupes:
@@ -281,8 +258,9 @@ def sync_tasks(proj):
         t["after"] = ",".join(sorted(by_issue[b] for b in t.pop("blocked_by") if b in by_issue))
     tasks.sort(key=lambda t: t["id"])
     (proj / "results").mkdir(exist_ok=True)
+    f = data["feature"]
     (proj / "results" / "tasks.json").write_text(json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "feature": {"id": root["identifier"], "title": root["title"], "description": root.get("description") or ""}, "tasks": tasks}, indent=2))
+        "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks}, indent=2))
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
@@ -291,8 +269,11 @@ def linear_cache(proj):
     path = proj / "results" / "tasks.json"
     return json.loads(path.read_text()) if path.exists() else {"feature": {}, "tasks": []}
 
-def load_tasks(proj):
-    """The tasks as last synced from Linear, no network. Commands that act on tasks call sync_tasks first."""
+def load_tasks(proj, required=False):
+    """The tasks as the orchestrator last synced them from Linear. Commands that act on tasks require a sync."""
+    if required and not (proj / "results" / "tasks.json").exists():
+        sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
+                 f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
     return linear_cache(proj)["tasks"]
 
 def digests(root, files):
@@ -1105,7 +1086,7 @@ def cmd_run(a):
     only = set(a.only.split(",")) if a.only else None
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
-    tasks = [m for m in sync_tasks(proj) if not only or m["id"] in only]
+    tasks = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
     if getattr(a, "redo", False):
@@ -1551,7 +1532,7 @@ def cmd_verify(a):
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     t0 = time.time()
-    sync_tasks(proj)  # acceptance criteria and the plan come from Linear as they are now
+    load_tasks(proj, required=True)  # acceptance criteria and the plan come from the Linear sync
     say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
     root, base, wt = verify_root(repo, proj, cfg)
@@ -1740,7 +1721,7 @@ def project_summary(repo, proj):
 def cmd_tasks(a):
     """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
-    tasks = sync_tasks(proj)
+    tasks = load_tasks(proj, required=True)
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a fast-coding block")
     print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(m['id'] for m in tasks)}")
@@ -1914,7 +1895,7 @@ def cmd_resume(a):
     if state["command"] == "run":
         if sh(["git", "status", "--porcelain"], repo).stdout.strip():
             sys.exit("repo has uncommitted changes; commit first")
-        tasks = [m for m in sync_tasks(proj) if m["id"] in set(state["remaining"])]
+        tasks = [m for m in load_tasks(proj, required=True) if m["id"] in set(state["remaining"])]
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
@@ -1938,7 +1919,7 @@ def cmd_bench(a):
     only = set(a.only.split(",")) if a.only else None
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit first")
-    tasks = [m for m in sync_tasks(proj) if not only or m["id"] in only]
+    tasks = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a fast-coding block")
     models = a.models.split(",")
@@ -2086,9 +2067,13 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     print(line)
 
 def cmd_sync(a):
-    """Pull the feature and its tasks from Linear into the local cache and list them."""
+    """Store the feature and its tasks, read from Linear by the orchestrator and piped in as JSON, and list them."""
     proj = project_dir(a)
-    tasks = sync_tasks(proj)
+    try:
+        data = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        sys.exit(f"sync: stdin is not JSON ({e}); expected {SYNC_SHAPE}")
+    tasks = sync_tasks(proj, data)
     f = linear_cache(proj)["feature"]
     print(f"{f['id']} {f['title']}: {len(tasks)} task(s) synced")
     for m in tasks:
@@ -2114,7 +2099,7 @@ def main():
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", cmd_done, "record tasks the orchestrator finished by hand: --only ids --note why"),
-                            ("sync", cmd_sync, "pull the feature and its tasks from Linear into the local cache (run, verify, tasks do this first)"),
+                            ("sync", cmd_sync, "store the feature and its tasks, read from Linear by the orchestrator, from JSON on stdin"),
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
@@ -2160,7 +2145,6 @@ def main():
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
-            s.add_argument("kind", nargs="?", choices=("openrouter", "linear"), help="for `key`: which key to set (default openrouter)")
         if name == "clean":
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
