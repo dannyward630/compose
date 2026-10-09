@@ -612,6 +612,14 @@ def cmd_crew(a):
         sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
     name = agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
+    if a.action == "focus":
+        if not rec.exists():
+            sys.exit(f"no crew {name}")
+        c = json.loads(rec.read_text())
+        herdr("workspace", "focus", c["space"])
+        herdr("tab", "focus", c["tab"])
+        print(f"focused {name} ({c['title']})")
+        return
     if a.action == "stop":
         if not rec.exists():
             sys.exit(f"no crew {name}")
@@ -674,13 +682,51 @@ def write_report(proj, name, state, message):
     with open(crew_dir(proj) / f"{name}.status", "a") as f:
         f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "state": state, "message": message}) + "\n")
 
+def crew_record(proj, name):
+    f = crew_dir(proj) / f"{name}.json"
+    return json.loads(f.read_text()) if f.exists() else None
+
+def crew_attention(proj, name, state, message):
+    """The captain's attention, done by the CLI so no session can forget it: a needs-user or blocked report notifies the
+    captain and badges the pane; it never steals focus (`crew focus` jumps there on request)."""
+    c = crew_record(proj, name)
+    if not c:
+        return
+    if state in ("needs-user", "blocked"):
+        herdr("notification", "show", f"{c['title']} needs you" if state == "needs-user" else f"{c['title']} is blocked",
+              "--body", f"{message[:160]}  (space {proj.name}, tab {c['title']!r})", "--sound", "request")
+    label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
+    herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
+
+def broadcast_decision(proj, name, message):
+    """A question agent's `done` carries a decision: hand it to every other open question agent, so none asks what was just
+    settled. Each still re-reads Linear before every question; this is the push that does not depend on that."""
+    me = crew_record(proj, name)
+    if not me or not str(me.get("role", "")).lower().startswith("q-"):
+        return []
+    told = []
+    for f in sorted(crew_dir(proj).glob("*.json")):
+        c = json.loads(f.read_text())
+        if c["name"] == name or not str(c.get("role", "")).lower().startswith("q-"):
+            continue
+        if (crew_reports(proj, c["name"]) or [{}])[-1].get("state") == "done":
+            continue
+        herdr("agent", "prompt", c["name"], f"Decision just recorded by {name} ({me['title']}): {message}\n"
+              "Re-read Linear (the map's Decisions so far) before your next question. Drop or reword any question it already answers, "
+              "and tell the captain in one line when it changes what you were about to ask.")
+        told.append(c["name"])
+    return told
+
 def cmd_report(a):
     """A crew session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
     proj = project_dir(a)
     if a.state not in CREW_STATES:
         sys.exit(f"state is one of {', '.join(CREW_STATES)}")
-    write_report(proj, a.as_, a.state, " ".join(a.message))
-    print(f"reported {a.as_} {a.state}")
+    message = " ".join(a.message)
+    write_report(proj, a.as_, a.state, message)
+    crew_attention(proj, a.as_, a.state, message)
+    told = broadcast_decision(proj, a.as_, message) if a.state == "done" else []
+    print(f"reported {a.as_} {a.state}" + (f"; told {', '.join(told)}" if told else ""))
 
 def herdr_tabs(space):
     return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
@@ -2235,7 +2281,7 @@ def main():
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
-                            ("crew", cmd_crew, "start | list | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
+                            ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
@@ -2275,7 +2321,7 @@ def main():
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
         if name == "crew":
-            s.add_argument("action", choices=("start", "list", "stop"))
+            s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator, q-<ticket>, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")

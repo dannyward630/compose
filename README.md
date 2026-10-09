@@ -59,11 +59,15 @@ The first mate and the orchestrator write no code, not one line: tests, groundwo
 For the orchestrator this is enforced: `crew start` marks its tab `FAST_CODING_ROLE=orchestrator`, and the plugin's PreToolUse hook (`hooks/hooks.json` runs `fast-coding guard`) denies its Write and Edit calls inside a repository, except the CLI's JSON under `.fast-coding/`. Other sessions are untouched.
 You talk to the first mate. A question agent grills you in its own tab; answer there, or tell the first mate, who forwards it. You can type into any crew tab directly.
 Crew report upward with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`); `watch` turns each report into a wake event, so a session that is waiting costs nothing.
+A `needs-user` or `blocked` report also pops a herdr notification naming the tab and badges that pane `needs you`; nothing steals focus, and `fast-coding crew focus --role <role>` jumps there when you ask.
+A question agent's `done` is forwarded by the CLI to every other open question agent, and each re-reads Linear before every question, so parallel questions never ask what another just settled.
+The orchestrator reviews each layer's diff as soon as it passes, as the senior engineer over the fast models, so a bad layer is caught before the tasks stacked on it build further.
 
 ```bash
 fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt   # first mate, after init
 fast-coding crew start --project <slug> --role q-ENG-12 --title "Payment provider" --brief - < brief.txt  # orchestrator, per independent question
 fast-coding crew list  --project <slug>                       # every crew session with its last report and herdr status
+fast-coding crew focus --project <slug> --role q-ENG-12      # jump to that tab (the CLI never moves focus by itself)
 fast-coding crew stop  --project <slug> --role q-ENG-12       # close its tab; refused until it reported done (--force overrides)
 fast-coding report --project <slug> --as <slug>-q-eng-12 needs-user "Stripe or Adyen? I recommend Stripe"   # what crew run
 fast-coding watch --project <slug> --from orchestrator        # the first mate wakes only on the orchestrator's reports

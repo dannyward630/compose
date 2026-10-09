@@ -96,6 +96,52 @@ class Crew(unittest.TestCase):
         self.assertEqual(closed, [("tab", "close", "w9:t3")])
 
 
+class Attention(unittest.TestCase):
+    """The CLI, not a session's memory, gets the captain's attention and spreads decisions between question agents."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        self.proj.mkdir(parents=True)
+        for role, title in (("q-neb-1", "Payment provider"), ("q-neb-2", "Refund window"), ("q-neb-3", "Currency"), ("tests", "tests")):
+            name = f"shop-{role}"
+            (fc.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps(
+                {"name": name, "role": role, "title": title, "space": "w9", "tab": f"w9:{role}", "pane": f"p-{role}"}))
+            fc.write_report(self.proj, name, "working", "started")
+        fc.write_report(self.proj, "shop-q-neb-3", "done", "Currency: USD only")
+        self.calls = []
+
+    def report(self, who, state, msg):
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+                mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+            fc.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
+
+    def test_needs_user_notifies_and_badges_without_focus(self):
+        self.report("shop-q-neb-1", "needs-user", "Stripe or Adyen?")
+        verbs = [c[:2] for c in self.calls]
+        self.assertEqual(verbs, [("notification", "show"), ("pane", "report-metadata")])
+        self.assertIn("Payment provider needs you", self.calls[0])
+        self.assertIn("request", self.calls[0])
+        self.assertIn("blocked=needs you", self.calls[1])
+        self.assertNotIn(("tab", "focus"), verbs)
+
+    def test_done_decision_reaches_open_question_agents_only(self):
+        self.report("shop-q-neb-1", "done", "Provider: Stripe (NEB-1)")
+        prompted = [c[2] for c in self.calls if c[:2] == ("agent", "prompt")]
+        self.assertEqual(prompted, ["shop-q-neb-2"])  # not itself, not the finished q-neb-3, not the tests crew
+        self.assertIn("Provider: Stripe (NEB-1)", next(c[3] for c in self.calls if c[:2] == ("agent", "prompt")))
+        self.assertNotIn(("notification", "show"), [c[:2] for c in self.calls])
+
+    def test_non_question_done_is_not_broadcast(self):
+        self.report("shop-tests", "done", "tests committed")
+        self.assertEqual([c for c in self.calls if c[:2] == ("agent", "prompt")], [])
+
+    def test_focus_jumps_on_request(self):
+        a = type("A", (), {"action": "focus", "role": "q-neb-2"})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+                mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+            fc.cmd_crew(a)
+        self.assertEqual(self.calls, [("workspace", "focus", "w9"), ("tab", "focus", "w9:q-neb-2")])
+
+
 class Guard(unittest.TestCase):
     """The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are crew work."""
     def setUp(self):
