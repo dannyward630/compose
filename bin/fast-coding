@@ -966,6 +966,10 @@ def task_base(repo, proj, meta):
             unmerged.append(b)
     if not unmerged:
         return "HEAD", head
+    if is_lite(proj):  # no stack mid-run: build on the dependency itself, or on a merge of several
+        if len(unmerged) == 1:
+            return unmerged[0], sh(["git", "rev-parse", unmerged[0]], repo).stdout.strip()
+        return "merge of " + ", ".join(unmerged), merge_tips(repo, proj, unmerged)
     # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
     trunk = current_branch(repo)
     with STACK_LOCK:  # read the base before another task's linearize rewrites it
@@ -1223,6 +1227,31 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
 
 # ---------- stacks (gh stack) ----------
 
+def merge_tips(repo, proj, branches):
+    """A detached merge commit of `branches`, made in the CLI's stack worktree: the base of a lite task with several dependencies."""
+    with STACK_LOCK:
+        wt = stack_worktree(repo, proj, current_branch(repo))
+        sh(["git", "checkout", "-q", "--detach", branches[0]], wt)
+        r = sh(["git", "merge", "-q", "--no-edit", *branches[1:]], wt, check=False)
+        sha = sh(["git", "rev-parse", "HEAD"], wt).stdout.strip() if r.returncode == 0 else None
+        if r.returncode:
+            sh(["git", "merge", "--abort"], wt, check=False)
+        sh(["git", "checkout", "-q", "--detach", current_branch(repo)], wt, check=False)
+    if not sha:
+        raise RuntimeError(f"after: {', '.join(branches)} conflict when merged; their tasks overlap. Resolve by hand "
+                           f"(git merge them), or split the files differently, then re-run this task.\n{(r.stdout + r.stderr)[-800:]}")
+    return sha
+
+def land_lite(repo, proj):
+    """Merge every unmerged task branch into the project branch, dependencies first, so a lite project's verify and its
+    deliverable are the project branch itself. A conflict stops verify with the branch named."""
+    for b in stack_order(repo, proj):
+        r = sh(["git", "merge", "-q", "--no-edit", b], repo, check=False)
+        if r.returncode:
+            sh(["git", "merge", "--abort"], repo, check=False)
+            sys.exit(f"{b} conflicts with {current_branch(repo)}; resolve by hand: cd {repo} && git merge {b}\n{(r.stdout + r.stderr)[-800:]}")
+        say(f"land   {b} merged into {current_branch(repo)}")
+
 def task_branches(repo, proj):
     """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
     head = sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
@@ -1472,7 +1501,7 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fallback_for(m) for m in models})
     a.trunk = a.trunk or current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
-    if stack_order(repo, proj):
+    if stack_order(repo, proj) and not is_lite(proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
@@ -1591,6 +1620,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     wanted = cfg.get("perspectives", ["correctness", "security", "spec"] + (["docs"] if docs_text else []))
     schema = ('Return JSON {"issues": [{"file": str, "line": int|null, "severity": "high|medium|low", "note": str}]}. '
               "Be concrete and terse. An empty list means clean. Never invent files not in the input. "
+              "Severity: high only for a bug that breaks a stated requirement, loses data, or is a security hole. Performance or style "
+              "concerns at the scale this project runs at are low, never high. "
               + ("The test suite currently PASSES; do not report anything the tests already prove works." if tests_pass else ""))
     user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
@@ -1862,13 +1893,15 @@ def run_stages(repo, proj, cfg, a):
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
-        ok &= rv["pass"]
-        herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
-        say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
+        gate_review = not is_lite(proj)  # on lite, review findings are reported for the orchestrator; only checks and e2e fail verify
+        if gate_review:
+            ok &= rv["pass"]
+        herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
+        say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {i.get('note')}")
-        for i in rv["confirmed"]:
+        for i in rv["confirmed"] if gate_review else []:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
     if not a.skip_review and cfg.get("jev_acceptance", True):
         t1 = time.time()
@@ -1880,7 +1913,7 @@ def run_stages(repo, proj, cfg, a):
             acc = {"pass": False, "criteria": [], "failed": [], "error": str(e)}
         acc["seconds"] = round(time.time() - t1, 1)
         report["acceptance"] = acc
-        gate = bool(cfg.get("acceptance_gate", False))  # tests already cover every criterion; the classifier is advisory unless asked to gate
+        gate = bool(cfg.get("acceptance_gate", False)) and not is_lite(proj)  # tests already cover every criterion; the classifier is advisory unless asked to gate
         if gate:
             ok &= acc["pass"]
         n = len(acc.get("criteria", []))
@@ -1905,6 +1938,9 @@ def verify_root(repo, proj, cfg):
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
     base is the trunk. With no open layers it runs on the user's checkout against `review_base`."""
     trunk = current_branch(repo)
+    if is_lite(proj):  # a lite project lands as one branch: merge the task branches in and verify the project branch itself
+        land_lite(repo, proj)
+        return repo, cfg.get("review_base", trunk), None
     if not stack_order(repo, proj):
         return repo, cfg.get("review_base", trunk), None
     wt = stack_worktree(repo, proj, trunk)
@@ -2169,7 +2205,7 @@ def cmd_tasks(a):
         print(f"\n  WARNING LITE PROJECT HAS {len(open_tasks)} TASKS (lite is for {LITE_MAX_TASKS} or fewer): escalate to the full path "
               "(SKILL.md, Lite path) or cut the plan before `run`.")
 
-LITE_MAX_TASKS = 6
+LITE_MAX_TASKS = 12
 
 def run_waves(tasks):
     """The tasks grouped as `run` dispatches them when every task passes: a task waits only for its `after:` tasks in the list."""
