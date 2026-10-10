@@ -19,9 +19,10 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ### 0L. Pick the path first: lite or full
 The full path below (Linear tree, wayfinder, crews, gates, a gh stack) pays off on big, risky work and costs more than it saves on small work.
-Before step 0, classify the work by size and by reversibility.
-It is **lite** only when all four hold:
-1. **Small**: one feature, and the plan you can already see comes to 6 tasks or fewer.
+Before step 0, classify the work.
+The captain's own words decide it first: "homework", "take-home", "prototype", "quick", "spike", or "lite" picks lite directly, with no size estimate.
+Otherwise it is **lite** only when all four hold:
+1. **Small**: one feature, and the plan you can already see comes to about 12 tiny tasks or fewer. Count tiny one-file tasks, not features or screens: a homework-sized spec with server and client sides is often 9 or 10 tiny tasks and is still lite.
 2. **Reversible**: a wrong call costs a re-run, not an incident. No production data or real-data migrations, auth, payments, security boundaries, or public APIs others depend on. Homework, prototypes, demos, internal tools, and local-only changes qualify.
 3. **Clear destination**: the request (a README, a ticket, the captain's words) says what done is, and every open decision has a recommended option you would defend.
 4. **One area**: one repo, one feature, no epic, no coordination with other teams or projects.
@@ -34,8 +35,9 @@ The first report names the path and the reason in one line, with a one-word over
 - **0g and 3 (crews)**: one `groundwork` crew does the install, the smoke checks, and the acceptance tests (and e2e cases) in one brief. No throwaway reference implementation: the red check and your read of every test are the proof.
 - **1 and 2 (plan, tasks)**: same content, no issues. Pipe it to `fast-coding sync` yourself in the usual JSON: feature `id` is the slug and its `description` is the plan; each issue's `id` is its task id (`001`), its `description` the brief ending with the `fast-coding` block, and `blockedBy` the task ids it truly needs.
 - **3b (gate)**: none. Dispatch as soon as `fast-coding tasks` shows no WARNING.
-- **4 (run)**: `run` does not register a gh stack for a lite project, and there is no Linear to move.
-- **Delivery**: after verify passes, fast-forward the project branch to the verified stack top (`git -C <wt> merge --ff-only <top task branch>`). The result is one branch, `fast-coding/<slug>`, for one PR when the captain asks.
+- **4 (run)**: tasks never get rebased into one chain. A task with one `after:` builds on that task's branch; a task with several builds on a merge of them, and a merge conflict there stops that task with the branches named (split the files differently). `run` registers no gh stack, and there is no Linear to move.
+- **6 (verify)**: `verify` first merges every task branch into the project branch, dependencies first, and verifies the project branch itself. Its fix rounds act only on failing checks and failing e2e; review and acceptance findings are printed and recorded for you to weigh, never auto-fixed and never a FAIL.
+- **Delivery**: the verified project branch, `fast-coding/<slug>`, is the result: one branch for one PR when the captain asks.
 
 **What lite keeps**: its own worktree (0a), tiny tasks with tests written first, parallel implementers, your review of every layer (5), the full verify with e2e (6), the captain's quality bar (1), and nothing pushed.
 
@@ -45,7 +47,7 @@ Send them in one batched report as the run starts: a numbered list, each with th
 The captain overrides any of them by number; an override after code exists becomes a new task or a re-run of the affected ones.
 
 **Escalate to full mid-way** the moment any of these happens:
-- `fast-coding tasks` prints `WARNING LITE PROJECT HAS N TASKS` (more than 6)
+- `fast-coding tasks` prints `WARNING LITE PROJECT HAS N TASKS` (more than 12)
 - a decision turns out irreversible or has no defensible default
 - a second wave looms, or the captain says `full`
 To escalate: create the Linear feature, stories, and task issues from what exists (the plan and every brief with its block), rewrite `linear.json` as `{"feature": "<issue id>"}`, re-sync, ask the decisions that need the captain as one request, and continue at the step you were on. Passed layers keep.
@@ -376,7 +378,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - Nothing is implemented beyond what the captain settled. Intake, wayfinder, stories, the plan, task issues, and tests are all preparation; `fast-coding run` is the first implementing action. It starts without a further go when the task list matches the settled spec, and waits for an explicit go whenever it departs from it (step 3b), every wave.
 - Tests are the contract. The implementer never edits them.
 - Commit messages describe the change itself, in plain words (`Save submissions in one transaction`). Crew and the orchestrator never mention fast-coding, waves, task ids, crews, Linear, or the process in a commit message; the CLI's own commits follow the same rule.
-- The first mate and the orchestrator never write or edit code: no source, test, stub, fixture, build or CI config, generated file, or repo doc, not even a one-line fix. They read code to review it, write Linear, write the CLI's JSON (`.fast-coding/linear.json`, `.fast-coding/<slug>/linear.json`, `verify.json`), and run `fast-coding`, `git` reads, and `herdr` (plus, on the lite path, the one `merge --ff-only` that delivers it). Every change to the repo is crew work or a task for `run`. For the orchestrator a hook enforces it: its tab carries `FAST_CODING_ROLE=orchestrator`, and the plugin's `fast-coding guard` denies its Write and Edit calls inside a repository. Do not route around the hook through Bash.
+- The first mate and the orchestrator never write or edit code: no source, test, stub, fixture, build or CI config, generated file, or repo doc, not even a one-line fix. They read code to review it, write Linear, write the CLI's JSON (`.fast-coding/linear.json`, `.fast-coding/<slug>/linear.json`, `verify.json`), and run `fast-coding`, `git` reads, and `herdr` (on the lite path, `verify` merges the task branches into the project branch itself). Every change to the repo is crew work or a task for `run`. For the orchestrator a hook enforces it: its tab carries `FAST_CODING_ROLE=orchestrator`, and the plugin's `fast-coding guard` denies its Write and Edit calls inside a repository. Do not route around the hook through Bash.
 - Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, plans, stories, tasks, grilling notes, steers), and the briefs you give crew. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task issue format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
 - Every captain round-trip stalls the whole project, so ask once, up front. Start groundwork and the smoke check (0g) first, so its toolchain and dependency findings are in hand; then send every decision you can see coming (scoring, toolchain, dependency bumps, the quality bar where it is unclear) as one `needs-user` with a numbered list and your recommendation on each, instead of one question, a wait, then the next. Keep groundwork running while it waits. Ask mid-run only when the run cannot continue without the answer.

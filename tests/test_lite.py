@@ -11,7 +11,7 @@ def issues(n):
 
 
 class Lite(unittest.TestCase):
-    """A lite project runs without Linear: `init --lite` marks it, `sync` takes the orchestrator's own JSON, `tasks` warns past 6."""
+    """A lite project runs without Linear: `init --lite` marks it, `sync` takes the orchestrator's own JSON, `tasks` warns past 12."""
     def fc(self, *args, stdin=None):
         p = subprocess.run([CLI, *args, "--repo", str(self.repo)], capture_output=True, text=True, env=ENV, input=stdin)
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -28,20 +28,20 @@ class Lite(unittest.TestCase):
     def sync(self, slug, n):
         return self.fc("sync", "--project", slug, stdin=json.dumps({"feature": {"id": slug, "title": "t", "description": "## Plan"}, "issues": issues(n)}))
 
-    def test_lite_syncs_without_linear_and_warns_past_six_tasks(self):
+    def test_lite_syncs_without_linear_and_warns_past_twelve_tasks(self):
         out = self.fc("init", "--project", "hw", "--lite")
         self.assertIn("lite, no Linear", out)
         self.assertEqual(json.loads((self.repo.parent / "fast-coding-hw" / ".fast-coding" / "hw" / "linear.json").read_text()),
                          {"feature": "hw", "lite": True})
-        self.assertIn("6 task(s) synced", self.sync("hw", 6))
+        self.assertIn("12 task(s) synced", self.sync("hw", 12))
         self.assertNotIn("LITE PROJECT", self.fc("tasks", "--project", "hw"))
-        self.sync("hw", 7)
-        self.assertIn("WARNING LITE PROJECT HAS 7 TASKS", self.fc("tasks", "--project", "hw"))
+        self.sync("hw", 13)
+        self.assertIn("WARNING LITE PROJECT HAS 13 TASKS", self.fc("tasks", "--project", "hw"))
 
     def test_full_project_never_gets_the_lite_warning(self):
         self.fc("init", "--project", "big")
         (self.repo.parent / "fast-coding-big" / ".fast-coding" / "big" / "linear.json").write_text(json.dumps({"feature": "big"}))
-        self.sync("big", 7)
+        self.sync("big", 13)
         self.assertNotIn("LITE PROJECT", self.fc("tasks", "--project", "big"))
 
 
