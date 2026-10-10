@@ -2379,6 +2379,14 @@ def cmd_top(a):
         sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         print(f"{wt} detached at {trunk}")
         return
+    if is_lite(proj):  # no stack on lite: the top is every unmerged task branch merged together, never a rebase
+        branches = stack_order(repo, proj)
+        if not branches:
+            sys.exit("no unmerged task branches; the project branch already is the top")
+        top = merge_tips(repo, proj, branches) if len(branches) > 1 else branches[0]
+        sh(["git", "checkout", "-q", "--detach", top], wt)
+        print(f"lite top: {len(branches)} task branch(es) merged on {trunk}, checked out at:\n{wt}")
+        return
     chain = linearize(repo, proj, trunk, wt)
     if not chain:
         sys.exit("no unmerged layers; the trunk already is the top")

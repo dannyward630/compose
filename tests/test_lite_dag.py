@@ -75,3 +75,15 @@ class LiteReview(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiteTop(LiteDag):
+    def test_top_merges_task_branches_without_rebasing_them(self):
+        self.task("001", "b.txt", "one\n"); self.task("002", "c.txt", "two\n")
+        before = {b: self.git("rev-parse", f"fast/p/{b}") for b in ("001", "002")}
+        with mock.patch.object(fc, "linearize", side_effect=AssertionError("lite top must not linearize")), \
+                mock.patch.object(fc, "project_dir", return_value=self.proj):
+            fc.cmd_top(SimpleNamespace(repo=str(self.repo), project="p", detach=False))
+        wt = self.proj / "worktrees" / ".stackroot"
+        self.assertTrue((wt / "b.txt").exists() and (wt / "c.txt").exists())
+        self.assertEqual(before, {b: self.git("rev-parse", f"fast/p/{b}") for b in ("001", "002")})
