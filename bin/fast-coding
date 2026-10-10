@@ -1991,7 +1991,8 @@ def render_status(repo, projects):
         rtxt = f"  run live since {m['started_at'][11:16]} (pid {m['pid']})" if m and pid_alive(m.get("pid")) else \
                (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> fast-coding resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
-        out.append(f"project {proj.name}   trunk {trunk}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}")
+        on = f" (after {project_after(proj)})" if project_after(proj) else ""
+        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
@@ -2014,7 +2015,8 @@ def project_summary(repo, proj):
     last = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(stamps))) if stamps else "never run"
     done = counts.get("merged", 0) + counts.get("passed", 0) + counts.get("hand_done", 0) + counts.get("already_green", 0)
     halted = (proj / "results" / "resume.json").exists()
-    return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted}
+    return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted,
+            "after": project_after(proj)}
 
 def cmd_tasks(a):
     """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
@@ -2169,7 +2171,8 @@ def cmd_projects(a):
         ps = project_summary(wt, proj)
         states = ", ".join(f"{n} {k}" for k, n in sorted(ps["counts"].items(), key=lambda kv: -kv[1]))
         flag = "  HALTED (payment) -> fast-coding resume" if ps["halted"] else ""
-        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{flag}")
+        after = f"  (after {ps['after']})" if ps["after"] else ""
+        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{after}{flag}")
 
 def cmd_status(a):
     """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress."""
@@ -2306,12 +2309,24 @@ def cmd_bench(a):
 
 # ---------- init / clean ----------
 
+def project_after(proj):
+    """The project this one is built on (`init --after`), or None. Its branch is the review base in verify.json."""
+    f = proj / "verify.json"
+    base = json.loads(f.read_text()).get("review_base", "") if f.exists() else ""
+    return base.removeprefix("fast-coding/") if base.startswith("fast-coding/") else None
+
 def cmd_init(a):
-    """Create the project's worktree `../fast-coding-<name>` on branch `fast-coding/<name>` (from the branch the user is on),
-    with the `.fast-coding/<name>/` skeleton committed there. The user's checkout is never touched again by this project."""
+    """Create the project's worktree `../fast-coding-<name>` on branch `fast-coding/<name>` (from the branch the user is on,
+    or with --after from another project's branch, for a feature that needs that feature's code), with the
+    `.fast-coding/<name>/` skeleton committed there. The user's checkout is never touched again by this project."""
     here = Path(a.repo).resolve()
     name = a.project
     branch = f"fast-coding/{name}"
+    after = f"fast-coding/{a.after}" if a.after else None
+    if after and a.here:
+        sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
+    if after and sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
+        sys.exit(f"no branch {after}: `fast-coding init --project {a.after}` that project first")
     existing = all_projects(here).get(name)
     if existing:
         wt, proj = existing
@@ -2319,12 +2334,12 @@ def cmd_init(a):
     elif a.here:
         wt, proj = here, here / ".fast-coding" / name
     else:
-        base = current_branch(here)
+        base = after or current_branch(here)
         wt = here.parent / f"fast-coding-{name}"
         if wt.exists():
             sys.exit(f"{wt} exists already; remove it or pass --here")
         if sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
-            sh(["git", "branch", branch, "HEAD"], here)
+            sh(["git", "branch", branch, after or "HEAD"], here)
         sh(["git", "worktree", "add", "-q", str(wt), branch], here)
         proj = wt / ".fast-coding" / name
         print(f"worktree {wt}  branch {branch} (from {base})")
@@ -2333,7 +2348,7 @@ def cmd_init(a):
         (proj / "verify.json").write_text(json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
-            "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": "main"}, indent=2))
+            "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main"}, indent=2))
     gi = wt / ".gitignore"
     lines = gi.read_text().splitlines() if gi.exists() else []
     for pat in (".fast-coding/*/worktrees/", ".fast-coding/*/results/"):
@@ -2401,7 +2416,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
     project_branch = f"fast-coding/{name}"
     if wt != main_repo and not kept and trunk == project_branch:
-        why = merge_evidence(main_repo, project_branch, ["main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
+        on = [f"fast-coding/{project_after(proj)}"] if project_after(proj) else []  # merged into the project it was built on counts
+        why = merge_evidence(main_repo, project_branch, [*on, "main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
         if why:
             sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists():
@@ -2467,6 +2483,7 @@ def main():
         s.set_defaults(fn=fn)
         if name == "init":
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
+            s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT>): a feature that needs that feature's code")
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)
