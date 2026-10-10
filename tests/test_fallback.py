@@ -57,6 +57,22 @@ class Fallback(unittest.TestCase):
         self.assertIsNone(fc.fallback_for(fc.DEFAULT_MODEL))
 
 
+class Preflight(unittest.TestCase):
+    def test_bad_model_stops_before_anything_runs(self):
+        def impl(cwd, model, prompt, session=None, task=None):
+            if model == BACKUP:
+                raise RuntimeError("400 z-ai/glm-5-3-flash is not a valid model ID")
+            if model == "pi:r/limited":
+                raise fc.RateLimited({"cost": 0.0})
+            return "s", "OK", 0, {"cost": 0.0}
+        with mock.patch.object(fc, "implementer", impl):
+            fc.preflight({PRIMARY, "pi:r/limited", "claude", None})  # a rate limit proves the model resolved; claude is not probed
+            with self.assertRaises(SystemExit) as cm:
+                fc.preflight({PRIMARY, BACKUP})
+        self.assertIn(BACKUP, str(cm.exception))
+        self.assertIn("not a valid model ID", str(cm.exception))
+
+
 def ws(name=None, target=None, stdin=""):
     with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
         fc.cmd_workspace(type("A", (), {"name": name, "target": target}))
