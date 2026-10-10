@@ -3,6 +3,7 @@
 
 Layout inside any repo:
   .fast-coding/<project>/linear.json    {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
+                                        (lite project: {"feature": "<project>", "lite": true}, no Linear; `sync` takes the same JSON)
   .fast-coding/<project>/verify.json    local verification config
   .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results (git-ignored)
   .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
@@ -270,6 +271,11 @@ def sync_tasks(proj, data):
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
+
+def is_lite(proj):
+    """A lite project (`init --lite`) has no Linear tree: the orchestrator pipes its plan and task blocks to `sync` itself."""
+    link = proj / "linear.json"
+    return link.exists() and json.loads(link.read_text()).get("lite") is True
 
 def linear_cache(proj):
     path = proj / "results" / "tasks.json"
@@ -1413,7 +1419,7 @@ def run_tasks(repo, proj, tasks, a):
     passed = sum(r["status"] == "passed" for r in results)
     say(f"run done   {passed}/{len(results)} passed  wall {fmt(total)}  sum of task time {fmt(sum(r['seconds'] for r in results))}")
     say(LEDGER.line())
-    if passed and not a.no_stack:
+    if passed and not a.no_stack and not is_lite(proj):  # a lite project lands as one branch, not a stack
         register_stack(repo, proj, a.trunk)
     if halt:
         done_ids = {r["id"] for r in results if r["status"] in ("passed", "already_green")}
@@ -2053,6 +2059,11 @@ def cmd_tasks(a):
     if len(open_tasks) >= 3 and len(waves) > len(open_tasks) / 2:
         print(f"\n  WARNING SERIAL CHAIN: {len(open_tasks)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
               "(blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.")
+    if is_lite(proj) and len(open_tasks) > LITE_MAX_TASKS:
+        print(f"\n  WARNING LITE PROJECT HAS {len(open_tasks)} TASKS (lite is for {LITE_MAX_TASKS} or fewer): escalate to the full path "
+              "(SKILL.md, Lite path) or cut the plan before `run`.")
+
+LITE_MAX_TASKS = 6
 
 def run_waves(tasks):
     """The tasks grouped as `run` dispatches them when every task passes: a task waits only for its `after:` tasks in the list."""
@@ -2355,13 +2366,16 @@ def cmd_init(a):
         if pat not in lines:
             lines.append(pat)
     gi.write_text("\n".join(lines) + "\n")
+    if a.lite and not (proj / "linear.json").exists():
+        (proj / "linear.json").write_text(json.dumps({"feature": name, "lite": True}, indent=2) + "\n")
     (proj / ".gitkeep").write_text("")
     sh(["git", "add", "-A", ".fast-coding", ".gitignore"], wt, check=False)
     sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
     if herdr_space(proj):
         print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
-          f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
+          + (f"lite, no Linear: pipe the plan and task blocks to `fast-coding sync` as feature id {name!r} ({SYNC_SHAPE})" if is_lite(proj) else
+             f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}"))
 
 def merge_evidence(repo, branch, targets, has_remote):
     """Why a branch counts as merged, or None. Two independent signals, either suffices:
@@ -2483,6 +2497,7 @@ def main():
         s.set_defaults(fn=fn)
         if name == "init":
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
+            s.add_argument("--lite", action="store_true", help="small, reversible work: no Linear tree, no gh stack (SKILL.md, Lite path)")
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT>): a feature that needs that feature's code")
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
