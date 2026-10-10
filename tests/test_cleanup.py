@@ -51,6 +51,19 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
         self.assertFalse((self.proj / "worktrees" / "tests-001").exists())
 
+    def test_run_collects_finished_test_crews_and_waits_for_busy_ones(self):
+        from types import SimpleNamespace
+        self.crew_commits("001", "a_test.go", "a\n")
+        a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False)
+        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc, "crew_reports", return_value=[{"state": "working"}]):
+            with self.assertRaises(SystemExit) as e:
+                fc.cmd_run(a)
+            self.assertIn("tests-001", str(e.exception)); rt.assert_not_called()
+        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc, "crew_reports", return_value=[{"state": "done"}]):
+            fc.cmd_run(a)
+            rt.assert_called_once()
+        self.assertTrue((self.repo / "a_test.go").exists())  # collected before the run
+
     def test_a_conflict_names_the_task_and_keeps_its_branch(self):
         self.crew_commits("001", "a.txt", "crew\n")
         (self.repo / "a.txt").write_text("main\n"); self.run("commit", "-qam", "main moved")

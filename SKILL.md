@@ -252,6 +252,7 @@ When it reports `stubs ready`, run `fast-coding testcrews --project <slug>`: one
 Each crew works in its own worktree on its own branch (`fast/<slug>/tests-NNN`, off the stubs commit), so no crew can amend or reset another's commit.
 The budget is 60 lines per task by default; `--budget N` changes it for the whole set, and `test_lines: N` in a task's block wins for that task.
 When every test is accepted, `fast-coding testcrews --project <slug> --collect` cherry-picks each crew's commits onto the project branch in task order and removes their worktrees and branches; a conflict stops it with the task named and that crew's branch kept.
+`run` also collects any finished test crew's branch before it starts, and refuses to start while a test crew is still writing.
 Parallel writers without the contract guessed shared types differently and wrote tests that fail on correct code; with it, writing every test takes about as long as writing one.
 Groundwork that is real code, not a stub, is a task of its own (`000`) for `run`, not part of any brief.
 For anything with a UI or a server, the browser e2e (the `e2e_setup` and `e2e` cases in `verify.json`, each with an `assert` that checks the real DOM or log) comes from the groundwork crew, before `run`, so the first verify drives the finished app; never "add e2e after the run".

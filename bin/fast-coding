@@ -1922,6 +1922,14 @@ def cmd_run(a):
         sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
     if getattr(a, "redo", False):
         os.environ["FAST_CODING_REDO"] = "1"
+    # Test crews write on their own branches; their tests must be on the project branch before any implementer starts.
+    wt = project_worktree(proj)
+    pending = [m["id"] for m in tasks if sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, m["id"])], wt, check=False).returncode == 0]
+    if pending:
+        busy = [t for t in pending if (crew_reports(proj, agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
+        if busy:
+            sys.exit(f"test crews still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
+        collect_tests(proj, ",".join(pending))
     run_tasks(repo, proj, tasks, a)
 
 def preflight(models):
