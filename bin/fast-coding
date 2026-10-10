@@ -2307,8 +2307,10 @@ def jev_e2e(case, repo):
               f"with Agent({case['url']!r}, {case['goal']!r}) as a:\n"
               "    last=None\n    for s in a.run(): last=s\n"
               "    dec=last['decisions']; txt=last['text_calls']\n"
-              "    usage={'typesafe_calls':len(dec),'typesafe_tokens':sum((d.get('usage') or {}).get('total_tokens',0) for d in dec),"
-              "'text_calls':len(txt),'text_tokens':sum((t.get('usage') or {}).get('total_tokens',0) for t in txt)}\n"
+              "    tok=lambda u,*k: next((u[x] for x in k if u.get(x)), 0)\n"
+              "    side=lambda calls,*k: sum(tok(c.get('usage') or {},*k) for c in calls)\n"
+              "    usage={'typesafe_calls':len(dec),'typesafe_in':side(dec,'input_tokens','prompt_tokens'),'typesafe_out':side(dec,'output_tokens','completion_tokens'),"
+              "'text_calls':len(txt),'text_in':side(txt,'input_tokens','prompt_tokens'),'text_out':side(txt,'output_tokens','completion_tokens')}\n"
               "    print('JEV_RESULT '+json.dumps({'status':last['status'],'elapsed_ms':last['elapsed_ms'],'steps':len(last['history']),'url':last['page']['url'],'usage':usage}))\n"
               "    sys.stdout.flush()\n"
               f"    sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}))\n")
@@ -2323,8 +2325,8 @@ def jev_e2e(case, repo):
         u = r["run"]["usage"]
         prices = case.get("prices") or {}
         ts_cost = u["typesafe_calls"] * prices["typesafe_per_call"] if "typesafe_per_call" in prices else None
-        LEDGER.add("typesafe", u["typesafe_tokens"], 0, ts_cost, calls=u["typesafe_calls"])
-        LEDGER.add("openrouter", u["text_tokens"], 0, None, calls=u["text_calls"])  # jev's text helper does not return $
+        LEDGER.add("typesafe", u["typesafe_in"], u["typesafe_out"], ts_cost, calls=u["typesafe_calls"])
+        LEDGER.add("openrouter", u["text_in"], u["text_out"], None, calls=u["text_calls"])  # jev's text helper does not return $
     return r
 
 def review_inputs(repo, proj, cfg):
