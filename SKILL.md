@@ -130,6 +130,7 @@ Every crew session is started with `fast-coding crew start --role <role> --title
 The model comes from `models.crew` in `~/.fast-coding/config.json`: the role's entry, else `default`. The orchestrator gets the most judgment (Sonnet at high effort, or a stronger model), because its judgment (reviewing layers, catching a test-gaming fix, root-causing a failure) saves whole verify cycles. Groundwork and tests crews write code against a clear brief, where Sonnet is enough and faster. A mechanical crew (a revert, a stack or port fix, a one-command job) is started with `--model small`, Haiku, since speed is all it needs.
 Nothing is closed by hand: a crew session's tab closes by itself when the turn that reported `done` ends, so a crew reports `done` only when nothing is left for it (work waiting on your review is `working`).
 The orchestrator's own `done` runs `fast-coding teardown`, which closes the implementers tab, the verify tab, and every crew tab whose last report is `done`; `shell`, `status`, and the orchestrator stay, and crew not yet done are left open and named.
+Teardown also stops every server still listening from inside the project worktree (a crew's dev server, a run's leftover) and removes `.fast-coding/<slug>/scratch/`, where crews keep scratch copies; a crew's own scratch goes when it reports `done`. `clean --delete-unmerged` removes an unmerged project entirely: its worktree folder, ignored files included, and its branch.
 `fast-coding crew stop --role <role>` remains for closing one early; it refuses a session that has not reported `done`, and `--force` is for the captain's say-so only.
 The harness's in-process subagent tool (Claude's `Agent`) has no pane, so herdr cannot show it: inside herdr it is not used.
 Names match `[a-z][a-z0-9_-]{0,31}` and are unique among live agents.
@@ -247,12 +248,15 @@ One feature, one stack. The project's tasks become the layers of a single `gh st
 ### 3. Write the tests first (red)
 The acceptance tests are the contract, so you specify every one, but crew write them, one per task, all at once.
 The groundwork crew lays the ground first (0g): schema, codegen, stubs that compile, the e2e cases, and a contract file (`.fast-coding/<slug>/results/contract.md`, never committed) that pins every type, signature, value-or-pointer shape, fixture, and test path a test writer would otherwise guess.
-When it reports `stubs ready`, run `fast-coding testcrews --project <slug>`: one `tests-NNN` crew per task (the `tests` or `groundwork` model under `models.crew`), each briefed with its task issue, the holdout rule below, its `protected:` path, and the contract. They commit only their own file. `--print` shows the briefs; `--only` picks tasks.
+When it reports `stubs ready`, run `fast-coding testcrews --project <slug>`: one `tests-NNN` crew per task (the `tests` or `groundwork` model under `models.crew`), each briefed with its task issue, the holdout rule below, its `protected:` path, a line budget, and the contract. `--print` shows the briefs; `--only` picks tasks.
+Each crew works in its own worktree on its own branch (`fast/<slug>/tests-NNN`, off the stubs commit), so no crew can amend or reset another's commit.
+The budget is 60 lines per task by default; `--budget N` changes it for the whole set, and `test_lines: N` in a task's block wins for that task.
+When every test is accepted, `fast-coding testcrews --project <slug> --collect` cherry-picks each crew's commits onto the project branch in task order and removes their worktrees and branches; a conflict stops it with the task named and that crew's branch kept.
 Parallel writers without the contract guessed shared types differently and wrote tests that fail on correct code; with it, writing every test takes about as long as writing one.
 Groundwork that is real code, not a stub, is a task of its own (`000`) for `run`, not part of any brief.
 For anything with a UI or a server, the browser e2e (the `e2e_setup` and `e2e` cases in `verify.json`, each with an `assert` that checks the real DOM or log) comes from the groundwork crew, before `run`, so the first verify drives the finished app; never "add e2e after the run".
 Each crew reports `working "test ready"` once its file is committed, not `done`, since `done` closes its tab.
-Read every test once they are all in (`git show`), send changes back with `herdr agent prompt <slug>-tests-NNN "..."` until each tests what its issue says, then tell each to report `done`.
+Read every test once they are all in (`git log -p HEAD..fast/<slug>/tests-NNN`), send changes back with `herdr agent prompt <slug>-tests-NNN "..."` until each tests what its issue says, then tell each to report `done` and run `--collect` before `run`.
 List each test under `protected:`. The CLI rejects any attempt that changes a protected file.
 It must fail on HEAD; `run` refuses a task whose test already passes.
 Tests are proportional to the code they test:
@@ -289,7 +293,7 @@ Nothing is pushed. `fast-coding stack --submit` runs `gh stack submit --auto`, w
 
 ### 5. Review
 You are the senior engineer over the fast models. Review each layer the moment its `state=passed` event arrives, while the rest of the run continues, not after the run: a task stacked on it starts right away, so a bad layer caught late has been built on.
-`run` ends with a `NNN triage clean|flag: <reason>` line per passed task: a fast model checked each diff against its brief and the simplicity bar, all at once (`fast-coding triage` repeats it). Read flagged layers in full and skim the clean ones (file list and diffstat); a flag is a pointer, never a verdict, and a clean is not a pass.
+`run` ends with a `NNN triage clean|flag: <reason>` line per passed task: a fast model checked each diff against its brief and the simplicity bar, all at once (`fast-coding triage` repeats it). Read flagged layers in full. For a clean layer check only its diffstat (`git diff --stat <base>..fast/<project>/NNN`): when every changed file is in the task's `files:`, accept it without reading the diff. Reading every diff of an all-clean run is the time triage exists to save. A flag is a pointer, never a verdict.
 Read `.fast-coding/<project>/results/NNN.json` and the layer's own diff: `git diff <base>..fast/<project>/NNN`, where `base` is in the result (`HEAD` or the lower task's branch). `gh stack view --json` from a task branch shows the chain.
 Passing is not done. Reject scope creep, gamed tests, site-specific hacks, over-engineering (anything past the plan's simplicity bar), and poor quality; a rejected layer is re-split or fixed, then re-run, and every task stacked on it re-runs on the new layer (`run --only <its id and theirs> --redo`). Comment the rejection on the task's issue in one paragraph. You never merge, locally or on GitHub. When the user says so, `fast-coding stack --submit` pushes the stack and opens one draft PR per layer; a human reviewer reads them bottom-up and decides on GitHub whether the stack merges. `gh stack merge` is the reviewer's tool, not yours.
 
@@ -315,6 +319,7 @@ e2e runs at the same time as review and jev acceptance, right after checks, sinc
 Each e2e stage gets two fresh free ports, `$E2E_PORT` and `$E2E_CLIENT_PORT`, in the environment of `e2e_setup`, `driver` and `assert`, and expanded in `url` and `goal`.
 Use them; never hardcode a port, unless the app itself pins one (then keep that one and nothing else fixed).
 Start servers in `e2e_setup` with a plain `&`; never free ports there with `lsof | kill`.
+e2e driver and assert scripts live in the project, under `.fast-coding/<slug>/e2e/`, referenced by that path in `verify.json`; verify's worktree links the project's `.fast-coding`, so they resolve there. Never put them in `~/.fast-coding`, `/tmp`, or anywhere outside the project, where teardown and `clean` cannot find them.
 Each e2e stage also launches its own `bp` Chromium on a third fresh port with a throwaway profile, and sets `BU_CDP_URL` and `BU_NAME` for `driver`, `assert` and jev, so verify never attaches to the user's real Chrome and no project launches a browser in `e2e_setup` for that.
 The only exception is a stage whose `e2e_env` sets `BU_CDP_URL` itself (an extension's Chromium, see 6a): it uses that browser.
 The stage ends everything it started when it ends, pass or fail: the setup's process group, its own browser and that browser's harness daemon, and anything left listening on its ports or the browser's CDP port, so no server or browser outlives a round.
