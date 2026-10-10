@@ -154,7 +154,7 @@ Secrets never live in this repo or on Linear issues: the active workspace's key 
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
 
 ```bash
-fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ committed (--here: in this checkout; --after <project>: branch from that project's branch)
+fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ committed (--here: in this checkout; --after <project>: branch from that project's branch; --lite: small reversible work, no Linear, no gh stack)
 fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; one gh stack on your branch
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost

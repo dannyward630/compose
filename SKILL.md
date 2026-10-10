@@ -17,7 +17,41 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ## Workflow
 
+### 0L. Pick the path first: lite or full
+The full path below (Linear tree, wayfinder, crews, gates, a gh stack) pays off on big, risky work and costs more than it saves on small work.
+Before step 0, classify the work by size and by reversibility.
+It is **lite** only when all four hold:
+1. **Small**: one feature, and the plan you can already see comes to 6 tasks or fewer.
+2. **Reversible**: a wrong call costs a re-run, not an incident. No production data or real-data migrations, auth, payments, security boundaries, or public APIs others depend on. Homework, prototypes, demos, internal tools, and local-only changes qualify.
+3. **Clear destination**: the request (a README, a ticket, the captain's words) says what done is, and every open decision has a recommended option you would defend.
+4. **One area**: one repo, one feature, no epic, no coordination with other teams or projects.
+Any doubt on any criterion means full.
+The first report names the path and the reason in one line, with a one-word override, e.g. "Lite path: homework-sized (about 5 tasks), reversible, the README settles done. Say `full` to switch." The captain's `full` or `lite` wins either way.
+
+**What lite skips** (deltas on the full path; every step not named here runs as written):
+- **0, 0s (Linear)**: no Linear tree and no state roll-ups. `fast-coding init --lite` writes `linear.json` as `{"feature": "<slug>", "lite": true}`. An issue the captain handed you gets one comment with the plan and one with the outcome; nothing is created under it.
+- **0b (wayfinder)**: skipped, no question agents. You take the recommended option on every open decision yourself.
+- **0g and 3 (crews)**: one `groundwork` crew does the install, the smoke checks, and the acceptance tests (and e2e cases) in one brief. No throwaway reference implementation: the red check and your read of every test are the proof.
+- **1 and 2 (plan, tasks)**: same content, no issues. Pipe it to `fast-coding sync` yourself in the usual JSON: feature `id` is the slug and its `description` is the plan; each issue's `id` is its task id (`001`), its `description` the brief ending with the `fast-coding` block, and `blockedBy` the task ids it truly needs.
+- **3b (gate)**: none. Dispatch as soon as `fast-coding tasks` shows no WARNING.
+- **4 (run)**: `run` does not register a gh stack for a lite project, and there is no Linear to move.
+- **Delivery**: after verify passes, fast-forward the project branch to the verified stack top (`git -C <wt> merge --ff-only <top task branch>`). The result is one branch, `fast-coding/<slug>`, for one PR when the captain asks.
+
+**What lite keeps**: its own worktree (0a), tiny tasks with tests written first, parallel implementers, your review of every layer (5), the full verify with e2e (6), the captain's quality bar (1), and nothing pushed.
+
+**Decisions on the lite path are taken, then reported once.**
+Pick the recommended option for every open decision, including what 0g finds.
+Send them in one batched report as the run starts: a numbered list, each with the decision, the option taken, one line of why, and the main alternative.
+The captain overrides any of them by number; an override after code exists becomes a new task or a re-run of the affected ones.
+
+**Escalate to full mid-way** the moment any of these happens:
+- `fast-coding tasks` prints `WARNING LITE PROJECT HAS N TASKS` (more than 6)
+- a decision turns out irreversible or has no defensible default
+- a second wave looms, or the captain says `full`
+To escalate: create the Linear feature, stories, and task issues from what exists (the plan and every brief with its block), rewrite `linear.json` as `{"feature": "<issue id>"}`, re-sync, ask the decisions that need the captain as one request, and continue at the step you were on. Passed layers keep.
+
 ### 0. Know the repo's Linear project
+Lite path (0L): skip this step.
 Everything that would be a ticket lives on Linear, never as files in the repo: the feature, its decision tickets, its tasks.
 Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another), and commit it on the user's branch before anything else.
@@ -77,9 +111,9 @@ The CLI builds the topology by itself, named so the captain reads it at a glance
 - tab **`verify`**, rebuilt by each verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
 `<slug>` is the project's (0a); until a project exists it is a kebab-case name for the map in the user's words.
 **Three roles, like firstmate** (github.com/kunchenguid/firstmate). The captain is the user.
-- **First mate**: the session the captain started. It stays in the pane it was started in and is the captain's one point of contact. It takes the intake (0, 0j) and creates the project (0a), then hands the project to an orchestrator and only relays from then on. It never moves, and one first mate can run several projects.
+- **First mate**: the session the captain started. It stays in the pane it was started in and is the captain's one point of contact. It takes the intake (0L, 0, 0j), names the path and its reason in its first report to the captain, and creates the project (0a), then hands the project to an orchestrator and only relays from then on. It never moves, and one first mate can run several projects.
 - **An epic as a unit** (0j, settled path): the first mate creates every feature's project and orchestrator, runs one `watch` per project, and relays as above. It reports at epic level: features verified X of N, total cost and wall time, and which feature waits on what. It keeps the epic's Linear state in step with its features (0s). It still writes no code and does no orchestrator's work.
-- **Orchestrator**: a Claude session in the project's space, started by the first mate right after `init`: `fast-coding crew start --repo <wt> --project <slug> --role orchestrator --title orchestrator --brief -` with a brief on stdin naming the project, the worktree, the feature issue, what the captain asked, and "invoke the fast-coding skill and continue from 0b". It runs everything from 0b on. It reports up with `fast-coding report`, and the captain can also type into its pane directly.
+- **Orchestrator**: a Claude session in the project's space, started by the first mate right after `init`: `fast-coding crew start --repo <wt> --project <slug> --role orchestrator --title orchestrator --brief -` with a brief on stdin naming the project, the worktree, the feature issue, what the captain asked, the path (0L), and "invoke the fast-coding skill and continue from 0b" (lite: "lite path, continue from 0g"). It runs everything from there on. It reports up with `fast-coding report`, and the captain can also type into its pane directly.
 - **Crew**: sessions the orchestrator starts in the same space: wayfinder question agents (0b), helpers (researchers, writers, reviewers), and the implementers `run` starts.
 The CLI directs the captain's attention, not you: every `needs-user` or `blocked` report pops a herdr notification naming the tab and badges that pane `needs you`, and never steals focus. When the captain says "take me there", run `fast-coding crew focus --project <slug> --role <role>`.
 The first mate's loop: `fast-coding watch --repo <wt> --project <slug> --from orchestrator` in the background; on each `event crew=<slug>-orchestrator` line, tell the captain the outcome in one or two sentences (needs-user: the question and its recommendation, and that the captain may answer here or in the orchestrator's tab); forward the captain's answer with `herdr agent prompt <slug>-orchestrator "<answer>"`; start `watch` again. Read the orchestrator with `herdr agent read <slug>-orchestrator --source recent-unwrapped --lines 80` before relaying anything unclear. Do not do the orchestrator's work yourself.
@@ -95,6 +129,7 @@ A project is one feature: its own git worktree and branch, one plan, one set of 
 - Run `fast-coding projects --repo <path>`. If the request continues a feature that already has a project (same spec, same area of the code, or the user names it), use that project: new tasks get the next ids and become new layers of its stack.
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` committed there. Tell the user the project name and the worktree path in your first reply.
 - Inside herdr, right after `init` and the feature issue exist, hand the project to its orchestrator (0h) and become the first mate. The rest of this skill is the orchestrator's.
+- A lite project (0L) is made with `init --lite` and has no feature issue; the rest of 0a holds.
 - Every project is one **feature issue** on Linear (label `Feature`, title in the user's words, under its epic when there is one). Create it if the user did not hand you one, and record its identifier in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Its stories, their tasks, and any decision tickets are its sub-issues, so the whole feature reads as one tree in Linear.
 - From then on everything you do in code for this project happens in that worktree: acceptance tests, every commit, every `fast-coding` command (`--repo <worktree>`, or any checkout with `--project <slug>`: the CLI resolves it). Everything written in words (grilling notes, the plan, tasks, decisions) goes to Linear, never to a file (Rules). The user's own checkout and branch are never touched. Several projects can run at the same time, each in its own worktree with its own stack.
 - The stack's trunk is `fast-coding/<slug>`; PRs target it, and one final PR takes the project branch to the user's branch.
@@ -103,6 +138,7 @@ A project is one feature: its own git worktree and branch, one plan, one set of 
 `fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
 
 ### 0b. Find the way first when the decisions are not written down
+Lite path (0L): skip this step; you take the recommended options and report them once.
 A settled spec is a feature issue whose description says the way is clear: no open decision sub-issues, and `## Not yet specified` empty. A repo file (`DESIGN.md`, a PRD) counts too when the user points at it.
 If none exists for this piece of work, do not plan yet: invoke the `wayfinder` skill with the epic (or the feature, when it is its own map) as the map (it is user-invocable only; when the Skill tool does not list it, read `~/.claude/skills/wayfinder/SKILL.md` and follow it). Wayfinder's tracker is Linear here, and this is how its operations map:
 - the **map** is the epic issue, or the feature issue when there is no epic; its description is the map body (Destination, Notes, Decisions so far, Not yet specified, Out of scope)
@@ -138,7 +174,8 @@ A captain answer takes minutes; nothing should wait on it that does not need it.
 4. Report what is broken (a dependency that fails on current Node or Go, a toolchain bump) as decisions with a recommendation, not fixes.
 5. Once the captain decides, the groundwork crew applies dependency and toolchain changes itself with the package manager (`yarn upgrade`, a `resolutions` entry, `go get`), proves the smoke checks, and commits to the trunk before `run`. Dependency bumps, lockfile edits, and toolchain changes are never implementer tasks.
 Its findings join the captain's one upfront request (Rules: ask once); they never surface after a run as a second wave.
-An autonomous mode is never a mandate to decide for the user.
+An autonomous mode is never a mandate to decide for the user; the lite path (0L) is the one exception, for reversible decisions only, each reported.
+On the lite path the same crew also writes the acceptance tests and e2e cases (step 3), with no reference implementation.
 Helpers in this phase read research, draft ticket Questions, or draw a prototype whose decision is settled; none writes a document that carries an open decision.
 Research the user points at (notes, a folder of findings) feeds the map's Notes; it is not the spec.
 If a spec exists, read it and do not reopen its decisions. Open a decision ticket only for what it leaves open that the plan needs.
@@ -199,6 +236,7 @@ Include holdout cases the task issue does not list. The implementer is told they
 Commit the tests before dispatching; independent tasks branch from HEAD, stacked tasks from their lower layer.
 
 ### 3b. The task list goes to the captain; it waits only when it departs from what they settled
+Lite path (0L): no gate; fix every WARNING, then dispatch. `WARNING LITE PROJECT HAS N TASKS` means escalate to full.
 Run `fast-coding tasks --repo <path> --project <name>`: every task's id, title, the files it owns, what it builds on, and its test, in stack order, then the run waves, with a warning for any file two tasks claim, any task too big, and a serial chain. Fix every WARNING first.
 Then compare the list with the spec the captain settled (the map's Decisions so far and the stories):
 - **It matches** (it builds exactly the settled scope, with no new or dropped scope, no dependency bump, no toolchain change, no decision the captain has not made): report `working` with the `tasks` output and one line per task on what its holdout cases cover, and dispatch right away. The captain can still stop it from the report.
@@ -210,7 +248,7 @@ Green is the implementer's job. Refactor goes through review and the verify fix 
 `fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one implementer session (pi by default) each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, a new document, or a change outside `files:` are fed back into the same session up to `--attempts` (default 3).
 Each clone, and the worktree verify runs in, borrows the main checkout's git-ignored installs (`node_modules` at any depth, `vendor`, `.venv`) as symlinks that never show in `git status`, and graft never edits `.gitignore` there. So install dependencies once in the project worktree before `run`; do not patch test commands to link them.
 The trunk is the branch the user is on when you run it (`--trunk` overrides). That checkout is never switched: clones are separate repos, and every `gh stack` operation runs in a CLI-owned detached worktree under `.fast-coding/<project>/worktrees/.stackroot`, with the stack state mirrored into the user's `.git` so `gh stack view` works from a task branch there.
-When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration.
+When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration, and a lite project (0L) never registers one.
 Use `--only 003,004` for a subset.
 Run it in the background (`run_in_background`); your job during a run is supervising the crew and keeping Linear true, not typing code, and not polling. Supervision costs zero tokens while nothing happens:
 - Start `fast-coding watch --repo <wt> --project <slug>` in the background too. It sleeps until something you must act on happens, prints one `event ...` line, and exits; its exit wakes you. Act on the line, then start `watch` again. Never loop on `status` or `herdr agent list` yourself.
@@ -317,9 +355,10 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - An issue under the feature without the block is not a task (stories, decision tickets): the CLI ignores it.
 
 ## Rules
+- On the lite path (0L) the captain settles by default: the recommended options you took and reported. Everything else below holds there too.
 - Nothing is implemented beyond what the captain settled. Intake, wayfinder, stories, the plan, task issues, and tests are all preparation; `fast-coding run` is the first implementing action. It starts without a further go when the task list matches the settled spec, and waits for an explicit go whenever it departs from it (step 3b), every wave.
 - Tests are the contract. The implementer never edits them.
-- The first mate and the orchestrator never write or edit code: no source, test, stub, fixture, build or CI config, generated file, or repo doc, not even a one-line fix. They read code to review it, write Linear, write the CLI's JSON (`.fast-coding/linear.json`, `.fast-coding/<slug>/linear.json`, `verify.json`), and run `fast-coding`, `git` reads, and `herdr`. Every change to the repo is crew work or a task for `run`. For the orchestrator a hook enforces it: its tab carries `FAST_CODING_ROLE=orchestrator`, and the plugin's `fast-coding guard` denies its Write and Edit calls inside a repository. Do not route around the hook through Bash.
+- The first mate and the orchestrator never write or edit code: no source, test, stub, fixture, build or CI config, generated file, or repo doc, not even a one-line fix. They read code to review it, write Linear, write the CLI's JSON (`.fast-coding/linear.json`, `.fast-coding/<slug>/linear.json`, `verify.json`), and run `fast-coding`, `git` reads, and `herdr` (plus, on the lite path, the one `merge --ff-only` that delivers it). Every change to the repo is crew work or a task for `run`. For the orchestrator a hook enforces it: its tab carries `FAST_CODING_ROLE=orchestrator`, and the plugin's `fast-coding guard` denies its Write and Edit calls inside a repository. Do not route around the hook through Bash.
 - Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, plans, stories, tasks, grilling notes, steers), and the briefs you give crew. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task issue format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
 - Every captain round-trip stalls the whole project, so ask once, up front. Start groundwork and the smoke check (0g) first, so its toolchain and dependency findings are in hand; then send every decision you can see coming (scoring, toolchain, dependency bumps, the quality bar where it is unclear) as one `needs-user` with a numbered list and your recommendation on each, instead of one question, a wait, then the next. Keep groundwork running while it waits. Ask mid-run only when the run cannot continue without the answer.
