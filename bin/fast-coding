@@ -1746,6 +1746,61 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     failed = [r for r in suspects if r.get("confirmed")]
     return {"pass": not failed, "criteria": rows, "failed": failed, "suspects": suspects, "model": model}
 
+TOOL_ERROR_RE = re.compile(r"/jev_ultrafast/|/browser_harness/|command not found|address already in use|EADDRINUSE|"
+                           r"No module named|Chromium not found|did not open the debug port", re.I)
+
+def tool_error(output):
+    """A failure the harness caused (a jev or browser crash, a missing tool, a port taken), not the app: retried once and
+    never handed to a fixer, who could only 'fix' it by bending the app toward the harness."""
+    return bool(TOOL_ERROR_RE.search(output or ""))
+
+def free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+def port_listening(port):
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+
+def stop_group(proc):
+    """End a setup command and everything it started in its process group, even after the shell itself exited
+    (its pid is the group id, so `getpgid` on a reaped leader is not needed)."""
+    import signal
+    for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 0)):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):  # macOS answers EPERM for a group left with only its zombie leader
+            break
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            proc.poll()  # reap the leader so the group can empty
+            try:
+                os.killpg(proc.pid, 0)
+            except (ProcessLookupError, PermissionError):
+                return
+            time.sleep(0.1)
+    proc.poll()
+
+def kill_listeners(ports):
+    """Kill whatever listens on these ports: servers and browsers a setup detached from its process group (`&`, `bp launch`)."""
+    for port in ports:
+        pids = sh(f"lsof -ti tcp:{int(port)} -sTCP:LISTEN", ".", check=False).stdout.split()
+        if pids:
+            sh(["kill", "-9", *pids], ".", check=False)
+
+def e2e_ports(cfg, env):
+    """The ports an e2e stage may leave a listener on: the fresh ones it hands out, every case URL's, and the CDP port of a
+    browser the setup launches (BU_CDP_URL)."""
+    urls = [c.get("url", "") for c in cfg.get("e2e", [])] + [env.get("BU_CDP_URL", "")]
+    return {int(env["E2E_PORT"]), int(env["E2E_CLIENT_PORT"])} | {int(m) for u in urls for m in re.findall(r"://[^/:]+:(\d+)", u)}
+
+def expand_ports(text, env):
+    return re.sub(r"\$\{?(E2E_PORT|E2E_CLIENT_PORT)\}?", lambda m: env[m.group(1)], text) if isinstance(text, str) else text
+
 def driver_e2e(case, repo):
     """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
     env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
@@ -1759,11 +1814,7 @@ def driver_e2e(case, repo):
                            timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
     finally:
         if setup:
-            import signal
-            try:
-                os.killpg(os.getpgid(setup.pid), signal.SIGTERM)
-            except Exception:  # noqa: BLE001
-                pass
+            stop_group(setup)
     if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
         raise PaymentRequired("jev-ultrafast e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
     r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-4000:], "stderr": p.stderr[-2000:]}
@@ -1837,37 +1888,47 @@ def e2e_stage(repo, cfg, panes, report, findings):
     """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models."""
     ok = True
     stage_setup = None
-    if cfg.get("e2e_setup"):
-        # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
-        env = {**os.environ, **{k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}}
-        stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        time.sleep(cfg.get("e2e_setup_wait", 3))
+    # The stage owns its lifecycle: fresh ports each run (the config uses $E2E_PORT / $E2E_CLIENT_PORT), and whatever
+    # it started (setup's process group, plus anything left listening on its ports that was not before) ends with it,
+    # pass, fail, exception or Ctrl-C, so no server or browser outlives a round to answer the next one.
+    env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
+    env.update(E2E_PORT=str(free_port()), E2E_CLIENT_PORT=str(free_port()))
+    cfg = {**cfg, "e2e": [{k: expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
+    ports = e2e_ports(cfg, env)
+    busy = {p for p in ports if port_listening(p)}
     try:
+        if cfg.get("e2e_setup"):
+            # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
+            stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env={**os.environ, **env}, stdin=subprocess.DEVNULL,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            time.sleep(cfg.get("e2e_setup_wait", 3))
         for i, case in enumerate(cfg.get("e2e", [])):
             t1 = time.time()
             stage = f"e2e {case.get('name', i)}"[:40]
             herdr_stage(panes, stage, "working")
-            r = jev_e2e({**case, "env": {**(cfg.get("e2e_env") or {}), **(case.get("env") or {})}}, repo)
+            run_case = lambda: jev_e2e({**case, "env": {**env, **(case.get("env") or {})}}, repo)
+            r = run_case()
+            if r["exit"] and tool_error(r["stdout"] + r["stderr"]):
+                say(f"e2e    tool error in {case.get('name')}; retrying once")
+                r = run_case()
+            r["tool_error"] = bool(r["exit"]) and tool_error(r["stdout"] + r["stderr"])
             r["seconds"] = round(time.time() - t1, 1)
             report["e2e"].append(r)
             ok &= r["exit"] == 0
-            herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", "ok" if r["exit"] == 0 else "FAIL")
+            verdict = "ok  " if r["exit"] == 0 else "TOOL ERROR" if r["tool_error"] else "FAIL"
+            herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
             run = r.get("run") or {}
-            say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
+            say(f"e2e    {verdict} {fmt(r['seconds']):>8}  {case.get('name')}  "
                 f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
             for line in (r.get("stdout") or "").splitlines()[-8:]:
                 if line and not line.startswith("E2E_RESULT"):
                     print(f"           {line[:160]}")
-            if r["exit"]:
+            if r["exit"] and not r["tool_error"]:  # a tool crash is not the app's failure: no fixer gets it
                 findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     finally:
         if stage_setup:
-            import signal
-            try:
-                os.killpg(os.getpgid(stage_setup.pid), signal.SIGTERM)
-            except Exception:  # noqa: BLE001
-                pass
+            stop_group(stage_setup)
+        kill_listeners(ports - busy)
     return ok
 
 def run_stages(repo, proj, cfg, a):
@@ -1881,11 +1942,15 @@ def run_stages(repo, proj, cfg, a):
     for c in cfg.get("checks", []):
         t1 = time.time()
         p = sh(c, repo, timeout=900, check=False)
+        if p.returncode and tool_error(p.stdout + p.stderr):
+            say(f"check  tool error; retrying once  {c}")
+            p = sh(c, repo, timeout=900, check=False)
         out = (p.stdout + p.stderr)[-3000:]
-        report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out})
+        tool = bool(p.returncode) and tool_error(out)
+        report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
         ok &= p.returncode == 0
-        say(f"check  {'ok  ' if p.returncode == 0 else 'FAIL'} {fmt(time.time() - t1):>8}  {c}")
-        if p.returncode:
+        say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fmt(time.time() - t1):>8}  {c}")
+        if p.returncode and not tool:
             findings.append(f"Command failed: {c}\n{out}")
     checks_pass = all(c["exit"] == 0 for c in report["checks"])
     herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
@@ -2002,6 +2067,9 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         rounds.append(report)
         if ok or rnd == a.fix:
             break
+        if not findings.strip():
+            say("fix    skip  only tool errors failed (see TOOL ERROR above); nothing for a fixer to change in the app")
+            break
         # Fix loop: hand confirmed findings to the fast implementer in the repo itself, then re-run every stage.
         if sh(["git", "status", "--porcelain"], repo).stdout.strip() and rnd == 0:
             say("fix    skip  repo has uncommitted changes; commit first so a bad fix can be reverted")
@@ -2019,6 +2087,8 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
                   "Verification of this repository failed. Fix ONLY the findings below with the smallest change. "
                   f"Do not edit these files: {', '.join(protected) or 'none'}. Do not weaken or delete tests. "
                   "Keep behavior the tests already cover. Keep the code simple; do not restructure. "
+                  "Fix the app for a real user, never for the test harness: do not add labels, text, attributes, or "
+                  "shortcuts aimed at the test bot or the e2e script; if a finding is the harness's fault, change nothing. "
                   "Run the test commands yourself before finishing. Do not explain, just edit.\n\nFINDINGS:\n" + findings[:30000])
         try:
             _, reply, tools, usage = implementer(repo, model, prompt)
