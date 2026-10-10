@@ -1675,6 +1675,10 @@ def stack_worktree(repo, proj, trunk):
         else:
             sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         ready_checkout(repo, wt)  # verify runs its checks here
+        tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
+        if tools.is_dir() and not link.exists() and not link.is_symlink():
+            link.symlink_to(tools)
+            exclude_paths(wt, ["/.fast-coding"])  # the `/.fast-coding/` rule does not cover a link
     return wt
 
 def exclude_paths(wt, rules):

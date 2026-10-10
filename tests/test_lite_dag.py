@@ -110,3 +110,10 @@ class LiteTop(LiteDag):
         wt = self.proj / "worktrees" / ".stackroot"
         self.assertTrue((wt / "b.txt").exists() and (wt / "c.txt").exists())
         self.assertEqual(before, {b: self.git("rev-parse", f"fast/p/{b}") for b in ("001", "002")})
+
+    def test_the_stack_worktree_sees_the_tool_dir(self):
+        (self.proj / "e2e").mkdir(); (self.proj / "e2e" / "assert.sh").write_text("true\n")
+        wt = fc.stack_worktree(self.repo, self.proj, "main")
+        self.assertTrue((wt / ".fast-coding" / "p" / "e2e" / "assert.sh").exists())
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
