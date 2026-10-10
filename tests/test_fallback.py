@@ -125,6 +125,8 @@ class FixScope(unittest.TestCase):
         code, repo, res = self.verify({"a.go": "fixed\n"})
         self.assertEqual((code, res["passed"]), (0, True))
         self.assertEqual((repo / "a.go").read_text(), "fixed\n")
+        log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout
+        self.assertEqual(log.strip(), "Fix verification findings")  # plain, never the tool's name
 
     def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
         code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})

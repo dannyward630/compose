@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """fast-coding: a frontier model plans, parallel OpenCode implementers build, a local pipeline verifies. Stdlib only.
 
-Layout inside any repo:
-  .fast-coding/<project>/linear.json    {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
+Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
+  .fast-coding/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
                                         (lite project: {"feature": "<project>", "lite": true}, no Linear; `sync` takes the same JSON)
   .fast-coding/<project>/verify.json    local verification config
-  .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results (git-ignored)
-  .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
+  .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results
+  .fast-coding/<project>/worktrees/     one git clone per task
 Nothing is pushed. The only network calls are the model APIs.
 """
 import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
@@ -654,7 +654,7 @@ def cmd_crew(a):
     title = a.title or a.role
     space = herdr_space(proj)
     role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(wt), "--env", f"FAST_CODING_ROLE={role}",
+    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(wt), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", "--permission-mode", "auto", check=True, timeout=90)
@@ -997,6 +997,11 @@ def format_files(wt, files):
             out.append(f)
     return out
 
+def commit_message(meta):
+    """A task's commit says what changed, in the task title's words: no tool name, task id, or process."""
+    title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
+    return title or "Update " + ", ".join(meta.get("files") or ["files"])
+
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -1059,7 +1064,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"Done means this command exits 0: {meta['test']}\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
-              "Run the test command once before finishing. Make the smallest, simplest change that passes. Do not explain, just edit.\n"
+              "Run the test command once before finishing. Make the smallest, simplest change that passes: no defensive checks, flags, "
+              "hardening, helpers, or comments the task does not ask for. Do not explain, just edit.\n"
               f"Hard limits: the whole change must stay under {MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
               "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
               "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.")
@@ -1194,7 +1200,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         elif formatted:
             say(f"{tid} format  {', '.join(formatted)}")
         sh(["git", "add", "-A"], wt)
-        sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
+        sh(["git", "commit", "-qm", commit_message(meta)], wt, check=False)
         sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
     diff = sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
@@ -1260,19 +1266,41 @@ def stack_worktree(repo, proj, trunk):
     ready_checkout(repo, wt)  # verify runs its checks here
     return wt
 
+def exclude_paths(wt, rules):
+    """Add git ignore rules to the checkout's info/exclude, which no commit carries. A linked worktree shares the main
+    checkout's file, so one call covers every checkout of the repository."""
+    exclude = Path(sh(["git", "rev-parse", "--git-path", "info/exclude"], wt).stdout.strip())
+    exclude = exclude if exclude.is_absolute() else wt / exclude
+    have = exclude.read_text().splitlines() if exclude.exists() else []
+    add = [l for l in rules if l not in have]
+    if add:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text("".join(l + "\n" for l in have + add))
+
+TOOL_DIRS = ("graft/", ".fast-coding/")
+
+def ignore_tool_files(wt):
+    """Keep fast-coding's and graft's own files out of the repository, before anything else is written: every checkout
+    ignores them through info/exclude (also graft's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
+    of the delivered branch ignores them too. Returns True when `.gitignore` changed (the caller commits it)."""
+    exclude_paths(wt, ["/" + d for d in TOOL_DIRS] + ["/.ignore"])
+    gi = wt / ".gitignore"
+    if not gi.exists():
+        return False
+    lines = gi.read_text().splitlines()
+    have = {l.strip().strip("/") for l in lines}
+    add = [d for d in TOOL_DIRS if d.strip("/") not in have]
+    if add:
+        gi.write_text("\n".join(lines + add) + "\n")
+    return bool(add)
+
 def ready_checkout(repo, wt):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
     (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
     the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does."""
     ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], repo, check=False).stdout.splitlines()
     deps = [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
-    exclude = Path(sh(["git", "rev-parse", "--git-path", "info/exclude"], wt).stdout.strip())
-    exclude = exclude if exclude.is_absolute() else wt / exclude  # a worktree shares the main checkout's file; harmless there
-    have = exclude.read_text().splitlines() if exclude.exists() else []
-    add = [l for l in ["/graft/", "/.ignore", *("/" + d for d in deps)] if l not in have]
-    if add:
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        exclude.write_text("".join(l + "\n" for l in have + add))
+    exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
     for d in deps:
         link = wt / d
         if link.parent.is_dir() and not link.exists() and not link.is_symlink():
@@ -1984,7 +2012,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         say(f"fix    done  {fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
         if changed:
             sh(["git", "add", "-A"], repo)
-            sh(["git", "commit", "-qm", f"fast-coding verify fix round {rnd + 1} ({proj.name})"], repo, check=False)
+            sh(["git", "commit", "-qm", "Fix verification findings"], repo, check=False)
             say("fix    committed on " + (sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
         else:
             break
@@ -2395,7 +2423,7 @@ def project_after(proj):
 def cmd_init(a):
     """Create the project's worktree `../fast-coding-<name>` on branch `fast-coding/<name>` (from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
-    `.fast-coding/<name>/` skeleton committed there. The user's checkout is never touched again by this project."""
+    `.fast-coding/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
     here = Path(a.repo).resolve()
     name = a.project
     branch = f"fast-coding/{name}"
@@ -2420,23 +2448,20 @@ def cmd_init(a):
         sh(["git", "worktree", "add", "-q", str(wt), branch], here)
         proj = wt / ".fast-coding" / name
         print(f"worktree {wt}  branch {branch} (from {base})")
+    if ignore_tool_files(wt):
+        sh(["git", "add", ".gitignore"], wt)
+        sh(["git", "commit", "-qm", "Ignore local tool directories"], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
+    repo_link = here / ".fast-coding" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
+    if repo_link.exists() and not (wt / ".fast-coding" / "linear.json").exists():
+        (wt / ".fast-coding" / "linear.json").write_text(repo_link.read_text())
     if not (proj / "verify.json").exists():
         (proj / "verify.json").write_text(json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main"}, indent=2))
-    gi = wt / ".gitignore"
-    lines = gi.read_text().splitlines() if gi.exists() else []
-    for pat in (".fast-coding/*/worktrees/", ".fast-coding/*/results/"):
-        if pat not in lines:
-            lines.append(pat)
-    gi.write_text("\n".join(lines) + "\n")
     if a.lite and not (proj / "linear.json").exists():
         (proj / "linear.json").write_text(json.dumps({"feature": name, "lite": True}, indent=2) + "\n")
-    (proj / ".gitkeep").write_text("")
-    sh(["git", "add", "-A", ".fast-coding", ".gitignore"], wt, check=False)
-    sh(["git", "commit", "-qm", f"fast-coding: project {name}"], wt, check=False)
     if herdr_space(proj):
         print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
