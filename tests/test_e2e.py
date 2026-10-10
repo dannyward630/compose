@@ -1,0 +1,71 @@
+import importlib.machinery, importlib.util, os, tempfile, time, unittest
+from pathlib import Path
+
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+fc = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(fc)
+
+DETACHED = "python3 -c \"import os,subprocess; subprocess.Popen(['python3','-m','http.server',os.environ['E2E_CLIENT_PORT']],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\""
+
+
+class E2eLifecycle(unittest.TestCase):
+    """An e2e stage ends everything it started, so no server or browser answers the next round."""
+    def stage(self, cfg):
+        report, findings = {"e2e": []}, []
+        ok = fc.e2e_stage(Path(self.dir), cfg, {}, report, findings)
+        return ok, report, findings
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def alive(self, pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def test_setup_processes_and_detached_listeners_are_gone_afterwards(self):
+        ports = Path(self.dir) / "ports"
+        setup = (f"echo $E2E_PORT $E2E_CLIENT_PORT > {ports}; sleep 300 & echo $! > {self.dir}/sleep.pid; "
+                 f"python3 -m http.server $E2E_PORT >/dev/null 2>&1 & {DETACHED}; sleep 300")
+        cfg = {"e2e_setup": setup, "e2e_setup_wait": 2,
+               "e2e": [{"name": "probe", "driver": "curl -sf -o /dev/null http://127.0.0.1:$E2E_PORT/ && curl -sf -o /dev/null http://127.0.0.1:$E2E_CLIENT_PORT/"}]}
+        ok, report, _ = self.stage(cfg)
+        self.assertTrue(ok, report)
+        server, client = map(int, ports.read_text().split())
+        time.sleep(0.5)
+        self.assertFalse(fc.port_listening(server))
+        self.assertFalse(fc.port_listening(client))  # detached from the setup's group, like `bp launch`
+        self.assertFalse(self.alive(int((Path(self.dir) / "sleep.pid").read_text())))
+
+    def test_every_stage_gets_fresh_ports(self):
+        seen = []
+        for _ in range(2):
+            out = Path(self.dir) / "p"
+            self.stage({"e2e": [{"name": "p", "driver": f"echo $E2E_PORT >> {out}"}]})
+            seen = out.read_text().split()
+        self.assertEqual(len(set(seen)), 2)
+
+
+class ToolErrors(unittest.TestCase):
+    def test_a_harness_crash_is_retried_once_and_never_a_finding(self):
+        d = tempfile.mkdtemp()
+        crash = f"echo x >> {d}/n; echo 'File \"/x/jev_ultrafast/model.py\", line 193' >&2; exit 1"
+        report, findings = {"e2e": []}, []
+        ok = fc.e2e_stage(Path(d), {"e2e": [{"name": "c", "driver": crash}]}, {}, report, findings)
+        self.assertFalse(ok)
+        self.assertEqual(findings, [])
+        self.assertTrue(report["e2e"][0]["tool_error"])
+        self.assertEqual(len((Path(d) / "n").read_text().split()), 2)
+
+    def test_an_app_failure_is_a_finding(self):
+        report, findings = {"e2e": []}, []
+        ok = fc.e2e_stage(Path(tempfile.mkdtemp()), {"e2e": [{"name": "a", "driver": "echo 'AssertionError: no line' >&2; exit 1"}]}, {}, report, findings)
+        self.assertFalse(ok)
+        self.assertEqual(len(findings), 1)
+        self.assertFalse(report["e2e"][0]["tool_error"])
+
+
+if __name__ == "__main__":
+    unittest.main()
