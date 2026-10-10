@@ -132,6 +132,7 @@ A captain answer takes minutes; nothing should wait on it that does not need it.
 2. Build and start the app on the current toolchain, the way a user would (`yarn build`, `go build ./...`, start the server and probe one URL), and run the existing tests. Unit tests passing is not proof the app runs.
 3. Write each smoke command that passed into `verify.json` `checks` (build, plus a start-and-probe one-liner when starting differs from building), so every verify re-proves it.
 4. Report what is broken (a dependency that fails on current Node or Go, a toolchain bump) as decisions with a recommendation, not fixes.
+5. Once the captain decides, the groundwork crew applies dependency and toolchain changes itself with the package manager (`yarn upgrade`, a `resolutions` entry, `go get`), proves the smoke checks, and commits to the trunk before `run`. Dependency bumps, lockfile edits, and toolchain changes are never implementer tasks.
 Its findings join the captain's one upfront request (Rules: ask once); they never surface after a run as a second wave.
 An autonomous mode is never a mandate to decide for the user.
 Helpers in this phase read research, draft ticket Questions, or draw a prototype whose decision is settled; none writes a document that carries an open decision.
@@ -276,6 +277,7 @@ A rebase conflict while stacking (`after: ... could not be chained`) is crew wor
 ## Task issue format
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (GLM 5.3 Flash; the preset pins Together, then CoreWeave). gpt-oss-120b on Cerebras was the default until 2026-10-10 and was dropped for missing too often.
+Leave `model:` unset. A task that seems to need a stronger model is a task to split, or work for groundwork (dependencies, toolchain). Setting `model: claude` (or any non-default model) on a planned task is a captain decision: it goes into the one upfront request with the reason, never only into a later report.
 There is no fallback by default. When `models.fallback` is set, an attempt that errors, times out, is rate-limited, or misses moves the task to it in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
 `run` and `resume` probe every model they may call (each task's, and the fallback) with one tiny prompt before cloning anything; a wrong model id or preset slug stops the run there with the provider's message.
 Models, the fallback, and the OpenRouter key come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
