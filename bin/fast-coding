@@ -151,8 +151,9 @@ def cmd_workspace(a):
     _, st = settings(cfg)
     m = st.get("models", {})
     print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
-    for role, model in (m.get("crew") or {}).items():
-        print(f"crew {role:14} {model}")
+    for role, entry in (m.get("crew") or {}).items():
+        model, effort = (entry.get("model"), entry.get("effort")) if isinstance(entry, dict) else (entry, None)
+        print(f"crew {role:14} {model}" + (f" ({effort} effort)" if effort else ""))
 
 # ---------- output and cost ledger ----------
 
