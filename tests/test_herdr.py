@@ -126,3 +126,21 @@ class Tabs(unittest.TestCase):
             fc.herdr_verify_panes("w9", "/tmp", ["checks"])
         closed = [c[2] for c in calls if c[:2] == ("tab", "close")]
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
+
+
+class StackLock(unittest.TestCase):
+    def test_parallel_linearize_calls_never_overlap(self):
+        """Parallel tasks with `after:` all linearize in the one stack worktree; overlapping git there crashed a run."""
+        import threading as th
+        active, overlaps = [0], []
+        def fake(*a):
+            active[0] += 1
+            if active[0] > 1:
+                overlaps.append(1)
+            __import__('time').sleep(0.05)
+            active[0] -= 1
+            return []
+        with mock.patch.object(fc, "_linearize", fake):
+            ts = [th.Thread(target=fc.linearize, args=(None, None, "t", None)) for _ in range(4)]
+            [t.start() for t in ts]; [t.join() for t in ts]
+        self.assertEqual(overlaps, [])

@@ -968,13 +968,14 @@ def task_base(repo, proj, meta):
         return "HEAD", head
     # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
     trunk = current_branch(repo)
-    chain = linearize(repo, proj, trunk, stack_worktree(repo, proj, trunk))
-    missing = [b for b in unmerged if b not in chain]
-    if missing:
-        raise RuntimeError(f"after: {', '.join(missing)} could not be chained (rebase conflict); resolve it, then re-run this task")
-    # Base on the highest dependency, not the chain top: layers ordered after this task must stay above it in history.
-    base = max(unmerged, key=chain.index)
-    return base, sh(["git", "rev-parse", base], repo).stdout.strip()
+    with STACK_LOCK:  # read the base before another task's linearize rewrites it
+        chain = linearize(repo, proj, trunk, stack_worktree(repo, proj, trunk))
+        missing = [b for b in unmerged if b not in chain]
+        if missing:
+            raise RuntimeError(f"after: {', '.join(missing)} could not be chained (rebase conflict); resolve it, then re-run this task")
+        # Base on the highest dependency, not the chain top: layers ordered after this task must stay above it in history.
+        base = max(unmerged, key=chain.index)
+        return base, sh(["git", "rev-parse", base], repo).stdout.strip()
 
 PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
 
@@ -1262,12 +1263,13 @@ def stack_worktree(repo, proj, trunk):
     """A detached worktree the CLI owns for every gh stack operation, so the user's checkout is never switched.
     Detached because a branch checked out in the user's tree cannot be checked out again elsewhere."""
     wt = proj / "worktrees" / ".stackroot"
-    if not (wt / ".git").exists():
-        sh(["git", "worktree", "prune"], repo, check=False)
-        sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
-    else:
-        sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-    ready_checkout(repo, wt)  # verify runs its checks here
+    with STACK_LOCK:
+        if not (wt / ".git").exists():
+            sh(["git", "worktree", "prune"], repo, check=False)
+            sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
+        else:
+            sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        ready_checkout(repo, wt)  # verify runs its checks here
     return wt
 
 def exclude_paths(wt, rules):
@@ -1341,7 +1343,13 @@ def chain_order(repo, proj, trunk):
         return int(sh(["git", "rev-list", "--count", f"{trunk}..{b}"], repo, check=False).stdout.strip() or 0)
     return sorted(order, key=lambda b: (depth(b), rank[b]))
 
+STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
+
 def linearize(repo, proj, trunk, wt):
+    with STACK_LOCK:
+        return _linearize(repo, proj, trunk, wt)
+
+def _linearize(repo, proj, trunk, wt):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
     chain = chain_order(repo, proj, trunk)
