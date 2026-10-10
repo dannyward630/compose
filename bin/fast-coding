@@ -609,7 +609,9 @@ def crew_preamble(proj, name, title):
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
             f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
-            f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n\n")
+            f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
+            f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
+            f"and a test failing on the stubs plus the orchestrator's read of it is the proof.\n\n")
 
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows

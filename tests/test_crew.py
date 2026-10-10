@@ -73,6 +73,7 @@ class Crew(unittest.TestCase):
         pre = fc.crew_preamble(self.proj, "shop-tests", "tests")
         self.assertIn("never mention fast-coding", pre)
         self.assertIn("one test file per unit", pre)
+        self.assertIn("not even a throwaway reference", pre)
 
     def test_start_outside_herdr_says_so(self):
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
