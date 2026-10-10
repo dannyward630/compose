@@ -158,7 +158,7 @@ Secrets never live in this repo or on Linear issues: the active workspace's key 
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
 
 ```bash
-fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ untracked, graft/ and .fast-coding/ ignored first (--here: in this checkout; --after <project>: branch from that project's branch; --lite: small reversible work, no Linear, no gh stack)
+fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ untracked, graft/ and .fast-coding/ ignored first (--here: in this checkout; --after <project>: branch from that project's branch)
 fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; one gh stack on your branch
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
@@ -236,14 +236,14 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
 {"workspace": "work",
  "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
             "fallback": "<optional, default: none>", "fix": "<optional, default: implementer>",
-            "crew": {"orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}, "groundwork": "claude:claude-opus-5-5",
-                     "tests": "claude:claude-sonnet-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
+            "crew": {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model": "claude:claude-opus-5-5", "effort": "high"}},
+                     "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
                 "personal": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_...", "models": {"fallback": null}}}}
 ```
 
-A workspace's `linear_api_key` (set with `pbpaste | fast-coding workspace key <name> --linear`) lets the CLI keep Linear's state table on full-path projects: tasks In Progress and In Review with a comment, stories and the feature rolled up, the feature In Review on verify PASS.
+A workspace's `linear_api_key` (set with `pbpaste | fast-coding workspace key <name> --linear`) lets the CLI keep Linear's state table: tasks In Progress and In Review with a comment, stories and the feature rolled up, the feature In Review on verify PASS.
 Without it the CLI prints one `linear skipped` line and the run goes on; a Linear error never stops a run either.
 The workspace key goes to pi (`--api-key`, which beats its auth store), OpenCode (`OPENCODE_CONFIG_CONTENT`), the Mercury review, and jev's e2e text helper (`TEXT_MODEL_API_KEY`), so every OpenRouter call bills that account.
 OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any preset an opt-in fallback names) in each workspace's account too.
@@ -252,6 +252,8 @@ OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any pr
 A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare `claude` runs Claude Code with its default model, anything else is an OpenCode id.
 `models.crew` picks the model of each Claude crew session by role (`orchestrator`, `groundwork`, `tests`, any role name), then `default`; `crew start --model small` (or any name under `models.crew`, or a `claude:<model-id>`) overrides it.
 An entry is a model id, or `{"model": "claude:<model-id>", "effort": "high"}` to also set Claude Code's `--effort`.
+An entry may carry a `fallback` (another entry): `crew start` probes the primary model once a day (`claude -p --model <id>`, cached in `~/.fast-coding/model-probe.json`) and uses the fallback when the probe fails, printing which it chose.
+The planning roles, the `orchestrator` and every wayfinder question agent (`q-<ticket>`), use `planner` when they have no entry of their own: Fable, else Opus 5.5 at high effort. Groundwork and test crews use `groundwork` (Opus); everything else `default`.
 Crew sessions are always Claude Code, so a `pi:` or OpenCode id under `models.crew` stops `crew start` with the key named; without `models.crew` every crew gets Claude Code's default model.
 `default` always exists: it is the top level itself, active when `workspace` is unset, and with no top-level `openrouter_api_key` the harnesses keep their own auth stores.
 `/fast-coding:workspace` comes from the repo being a skills-dir plugin too (`.claude-plugin/plugin.json`, `commands/workspace.md`).

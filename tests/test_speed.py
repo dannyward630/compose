@@ -41,7 +41,7 @@ class Waves(unittest.TestCase):
 
 class E2EBesideReview(unittest.TestCase):
     def test_e2e_runs_while_review_waits_on_models(self):
-        slow = lambda result: (lambda *a, **k: (time.sleep(0.6), result)[1])
+        slow = lambda result: (lambda *a, **k: (time.sleep(1.5), result)[1])
         # a configured browser, so the stage does not launch its own: this times the overlap, not a Chromium start
         cfg = {"e2e": [{"name": "flow"}], "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, "review": True, "jev_acceptance": True}
         args = type("A", (), {"skip_e2e": False, "skip_review": False})()
@@ -54,7 +54,7 @@ class E2EBesideReview(unittest.TestCase):
             ok, report, _ = fc.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, args)
         self.assertTrue(ok)
         self.assertEqual(len(report["e2e"]), 1)
-        self.assertLess(time.time() - t0, 1.1)  # in sequence, 0.6s of e2e plus 0.6s of review is 1.2s
+        self.assertLess(time.time() - t0, 2.6)  # in sequence, 1.5s of e2e plus 1.5s of review is 3s; overlap plus stage setup stays under
 
 
 if __name__ == "__main__":

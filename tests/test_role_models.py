@@ -75,5 +75,70 @@ class RoleModels(unittest.TestCase):
         self.assertIsNone(fc.fallback_for("claude:claude-opus-5-5"))
 
 
+PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model": "claude:claude-opus-5-5", "effort": "high"}},
+           "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5"}
+
+
+class PlannerChain(unittest.TestCase):
+    """Planning (the orchestrator, wayfinder `q-*` agents) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
+        for p in (mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json")):
+            p.start(); self.addCleanup(p.stop)
+        fc.apply_config(); fc._PROBED.clear()
+        self.addCleanup(fc._PROBED.clear)
+        for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"):
+            self.addCleanup(setattr, fc, k, {})
+        self.probe_cache = d / "probe.json"
+
+    def probe(self, ok):
+        out = json.dumps({"is_error": not ok, "result": "ok" if ok else "model not found"})
+        return mock.patch.object(fc.subprocess, "run", return_value=fc.subprocess.CompletedProcess([], 0 if ok else 1, out, ""))
+
+    def test_planning_roles_use_the_planner_and_others_do_not(self):
+        with self.probe(True):
+            self.assertEqual(fc.crew_pick("orchestrator")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.crew_pick("q-neb-12")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.crew_pick("groundwork")[:2], ("claude:claude-opus-5-5", None))
+            self.assertEqual(fc.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
+
+    def test_fallback_when_the_planner_model_is_unavailable(self):
+        with self.probe(False):
+            model, effort, note = fc.crew_pick("orchestrator")
+        self.assertEqual((model, effort), ("claude:claude-opus-5-5", "high"))
+        self.assertIn("unavailable", note); self.assertIn("model not found", note)
+
+    def test_the_probe_runs_once_a_day(self):
+        with self.probe(True) as run:
+            fc.crew_pick("orchestrator"); fc.crew_pick("q-a"); fc.crew_pick("q-b")
+            self.assertEqual(run.call_count, 1)
+        fc._PROBED.clear()  # a new CLI process the same day reads the cache file
+        with self.probe(False) as run:
+            self.assertEqual(fc.crew_pick("orchestrator")[0], "claude:claude-fable-5-1")
+            run.assert_not_called()
+        self.assertIn("claude-fable-5-1", json.loads(self.probe_cache.read_text()))
+
+    def test_crew_start_passes_the_chosen_model_and_effort(self):
+        calls = []
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}}
+            return {}
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        a = SimpleNamespace(action="start", role="orchestrator", repo=str(proj), project="p", model=None, title=None,
+                            brief="plan it", cwd=None, force=False)
+        with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
+                mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
+                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
+                mock.patch.object(fc, "write_report"):
+            fc.cmd_crew(a)
+        start = next(c for c in calls if c[:2] == ("agent", "start"))
+        self.assertIn("claude-opus-5-5", start); self.assertIn("--effort", start); self.assertIn("high", start)
+        rec = json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())
+        self.assertEqual((rec["model"], rec["effort"]), ("claude:claude-opus-5-5", "high"))
+
+
 if __name__ == "__main__":
     unittest.main()

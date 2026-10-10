@@ -3,7 +3,6 @@
 
 Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
   .fast-coding/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
-                                        (lite project: {"feature": "<project>", "lite": true}, no Linear; `sync` takes the same JSON)
   .fast-coding/<project>/verify.json    local verification config
   .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results
   .fast-coding/<project>/worktrees/     one git clone per task
@@ -47,6 +46,9 @@ CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> cla
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
+CREW_FALLBACK = {}  # the same keys -> (model, effort) to use when the entry's own model fails its availability probe
+PLANNING_ROLES = ("orchestrator",)  # plus every wayfinder question agent, `q-<ticket>`: they plan, so they get `planner`
+PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
 def is_claude(model):
     return model == "claude" or str(model).startswith("claude:")
@@ -77,13 +79,15 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, LINEAR_KEY, WORKSPACE
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE
     name, st = settings(read_config())
     WORKSPACE, LINEAR_KEY = name, st.get("linear_api_key") or None  # the CLI moves Linear states with it (full path only)
     models = st.get("models", {})
     crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}
     CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
     CREW_EFFORT = {k: v["effort"] for k, v in crew.items() if isinstance(v, dict) and v.get("effort")}
+    entry = lambda e: (e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)
+    CREW_FALLBACK = {k: entry(v["fallback"]) for k, v in crew.items() if isinstance(v, dict) and v.get("fallback")}
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     if "fix" in models:
@@ -151,9 +155,10 @@ def cmd_workspace(a):
     _, st = settings(cfg)
     m = st.get("models", {})
     print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
+    show = lambda e: (f"{e.get('model')}" + (f" ({e['effort']} effort)" if e.get("effort") else "")) if isinstance(e, dict) else str(e)
     for role, entry in (m.get("crew") or {}).items():
-        model, effort = (entry.get("model"), entry.get("effort")) if isinstance(entry, dict) else (entry, None)
-        print(f"crew {role:14} {model}" + (f" ({effort} effort)" if effort else ""))
+        fb = entry.get("fallback") if isinstance(entry, dict) else None
+        print(f"crew {role:14} {show(entry)}" + (f", else {show(fb)}" if fb else ""))
 
 # ---------- output and cost ledger ----------
 
@@ -296,11 +301,6 @@ def sync_tasks(proj, data):
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
-
-def is_lite(proj):
-    """A lite project (`init --lite`) has no Linear tree: the orchestrator pipes its plan and task blocks to `sync` itself."""
-    link = proj / "linear.json"
-    return link.exists() and json.loads(link.read_text()).get("lite") is True
 
 def linear_cache(proj):
     path = proj / "results" / "tasks.json"
@@ -471,7 +471,7 @@ def http_json(req, provider, timeout=90):
     return out
 
 # ---------- Linear: the CLI keeps the state table true, so the orchestrator spends no model turn on it ----------
-# Full path only (lite has no Linear tree). The key is the active workspace's `linear_api_key`; it goes in a header,
+# The key is the active workspace's `linear_api_key`; it goes in a header,
 # never argv or a results file. Every call is best effort: a Linear outage prints one line and the run goes on.
 LINEAR_URL = "https://api.linear.app/graphql"
 LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier state { name type }
@@ -541,7 +541,7 @@ def linear_roll_up(proj, ident, verified=False):
 def linear_event(proj, meta, event, result=None):
     """One task event through the state table: `dispatched` moves the task In Progress, `passed` In Review with a comment,
     `failed` keeps it In Progress with the failure as a comment; then its story and the feature roll up."""
-    if is_lite(proj) or not meta.get("linear"):
+    if not meta.get("linear"):
         return
     if not LINEAR_KEY:
         if not _linear_warned:
@@ -570,7 +570,7 @@ def linear_event(proj, meta, event, result=None):
 def linear_verified(proj):
     """verify PASS: the feature moves to In Review once every story is In Review or Done."""
     link = proj / "linear.json"
-    if is_lite(proj) or not link.exists() or not LINEAR_KEY:
+    if not link.exists() or not LINEAR_KEY:
         return
     feature = json.loads(link.read_text()).get("feature")
     try:
@@ -776,28 +776,70 @@ def crew_preamble(proj, name, title):
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
-def crew_model(role, explicit=None):
-    """The model a crew session runs: `--model` (a `claude:<id>`, or a name under models.crew such as `small`), else
-    models.crew[<role>], else models.crew.default, else bare `claude` (Claude Code's default). Crew are always Claude Code."""
-    if explicit:
-        key, model = (f"models.crew.{explicit}", CREW_MODELS[explicit]) if explicit in CREW_MODELS else ("--model", explicit)
-    elif role in CREW_MODELS:
-        key, model = f"models.crew.{role}", CREW_MODELS[role]
-    elif "default" in CREW_MODELS:
-        key, model = "models.crew.default", CREW_MODELS["default"]
+_PROBED = {}
+
+def model_available(model):
+    """Whether Claude Code can run `model` (a claude:<id>) on this account: one tiny `claude -p` turn, cached for the day
+    in ~/.fast-coding/model-probe.json. Returns (ok, why)."""
+    mid, today = claude_id(model), time.strftime("%Y-%m-%d")
+    if not mid:
+        return True, "Claude Code's default model"
+    if mid in _PROBED:
+        return _PROBED[mid]
+    try:
+        cache = json.loads(PROBE_CACHE.read_text()) if PROBE_CACHE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        cache = {}
+    hit = cache.get(mid)
+    if hit and hit.get("date") == today:
+        _PROBED[mid] = (hit["ok"], hit["why"])
+        return _PROBED[mid]
+    try:
+        p = subprocess.run(["claude", "-p", "--model", mid, "--output-format", "json", "Reply with exactly: ok"],
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        out = json.loads((p.stdout or "{}").strip() or "{}") if p.stdout.strip().startswith("{") else {}
+        ok = p.returncode == 0 and out.get("is_error") is False
+        why = "answered" if ok else (out.get("result") or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        ok, why = False, f"{type(e).__name__}: {e}"[:160]
+    _PROBED[mid] = (ok, why)
+    cache[mid] = {"date": today, "ok": ok, "why": why}
+    PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    PROBE_CACHE.write_text(json.dumps(cache, indent=2))
+    return ok, why
+
+def crew_pick(role, explicit=None):
+    """(model, effort, note) for a crew session. `--model` (a `claude:<id>`, or a name under models.crew such as `small`)
+    wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator and `q-<ticket>` wayfinder
+    agents), then `default`, then bare `claude`. An entry with a `fallback` probes its model first and uses the fallback
+    when Claude Code cannot run it. Crew are always Claude Code."""
+    if explicit and explicit not in CREW_MODELS:
+        key, model, effort = "--model", explicit, None
     else:
-        return "claude"
+        key = explicit or (role if role in CREW_MODELS else
+                           "planner" if (role in PLANNING_ROLES or str(role).startswith("q-")) and "planner" in CREW_MODELS else
+                           "default" if "default" in CREW_MODELS else None)
+        if key is None:
+            return "claude", None, ""
+        model, effort = CREW_MODELS[key], CREW_EFFORT.get(key)
+    note = f"models.crew.{key}" if key != "--model" else "--model"
+    if key in CREW_FALLBACK:
+        ok, why = model_available(model)
+        if not ok:
+            note = f"models.crew.{key}: {model} unavailable ({why}), using its fallback"
+            model, effort = CREW_FALLBACK[key]
     if not is_claude(model):
         where = "" if key == "--model" else f" in {CONFIG_PATH}"
-        sys.exit(f"{key} is {model!r}, but crew sessions run in Claude Code: use claude:<model-id> (e.g. claude:claude-sonnet-5-5)"
-                 f"{where}; pi: and OpenCode ids are for implementers only")
-    return model
+        sys.exit(f"{'--model' if key == '--model' else 'models.crew.' + key} is {model!r}, but crew sessions run in Claude Code: "
+                 f"use claude:<model-id> (e.g. claude:claude-sonnet-5-5){where}; pi: and OpenCode ids are for implementers only")
+    return model, effort, note
+
+def crew_model(role, explicit=None):
+    return crew_pick(role, explicit)[0]
 
 def crew_effort(role, explicit=None):
-    """The Claude Code effort for the entry crew_model picked, or None to keep Claude Code's default."""
-    if explicit:
-        return CREW_EFFORT.get(explicit)
-    return CREW_EFFORT.get(role) if role in CREW_MODELS else CREW_EFFORT.get("default")
+    """The Claude Code effort for the entry crew_pick chose, or None to keep Claude Code's default."""
+    return crew_pick(role, explicit)[1]
 
 def claude_trusted(path):
     """Whether Claude Code has accepted its folder-trust dialog for `path` or a parent (None when it cannot tell).
@@ -1024,7 +1066,7 @@ def cmd_crew(a):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
             live = (herdr("agent", "get", c["name"]) or {}).get("agent") or {}
-            print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {c.get('model', 'claude'):26} {c['title'][:30]:30} {last.get('message', '')[:70]}")
+            print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
         sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
@@ -1049,8 +1091,7 @@ def cmd_crew(a):
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"crew {name} stopped")
         return
-    model = crew_model(a.role, getattr(a, "model", None))
-    effort = crew_effort(a.role, getattr(a, "model", None))
+    model, effort, why_model = crew_pick(a.role, getattr(a, "model", None))
     if not herdr_env():
         sys.exit("crew sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     if herdr("agent", "get", name):
@@ -1072,11 +1113,12 @@ def cmd_crew(a):
           *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
           "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
-    print(f"crew {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}; it reports with `fast-coding report`, `watch` wakes on it")
+    print(f"crew {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
+          f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config
@@ -1394,10 +1436,6 @@ def task_base(repo, proj, meta):
             unmerged.append(b)
     if not unmerged:
         return "HEAD", head
-    if is_lite(proj):  # no stack mid-run: build on the dependency itself, or on a merge of several
-        if len(unmerged) == 1:
-            return unmerged[0], sh(["git", "rev-parse", unmerged[0]], repo).stdout.strip()
-        return "merge of " + ", ".join(unmerged), merge_tips(repo, proj, unmerged)
     # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
     trunk = current_branch(repo)
     with STACK_LOCK:  # read the base before another task's linearize rewrites it
@@ -1710,38 +1748,6 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
 
 # ---------- stacks (gh stack) ----------
 
-def merge_tips(repo, proj, branches):
-    """A detached merge commit of `branches`, made in the CLI's stack worktree: the base of a lite task with several dependencies."""
-    with STACK_LOCK:
-        wt = stack_worktree(repo, proj, current_branch(repo))
-        sh(["git", "checkout", "-q", "--detach", branches[0]], wt)
-        r = sh(["git", "merge", "-q", "--no-edit", *branches[1:]], wt, check=False)
-        sha = sh(["git", "rev-parse", "HEAD"], wt).stdout.strip() if r.returncode == 0 else None
-        if r.returncode:
-            sh(["git", "merge", "--abort"], wt, check=False)
-        sh(["git", "checkout", "-q", "--detach", current_branch(repo)], wt, check=False)
-    if not sha:
-        raise RuntimeError(f"after: {', '.join(branches)} conflict when merged; their tasks overlap. Resolve by hand "
-                           f"(git merge them), or split the files differently, then re-run this task.\n{(r.stdout + r.stderr)[-800:]}")
-    return sha
-
-def land_lite(repo, proj):
-    """Replay every unmerged task branch's own commits onto the project branch, dependencies first, so a lite project's
-    verify and its deliverable are the project branch itself, as linear history with the tasks' plain messages: no merge
-    commits, whose default messages would name the tool's branches. Commits already landed (a dependency's, reached
-    through a later task's base) are skipped by patch id. Each task branch then points into the landed history, so it
-    reads as merged. A conflict stops verify with the task named."""
-    for b in stack_order(repo, proj):
-        own = sh(["git", "rev-list", "--reverse", "--no-merges", "--cherry-pick", "--right-only", f"HEAD...{b}"], repo).stdout.split()
-        if own:
-            r = sh(["git", "cherry-pick", "--allow-empty", *own], repo, check=False)
-            if r.returncode:
-                sh(["git", "cherry-pick", "--abort"], repo, check=False)
-                sys.exit(f"task {b.rsplit('/', 1)[1]} ({b}) conflicts with {current_branch(repo)}; resolve by hand: "
-                         f"cd {repo} && git cherry-pick {' '.join(own)}\n{(r.stdout + r.stderr)[-800:]}")
-        sh(["git", "branch", "-f", b, "HEAD"], repo)
-        say(f"land   {b} ({len(own)} commit(s)) onto {current_branch(repo)}")
-
 def replace_branch(repo, proj, branch):
     """Delete a task branch that is about to be rebuilt. Its old tip is kept under a ref: layers stacked above still carry the
     old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""
@@ -2024,7 +2030,7 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fallback_for(m) for m in models})
     a.trunk = a.trunk or current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
-    if stack_order(repo, proj) and not is_lite(proj):
+    if stack_order(repo, proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
@@ -2079,7 +2085,7 @@ def run_tasks(repo, proj, tasks, a):
         triage(repo, proj, [r["id"] for r in results if r["status"] == "passed"])
     say(f"run done   {passed}/{len(results)} passed  wall {fmt(total)}  sum of task time {fmt(sum(r['seconds'] for r in results))}")
     say(LEDGER.line())
-    if passed and not a.no_stack and not is_lite(proj):  # a lite project lands as one branch, not a stack
+    if passed and not a.no_stack:
         register_stack(repo, proj, a.trunk)
     if halt:
         done_ids = {r["id"] for r in results if r["status"] in ("passed", "already_green")}
@@ -2528,7 +2534,7 @@ def run_stages(repo, proj, cfg, a):
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
-        gate_review = not is_lite(proj)  # on lite, review findings are reported for the orchestrator; only checks and e2e fail verify
+        gate_review = True
         if gate_review:
             ok &= rv["pass"]
         herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
@@ -2548,7 +2554,7 @@ def run_stages(repo, proj, cfg, a):
             acc = {"pass": False, "criteria": [], "failed": [], "error": str(e)}
         acc["seconds"] = round(time.time() - t1, 1)
         report["acceptance"] = acc
-        gate = bool(cfg.get("acceptance_gate", False)) and not is_lite(proj)  # tests already cover every criterion; the classifier is advisory unless asked to gate
+        gate = bool(cfg.get("acceptance_gate", False))  # tests already cover every criterion; the classifier is advisory unless asked to gate
         if gate:
             ok &= acc["pass"]
         n = len(acc.get("criteria", []))
@@ -2573,9 +2579,6 @@ def verify_root(repo, proj, cfg):
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
     base is the trunk. With no open layers it runs on the user's checkout against `review_base`."""
     trunk = current_branch(repo)
-    if is_lite(proj):  # a lite project lands as one branch: merge the task branches in and verify the project branch itself
-        land_lite(repo, proj)
-        return repo, cfg.get("review_base", trunk), None
     if not stack_order(repo, proj):
         return repo, cfg.get("review_base", trunk), None
     wt = stack_worktree(repo, proj, trunk)
@@ -2843,11 +2846,7 @@ def cmd_tasks(a):
     if len(open_tasks) >= 3 and len(waves) > len(open_tasks) / 2:
         print(f"\n  WARNING SERIAL CHAIN: {len(open_tasks)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
               "(blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.")
-    if is_lite(proj) and len(open_tasks) > LITE_MAX_TASKS:
-        print(f"\n  WARNING LITE PROJECT HAS {len(open_tasks)} TASKS (lite is for {LITE_MAX_TASKS} or fewer): escalate to the full path "
-              "(SKILL.md, Lite path) or cut the plan before `run`.")
 
-LITE_MAX_TASKS = 12
 
 def run_waves(tasks):
     """The tasks grouped as `run` dispatches them when every task passes: a task waits only for its `after:` tasks in the list."""
@@ -3089,14 +3088,6 @@ def cmd_top(a):
         sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         print(f"{wt} detached at {trunk}")
         return
-    if is_lite(proj):  # no stack on lite: the top is every unmerged task branch merged together, never a rebase
-        branches = stack_order(repo, proj)
-        if not branches:
-            sys.exit("no unmerged task branches; the project branch already is the top")
-        top = merge_tips(repo, proj, branches) if len(branches) > 1 else branches[0]
-        sh(["git", "checkout", "-q", "--detach", top], wt)
-        print(f"lite top: {len(branches)} task branch(es) merged on {trunk}, checked out at:\n{wt}")
-        return
     chain = linearize(repo, proj, trunk, wt)
     if not chain:
         sys.exit("no unmerged layers; the trunk already is the top")
@@ -3228,13 +3219,10 @@ def cmd_init(a):
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main"}, indent=2))
-    if a.lite and not (proj / "linear.json").exists():
-        (proj / "linear.json").write_text(json.dumps({"feature": name, "lite": True}, indent=2) + "\n")
     if herdr_space(proj):
         print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
-          + (f"lite, no Linear: pipe the plan and task blocks to `fast-coding sync` as feature id {name!r} ({SYNC_SHAPE})" if is_lite(proj) else
-             f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}"))
+          + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
 
 def merge_evidence(repo, branch, targets, has_remote):
     """Why a branch counts as merged, or None. Two independent signals, either suffices:
@@ -3365,7 +3353,6 @@ def main():
         s.set_defaults(fn=fn)
         if name == "init":
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
-            s.add_argument("--lite", action="store_true", help="small, reversible work: no Linear tree, no gh stack (SKILL.md, Lite path)")
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT>): a feature that needs that feature's code")
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")

@@ -108,11 +108,8 @@ class LinearStates(unittest.TestCase):
             fc.linear_verified(self.proj)
         self.assertTrue(any("update failed" in s for s in said))
 
-    def test_lite_and_untracked_tasks_leave_linear_alone(self):
+    def test_untracked_tasks_leave_linear_alone(self):
         fc.linear_event(self.proj, {}, "dispatched")
-        (self.proj / "linear.json").write_text(json.dumps({"feature": "p", "lite": True}))
-        fc.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
-        fc.linear_verified(self.proj)
         self.assertEqual(self.lin.calls, 0)
 
 
