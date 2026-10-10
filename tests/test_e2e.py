@@ -47,6 +47,23 @@ class E2eLifecycle(unittest.TestCase):
             seen = out.read_text().split()
         self.assertEqual(len(set(seen)), 2)
 
+    def test_the_stage_launches_and_ends_its_own_browser(self):
+        out = Path(self.dir) / "cdp"
+        ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version >/dev/null && echo $BU_CDP_URL $BU_NAME > {out}"}]})
+        self.assertTrue(ok, report)
+        url, name = out.read_text().split()
+        port = int(url.rsplit(":", 1)[1])
+        self.assertNotIn(port, (9222, 9333))  # never the captain's Chrome or a fixed shared port
+        self.assertTrue(name)
+        time.sleep(0.5)
+        self.assertFalse(fc.port_listening(port))
+
+    def test_a_configured_browser_is_used_instead(self):
+        out = Path(self.dir) / "cdp"
+        self.stage({"e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1", "BU_NAME": "ext"},
+                    "e2e": [{"name": "b", "driver": f"echo $BU_CDP_URL $BU_NAME > {out}"}]})
+        self.assertEqual(out.read_text().split(), ["http://127.0.0.1:1", "ext"])
+
 
 class ToolErrors(unittest.TestCase):
     def test_a_harness_crash_is_retried_once_and_never_a_finding(self):

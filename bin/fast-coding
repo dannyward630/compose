@@ -2146,10 +2146,21 @@ def e2e_stage(repo, cfg, panes, report, findings):
     # pass, fail, exception or Ctrl-C, so no server or browser outlives a round to answer the next one.
     env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
     env.update(E2E_PORT=str(free_port()), E2E_CLIENT_PORT=str(free_port()))
+    # Never the captain's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
+    # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env).
+    profile = None if "BU_CDP_URL" in env else tempfile.mkdtemp(prefix="fc-e2e-browser-")
+    if profile:
+        cdp = free_port()
+        env.update(BU_CDP_URL=f"http://127.0.0.1:{cdp}", BU_NAME=f"fc-e2e-{cdp}")
     cfg = {**cfg, "e2e": [{k: expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
     ports = e2e_ports(cfg, env)
     busy = {p for p in ports if port_listening(p)}
     try:
+        if profile:
+            p = sh(["bp", "launch", "about:blank", "--profile", profile], repo, timeout=30, check=False,
+                   env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
+            if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
+                say(f"e2e    browser launch failed: {(p.stderr or p.stdout).strip()[-300:]}")
         if cfg.get("e2e_setup"):
             # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
             stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env={**os.environ, **env}, stdin=subprocess.DEVNULL,
@@ -2181,7 +2192,12 @@ def e2e_stage(repo, cfg, panes, report, findings):
     finally:
         if stage_setup:
             stop_group(stage_setup)
+        if profile and JEV_DIR.exists():  # browser-harness keeps one daemon per BU_NAME alive; end ours with the browser it drove
+            sh(["uv", "run", "python", "-c", f"from browser_harness.admin import restart_daemon; restart_daemon({env['BU_NAME']!r})"],
+               JEV_DIR, timeout=30, check=False)
         kill_listeners(ports - busy)
+        if profile:
+            shutil.rmtree(profile, ignore_errors=True)
     return ok
 
 def run_stages(repo, proj, cfg, a):

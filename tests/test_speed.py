@@ -42,7 +42,8 @@ class Waves(unittest.TestCase):
 class E2EBesideReview(unittest.TestCase):
     def test_e2e_runs_while_review_waits_on_models(self):
         slow = lambda result: (lambda *a, **k: (time.sleep(0.6), result)[1])
-        cfg = {"e2e": [{"name": "flow"}], "review": True, "jev_acceptance": True}
+        # a configured browser, so the stage does not launch its own: this times the overlap, not a Chromium start
+        cfg = {"e2e": [{"name": "flow"}], "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, "review": True, "jev_acceptance": True}
         args = type("A", (), {"skip_e2e": False, "skip_review": False})()
         with mock.patch.object(fc, "herdr_verify_panes", return_value={}), mock.patch.object(fc, "herdr_space", return_value=None), \
                 mock.patch.object(fc, "review_inputs", return_value=("", "", "", [])), \

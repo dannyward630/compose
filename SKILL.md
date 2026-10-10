@@ -315,12 +315,14 @@ e2e runs at the same time as review and jev acceptance, right after checks, sinc
 Each e2e stage gets two fresh free ports, `$E2E_PORT` and `$E2E_CLIENT_PORT`, in the environment of `e2e_setup`, `driver` and `assert`, and expanded in `url` and `goal`.
 Use them; never hardcode a port, unless the app itself pins one (then keep that one and nothing else fixed).
 Start servers in `e2e_setup` with a plain `&`; never free ports there with `lsof | kill`.
-The stage ends everything it started when it ends, pass or fail: the setup's process group, and anything left listening on its ports or the browser's CDP port, so no server or browser outlives a round.
+Each e2e stage also launches its own `bp` Chromium on a third fresh port with a throwaway profile, and sets `BU_CDP_URL` and `BU_NAME` for `driver`, `assert` and jev, so verify never attaches to the user's real Chrome and no project launches a browser in `e2e_setup` for that.
+The only exception is a stage whose `e2e_env` sets `BU_CDP_URL` itself (an extension's Chromium, see 6a): it uses that browser.
+The stage ends everything it started when it ends, pass or fail: the setup's process group, its own browser and that browser's harness daemon, and anything left listening on its ports or the browser's CDP port, so no server or browser outlives a round.
 A failure that is the harness's (a jev or browser crash, a missing tool, a port in use) is reported as `TOOL ERROR`, retried once, and never handed to a fix round; only app failures are.
 1. **checks**: lint, unit tests, and the 0g smoke checks, exact and cheap, run first. Formatting is already done: `run` formats each passed task's own files (gofmt, the repo's installed prettier) before committing, and keeps the unformatted version if formatting would break the test.
 2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
 3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task issue becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
-4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check (written by the tests crew) that reads the real DOM or run log. A DONE from the model is never the proof.
+4. **e2e**: each case drives the stage's own browser with jev-ultrafast to the goal, then runs `assert`, an independent check (written by the tests crew) that reads the real DOM or run log. A DONE from the model is never the proof.
 5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. A fixer has the tasks' scope: a round that touches any file the stack does not already change (a lockfile, `setupTests.js`, a new `package-lock.json`) is reverted whole and verify ends FAIL. Treat that FAIL as an environment problem for crew, not a finding. After N rounds it escalates to you with the findings. `--fix 0` reports only.
 
 Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (openrouter for implementers, fixes, Mercury reviews, and jev's text helper; cerebras when a task pins it; typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
@@ -331,7 +333,8 @@ Fix what fails, re-run. Only then tell the user it is done, with the verify outp
 Any browser exploration or testing in this loop, by you or by an implementer, uses `bp` from `~/code/browser-probe` (skill `browser-probe`, rules in its `AGENTS.md`). Not the user's real Chrome, not ad hoc Playwright scripts.
 - **Exploring** (what does the panel show, did the fill work, record a flow): `bp launch --ext <dir>`, `bp list`, `bp hosts`, `bp snap`, `bp clicktext`, `bp form`, `bp record`. Screenshots land in `shots/` with an `index.md` line each.
 - **Driving toward a goal with the model**: `bp goal <url> "<goal> … stop before Submit"`. Same jev policy as verify's e2e, same Chromium.
-- **Verify e2e for an extension**: launch the extension's Chromium in `e2e_setup` and point jev at it with `e2e_env`, so `jev_e2e` attaches to that browser instead of the default Chrome:
+- **Verify e2e for a web app**: nothing to configure. The stage launches and ends its own `bp` Chromium (section 6).
+- **Verify e2e for an extension**: the stage's own browser has no extension, so launch the extension's Chromium in `e2e_setup` and point jev at it with `e2e_env`; a `BU_CDP_URL` there replaces the stage's own browser, and the stage still ends the browser on that CDP port:
   ```json
   "e2e_setup": "BP_PORT=9333 bp launch about:blank --ext /path/to/extension/dist --profile /tmp/bp-profile-verify",
   "e2e_setup_wait": 4,
