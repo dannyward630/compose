@@ -44,6 +44,8 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions are always Claude Code.
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
+LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
+WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 
 def is_claude(model):
@@ -75,8 +77,9 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, LINEAR_KEY, WORKSPACE
     name, st = settings(read_config())
+    WORKSPACE, LINEAR_KEY = name, st.get("linear_api_key") or None  # the CLI moves Linear states with it (full path only)
     models = st.get("models", {})
     crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}
     CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
@@ -96,13 +99,13 @@ def apply_config():
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
-def read_key(name):
+def read_key(name, kind="OpenRouter"):
     """The key from piped stdin (`pbpaste | fast-coding workspace key personal`) or a hidden prompt; never an argument,
     so it stays out of shell history, the process list, and chat."""
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
     import getpass
-    return getpass.getpass(f"OpenRouter API key for {name} (empty to set later): ").strip()
+    return getpass.getpass(f"{kind} API key for {name} (empty to set later): ").strip()
 
 def cmd_workspace(a):
     """`workspace` lists, `workspace <name>` switches, `workspace add|key|remove <name>` manages. `default` always exists:
@@ -122,10 +125,12 @@ def cmd_workspace(a):
         spaces[name] = {"openrouter_api_key": read_key(name)}  # empty fails loudly on use instead of billing another account
         print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | fast-coding workspace key {name}"))
     elif action == "key":
-        key = read_key(name)
+        linear = getattr(a, "linear", False)
+        key = read_key(name, "Linear" if linear else "OpenRouter")
         if not key:
-            sys.exit("no key read; copy it, then: pbpaste | fast-coding workspace key " + name)
-        (cfg if name == "default" else spaces[name])["openrouter_api_key"] = key
+            sys.exit("no key read; copy it, then: pbpaste | fast-coding workspace key " + name + (" --linear" if linear else ""))
+        (cfg if name == "default" else spaces[name])["linear_api_key" if linear else "openrouter_api_key"] = key
+        print(f"{name}: {'Linear' if linear else 'OpenRouter'} key set")
     elif action == "remove":
         if name == "default":
             sys.exit("default always exists; clear its key in the config's top level instead")
@@ -141,7 +146,8 @@ def cmd_workspace(a):
     for n, entry in [("default", cfg), *spaces.items()]:
         key = entry.get("openrouter_api_key")
         state = "…" + key[-4:] if key else "not set" if "openrouter_api_key" in entry else "harness auth stores" if n == "default" else "inherits default"
-        print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}")
+        lin = "set" if entry.get("linear_api_key") else "inherits default" if n != "default" and "linear_api_key" in cfg else "not set"
+        print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}, linear key {lin}")
     _, st = settings(cfg)
     m = st.get("models", {})
     print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
@@ -461,6 +467,114 @@ def http_json(req, provider, timeout=90):
     if err:
         payment_check(provider, json.dumps(err), (err.get("code") if isinstance(err, dict) else None))
     return out
+
+# ---------- Linear: the CLI keeps the state table true, so the orchestrator spends no model turn on it ----------
+# Full path only (lite has no Linear tree). The key is the active workspace's `linear_api_key`; it goes in a header,
+# never argv or a results file. Every call is best effort: a Linear outage prints one line and the run goes on.
+LINEAR_URL = "https://api.linear.app/graphql"
+LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier state { name type }
+  team { states { nodes { id name type } } } parent { identifier } children { nodes { identifier state { name type } } } } }"""
+_linear_warned = []
+
+def linear_gql(query, variables):
+    req = urllib.request.Request(LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": LINEAR_KEY})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        out = json.load(r)
+    if out.get("errors"):
+        raise RuntimeError("; ".join(e.get("message", "?") for e in out["errors"])[:300])
+    return out["data"]
+
+def linear_issue(ident):
+    issue = linear_gql(LINEAR_ISSUE, {"id": ident})["issue"]
+    if not issue:
+        raise RuntimeError(f"no issue {ident}")
+    return issue
+
+def linear_move(issue, state):
+    """Move an issue to the team state named `state` (case-insensitive). No-op when it is already there."""
+    if (issue["state"]["name"] or "").lower() == state.lower():
+        return False
+    match = [n for n in issue["team"]["states"]["nodes"] if n["name"].lower() == state.lower()]
+    if not match:
+        raise RuntimeError(f"{issue['identifier']}: the team has no {state!r} state")
+    linear_gql("mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }",
+               {"id": issue["id"], "s": match[0]["id"]})
+    say(f"linear {issue['identifier']} -> {state}")
+    return True
+
+def linear_comment(issue, body):
+    linear_gql("mutation($id: String!, $b: String!) { commentCreate(input: {issueId: $id, body: $b}) { success } }",
+               {"id": issue["id"], "b": body})
+
+def rollup_state(children):
+    """The state table for a story or epic: Done when every child is Done, In Review when every child is In Review or
+    Done, In Progress once any child started, else None (leave it)."""
+    names = [(c["state"]["name"] or "").lower() for c in children]
+    if names and all(n == "done" for n in names):
+        return "Done"
+    if names and all(n in ("in review", "done") for n in names):
+        return "In Review"
+    if any(c["state"]["type"] in ("started", "completed") for c in children):
+        return "In Progress"
+    return None
+
+def linear_roll_up(proj, ident, verified=False):
+    """Roll `ident` and its parents up the table. The feature reaches In Review only when verify passed, and the CLI
+    never marks the feature Done (that needs the project branch merged)."""
+    feature = json.loads((proj / "linear.json").read_text()).get("feature")
+    while ident:
+        issue = linear_issue(ident)
+        target = rollup_state(issue["children"]["nodes"])
+        if issue["identifier"] == feature:
+            if target in ("In Review", "Done"):
+                target = "In Review" if verified else "In Progress"
+            if target:
+                linear_move(issue, target)
+            return
+        if target:
+            linear_move(issue, target)
+        ident = (issue.get("parent") or {}).get("identifier")
+
+def linear_event(proj, meta, event, result=None):
+    """One task event through the state table: `dispatched` moves the task In Progress, `passed` In Review with a comment,
+    `failed` keeps it In Progress with the failure as a comment; then its story and the feature roll up."""
+    if is_lite(proj) or not meta.get("linear"):
+        return
+    if not LINEAR_KEY:
+        if not _linear_warned:
+            _linear_warned.append(1)
+            say(f"linear skipped: workspace {WORKSPACE!r} has no Linear key; set it: pbpaste | fast-coding workspace key {WORKSPACE} --linear")
+        return
+    try:
+        issue = linear_issue(meta["linear"])
+        if event == "dispatched":
+            linear_move(issue, "In Progress")
+        elif event == "passed":
+            linear_move(issue, "In Review")
+            linear_comment(issue, f"Passed: branch `{result['branch']}`, {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`.")
+        else:
+            linear_move(issue, "In Progress")
+            last = (result.get("log") or [{}])[-1]
+            tail = (last.get("test_output") or "").strip().splitlines()
+            why = last.get("error") or (tail[-1] if tail else "no detail")
+            linear_comment(issue, f"{result['status']} after {result['attempts']} attempt(s) (${result['cost']:.4f}, model `{result['model']}`): {why[:400]}")
+        parent = (issue.get("parent") or {}).get("identifier")
+        if parent:
+            linear_roll_up(proj, parent)
+    except Exception as e:  # noqa: BLE001  Linear never stops a run
+        say(f"linear {meta.get('linear')}: update failed ({str(e)[:200]}); the run goes on")
+
+def linear_verified(proj):
+    """verify PASS: the feature moves to In Review once every story is In Review or Done."""
+    link = proj / "linear.json"
+    if is_lite(proj) or not link.exists() or not LINEAR_KEY:
+        return
+    feature = json.loads(link.read_text()).get("feature")
+    try:
+        linear_roll_up(proj, feature, verified=True)
+    except Exception as e:  # noqa: BLE001
+        say(f"linear {feature}: update failed ({str(e)[:200]})")
 
 class RateLimited(Exception):
     def __init__(self, usage):
@@ -1335,6 +1449,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
     progress("running")
     say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
+    if not reset_files and not tag:  # bench runs leave Linear alone
+        linear_event(proj, meta, "dispatched")
     rate_waits = 0
     attempt = 0
     fall = lambda: None if reset_files else fallback_for(meta["model"])  # bench measures the named model alone
@@ -1470,6 +1586,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
     (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
+    if not reset_files and not tag:
+        linear_event(proj, meta, "passed" if status == "passed" else "failed", result)
     return result
 
 # ---------- stacks (gh stack) ----------
@@ -2415,6 +2533,8 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
     (proj / "results" / "verify.json").write_text(json.dumps(final, indent=2))
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     say(f"verify {'PASS' if ok else 'FAIL'}  wall {fmt(final['seconds'])}  rounds={len(rounds)}")
+    if ok:
+        linear_verified(proj)
     say(LEDGER.line())
     if not ok:
         print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
@@ -3050,6 +3170,7 @@ def main():
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
+            s.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
         if name == "clean":
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
