@@ -1764,7 +1764,19 @@ def cmd_verify(a):
             sh(["git", "checkout", "-q", "--detach", current_branch(repo)], wt, check=False)  # free the top branch again
             mirror_stack_state(repo, wt)
 
+LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
+             "Pipfile.lock", "Gemfile.lock", "composer.lock")
+
+def fix_strays(touched, allowed):
+    """Files a verify fix round may not touch. A fixer gets the same scope as the tasks: only files the stack already
+    changes. With no stack diff (verify on a plain checkout) it is free except for lockfiles, which a fixer only rewrites
+    when it is working around a broken environment, not fixing a finding."""
+    return [f for f in touched if f not in allowed] if allowed else [f for f in touched if Path(f).name in LOCKFILES]
+
 def verify_rounds(repo, proj, cfg, a, rounds, t0):
+    base = cfg.get("review_base")
+    allowed = set(sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
+    rejected = []
     for rnd in range(a.fix + 1):
         ok, report, findings = run_stages(repo, proj, cfg, a)
         rounds.append(report)
@@ -1821,6 +1833,16 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
             (repo / f).unlink()
         if new_docs:
             say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
+        sh(["git", "add", "-A"], repo)
+        stray = fix_strays(sh(["git", "diff", "--cached", "--name-only", "HEAD"], repo).stdout.splitlines(), allowed)
+        if stray:
+            # The whole round goes: an out-of-scope edit means the fixer worked around something (an install, the toolchain)
+            # instead of fixing a finding, and its other edits rest on that. The last stage run failed, so verify ends FAIL.
+            sh(["git", "reset", "-q", "--hard", "HEAD"], repo)
+            sh(["git", "clean", "-fdq"], repo)
+            rejected.append({"round": rnd + 1, "files": stray})
+            say(f"fix    REJECTED round {rnd + 1}: touched files outside the stack ({', '.join(stray[:8])}); reverted the round")
+            break
         changed = sh(["git", "status", "--porcelain"], repo).stdout.strip()
         say(f"fix    done  {fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
         if changed:
@@ -1829,7 +1851,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
             say("fix    committed on " + (sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
         else:
             break
-    final = {"rounds": rounds, "passed": ok, "seconds": round(time.time() - t0, 1), "cost": LEDGER.snapshot()}
+    final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": LEDGER.snapshot()}
     (proj / "results").mkdir(exist_ok=True)
     (proj / "results" / "verify.json").write_text(json.dumps(final, indent=2))
     (proj / "results" / "resume.json").unlink(missing_ok=True)

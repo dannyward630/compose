@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, os, subprocess, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -95,6 +95,47 @@ class ReadyCheckout(unittest.TestCase):
         self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
+
+
+class FixScope(unittest.TestCase):
+    def verify(self, writes):
+        """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass."""
+        root = Path(tempfile.mkdtemp())
+        repo, proj = root / "repo", root / "proj"
+        repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.go").write_text("a\n"); (repo / "yarn.lock").write_text("lock\n")
+        git("add", "-A"); git("commit", "-qm", "init")
+        git("checkout", "-qb", "layer")
+        (repo / "a.go").write_text("b\n")
+        git("commit", "-qam", "layer")
+        def impl(cwd, model, prompt, session=None, task=None):
+            for f, text in writes.items():
+                (Path(cwd) / f).write_text(text)
+            return "s", "", 1, {"cost": 0.0}
+        stages = iter([(False, {}, "finding"), (True, {}, "")])
+        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+                mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])):
+            with self.assertRaises(SystemExit) as cm:
+                fc.verify_rounds(repo, proj, {"review_base": "main"}, type("A", (), {"fix": 2})(), [], fc.time.time())
+        return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
+
+    def test_fix_inside_the_stack_commits_and_passes(self):
+        code, repo, res = self.verify({"a.go": "fixed\n"})
+        self.assertEqual((code, res["passed"]), (0, True))
+        self.assertEqual((repo / "a.go").read_text(), "fixed\n")
+
+    def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
+        code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})
+        self.assertEqual((code, res["passed"]), (1, False))
+        self.assertEqual(sorted(res["rejected_fixes"][0]["files"]), ["package-lock.json", "yarn.lock"])
+        self.assertEqual((repo / "a.go").read_text(), "b\n")  # the whole round is reverted
+        self.assertEqual((repo / "yarn.lock").read_text(), "lock\n")
+        self.assertFalse((repo / "package-lock.json").exists())
+
+    def test_no_stack_diff_still_refuses_lockfiles(self):
+        self.assertEqual(fc.fix_strays(["src/x.go", "client/yarn.lock"], set()), ["client/yarn.lock"])
 
 
 def ws(name=None, target=None, stdin=""):
