@@ -77,9 +77,9 @@ fast-coding watch --project <slug> --from orchestrator        # the first mate w
 |---|---|---|
 | space | one project (its worktree, grouped under the repo's space) | `<slug>` |
 | tab | the live `fast-coding status --watch` | `status` |
-| tab | one task, holding its implementer | `NNN <title>` |
-| agent | the task's interactive pi, steerable with `herdr agent prompt` | `<slug>-NNN` |
-| tab | one verify run, one pane per stage | `verify HH:MM` |
+| tab | every implementer, one pane per task (a passed task's pane closes) | `implementers` |
+| pane | one task's interactive pi, steerable with `herdr agent prompt` | `NNN <title>`, agent `<slug>-NNN` |
+| tab | the latest verify run, one pane per stage | `verify` |
 | tab | the project's orchestrator, a Claude session | `orchestrator`, agent `<slug>-orchestrator` |
 | tab | one crew session: a wayfinder question, a helper | its title, agent `<slug>-<role>` |
 | the first mate's pane | stays where you started it | yours |

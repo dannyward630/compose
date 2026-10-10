@@ -87,3 +87,42 @@ class Watch(unittest.TestCase):
         self.assertTrue(fc.pid_alive(os.getpid()))
         self.assertFalse(fc.pid_alive(2**22 + 12345))
         self.assertFalse(fc.pid_alive(None))
+
+
+class Tabs(unittest.TestCase):
+    """Implementers share one tab, one pane each; verify reuses one tab. A space never grows a tab per task or per run."""
+    def fake(self, tabs, panes):
+        calls = []
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            if args[:2] == ("tab", "list"):
+                return {"tabs": [{"label": l, "tab_id": t} for l, t in tabs.items()]}
+            if args[:2] == ("pane", "list"):
+                return {"panes": panes}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}}
+            if args[:2] == ("pane", "split"):
+                return {"pane": {"pane_id": f"w9:p{len(calls)}"}}
+        return calls, herdr
+
+    def test_first_implementer_creates_the_tab_later_ones_split_it(self):
+        calls, h = self.fake({}, [])
+        with mock.patch.object(fc, "herdr", h):
+            self.assertEqual(fc.herdr_implementer_pane("w9", "/tmp", {"K": "v"}), "w9:p1")
+        self.assertIn("implementers", calls[-1]); self.assertIn("K=v", calls[-1])
+        for n, direction in ((1, "right"), (2, "down")):
+            panes = [{"pane_id": f"w9:p{i}", "tab_id": "w9:t9"} for i in range(1, n + 1)] + [{"pane_id": "w9:pX", "tab_id": "w9:t1"}]
+            calls, h = self.fake({"implementers": "w9:t9"}, panes)
+            with mock.patch.object(fc, "herdr", h):
+                fc.herdr_implementer_pane("w9", "/tmp", {})
+            split = calls[-1]
+            self.assertEqual(split[:3], ("pane", "split", f"w9:p{n}"))
+            self.assertIn(direction, split)
+            self.assertFalse(any(c[:2] == ("tab", "create") for c in calls))
+
+    def test_verify_replaces_its_previous_tab(self):
+        calls, h = self.fake({"verify": "w9:t2", "verify 12:10": "w9:t3", "status": "w9:t4"}, [])
+        with mock.patch.object(fc, "herdr", h):
+            fc.herdr_verify_panes("w9", "/tmp", ["checks"])
+        closed = [c[2] for c in calls if c[:2] == ("tab", "close")]
+        self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])

@@ -12,7 +12,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 |---|---|---|
 | You (orchestrator; the first mate likewise) | Find the way with the user (wayfinder), write the spec, the plan, and every task as Linear issues and move them through its states, brief crew for the acceptance tests and any other code, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Write or edit any code, test, config, or repo doc, not one line (crew do, Rules); merge anything: a human reviewer merges the PRs on GitHub |
 | Crew (Claude sessions in the project's space, 0h) | Acceptance tests and the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, wayfinder questions, research | Plan, re-scope their brief, address the captain except through `report` and their own pane |
-| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own tab) | One task issue's brief, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
+| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own pane of the `implementers` tab) | One task issue's brief, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the captain |
 | `fast-coding verify` | Checks, jev-ultrafast browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow
@@ -71,8 +71,8 @@ You are inside herdr when `HERDR_ENV=1` (herdr also sets `HERDR_SOCKET_PATH`, `H
 The CLI builds the topology by itself, named so the captain reads it at a glance:
 - **space** `<slug>`: the project's worktree, opened as a herdr worktree workspace grouped under the repo's space (`init` and `run` create it)
 - tab **`status`**: `fast-coding status --watch` running live; tab **`shell`**: a shell in the project worktree
-- one tab per task, **`NNN <title>`**, holding the task's implementer: an interactive pi agent named **`<slug>-NNN`**, with state labels (`attempt 2/3`, `passed`, `rejected_size`) and tokens (`model`, `cost`) on its pane
-- tab **`verify HH:MM`** per verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
+- tab **`implementers`**: one pane per running task, labeled **`NNN <title>`**, holding the task's interactive pi agent named **`<slug>-NNN`**, with state labels (`attempt 2/3`, `rejected_size`) and tokens (`model`, `cost`) on its pane. A passed task's pane closes; a missed one stays to read and steer
+- tab **`verify`**, rebuilt by each verify run: one pane per stage (`checks`, `e2e <name>`, `review`, `jev`), reported `working`, then `idle` ok or `blocked` FAIL
 `<slug>` is the project's (0a); until a project exists it is a kebab-case name for the map in the user's words.
 **Three roles, like firstmate** (github.com/kunchenguid/firstmate). The captain is the user.
 - **First mate**: the session the captain started. It stays in the pane it was started in and is the captain's one point of contact. It takes the intake (0, 0j) and creates the project (0a), then hands the project to an orchestrator and only relays from then on. It never moves, and one first mate can run several projects.

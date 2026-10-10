@@ -753,8 +753,23 @@ def herdr_label(session, label, cost, state="working"):
         herdr("pane", "report-metadata", session["pane"], "--source", "fast-coding", "--state-label", f"{state}={label}",
               "--state-label", f"done={label}", "--token", f"cost=${cost:.4f}")
 
+IMPLEMENTERS_TAB = "implementers"
+
+def herdr_implementer_pane(space, cwd, env):
+    """A fresh pane for one implementer in the space's single `implementers` tab: the tab's root pane when the tab is new,
+    else a split of its newest pane, alternating right and down so the panes tile instead of thinning into strips."""
+    env_args = [x for k, v in env.items() for x in ("--env", f"{k}={v}")]
+    tab = herdr_tabs(space).get(IMPLEMENTERS_TAB)
+    if not tab:
+        r = herdr("tab", "create", "--workspace", space, "--label", IMPLEMENTERS_TAB, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
+        return r["root_pane"]["pane_id"]
+    panes = [p for p in (herdr("pane", "list", "--workspace", space) or {}).get("panes", []) if p.get("tab_id") == tab["tab_id"]]
+    direction = "right" if len(panes) % 2 else "down"
+    r = herdr("pane", "split", panes[-1]["pane_id"], "--direction", direction, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
+    return r["pane"]["pane_id"]
+
 def herdr_pi(cwd, model, prompt, session, task, timeout=300):
-    """One turn of an interactive pi running as a named herdr agent in its own tab of the project's space.
+    """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
     Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
     and the pi session file the turn's text and usage are read from. The orchestrator steers the same agent with
     `herdr agent prompt <name> ...` between the CLI's own prompts."""
@@ -763,15 +778,14 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
     title = f"{tid} {meta.get('title', '')}".strip()[:60]
     if session is None:
         old = herdr("agent", "get", name)
-        if old:  # a previous run's agent for this task: its tab goes, the name is reused
-            herdr("tab", "close", (old.get("agent") or old).get("tab_id"))
+        if old:  # a previous run's agent for this task: its pane goes, the name is reused
+            herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         env = dict(os.environ)
         if "OPENROUTER_API_KEY" not in env and (JEV_DIR / ".env").exists():
             env["OPENROUTER_API_KEY"] = load_env(JEV_DIR / ".env").get("TEXT_MODEL_API_KEY", "").strip('"')
-        tab = herdr("tab", "create", "--workspace", task["space"], "--label", title, "--cwd", str(cwd),
-                    *(["--env", f"OPENROUTER_API_KEY={env['OPENROUTER_API_KEY']}"] if env.get("OPENROUTER_API_KEY") else []),
-                    "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1", "--no-focus", check=True)
-        pane = tab["root_pane"]["pane_id"]
+        pane = herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": env["OPENROUTER_API_KEY"]} if env.get("OPENROUTER_API_KEY") else {}),
+                                                           "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1"})
+        herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
         import uuid
@@ -780,7 +794,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
                 *(["--api-key", OPENROUTER_KEY] if OPENROUTER_KEY else [])]
         started = herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args, check=True, timeout=90)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
-        session = {"name": name, "pane": pane, "tab": tab["tab"]["tab_id"], "sfile": sfile, "seen": 0}
+        session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     for attempt in range(2):
         result, err = herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
@@ -791,7 +805,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
         break
     if err == "timeout" or err == "agent_prompt_stalled":
         herdr("agent", "send-keys", session["name"], "esc")
-        herdr("tab", "close", session["tab"])
+        herdr("pane", "close", session["pane"])
         raise subprocess.TimeoutExpired("herdr agent prompt", timeout)
     if err:
         raise RuntimeError(f"herdr agent prompt {session['name']}: {err}")
@@ -809,10 +823,13 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
     return session, text, tools, usage
 
 def herdr_verify_panes(space, wt, names):
-    """A `verify HH:MM` tab with one pane per stage, each a plain shell the CLI reports states for. {name: pane_id}."""
+    """The space's one `verify` tab, rebuilt per run, with one pane per stage, each a plain shell the CLI reports states for. {name: pane_id}."""
     if not space or not names:
         return {}
-    r = herdr("tab", "create", "--workspace", space, "--label", f"verify {time.strftime('%H:%M')}", "--cwd", str(wt), "--no-focus") or {}
+    for label, t in herdr_tabs(space).items():  # the previous run's tab (and the older `verify HH:MM` ones)
+        if label == "verify" or re.fullmatch(r"verify \d\d:\d\d", label or ""):
+            herdr("tab", "close", t["tab_id"])
+    r = herdr("tab", "create", "--workspace", space, "--label", "verify", "--cwd", str(wt), "--no-focus") or {}
     pane = (r.get("root_pane") or {}).get("pane_id")
     if not pane:
         return {}
@@ -1112,6 +1129,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
     if isinstance(session, dict):
         herdr_label(session, status, cost, state="idle")
+        if status == "passed":  # its branch is the record; a missed task's pane stays for the orchestrator to read and steer
+            herdr("pane", "close", session["pane"])
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
