@@ -883,6 +883,31 @@ def task_base(repo, proj, meta):
     base = max(unmerged, key=chain.index)
     return base, sh(["git", "rev-parse", base], repo).stdout.strip()
 
+PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
+
+def format_files(wt, files):
+    """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
+    fix rounds never spend one on formatting: gofmt for Go, the repo's installed prettier for web files. Returns what changed."""
+    import shutil
+    out = []
+    for f in files:
+        p = wt / f
+        cmd = None
+        if p.suffix == ".go" and shutil.which("gofmt"):
+            cmd = ["gofmt", "-w", str(p)]
+        elif p.suffix in PRETTIER_EXT:
+            d = p.parent
+            while cmd is None and (d == wt or wt in d.parents):  # the nearest node_modules, up to the clone root
+                bin_ = d / "node_modules" / ".bin" / "prettier"
+                cmd = [str(bin_), "--write", str(p)] if bin_.exists() else None
+                d = d.parent
+        if not cmd:
+            continue
+        before = p.read_bytes()
+        if sh(cmd, wt, timeout=120, check=False).returncode == 0 and p.read_bytes() != before:
+            out.append(f)
+    return out
+
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -1069,6 +1094,16 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     if others:
         say(f"{tid} note: main checkout has other uncommitted changes (left alone): {', '.join(others)[:160]}")
     if status == "passed":
+        sh(["git", "add", "-A"], wt)
+        changed = [f for f in sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]
+        kept = {f: (wt / f).read_bytes() for f in changed if (wt / f).is_file()}
+        formatted = format_files(wt, list(kept))
+        if formatted and sh(meta["test"], wt, timeout=600, check=False).returncode != 0:
+            for f, b in kept.items():
+                (wt / f).write_bytes(b)
+            say(f"{tid} note    formatting broke the test; committed unformatted: {', '.join(formatted)}")
+        elif formatted:
+            say(f"{tid} format  {', '.join(formatted)}")
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", f"fast-coding {proj.name}/{tid}: {meta.get('title', '')}"], wt, check=False)
         sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
@@ -1629,8 +1664,45 @@ def review_inputs(repo, proj, cfg):
     protected = sorted({f for t in tasks for f in t["protected"]})
     return diff, plan, docs, protected
 
+def e2e_stage(repo, cfg, panes, report, findings):
+    """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models."""
+    ok = True
+    stage_setup = None
+    if cfg.get("e2e_setup"):
+        # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
+        env = {**os.environ, **{k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}}
+        stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        time.sleep(cfg.get("e2e_setup_wait", 3))
+    try:
+        for i, case in enumerate(cfg.get("e2e", [])):
+            t1 = time.time()
+            stage = f"e2e {case.get('name', i)}"[:40]
+            herdr_stage(panes, stage, "working")
+            r = jev_e2e({**case, "env": {**(cfg.get("e2e_env") or {}), **(case.get("env") or {})}}, repo)
+            r["seconds"] = round(time.time() - t1, 1)
+            report["e2e"].append(r)
+            ok &= r["exit"] == 0
+            herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", "ok" if r["exit"] == 0 else "FAIL")
+            run = r.get("run") or {}
+            say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
+                f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
+            for line in (r.get("stdout") or "").splitlines()[-8:]:
+                if line and not line.startswith("E2E_RESULT"):
+                    print(f"           {line[:160]}")
+            if r["exit"]:
+                findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
+    finally:
+        if stage_setup:
+            import signal
+            try:
+                os.killpg(os.getpgid(stage_setup.pid), signal.SIGTERM)
+            except Exception:  # noqa: BLE001
+                pass
+    return ok
+
 def run_stages(repo, proj, cfg, a):
-    """One pass: checks (cheap, exact), then e2e (strongest signal, before the model-call burst), then review, then acceptance."""
+    """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance."""
     report, ok, findings = {"checks": [], "e2e": [], "review": None, "acceptance": None}, True, []
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
     stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
@@ -1648,39 +1720,10 @@ def run_stages(repo, proj, cfg, a):
             findings.append(f"Command failed: {c}\n{out}")
     checks_pass = all(c["exit"] == 0 for c in report["checks"])
     herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
-    if not a.skip_e2e and cfg.get("e2e"):
-        stage_setup = None
-        if cfg.get("e2e_setup"):
-            # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
-            env = {**os.environ, **{k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}}
-            stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            time.sleep(cfg.get("e2e_setup_wait", 3))
-        try:
-            for i, case in enumerate(cfg.get("e2e", [])):
-                t1 = time.time()
-                stage = f"e2e {case.get('name', i)}"[:40]
-                herdr_stage(panes, stage, "working")
-                r = jev_e2e({**case, "env": {**(cfg.get("e2e_env") or {}), **(case.get("env") or {})}}, repo)
-                r["seconds"] = round(time.time() - t1, 1)
-                report["e2e"].append(r)
-                ok &= r["exit"] == 0
-                herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", "ok" if r["exit"] == 0 else "FAIL")
-                run = r.get("run") or {}
-                say(f"e2e    {'ok  ' if r['exit'] == 0 else 'FAIL'} {fmt(r['seconds']):>8}  {case.get('name')}  "
-                    f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
-                for line in (r.get("stdout") or "").splitlines()[-8:]:
-                    if line and not line.startswith("E2E_RESULT"):
-                        print(f"           {line[:160]}")
-                if r["exit"]:
-                    findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
-        finally:
-            if stage_setup:
-                import signal
-                try:
-                    os.killpg(os.getpgid(stage_setup.pid), signal.SIGTERM)
-                except Exception:  # noqa: BLE001
-                    pass
+    # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
+    # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
+    pool = ThreadPoolExecutor(max_workers=1)
+    e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings) if not a.skip_e2e and cfg.get("e2e") else None
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
         herdr_stage(panes, "review", "working")
@@ -1721,6 +1764,9 @@ def run_stages(repo, proj, cfg, a):
         for r in acc.get("failed", []):
             if gate:
                 findings.append(f"[high] acceptance criterion not met (task {r['task']}, p={r['p_not_met']}): {r['criterion']}")
+    if e2e:
+        ok &= e2e.result()
+    pool.shutdown()
     return ok, report, "\n\n".join(findings)
 
 def verify_root(repo, proj, cfg):
@@ -1980,6 +2026,25 @@ def cmd_tasks(a):
         print("\n  WARNING TASK TOO BIG: split it before `run`; a task is one tiny change a fast model finishes in one short turn:")
         for tid, why in big:
             print(f"    {tid}: {why}")
+    waves = run_waves(open_tasks)
+    if waves:
+        print(f"\n  run waves (each wave in parallel): {'  then  '.join(', '.join(w) for w in waves)}")
+    if len(open_tasks) >= 3 and len(waves) > len(open_tasks) / 2:
+        print(f"\n  WARNING SERIAL CHAIN: {len(open_tasks)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
+              "(blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.")
+
+def run_waves(tasks):
+    """The tasks grouped as `run` dispatches them when every task passes: a task waits only for its `after:` tasks in the list."""
+    ids = {m["id"] for m in tasks}
+    deps = {m["id"]: {d.strip() for d in str(m.get("after") or "").split(",") if d.strip() in ids} for m in tasks}
+    waves, done = [], set()
+    while len(done) < len(deps):
+        wave = sorted(t for t, d in deps.items() if t not in done and d <= done)
+        if not wave:  # a cycle in `after:`; `run` would mark these blocked
+            break
+        waves.append(wave)
+        done |= set(wave)
+    return waves
 
 MAX_TASK_FILES, MAX_TASK_BRIEF = 2, 2500  # the size the fast implementers pass first try; bigger ones are where they miss
 
