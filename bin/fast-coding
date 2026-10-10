@@ -927,6 +927,7 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
+JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
 TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's crews wrote 2044 lines for 727 of code
@@ -1456,12 +1457,12 @@ def condense_failure(output):
 HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
              "another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
 
-def timed(cmd, cwd, limit):
+def timed(cmd, cwd, limit, env=None):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint."""
     import signal
     p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         stdin=subprocess.DEVNULL, start_new_session=True)
+                         stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     try:
         out, err = p.communicate(timeout=limit)
         return subprocess.CompletedProcess(cmd, p.returncode, out, err)
@@ -2267,7 +2268,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     failed = [r for r in suspects if r.get("confirmed")]
     return {"pass": not failed, "criteria": rows, "failed": failed, "suspects": suspects, "model": model}
 
-TOOL_ERROR_RE = re.compile(r"/jev_ultrafast/|/browser_harness/|command not found|address already in use|EADDRINUSE|"
+TOOL_ERROR_RE = re.compile(r"JEV_GAVE_UP|/jev_ultrafast/|/browser_harness/|command not found|address already in use|EADDRINUSE|"
                            r"No module named|Chromium not found|did not open the debug port", re.I)
 
 def tool_error(output):
@@ -2379,11 +2380,16 @@ def jev_e2e(case, repo):
     # case["env"] (verify.json e2e_env merged with the case's env) reaches jev: set BU_CDP_URL/BU_NAME there to point
     # browser-harness at a `bp`-launched Chromium that has the extension under test loaded.
     env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
-    p = sh(["uv", "run", "--env-file", ".env", "python", "-c", script], JEV_DIR, timeout=case.get("timeout", 300), check=False, env=env)
+    limit = int(case.get("timeout") or JEV_TIMEOUT)
+    p = timed(shlex.join(["uv", "run", "--env-file", ".env", "python", "-c", script]), JEV_DIR, limit, env=env)
     r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-3000:], "stderr": p.stderr[-2000:]}
     m = re.search(r"^JEV_RESULT (\{.*\})$", p.stdout, re.M)
+    if p.returncode == 124:  # killed at the limit: jev wandered or stuck, a harness failure, retried once, never fixed
+        r["stderr"] = f"JEV_GAVE_UP: jev did not reach its goal within {limit}s\n" + r["stderr"]
     if m:
         r["run"] = json.loads(m.group(1))
+        if r["run"].get("status") != "done":
+            r["stderr"] = f"JEV_GAVE_UP: jev ended {r['run'].get('status')} after {r['run'].get('steps')} steps\n" + r["stderr"]
         u = r["run"]["usage"]
         prices = case.get("prices") or {}
         ts_cost = u["typesafe_calls"] * prices["typesafe_per_call"] if "typesafe_per_call" in prices else None

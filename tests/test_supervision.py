@@ -103,3 +103,17 @@ class Timed(unittest.TestCase):
         self.assertLess(time.time() - t0, 10)
         time.sleep(0.5)
         self.assertEqual(sp.run(["pgrep", "-f", "sleep 40"], capture_output=True).stdout.strip(), b"")
+
+
+class JevLeash(unittest.TestCase):
+    def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):
+        self.assertTrue(fc.tool_error("JEV_GAVE_UP: jev ended blocked after 60 steps\n"))
+        self.assertTrue(fc.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))
+        self.assertFalse(fc.tool_error("AssertionError: score was 2 of 3"))
+
+    def test_a_jev_case_is_killed_at_its_limit(self):
+        with mock.patch.object(fc, "JEV_DIR", Path(tempfile.mkdtemp())), \
+             mock.patch.object(fc, "timed", return_value=fc.subprocess.CompletedProcess("x", 124, "", "hung")) as t:
+            r = fc.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
+        self.assertEqual(t.call_args[0][2], 5)
+        self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.tool_error(r["stderr"]))
