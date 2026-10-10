@@ -607,7 +607,9 @@ def crew_preamble(proj, name, title):
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
-            f"Linear is the record: write what you learn and decide there, never to files.\n\n")
+            f"Linear is the record: write what you learn and decide there, never to files.\n"
+            f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
+            f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n\n")
 
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows

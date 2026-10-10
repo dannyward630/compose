@@ -69,6 +69,11 @@ class Crew(unittest.TestCase):
     def test_orchestrator_reports_to_first_mate(self):
         self.assertIn("the first mate", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 
+    def test_every_brief_carries_the_commit_and_simplicity_rules(self):
+        pre = fc.crew_preamble(self.proj, "shop-tests", "tests")
+        self.assertIn("never mention fast-coding", pre)
+        self.assertIn("one test file per unit", pre)
+
     def test_start_outside_herdr_says_so(self):
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
