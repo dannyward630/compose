@@ -2829,7 +2829,65 @@ def watch_snapshot(repo, proj):
             snap["verify"] = (int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed")))
         except (json.JSONDecodeError, OSError):
             pass
+    # The newest sign of life anywhere in the project, and when the last run ended: the stall rules read these.
+    marks = [(report_time(r[-1]["at"]), f"crew {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
+    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if f.name != "watch.json"]
+    snap["last"] = max(marks) if marks else (0, "")
+    cost = proj / "results" / "run-cost.json"
+    snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
     return snap
+
+STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
+
+def report_time(at):
+    return time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
+
+def watch_stalls(proj, snap, limit, now_s=None):
+    """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once (results/watch.json
+    remembers it), so a supervisor that nudges is not woken again for the same silence."""
+    now_s = now_s or time.time()
+    orch = agent_name(proj.name, "orchestrator")
+    last = {n: (r[-1]["state"], report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
+    if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
+        return []  # finished, or waiting on the captain: silence is expected
+    pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
+    working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
+    f = proj / "results" / "watch.json"
+    try:
+        mem = json.loads(f.read_text())
+    except (OSError, json.JSONDecodeError):
+        mem = {}
+    fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
+    status = snap["agents"].get(orch, "gone")
+    if (seen.get(orch) or [None])[0] != status:
+        seen[orch] = [status, now_s]
+    ev = []
+    hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
+    tail = f"orchestrator {status}, pending tasks {len(pending)}, crews working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
+    def fire(key, what):
+        if key not in fired:
+            fired.add(key)
+            ev.append(f"event stall={what}; {tail}")
+    lt, what = snap.get("last") or (0, "")
+    if (pending or working or snap["run"]) and lt and now_s - lt >= limit:
+        fire(f"quiet:{lt}", f"quiet agent={orch} nothing moved for {fmt(now_s - lt)}, last: {what} at {hm(lt)}")
+    tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
+    if tests and all(st == "done" for st, _ in tests.values()) and not snap["run"] and pending \
+            and all(snap["tasks"][t]["state"] == "pending" for t in pending):
+        done_at = max(t for _, t in tests.values())
+        if now_s - done_at >= limit:
+            fire(f"undispatched:{done_at}", f"undispatched agent={orch} every test crew was done by {hm(done_at)} and nothing is dispatched")
+    ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
+    if ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
+        fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the orchestrator has not reported since")
+    since = seen[orch][1]
+    if status in ("idle", "done") and pending and now_s - since >= limit:
+        fire(f"idle:{since}", f"idle agent={orch} the orchestrator has been {status} since {hm(since)} with {len(pending)} task(s) pending")
+    try:
+        f.write_text(json.dumps({"fired": sorted(fired), "seen": seen}))
+    except OSError:
+        pass
+    return ev
 
 def watch_events(before, after):
     """The actionable differences between two snapshots, one line each. Attempt counts and idle/done flaps are not events."""
@@ -2857,8 +2915,9 @@ def watch_events(before, after):
 def watch_filter(events, slug, sources):
     """`--from` names the crew whose reports wake you (the first mate watches only its orchestrator); without it you get
     everything except the orchestrator's own reports, which go up to the first mate."""
-    if sources:  # a tool-bug from any crew wakes the first mate too: it owns fixing the tool
-        return [e for e in events if " state=tool-bug " in e or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
+    if sources:  # a tool-bug from any crew wakes the first mate too: it owns fixing the tool; a stall is its to supervise
+        return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
+                or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e]
 
@@ -2876,17 +2935,26 @@ def cmd_watch(a):
             print(line)
         return
     deadline = time.time() + a.timeout if a.timeout else None
+    try:
+        cfg_stall = json.loads((proj / "verify.json").read_text()).get("stall_seconds")
+    except (OSError, json.JSONDecodeError):
+        cfg_stall = None
+    limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
     while True:
         time.sleep(a.interval)
         after = watch_snapshot(repo, proj)
-        ev = watch_filter(watch_events(before, after), proj.name, sources)
+        ev = watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit), proj.name, sources)
         if ev:
             for line in ev:
                 print(f"[{now()}] {line}")
             return
         before = after
         if deadline and time.time() > deadline:
-            print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}; " + ("run still live" if after["run"] else "no run live"))
+            pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
+            working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
+            print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}: pending tasks {pending}, crews working "
+                  f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
+                  f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")
             sys.exit(2)
 
 def cmd_projects(a):
@@ -3243,7 +3311,8 @@ def main():
             s.add_argument("--detach", action="store_true")
         if name == "watch":
             s.add_argument("--now", action="store_true", help="print the current state as events and exit (session-start reconcile)")
-            s.add_argument("--timeout", type=float, default=0, help="seconds to wait before exiting 2 with a timeout event (0 = forever)")
+            s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
+            s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
             s.add_argument("--interval", type=float, default=2.0)
             s.add_argument("--from", dest="from_", help="only these crew wake you (roles or agent names, comma-separated); the first mate passes orchestrator")
         if name == "status":
