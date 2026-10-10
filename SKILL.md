@@ -36,7 +36,7 @@ The first report names the path and the reason in one line, with a one-word over
 - **1 and 2 (plan, tasks)**: same content, no issues. Pipe it to `fast-coding sync` yourself in the usual JSON: feature `id` is the slug and its `description` is the plan; each issue's `id` is its task id (`001`), its `description` the brief ending with the `fast-coding` block, and `blockedBy` the task ids it truly needs.
 - **3b (gate)**: none. Dispatch as soon as `fast-coding tasks` shows no WARNING.
 - **4 (run)**: tasks never get rebased into one chain. A task with one `after:` builds on that task's branch; a task with several builds on a merge of them, and a merge conflict there stops that task with the branches named (split the files differently). `run` registers no gh stack, and there is no Linear to move.
-- **6 (verify)**: `verify` first merges every task branch into the project branch, dependencies first, and verifies the project branch itself. Its fix rounds act only on failing checks and failing e2e; review and acceptance findings are printed and recorded for you to weigh, never auto-fixed and never a FAIL.
+- **6 (verify)**: `verify` first lands every task on the project branch, dependencies first, by cherry-picking each task's own commits (linear history with the tasks' plain messages, no merge commits), and verifies the project branch itself. Its fix rounds act only on failing checks and failing e2e; review and acceptance findings are printed and recorded for you to weigh, never auto-fixed and never a FAIL.
 - **Delivery**: the verified project branch, `fast-coding/<slug>`, is the result: one branch for one PR when the captain asks.
 
 **What lite keeps**: its own worktree (0a), tiny tasks with tests written first, parallel implementers, your review of every layer (5), the full verify with e2e (6), the captain's quality bar (1), and nothing pushed.
@@ -303,6 +303,11 @@ Verify runs at the top of the stack, in the CLI's worktree, since layers are nev
 }
 ```
 e2e runs at the same time as review and jev acceptance, right after checks, since those two only wait on model calls.
+Each e2e stage gets two fresh free ports, `$E2E_PORT` and `$E2E_CLIENT_PORT`, in the environment of `e2e_setup`, `driver` and `assert`, and expanded in `url` and `goal`.
+Use them; never hardcode a port, unless the app itself pins one (then keep that one and nothing else fixed).
+Start servers in `e2e_setup` with a plain `&`; never free ports there with `lsof | kill`.
+The stage ends everything it started when it ends, pass or fail: the setup's process group, and anything left listening on its ports or the browser's CDP port, so no server or browser outlives a round.
+A failure that is the harness's (a jev or browser crash, a missing tool, a port in use) is reported as `TOOL ERROR`, retried once, and never handed to a fix round; only app failures are.
 1. **checks**: lint, unit tests, and the 0g smoke checks, exact and cheap, run first. Formatting is already done: `run` formats each passed task's own files (gofmt, the repo's installed prettier) before committing, and keeps the unformatted version if formatting would break the test.
 2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
 3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task issue becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
