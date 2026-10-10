@@ -1469,7 +1469,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         # A passed layer may already have a PR. Never replace it silently; `--redo` says the user wants it rebuilt.
         say(f"{tid} keep    passed branch {branch} exists and is unmerged; pass --redo to rebuild it")
         return json.loads((proj / "results" / f"{tid}.json").read_text())
-    sh(["git", "branch", "-D", branch], repo, check=False)  # a re-run (or --redo) replaces the previous attempt
+    replace_branch(repo, proj, branch)  # a re-run (or --redo) replaces the previous attempt
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
@@ -1700,6 +1700,19 @@ def land_lite(repo, proj):
         sh(["git", "branch", "-f", b, "HEAD"], repo)
         say(f"land   {b} ({len(own)} commit(s)) onto {current_branch(repo)}")
 
+def replace_branch(repo, proj, branch):
+    """Delete a task branch that is about to be rebuilt. Its old tip is kept under a ref: layers stacked above still carry the
+    old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""
+    tip = sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip()
+    if tip:
+        sh(["git", "update-ref", f"refs/fast-coding/replaced/{proj.name}/{branch.rsplit('/', 1)[1]}/{tip}", tip], repo)
+    sh(["git", "branch", "-D", branch], repo, check=False)
+
+def replaced_tips(repo, proj):
+    """[(branch, old tip)] for the project's replaced task branches (see replace_branch)."""
+    out = sh(["git", "for-each-ref", "--format=%(refname) %(objectname)", f"refs/fast-coding/replaced/{proj.name}/"], repo, check=False).stdout
+    return [(f"fast/{proj.name}/{ref.split('/')[-2]}", tip) for ref, tip in (l.split() for l in out.splitlines())]
+
 def task_branches(repo, proj):
     """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
     head = sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
@@ -1835,10 +1848,15 @@ def _linearize(repo, proj, trunk, wt):
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
     chain = chain_order(repo, proj, trunk)
     linear, prev = [], trunk
+    replaced = replaced_tips(repo, proj)
+    contains = lambda anc, b: sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     for b in chain:
-        if sh(["git", "merge-base", "--is-ancestor", prev, b], repo, check=False).returncode != 0:
+        if not contains(prev, b):
+            # A layer below was rebuilt: b still carries its old commits, which the rebuilt layer replaces. Start the replay above them.
+            old = [t for rb, t in replaced if rb in linear and contains(t, b)]
+            upstream = max(old, key=lambda t: int(sh(["git", "rev-list", "--count", f"{trunk}..{t}"], repo).stdout)) if old else prev
             sh(["git", "checkout", "-q", b], wt)
-            r = sh(["git", "rebase", "-q", prev], wt, check=False)
+            r = sh(["git", "rebase", "-q", "--onto", prev, upstream], wt, check=False)
             if r.returncode:
                 sh(["git", "rebase", "--abort"], wt, check=False)
                 sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
@@ -1848,6 +1866,9 @@ def _linearize(repo, proj, trunk, wt):
         linear.append(b)
         prev = b
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    for rb, t in replaced:  # an old tip no layer carries any more is done with
+        if not any(contains(t, b) for b in chain):
+            sh(["git", "update-ref", "-d", f"refs/fast-coding/replaced/{proj.name}/{rb.rsplit('/', 1)[1]}/{t}"], repo, check=False)
     return linear
 
 def register_stack(repo, proj, trunk, submit=False):
