@@ -236,7 +236,7 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
 {"workspace": "work",
  "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
             "fallback": "<optional, default: none>", "fix": "<optional, default: implementer>",
-            "crew": {"orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}, "groundwork": "claude:claude-sonnet-5-5",
+            "crew": {"orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}, "groundwork": "claude:claude-opus-5-5",
                      "tests": "claude:claude-sonnet-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
