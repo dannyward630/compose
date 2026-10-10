@@ -735,6 +735,27 @@ def crew_reports(proj, name):
     f = crew_dir(proj) / f"{name}.status"
     return [json.loads(l) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
 
+def scratch_dir(proj, name=None):
+    return proj / "scratch" / name if name else proj / "scratch"
+
+def listeners_under(root):
+    """Pids listening on a TCP port whose working directory is inside `root`: the servers and dev watchers a crew or run
+    left behind. Listening narrows it to servers, so the herdr shells and agent sessions that also sit in the worktree stay."""
+    pids = set(sh("lsof -nP -iTCP -sTCP:LISTEN -t", ".", check=False).stdout.split())
+    root, out = str(Path(root).resolve()), []
+    for pid in pids:
+        cwd = next((l[1:] for l in sh(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], ".", check=False).stdout.splitlines()
+                    if l.startswith("n")), "")
+        if cwd == root or cwd.startswith(root + "/"):
+            out.append(pid)
+    return out
+
+def stop_listeners_under(root):
+    pids = listeners_under(root)
+    if pids:
+        sh(["kill", *pids], ".", check=False)
+    return pids
+
 def crew_preamble(proj, name, title):
     up = "the first mate, who relays to the captain" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
     report = f"fast-coding report --repo {project_worktree(proj)} --project {proj.name} --as {name}"
@@ -750,7 +771,9 @@ def crew_preamble(proj, name, title):
             f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
-            f"and a test failing on the stubs plus the orchestrator's read of it is the proof.\n\n")
+            f"and a test failing on the stubs plus the orchestrator's read of it is the proof.\n"
+            f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
+            f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
 def crew_model(role, explicit=None):
     """The model a crew session runs: `--model` (a `claude:<id>`, or a name under models.crew such as `small`), else
@@ -883,7 +906,7 @@ Phase A, toolchain (report before changing dependencies):
 Phase B, after the go:
 1. Apply the dependency and toolchain fixes with the package managers (never by hand-editing lockfiles). Commit.
 2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
-3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM.
+3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.fast-coding or /tmp.
 4. Commit.
 
 Phase C, the contract (you write no tests: one crew per task writes them in parallel from your contract):
@@ -900,11 +923,14 @@ def cmd_groundwork(a):
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=current_branch(wt), stacks=detect_stacks(wt),
-                                  verify=proj / "verify.json", contract=proj / "results" / "contract.md")
+                                  verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
-def test_brief(meta, contract):
+TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's crews wrote 2044 lines for 727 of code
+
+def test_brief(meta, contract, budget=None):
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
+    budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
             f"Test file: {paths}. Test command: {meta.get('test')}\n"
             f"It must fail on the current stubs for the reason this task fixes, and pass once {', '.join(meta.get('files') or [])} "
@@ -913,11 +939,12 @@ def test_brief(meta, contract):
             "(report `blocked` naming what is missing instead).\n"
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
             "no CSS values, no tooling tests.\n"
+            f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
+            "You work in your own worktree on your own branch; the CLI collects every crew's commits onto the project branch. "
             "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
-            f"`git add {paths} && git commit {paths} -m \"<plain message>\"` (other crews commit beside you on this one branch; "
-            "on an index.lock error wait a second and retry).\n"
+            f"`git add {paths} && git commit {paths} -m \"<plain message>\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
-            "`git rebase`, `git checkout`, or `git stash` here: HEAD is shared, so they rewrite or drop another crew's commit.\n"
+            "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the orchestrator says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
 
@@ -925,26 +952,63 @@ def cmd_testcrews(a):
     """Start one test-writing crew per task, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead."""
     proj = project_dir(a)
+    if getattr(a, "collect", False):
+        return collect_tests(proj, a.only)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
         sys.exit(f"no contract at {contract_file}: the groundwork crew writes it after the stubs (fast-coding groundwork, phase C)")
-    contract = contract_file.read_text()
+    contract, budget = contract_file.read_text(), getattr(a, "budget", None)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     metas = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
     if a.print_:
         for m in metas:
-            print(f"===== tests-{m['id']}\n{test_brief(m, contract)}\n")
+            print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget)}\n")
         return
     herdr_space(proj)  # once, before the parallel starts
     model = "tests" if "tests" in CREW_MODELS else "groundwork" if "groundwork" in CREW_MODELS else None
+    wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
     def start(m):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=test_brief(m, contract), force=False, cwd=None, model=model))
+                                        brief=test_brief(m, contract, budget), force=False, cwd=str(wts[m["id"]]), model=model))
         except SystemExit as e:
             print(f"tests-{m['id']} not started: {e}")
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
+
+def test_branch(proj, tid):
+    return f"fast/{proj.name}/tests-{tid}"
+
+def test_worktree(proj, tid):
+    """Each test crew writes on its own branch in its own worktree off the stubs commit: crews sharing one branch raced
+    (an amend landed on another crew's commit). The collect step brings their commits back in task order."""
+    wt = project_worktree(proj)
+    path, branch = proj / "worktrees" / f"tests-{tid}", test_branch(proj, tid)
+    if not path.exists():
+        sh(["git", "worktree", "add", "-q", "-B", branch, str(path), "HEAD"], wt)
+        ready_checkout(wt, path)
+    return path
+
+def collect_tests(proj, only=None):
+    """Cherry-pick every test crew's own commits onto the project branch in task order, then remove their worktrees and
+    branches. A conflict stops with the task named and leaves that crew's branch for a look."""
+    wt = project_worktree(proj)
+    want = {x.strip() for x in only.split(",")} if only else None
+    ids = sorted(m["id"] for m in load_tasks(proj, required=True) if not want or m["id"] in want)
+    for tid in ids:
+        branch = test_branch(proj, tid)
+        if sh(["git", "rev-parse", "--verify", "-q", branch], wt, check=False).returncode:
+            continue
+        commits = sh(["git", "rev-list", "--reverse", "--no-merges", f"HEAD..{branch}"], wt).stdout.split()
+        for c in commits:
+            p = sh(["git", "cherry-pick", "--allow-empty", c], wt, check=False)
+            if p.returncode:
+                sh(["git", "cherry-pick", "--abort"], wt, check=False)
+                sys.exit(f"tests-{tid}: {c[:7]} conflicts with the project branch; its branch {branch} is kept.\n{(p.stdout + p.stderr)[-600:]}")
+        sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
+        sh(["git", "branch", "-D", branch], wt, check=False)
+        say(f"tests-{tid} collected  {len(commits)} commit(s)")
+    sh(["git", "worktree", "prune"], wt, check=False)
 
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows
@@ -1112,6 +1176,10 @@ def close_after_turn(proj, name):
     me = shutil.which("herdr") or "herdr"
     subprocess.Popen(["sh", "-c", f'"$0" agent wait "$1" --timeout 900000; "$0" tab close "$2"', me, name, c["tab"]],
                      start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    scratch = scratch_dir(proj, name)
+    if scratch.exists():
+        stop_listeners_under(scratch)
+        shutil.rmtree(scratch, ignore_errors=True)
     crew_closed(proj, name, "reported done; tab closes when the turn ends")
 
 def crew_closed(proj, name, why):
@@ -1126,6 +1194,10 @@ VERIFY_TAB = re.compile(r"verify( \d\d:\d\d)?")
 def teardown(proj):
     """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
     and every crew tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
+    stopped = stop_listeners_under(project_worktree(proj))
+    if stopped:
+        print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")
+    shutil.rmtree(scratch_dir(proj), ignore_errors=True)
     space = herdr_env() and herdr_find_space(project_worktree(proj))
     if not space:
         return []
@@ -2171,6 +2243,17 @@ def kill_listeners(ports):
         if pids:
             sh(["kill", "-9", *pids], ".", check=False)
 
+def harness_daemons():
+    return set(sh("pgrep -f browser_harness.daemon", ".", check=False).stdout.split())
+
+def end_new_daemons(before):
+    """restart_daemon starts a fresh browser-harness daemon and jev's own runs leave theirs: end every daemon that was not
+    running before the stage, never one that was (another project or the captain may be using it)."""
+    new = harness_daemons() - before
+    if new:
+        sh(["kill", *new], ".", check=False)
+    return new
+
 def e2e_ports(cfg, env):
     """The ports an e2e stage may leave a listener on: the fresh ones it hands out, every case URL's, and the CDP port of a
     browser the setup launches (BU_CDP_URL)."""
@@ -2286,6 +2369,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
     cfg = {**cfg, "e2e": [{k: expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
     ports = e2e_ports(cfg, env)
     busy = {p for p in ports if port_listening(p)}
+    daemons = harness_daemons()
     try:
         if profile:
             p = sh(["bp", "launch", "about:blank", "--profile", profile], repo, timeout=30, check=False,
@@ -2327,6 +2411,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
             sh(["uv", "run", "python", "-c", f"from browser_harness.admin import restart_daemon; restart_daemon({env['BU_NAME']!r})"],
                JEV_DIR, timeout=30, check=False)
         kill_listeners(ports - busy)
+        end_new_daemons(daemons)
         if profile:
             shutil.rmtree(profile, ignore_errors=True)
     return ok
@@ -3060,7 +3145,10 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     if wt != main_repo and not kept and trunk == project_branch:
         on = [f"fast-coding/{project_after(proj)}"] if project_after(proj) else []  # merged into the project it was built on counts
         why = merge_evidence(main_repo, project_branch, [*on, "main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
+        if not why and delete_unmerged:
+            why = "UNMERGED, removed on --delete-unmerged"
         if why:
+            stop_listeners_under(wt)
             sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists():
                 space = herdr_find_space(wt)
@@ -3166,6 +3254,8 @@ def main():
             s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting crews")
+            s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
+            s.add_argument("--collect", action="store_true", help="cherry-pick every test crew's commits onto the project branch in task order")
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "crew":
