@@ -1975,6 +1975,22 @@ def cmd_tasks(a):
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
         for f, ids in clashes.items():
             print(f"    {f}: {', '.join(ids)}")
+    big = [(m["id"], why) for m in open_tasks if (why := too_big(m))]
+    if big:
+        print("\n  WARNING TASK TOO BIG: split it before `run`; a task is one tiny change a fast model finishes in one short turn:")
+        for tid, why in big:
+            print(f"    {tid}: {why}")
+
+MAX_TASK_FILES, MAX_TASK_BRIEF = 2, 2500  # the size the fast implementers pass first try; bigger ones are where they miss
+
+def too_big(meta):
+    """Why a task is too big for one fast turn, or None. Cheap signals only: files it owns and the length of its brief."""
+    why = []
+    if len(meta["files"]) > MAX_TASK_FILES:
+        why.append(f"owns {len(meta['files'])} files (max {MAX_TASK_FILES})")
+    if len(meta.get("body") or "") > MAX_TASK_BRIEF:
+        why.append(f"brief is {len(meta['body'])} chars (max {MAX_TASK_BRIEF})")
+    return "; ".join(why) or None
 
 # ---------- watch ----------
 FINAL_STATES = ("passed", "already_green", "failed", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")

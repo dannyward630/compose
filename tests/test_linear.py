@@ -44,6 +44,15 @@ class Sync(unittest.TestCase):
         self.assertEqual(fc.linear_cache(self.proj)["feature"]["description"], "## Plan\nThe plan.")
         self.assertEqual(fc.criteria_from_tasks(self.proj)[0], ("001", "works"))
 
+    def test_big_tasks_are_flagged(self):
+        small, wide, long = self.sync([
+            issue("ENG-3", "Small", block(id="001", files="a.go, a2.go", test="t")),
+            issue("ENG-4", "Wide", block(id="002", files="a.go, b.go, c.go", test="t")),
+            issue("ENG-5", "Long", "x" * 3000 + "\n\n" + block(id="003", files="d.go", test="t"))])
+        self.assertIsNone(fc.too_big(small))
+        self.assertIn("owns 3 files", fc.too_big(wide))
+        self.assertIn("brief is", fc.too_big(long))
+
     def test_criteria_in_linear_bullets(self):
         desc = "## Goal\n\nDo it.\n\n## Acceptance criteria\n\n* one\n* two\n\n## Test plan\n\n* run\n\n```fast-coding\nid: 001\ntest: t\n```"
         self.sync([issue("ENG-3", "A", desc)])
