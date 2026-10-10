@@ -2191,13 +2191,18 @@ def driver_e2e(case, repo):
     try:
         p = subprocess.run(case["driver"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
                            timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
+        out, err, code = p.stdout, p.stderr, p.returncode
+        if not code and case.get("assert"):  # the independent check runs after every case, same env and cwd as the driver
+            a = subprocess.run(case["assert"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
+                               timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
+            out, err, code = out + a.stdout, err + a.stderr, a.returncode
     finally:
         if setup:
             stop_group(setup)
     if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
         raise PaymentRequired("jev-ultrafast e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
-    r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-4000:], "stderr": p.stderr[-2000:]}
-    m = re.search(r"^E2E_RESULT (\{.*\})$", p.stdout, re.M)
+    r = {"name": case.get("name"), "exit": code, "stdout": out[-4000:], "stderr": err[-2000:]}
+    m = re.search(r"^E2E_RESULT (\{.*\})$", out, re.M)
     if m:
         r["run"] = json.loads(m.group(1))
     return r

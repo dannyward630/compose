@@ -64,6 +64,23 @@ class E2eLifecycle(unittest.TestCase):
                     "e2e": [{"name": "b", "driver": f"echo $BU_CDP_URL $BU_NAME > {out}"}]})
         self.assertEqual(out.read_text().split(), ["http://127.0.0.1:1", "ext"])
 
+    def test_a_driver_case_runs_its_assert_after_the_driver(self):
+        out = Path(self.dir) / "assert"
+        ok, report, findings = self.stage({"e2e": [{"name": "a", "driver": "true", "assert": f"echo $E2E_PORT $PWD > {out}; echo 'no row' >&2; false"}]})
+        self.assertFalse(ok)
+        self.assertIn("no row", findings[0])
+        port, cwd = out.read_text().split()
+        self.assertTrue(port.isdigit())
+        self.assertEqual(Path(cwd).resolve(), Path(self.dir).resolve())
+        ok, _, _ = self.stage({"e2e": [{"name": "a", "driver": "true", "assert": "true"}]})
+        self.assertTrue(ok)
+
+    def test_a_failing_driver_skips_its_assert(self):
+        out = Path(self.dir) / "assert"
+        ok, _, _ = self.stage({"e2e": [{"name": "a", "driver": "exit 1", "assert": f"touch {out}"}]})
+        self.assertFalse(ok)
+        self.assertFalse(out.exists())
+
 
 class ToolErrors(unittest.TestCase):
     def test_a_harness_crash_is_retried_once_and_never_a_finding(self):
