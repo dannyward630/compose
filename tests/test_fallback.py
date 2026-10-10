@@ -73,6 +73,30 @@ class Preflight(unittest.TestCase):
         self.assertIn("not a valid model ID", str(cm.exception))
 
 
+class ReadyCheckout(unittest.TestCase):
+    def test_clone_borrows_installs_and_stays_clean(self):
+        root = Path(tempfile.mkdtemp())
+        repo, wt = root / "repo", root / "wt"
+        (repo / "client" / "node_modules" / "jest").mkdir(parents=True)
+        (repo / "client" / "app.js").write_text("x\n")
+        (repo / "a.py").write_text("def f():\n    return 1\n")
+        (repo / ".gitignore").write_text("node_modules/\n")
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
+        git(repo, "init", "-q")
+        git(repo, "add", "-A")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        git(root, "clone", "-q", "--shared", str(repo), str(wt))
+        fc.ready_checkout(repo, wt)
+        fc.ready_checkout(repo, wt)  # idempotent: a re-run neither fails nor duplicates exclude lines
+        self.assertTrue((wt / "client" / "node_modules").is_symlink())
+        self.assertTrue((wt / "client" / "node_modules" / "jest").is_dir())
+        if subprocess.run(["which", "graft"], capture_output=True).returncode == 0:
+            subprocess.run(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], cwd=wt, capture_output=True)
+        self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
+        exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
+        self.assertEqual(exclude.count("/client/node_modules"), 1)
+
+
 def ws(name=None, target=None, stdin=""):
     with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
         fc.cmd_workspace(type("A", (), {"name": name, "target": target}))

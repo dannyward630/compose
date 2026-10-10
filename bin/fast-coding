@@ -25,6 +25,11 @@ CONFIG_PATH = Path(os.environ.get("FAST_CODING_CONFIG", Path.home() / ".fast-cod
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents
+DEP_DIRS = ("node_modules", "vendor", ".venv")  # git-ignored installs a task clone borrows from the main checkout
+# graft otherwise appends /graft/ to the tracked .gitignore and writes .ignore in every clone it builds or refreshes, which
+# the scope check rightly reads as an edit outside the task. Children (pi, OpenCode, their graft calls) inherit this.
+os.environ.setdefault("GRAFT_NO_GITIGNORE", "1")
+os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 
 # ---------- global config and workspaces ----------
 # ~/.fast-coding/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
@@ -764,7 +769,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=300):
         if "OPENROUTER_API_KEY" not in env and (JEV_DIR / ".env").exists():
             env["OPENROUTER_API_KEY"] = load_env(JEV_DIR / ".env").get("TEXT_MODEL_API_KEY", "").strip('"')
         tab = herdr("tab", "create", "--workspace", task["space"], "--label", title, "--cwd", str(cwd),
-                    *(["--env", f"OPENROUTER_API_KEY={env['OPENROUTER_API_KEY']}"] if env.get("OPENROUTER_API_KEY") else []), "--no-focus", check=True)
+                    *(["--env", f"OPENROUTER_API_KEY={env['OPENROUTER_API_KEY']}"] if env.get("OPENROUTER_API_KEY") else []),
+                    "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1", "--no-focus", check=True)
         pane = tab["root_pane"]["pane_id"]
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
@@ -830,7 +836,7 @@ def graft_pack(wt, query, repo=None, limit=6):
     if repo and not (wt / "graft").exists() and (repo / "graft").exists():
         import shutil
         shutil.copytree(repo / "graft", wt / "graft")
-        sh(["graft", "build", str(wt)], wt, timeout=600, check=False)
+        sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     if not (wt / "graft").exists():
         return ""
     p = sh(["graft", "ask", query, "--source", "-n", str(limit), "--no-refresh", str(wt)], wt, timeout=60, check=False)
@@ -901,6 +907,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
+    ready_checkout(repo, wt)
     for name in ("opencode.jsonc", "opencode.json"):  # untracked local config the implementer needs
         if (repo / name).exists() and not (wt / name).exists():
             shutil.copy(repo / name, wt / name)
@@ -1124,7 +1131,26 @@ def stack_worktree(repo, proj, trunk):
         sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
     else:
         sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    ready_checkout(repo, wt)  # verify runs its checks here
     return wt
+
+def ready_checkout(repo, wt):
+    """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
+    (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
+    the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does."""
+    ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], repo, check=False).stdout.splitlines()
+    deps = [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
+    exclude = Path(sh(["git", "rev-parse", "--git-path", "info/exclude"], wt).stdout.strip())
+    exclude = exclude if exclude.is_absolute() else wt / exclude  # a worktree shares the main checkout's file; harmless there
+    have = exclude.read_text().splitlines() if exclude.exists() else []
+    add = [l for l in ["/graft/", "/.ignore", *("/" + d for d in deps)] if l not in have]
+    if add:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text("".join(l + "\n" for l in have + add))
+    for d in deps:
+        link = wt / d
+        if link.parent.is_dir() and not link.exists() and not link.is_symlink():
+            link.symlink_to(repo / d)
 
 def mirror_stack_state(repo, wt):
     """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
