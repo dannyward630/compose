@@ -240,9 +240,11 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
                      "tests": "claude:claude-sonnet-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
-                "personal": {"openrouter_api_key": "sk-or-...", "models": {"fallback": null}}}}
+                "personal": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_...", "models": {"fallback": null}}}}
 ```
 
+A workspace's `linear_api_key` (set with `pbpaste | fast-coding workspace key <name> --linear`) lets the CLI keep Linear's state table on full-path projects: tasks In Progress and In Review with a comment, stories and the feature rolled up, the feature In Review on verify PASS.
+Without it the CLI prints one `linear skipped` line and the run goes on; a Linear error never stops a run either.
 The workspace key goes to pi (`--api-key`, which beats its auth store), OpenCode (`OPENCODE_CONFIG_CONTENT`), the Mercury review, and jev's e2e text helper (`TEXT_MODEL_API_KEY`), so every OpenRouter call bills that account.
 OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any preset an opt-in fallback names) in each workspace's account too.
 `run` and `resume` send each model they may call one tiny prompt before cloning anything, so a wrong id or preset slug stops the run with the provider's message.
