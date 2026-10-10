@@ -660,6 +660,174 @@ def crew_effort(role, explicit=None):
         return CREW_EFFORT.get(explicit)
     return CREW_EFFORT.get(role) if role in CREW_MODELS else CREW_EFFORT.get("default")
 
+def claude_trusted(path):
+    """Whether Claude Code has accepted its folder-trust dialog for `path` or a parent (None when it cannot tell).
+    An untrusted folder parks a new session at the trust prompt, so crew start says so instead of starting one."""
+    try:
+        projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
+    except (OSError, json.JSONDecodeError):
+        return None
+    return any((projects.get(str(p)) or {}).get("hasTrustDialogAccepted") for p in (path, *path.parents))
+
+def crew_workdir(cwd, wt, name):
+    """(directory, branch) a crew session works in. A --cwd in another git repo (a toolsmith in the fast-coding repo) gets its
+    own worktree on a new branch under that repo's .claude/worktrees, so the repo's checkout, which may be what every
+    session runs, never switches branches. Anything else runs where it was pointed (default: the project worktree)."""
+    if not cwd:
+        return wt, None
+    cwd = Path(cwd)
+    common = lambda d: sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], d, check=False).stdout.strip()
+    theirs = common(cwd) if cwd.is_dir() else ""
+    if not theirs or theirs == common(wt):
+        return cwd, None
+    top = Path(sh(["git", "rev-parse", "--show-toplevel"], cwd).stdout.strip())
+    if claude_trusted(top) is False:
+        sys.exit(f"Claude Code has never trusted {top}, so a session there would wait at its trust prompt. Run `claude` in "
+                 f"{top} once and accept the prompt (the captain decides that), then start this crew again.")
+    exclude = Path(theirs) / "info" / "exclude"
+    if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as f:
+            f.write("/.claude/worktrees/\n")
+    branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    path = top / ".claude" / "worktrees" / branch
+    sh(["git", "worktree", "add", "-q", "-b", branch, str(path), "HEAD"], top)
+    return path, branch
+
+TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
+              "does not ask for; code far more complex than the brief needs; a UI state not placed or styled the way the brief says; "
+              "anything aimed at the test rather than the user. Everything else is clean; style nits are clean.")
+
+def triage(repo, proj, ids):
+    """One fast-model look per passed task, all at once: `clean`, or `flag: <reason quoting the code>`. It only points the
+    orchestrator at layers to read in full; it never rejects. Stored as `triage` in the task's result file."""
+    env = fast_env()
+    if not env.get("TEXT_MODEL_API_KEY"):
+        return {}
+    metas = {m["id"]: m for m in load_tasks(proj)}
+    trunk = current_branch(repo)
+    def one(tid):
+        m, branch = metas.get(tid) or {}, f"fast/{proj.name}/{tid}"
+        try:
+            base = sh(["git", "merge-base", trunk, branch], repo).stdout.strip()
+            diff = sh(["git", "diff", base, branch, "--", *(m.get("files") or [])], repo, check=False).stdout
+            v = fast_json(env, "You triage one finished coding task for a senior reviewer. " + TRIAGE_BAR +
+                          ' Return JSON {"verdict": "clean" | "flag", "reason": str}; a flag reason is one line quoting the code.',
+                          f"TASK BRIEF:\n{(m.get('body') or '')[:6000]}\n\nFILES IT MAY CHANGE: {', '.join(m.get('files') or [])}\n\n"
+                          f"DIFF:\n{diff[:40000]}", max_tokens=300, timeout=30)
+            verdict, reason = ("flag" if v.get("verdict") == "flag" else "clean"), str(v.get("reason") or "").strip()[:300]
+        except Exception as e:  # noqa: BLE001 - triage is advisory
+            verdict, reason = "unknown", f"triage failed: {str(e)[:150]}"
+        f = proj / "results" / f"{tid}.json"
+        if f.exists():
+            r = json.loads(f.read_text()); r["triage"] = {"verdict": verdict, "reason": reason}
+            f.write_text(json.dumps(r, indent=2))
+        return tid, verdict, reason
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        out = list(ex.map(one, ids))
+    for tid, verdict, reason in out:
+        say(f"{tid} triage  {verdict}" + (f": {reason}" if verdict != "clean" and reason else ""))
+    return {tid: (v, r) for tid, v, r in out}
+
+def cmd_triage(a):
+    proj = project_dir(a); repo = Path(a.repo).resolve()
+    ids = [x.strip() for x in a.only.split(",")] if a.only else sorted(
+        f.stem for f in (proj / "results").glob("[0-9]*.json") if json.loads(f.read_text()).get("status") == "passed")
+    if not triage(repo, proj, ids):
+        sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
+
+# ---------- groundwork: the boilerplate brief, then one test crew per task on a shared contract ----------
+
+def detect_stacks(wt):
+    """One line per toolchain the probe must cover, from the manifests at the root and one level down."""
+    found = []
+    for d in [wt] + sorted(c for c in wt.iterdir() if c.is_dir() and not c.name.startswith(".") and c.name != "node_modules"):
+        rel = "." if d == wt else d.name
+        if (d / "go.mod").exists():
+            found.append(f"- Go module in {rel}: go mod download, go build ./..., go vet ./..., go test ./..., gofmt -l, and any codegen it uses")
+        if (d / "package.json").exists():
+            pm = ("pnpm" if (d / "pnpm-lock.yaml").exists() else "yarn (npx yarn@1 when yarn is not on PATH)" if (d / "yarn.lock").exists()
+                  else "npm ci" if (d / "package-lock.json").exists() else "the package manager its README names")
+            found.append(f"- Node package in {rel} with {pm}: install from the lockfile, its test, build, and start scripts")
+        if (d / "pyproject.toml").exists() or (d / "requirements.txt").exists():
+            found.append(f"- Python in {rel}: a venv, install, the test command, and how it starts")
+        if (d / "Cargo.toml").exists():
+            found.append(f"- Rust crate in {rel}: cargo build, cargo test")
+    return "\n".join(found) or "- no manifest found: read the README for how it builds and starts"
+
+GROUNDWORK_BRIEF = """You are the groundwork crew for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
+read them first with `fast-coding tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
+Commit on {trunk} in small commits with plain messages. Nothing is pushed.
+
+Phase A, toolchain (report before changing dependencies):
+{stacks}
+1. Install from the lockfiles, then build, test, and start every part the way a user would (start the server and probe one URL; start the client with BROWSER=none and probe it). Unit tests passing is not proof the app runs.
+2. For each breakage find the smallest fix that works (a documented setting, or an upgrade); try it on a scratch copy if needed.
+3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for the orchestrator's go in this pane.
+
+Phase B, after the go:
+1. Apply the dependency and toolchain fixes with the package managers (never by hand-editing lockfiles). Commit.
+2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
+3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM.
+4. Commit.
+
+Phase C, the contract (you write no tests: one crew per task writes them in parallel from your contract):
+Write {contract} (outside the repo; never commit it) with exactly what a test writer needs and must not guess:
+- every type, struct, and generated model a test touches, with its package and whether it is a value or a pointer
+- every stub's exact signature, and which task implements it
+- the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
+- per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
+Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the orchestrator says so.
+"""
+
+def cmd_groundwork(a):
+    """Print the groundwork brief for this project, plus the orchestrator's project notes from --extra (or stdin with `-`)."""
+    proj = project_dir(a); wt = project_worktree(proj)
+    extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
+    print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=current_branch(wt), stacks=detect_stacks(wt),
+                                  verify=proj / "verify.json", contract=proj / "results" / "contract.md")
+          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+
+def test_brief(meta, contract):
+    paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
+    return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
+            f"Test file: {paths}. Test command: {meta.get('test')}\n"
+            f"It must fail on the current stubs for the reason this task fixes, and pass once {', '.join(meta.get('files') or [])} "
+            "implement the brief.\n"
+            "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
+            "(report `blocked` naming what is missing instead).\n"
+            "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
+            "no CSS values, no tooling tests.\n"
+            "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
+            f"`git commit -m \"<plain message>\" -- {paths}` (other crews commit beside you; on an index.lock error wait a second and retry).\n"
+            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the orchestrator says so.\n\n"
+            f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
+
+def cmd_testcrews(a):
+    """Start one test-writing crew per task, in parallel, each briefed with its task and the groundwork's shared contract.
+    `--print` shows the briefs instead."""
+    proj = project_dir(a)
+    contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
+    if not contract_file.exists():
+        sys.exit(f"no contract at {contract_file}: the groundwork crew writes it after the stubs (fast-coding groundwork, phase C)")
+    contract = contract_file.read_text()
+    only = {x.strip() for x in a.only.split(",")} if a.only else None
+    metas = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
+    if a.print_:
+        for m in metas:
+            print(f"===== tests-{m['id']}\n{test_brief(m, contract)}\n")
+        return
+    herdr_space(proj)  # once, before the parallel starts
+    model = "tests" if "tests" in CREW_MODELS else "groundwork" if "groundwork" in CREW_MODELS else None
+    def start(m):
+        try:
+            cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
+                                        brief=test_brief(m, contract), force=False, cwd=None, model=model))
+        except SystemExit as e:
+            print(f"tests-{m['id']} not started: {e}")
+    with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
+        list(ex.map(start, metas))
+
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows
     each with its last report; `crew stop` closes a finished one's tab."""
@@ -705,16 +873,20 @@ def cmd_crew(a):
     if not (brief or "").strip():
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
+    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name)
+    if branch:
+        brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
+                 f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = herdr_space(proj)
     role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(getattr(a, "cwd", None) or wt), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
           *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
           "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
@@ -1072,6 +1244,21 @@ def commit_message(meta):
     title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
     return title or "Update " + ", ".join(meta.get("files") or ["files"])
 
+def condense_failure(output):
+    """A few lines naming the failing case(s) and why, for the implementer's next attempt. Empty when the output is already
+    short, no key is set, or the fast model fails: the raw tail always follows, so this only ever adds."""
+    if len(output) < 1200:
+        return ""
+    env = fast_env()
+    if not env.get("TEXT_MODEL_API_KEY"):
+        return ""
+    try:
+        v = fast_json(env, "You read a failing test run. Return JSON {\"summary\": str}: in at most 5 short lines, name each failing "
+                      "test case and what it expected versus what it got. No advice, no code.", output[-8000:], max_tokens=300, timeout=15)
+        return str(v.get("summary") or "").strip()[:800]
+    except Exception:  # noqa: BLE001 - a summary is optional
+        return ""
+
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -1226,7 +1413,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         problems = []
         if test.returncode != 0:
-            problems.append(f"The test still fails.\nCommand: {meta['test']}\nExit code: {test.returncode}\nOutput:\n{entry['test_output']}")
+            summary = condense_failure(test.stdout + test.stderr)
+            problems.append(f"The test still fails.\nCommand: {meta['test']}\nExit code: {test.returncode}\n"
+                            + (f"What failed:\n{summary}\n" if summary else "") + f"Output (tail):\n{entry['test_output']}")
         if over:
             problems.append(f"Your change is {lines} lines (added plus deleted); the hard limit is {MAX_DIFF_LINES}. Shrink it: revert "
                             "unrelated edits, drop new files that are not named in the task, remove long comments and duplication.")
@@ -1617,6 +1806,8 @@ def run_tasks(repo, proj, tasks, a):
     for r in results:
         print(f"{r['id']:6} {r['status']:18} {r['attempts']:<8} {fmt(r['seconds']):>9} {'$' + format(r['cost'], '.4f'):>9}  {r['branch']}")
     passed = sum(r["status"] == "passed" for r in results)
+    if passed:
+        triage(repo, proj, [r["id"] for r in results if r["status"] == "passed"])
     say(f"run done   {passed}/{len(results)} passed  wall {fmt(total)}  sum of task time {fmt(sum(r['seconds'] for r in results))}")
     say(LEDGER.line())
     if passed and not a.no_stack and not is_lite(proj):  # a lite project lands as one branch, not a stack
@@ -1649,7 +1840,11 @@ def lenient_json(content):
         # Common small-model slip: single-quoted JSON.
         return json.JSONDecoder().raw_decode(re.sub(r"(?<![\\\\])'", '"', content))[0]
 
-def fast_json(env, system, user, max_tokens=1500):
+def fast_env():
+    """The env a fast-model call reads: the jev-ultrafast .env, overridden by the process env (the workspace key)."""
+    return {**load_env(JEV_DIR / ".env"), **os.environ}
+
+def fast_json(env, system, user, max_tokens=1500, timeout=90):
     """One call to the fast text model in the jev-ultrafast .env (Mercury 2.5 by default) through OpenRouter. Cost is exact."""
     body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
@@ -1657,7 +1852,7 @@ def fast_json(env, system, user, max_tokens=1500):
     req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
                                  data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {env['TEXT_MODEL_API_KEY']}", "Content-Type": "application/json"})
-    out = http_json(req, "openrouter (Mercury review)")
+    out = http_json(req, "openrouter (Mercury review)", timeout=timeout)
     u = out.get("usage", {})
     LEDGER.add("openrouter", u.get("prompt_tokens", 0), u.get("completion_tokens", 0), u.get("cost"))
     content = ((out.get("choices") or [{}])[0].get("message") or {}).get("content")
@@ -2771,6 +2966,9 @@ def main():
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
+                            ("groundwork", cmd_groundwork, "print the groundwork crew's brief; --extra adds the project's notes"),
+                            ("testcrews", cmd_testcrews, "start one test-writing crew per task in parallel from the groundwork contract"),
+                            ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
@@ -2813,6 +3011,14 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
+        if name == "groundwork":
+            s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
+        if name == "testcrews":
+            s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
+            s.add_argument("--only", help="comma-separated task ids")
+            s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting crews")
+        if name == "triage":
+            s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator, q-<ticket>, or a helper's job; the agent is named <slug>-<role>")
