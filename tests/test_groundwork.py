@@ -59,6 +59,15 @@ class Groundwork(unittest.TestCase):
         self.assertIn("Store is a value type", text)
         self.assertIn("## Goal\nShow the form.", text)
 
+    def test_test_crews_commit_only_their_file_and_never_rewrite_the_shared_branch(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        out = io.StringIO()
+        with self.patched()[0], mock.patch("sys.stdout", out):
+            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=True))
+        text = out.getvalue()
+        self.assertIn("git add client/src/Form.test.js && git commit client/src/Form.test.js -m", text)
+        self.assertIn("Never run `git commit --amend`, `git reset`, `git rebase`", text)
+
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
             fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))

@@ -914,7 +914,10 @@ def test_brief(meta, contract):
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
             "no CSS values, no tooling tests.\n"
             "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
-            f"`git commit -m \"<plain message>\" -- {paths}` (other crews commit beside you; on an index.lock error wait a second and retry).\n"
+            f"`git add {paths} && git commit {paths} -m \"<plain message>\"` (other crews commit beside you on this one branch; "
+            "on an index.lock error wait a second and retry).\n"
+            "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
+            "`git rebase`, `git checkout`, or `git stash` here: HEAD is shared, so they rewrite or drop another crew's commit.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the orchestrator says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
 
