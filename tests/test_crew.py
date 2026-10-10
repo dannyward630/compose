@@ -176,3 +176,42 @@ class Guard(unittest.TestCase):
                 mock.patch.object(fc.sys, "stdout", out):
             fc.cmd_guard(None)
         self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+class ToolBug(unittest.TestCase):
+    """A failure of fast-coding itself goes to the first mate, who owns fixing the tool, and to a log across projects."""
+    setUp, report = Crew.setUp, Crew.report
+
+    def test_tool_bug_is_recorded_logged_and_wakes_the_first_mate(self):
+        log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
+        fc.write_report(self.proj, "shop-tests", "working", "started")
+        before = snap(self.proj)
+        with mock.patch.object(fc, "TOOL_BUGS", log):
+            self.report("shop-tests", "tool-bug", "run crashed on index.lock; worked around with --parallel 1")
+        self.assertEqual(fc.crew_reports(self.proj, "shop-tests")[-1]["state"], "tool-bug")
+        entry = json.loads(log.read_text().splitlines()[-1])
+        self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
+        self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
+        ev = fc.watch_events(before, snap(self.proj))
+        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the first mate wakes on a crew's tool-bug too
+        self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the orchestrator sees it
+
+    def test_every_brief_says_how_to_report_a_tool_bug(self):
+        self.assertIn("tool-bug", fc.crew_preamble(self.proj, "shop-tests", "tests"))
+
+    def test_crew_can_start_in_another_directory(self):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "get"):
+                return None
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            return {}
+        a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+                mock.patch("builtins.print"):
+            fc.cmd_crew(a)
+        tab = next(c for c in calls if c[:2] == ("tab", "create"))
+        self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")

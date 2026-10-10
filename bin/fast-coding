@@ -587,7 +587,9 @@ def herdr_space(proj):
 # The captain talks to the first mate (the session they started), which stays where it was launched. Each project gets an
 # orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts crew of its own (a wayfinder
 # question, a researcher). Every crew session reports with `fast-coding report`; `watch` turns new reports into wake events.
-CREW_STATES = ("working", "needs-user", "blocked", "done")
+CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug")
+CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
+TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the first mate
 
 def crew_dir(proj):
     d = proj / "results" / "crew"
@@ -607,6 +609,8 @@ def crew_preamble(proj, name, title):
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
+            f"When fast-coding itself fails (the CLI crashes, behaves wrongly, or lacks something you need), as opposed to the project's code: "
+            f"work around it to keep going, never edit the fast-coding repo, and report `{report} tool-bug \"<symptom, evidence, workaround used>\"`.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
             f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
@@ -658,7 +662,7 @@ def cmd_crew(a):
     title = a.title or a.role
     space = herdr_space(proj)
     role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(wt), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(getattr(a, "cwd", None) or wt), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", "--permission-mode", "auto", check=True, timeout=90)
@@ -742,6 +746,8 @@ def cmd_report(a):
         sys.exit(f"state is one of {', '.join(CREW_STATES)}")
     message = " ".join(a.message)
     write_report(proj, a.as_, a.state, message)
+    if a.state == "tool-bug":
+        log_tool_bug(proj, a.as_, message)
     crew_attention(proj, a.as_, a.state, message)
     told = broadcast_decision(proj, a.as_, message) if a.state == "done" else []
     print(f"reported {a.as_} {a.state}" + (f"; told {', '.join(told)}" if told else ""))
@@ -750,6 +756,14 @@ def cmd_report(a):
             teardown(proj)  # the project is finished: nothing it started should stay open
         else:
             close_after_turn(proj, a.as_)
+
+def log_tool_bug(proj, reporter, message):
+    """Append to the cross-project log the first mate reads when it briefs a toolsmith: which CLI build failed, where it lives."""
+    commit = sh(["git", "rev-parse", "--short", "HEAD"], CLI_REPO, check=False).stdout.strip()
+    TOOL_BUGS.parent.mkdir(parents=True, exist_ok=True)
+    with open(TOOL_BUGS, "a") as f:
+        f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "project": proj.name, "reporter": reporter,
+                            "message": message, "cli_commit": commit, "cli_repo": str(CLI_REPO)}) + "\n")
 
 def close_after_turn(proj, name):
     """Close a crew session's tab once the turn that reported `done` has ended. This runs inside that session's own pane,
@@ -2360,8 +2374,8 @@ def watch_events(before, after):
 def watch_filter(events, slug, sources):
     """`--from` names the crew whose reports wake you (the first mate watches only its orchestrator); without it you get
     everything except the orchestrator's own reports, which go up to the first mate."""
-    if sources:
-        return [e for e in events if any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
+    if sources:  # a tool-bug from any crew wakes the first mate too: it owns fixing the tool
+        return [e for e in events if " state=tool-bug " in e or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e]
 
@@ -2761,9 +2775,10 @@ def main():
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
+            s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
-            s.add_argument("state", help="working | needs-user | blocked | done")
+            s.add_argument("state", help="working | needs-user | blocked | done | tool-bug")
             s.add_argument("message", nargs="+")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
