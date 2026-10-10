@@ -2202,7 +2202,8 @@ def watch_snapshot(repo, proj):
     """Everything an orchestrator decides on: each task's state, each herdr agent's status, run and verify markers."""
     tasks = load_tasks(proj)
     trunk_head = sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
-    snap = {"tasks": {}, "agents": {}, "run": bool(run_marker(proj)), "verify": None,
+    # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
+    snap = {"tasks": {}, "agents": {}, "run": run_alive(proj), "crashed": bool(run_marker(proj)) and not run_alive(proj), "verify": None,
             "crew": {f.stem: crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
             if (proj / "results" / "crew").exists() else {}}
     for m in tasks:
@@ -2233,7 +2234,8 @@ def watch_events(before, after):
             ev.append(f"event agent={n} status=blocked  (read: herdr agent read {n} --lines 60; steer: herdr agent prompt {n} \"...\")")
     if before["run"] and not after["run"]:
         passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
-        ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}")
+        ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
+                  + ("  CRASHED: the run process died without finishing; read its log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
     if after["verify"] and after["verify"] != before["verify"]:
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
     for n, reports in after.get("crew", {}).items():
