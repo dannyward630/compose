@@ -9,7 +9,7 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/worktrees/     one git clone per task
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import argparse, hashlib, shlex, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -1453,17 +1453,41 @@ def condense_failure(output):
     except Exception:  # noqa: BLE001 - a summary is optional
         return ""
 
-def run_test(meta, wt):
-    """A task's test command with a time limit: a hang (a deadlock, a server left waiting) fails fast with a clear reason
-    instead of holding the attempt for minutes."""
-    limit = int(meta.get("test_timeout") or TEST_TIMEOUT)
+HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
+             "another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
+
+def timed(cmd, cwd, limit):
+    """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
+    group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint."""
+    import signal
+    p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
     try:
-        return sh(meta["test"], wt, timeout=limit, check=False)
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        return subprocess.CompletedProcess(meta["test"], 124, out[-2000:],
-            f"The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
-            f"another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
+        out, err = p.communicate(timeout=limit)
+        return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(p.pid, sig)
+            except (ProcessLookupError, PermissionError):  # the group is already gone (macOS says EPERM)
+                break
+            time.sleep(0.5)
+            if p.poll() is not None:
+                break
+        out, err = p.communicate()
+        return subprocess.CompletedProcess(cmd, 124, (out or "")[-2000:], ((err or "")[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
+
+def run_test(meta, wt):
+    """A task's test command under the time limit (a task's block can set `test_timeout:`)."""
+    return timed(meta["test"], wt, int(meta.get("test_timeout") or TEST_TIMEOUT))
+
+def cmd_timed(argv):
+    """`fast-coding timed <seconds> -- <command>`: what implementers run their test through, so a hang fails fast."""
+    if len(argv) < 3 or argv[1] != "--":
+        sys.exit("usage: fast-coding timed <seconds> -- <command>")
+    r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]))
+    sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
+    sys.exit(r.returncode)
 
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
@@ -1525,6 +1549,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"Files you may edit: {abs_files}.\n"
               f"Files you must NOT edit: {abs_protected}.\n"
               f"Done means this command exits 0: {meta['test']}\n"
+              f"Run it through the time limit, exactly: {shlex.quote(str(Path(sys.argv[0]).resolve()))} timed {int(meta.get('test_timeout') or TEST_TIMEOUT)} -- {meta['test']}\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
               "Run the test command once before finishing; if it hangs, your code deadlocks or waits forever, so stop it and fix that. Make the smallest, simplest change that passes: no defensive checks, flags, "
@@ -3302,6 +3327,8 @@ def cmd_clean(a):
         clean_project(main_repo, name, wt, proj, delete_unmerged=a.delete_unmerged)
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "timed":
+        return cmd_timed(sys.argv[2:])
     ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
