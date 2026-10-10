@@ -49,6 +49,29 @@ class LiteDag(unittest.TestCase):
         self.assertEqual(self.git("branch", "--show-current"), "main")
         self.assertTrue((self.repo / "b.txt").exists() and (self.repo / "c.txt").exists())
 
+    def test_landing_is_linear_with_plain_messages(self):
+        self.task("001", "b.txt", "b\n"); self.task("002", "c.txt", "c\n")
+        _, sha = fc.task_base(self.repo, self.proj, {"after": "001,002"})  # 003 builds on a merge of its dependencies
+        self.git("checkout", "-q", "-b", "fast/p/003", sha)
+        (self.repo / "d.txt").write_text("d\n"); self.git("add", "-A"); self.git("commit", "-qm", "task 003")
+        self.git("checkout", "-q", "main")
+        fc.land_lite(self.repo, self.proj)
+        self.assertEqual(self.git("rev-list", "--merges", "main"), "")
+        msgs = self.git("log", "--format=%s", "main").splitlines()
+        self.assertEqual(msgs[:3], ["task 003", "task 002", "task 001"])
+        self.assertFalse([m for m in msgs if "fast/" in m or "fast-coding" in m])
+        self.assertEqual(sorted(self.git("ls-tree", "--name-only", "main").split()), ["a.txt", "b.txt", "c.txt", "d.txt"])
+        self.assertEqual(fc.stack_order(self.repo, self.proj), [])  # every task now reads as landed
+        fc.land_lite(self.repo, self.proj)  # landing again adds nothing
+        self.assertEqual(len(self.git("log", "--format=%s", "main").splitlines()), len(msgs))
+
+    def test_landing_conflict_names_the_task(self):
+        self.task("001", "a.txt", "one\n")
+        (self.repo / "a.txt").write_text("other\n"); self.git("commit", "-qam", "trunk change")
+        with self.assertRaisesRegex(SystemExit, "task 001"):
+            fc.land_lite(self.repo, self.proj)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
     def test_overlapping_dependencies_fail_clearly(self):
         self.task("001", "a.txt", "one\n"); self.task("002", "a.txt", "two\n")
         with self.assertRaisesRegex(RuntimeError, "conflict when merged"):

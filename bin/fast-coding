@@ -1243,14 +1243,21 @@ def merge_tips(repo, proj, branches):
     return sha
 
 def land_lite(repo, proj):
-    """Merge every unmerged task branch into the project branch, dependencies first, so a lite project's verify and its
-    deliverable are the project branch itself. A conflict stops verify with the branch named."""
+    """Replay every unmerged task branch's own commits onto the project branch, dependencies first, so a lite project's
+    verify and its deliverable are the project branch itself, as linear history with the tasks' plain messages: no merge
+    commits, whose default messages would name the tool's branches. Commits already landed (a dependency's, reached
+    through a later task's base) are skipped by patch id. Each task branch then points into the landed history, so it
+    reads as merged. A conflict stops verify with the task named."""
     for b in stack_order(repo, proj):
-        r = sh(["git", "merge", "-q", "--no-edit", b], repo, check=False)
-        if r.returncode:
-            sh(["git", "merge", "--abort"], repo, check=False)
-            sys.exit(f"{b} conflicts with {current_branch(repo)}; resolve by hand: cd {repo} && git merge {b}\n{(r.stdout + r.stderr)[-800:]}")
-        say(f"land   {b} merged into {current_branch(repo)}")
+        own = sh(["git", "rev-list", "--reverse", "--no-merges", "--cherry-pick", "--right-only", f"HEAD...{b}"], repo).stdout.split()
+        if own:
+            r = sh(["git", "cherry-pick", "--allow-empty", *own], repo, check=False)
+            if r.returncode:
+                sh(["git", "cherry-pick", "--abort"], repo, check=False)
+                sys.exit(f"task {b.rsplit('/', 1)[1]} ({b}) conflicts with {current_branch(repo)}; resolve by hand: "
+                         f"cd {repo} && git cherry-pick {' '.join(own)}\n{(r.stdout + r.stderr)[-800:]}")
+        sh(["git", "branch", "-f", b, "HEAD"], repo)
+        say(f"land   {b} ({len(own)} commit(s)) onto {current_branch(repo)}")
 
 def task_branches(repo, proj):
     """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
