@@ -69,6 +69,7 @@ fast-coding crew start --project <slug> --role q-ENG-12 --title "Payment provide
 fast-coding crew list  --project <slug>                       # every crew session with its last report and herdr status
 fast-coding crew focus --project <slug> --role q-ENG-12      # jump to that tab (the CLI never moves focus by itself)
 fast-coding crew stop  --project <slug> --role q-ENG-12       # close its tab; refused until it reported done (--force overrides)
+fast-coding teardown   --project <slug>                       # close implementer, verify, and done crew tabs (the orchestrator's done runs it)
 fast-coding report --project <slug> --as <slug>-q-eng-12 needs-user "Stripe or Adyen? I recommend Stripe"   # what crew run
 fast-coding watch --project <slug> --from orchestrator        # the first mate wakes only on the orchestrator's reports
 ```
