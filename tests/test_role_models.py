@@ -20,6 +20,13 @@ class RoleModels(unittest.TestCase):
             fc.apply_config()
         self.addCleanup(setattr, fc, "CREW_MODELS", {})
 
+    def test_an_entry_can_carry_an_effort(self):
+        self.config({**CREW, "orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}})
+        self.addCleanup(setattr, fc, "CREW_EFFORT", {})
+        self.assertEqual(fc.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
+        self.assertEqual(fc.crew_effort("orchestrator"), "high")
+        self.assertIsNone(fc.crew_effort("groundwork"))  # a plain string keeps Claude Code's default effort
+
     def test_role_then_default_then_small_then_explicit(self):
         self.config(CREW)
         self.assertEqual(fc.crew_model("orchestrator"), "claude:claude-opus-5-5")

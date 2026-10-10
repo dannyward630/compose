@@ -44,6 +44,7 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions are always Claude Code.
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
+CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 
 def is_claude(model):
     return model == "claude" or str(model).startswith("claude:")
@@ -74,10 +75,12 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT
     name, st = settings(read_config())
     models = st.get("models", {})
-    CREW_MODELS = models.get("crew") or {}
+    crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}
+    CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
+    CREW_EFFORT = {k: v["effort"] for k, v in crew.items() if isinstance(v, dict) and v.get("effort")}
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     if "fix" in models:
@@ -651,6 +654,12 @@ def crew_model(role, explicit=None):
                  f"{where}; pi: and OpenCode ids are for implementers only")
     return model
 
+def crew_effort(role, explicit=None):
+    """The Claude Code effort for the entry crew_model picked, or None to keep Claude Code's default."""
+    if explicit:
+        return CREW_EFFORT.get(explicit)
+    return CREW_EFFORT.get(role) if role in CREW_MODELS else CREW_EFFORT.get("default")
+
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows
     each with its last report; `crew stop` closes a finished one's tab."""
@@ -687,6 +696,7 @@ def cmd_crew(a):
         print(f"crew {name} stopped")
         return
     model = crew_model(a.role, getattr(a, "model", None))
+    effort = crew_effort(a.role, getattr(a, "model", None))
     if not herdr_env():
         sys.exit("crew sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     if herdr("agent", "get", name):
@@ -701,13 +711,14 @@ def cmd_crew(a):
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
-          *(["--model", claude_id(model)] if claude_id(model) else []), "--permission-mode", "auto", check=True, timeout=90)
+          *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
+          "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
-    print(f"crew {name} started in tab {title!r} of space {slug} on {model}; it reports with `fast-coding report`, `watch` wakes on it")
+    print(f"crew {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config

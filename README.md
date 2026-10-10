@@ -233,7 +233,7 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
 {"workspace": "work",
  "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
             "fallback": "<optional, default: none>", "fix": "<optional, default: implementer>",
-            "crew": {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-sonnet-5-5",
+            "crew": {"orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}, "groundwork": "claude:claude-sonnet-5-5",
                      "tests": "claude:claude-sonnet-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
@@ -246,6 +246,7 @@ OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any pr
 `fallback: null` (the default) turns the fallback off; a project's `verify.json` `fix_model` still wins over `models.fix`.
 A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare `claude` runs Claude Code with its default model, anything else is an OpenCode id.
 `models.crew` picks the model of each Claude crew session by role (`orchestrator`, `groundwork`, `tests`, any role name), then `default`; `crew start --model small` (or any name under `models.crew`, or a `claude:<model-id>`) overrides it.
+An entry is a model id, or `{"model": "claude:<model-id>", "effort": "high"}` to also set Claude Code's `--effort`.
 Crew sessions are always Claude Code, so a `pi:` or OpenCode id under `models.crew` stops `crew start` with the key named; without `models.crew` every crew gets Claude Code's default model.
 `default` always exists: it is the top level itself, active when `workspace` is unset, and with no top-level `openrouter_api_key` the harnesses keep their own auth stores.
 `/fast-coding:workspace` comes from the repo being a skills-dir plugin too (`.claude-plugin/plugin.json`, `commands/workspace.md`).
