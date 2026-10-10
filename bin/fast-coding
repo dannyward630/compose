@@ -369,7 +369,8 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
 
 RATE_LIMIT_MARK = "exceeded the provider's size limit"
 
-def pi_turn(cwd, model, prompt, session=None, timeout=300):
+def pi_turn(cwd, model, prompt, session=None, timeout=None):
+    timeout = timeout or TURN_TIMEOUT
     """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
     OpenCode's ~12K. Same contract as opencode(): (session, reply_text, tool_calls, usage). The session lives outside the
     task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast."""
@@ -926,6 +927,8 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
+TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
+TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's crews wrote 2044 lines for 727 of code
 
 def test_brief(meta, contract, budget=None):
@@ -1267,11 +1270,12 @@ def herdr_implementer_pane(space, cwd, env):
     r = herdr("pane", "split", panes[-1]["pane_id"], "--direction", direction, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
     return r["pane"]["pane_id"]
 
-def herdr_pi(cwd, model, prompt, session, task, timeout=300):
+def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
     Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
     and the pi session file the turn's text and usage are read from. The orchestrator steers the same agent with
     `herdr agent prompt <name> ...` between the CLI's own prompts."""
+    timeout = timeout or TURN_TIMEOUT
     meta, proj = task["meta"], task["proj"]
     tid, name = meta["id"], agent_name(proj.name, meta["id"])
     title = f"{tid} {meta.get('title', '')}".strip()[:60]
@@ -1449,6 +1453,18 @@ def condense_failure(output):
     except Exception:  # noqa: BLE001 - a summary is optional
         return ""
 
+def run_test(meta, wt):
+    """A task's test command with a time limit: a hang (a deadlock, a server left waiting) fails fast with a clear reason
+    instead of holding the attempt for minutes."""
+    limit = int(meta.get("test_timeout") or TEST_TIMEOUT)
+    try:
+        return sh(meta["test"], wt, timeout=limit, check=False)
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        return subprocess.CompletedProcess(meta["test"], 124, out[-2000:],
+            f"The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
+            f"another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
+
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -1485,7 +1501,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         sh(["git", "commit", "-qam", "bench: reset implementation"], wt, check=False)
     before = digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
-    red = sh(meta["test"], wt, timeout=600, check=False)
+    red = run_test(meta, wt)
     if red.returncode == 0:
         say(f"{tid} skip    test already passes on {base_name}; fix the test or drop the task")
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
@@ -1511,7 +1527,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"Done means this command exits 0: {meta['test']}\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
-              "Run the test command once before finishing. Make the smallest, simplest change that passes: no defensive checks, flags, "
+              "Run the test command once before finishing; if it hangs, your code deadlocks or waits forever, so stop it and fix that. Make the smallest, simplest change that passes: no defensive checks, flags, "
               "hardening, helpers, or comments the task does not ask for. Do not explain, just edit.\n"
               f"Hard limits: the whole change must stay under {MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
               "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
@@ -1582,7 +1598,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 continue
             break
         cost += usage["cost"]
-        test = sh(meta["test"], wt, timeout=600, check=False)
+        test = run_test(meta, wt)
         tampered = [f for f, d in digests(wt, meta["protected"]).items() if d != before[f]]
         lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
         entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
@@ -1641,7 +1657,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         changed = [f for f in sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]
         kept = {f: (wt / f).read_bytes() for f in changed if (wt / f).is_file()}
         formatted = format_files(wt, list(kept))
-        if formatted and sh(meta["test"], wt, timeout=600, check=False).returncode != 0:
+        if formatted and run_test(meta, wt).returncode != 0:
             for f, b in kept.items():
                 (wt / f).write_bytes(b)
             say(f"{tid} note    formatting broke the test; committed unformatted: {', '.join(formatted)}")

@@ -80,3 +80,13 @@ class WatchTimeout(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHang(unittest.TestCase):
+    def test_a_hanging_test_fails_fast_with_a_reason(self):
+        import tempfile, time
+        t0 = time.time()
+        r = fc.run_test({"test": "sleep 30", "test_timeout": "1"}, tempfile.mkdtemp())
+        self.assertLess(time.time() - t0, 10)
+        self.assertEqual(r.returncode, 124)
+        self.assertIn("hangs", r.stderr)

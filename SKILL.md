@@ -264,6 +264,7 @@ For anything with a UI or a server, the browser e2e (the `e2e_setup` and `e2e` c
 Each crew reports `working "test ready"` once its file is committed, not `done`, since `done` closes its tab.
 Read every test once they are all in (`git log -p HEAD..fast/<slug>/tests-NNN`), send changes back with `herdr agent prompt <slug>-tests-NNN "..."` until each tests what its issue says, then tell each to report `done` and run `--collect` before `run`.
 A test that fails on the stubs because it needs code another task owns is a missing dependency: give the task `after: <that task>` before dispatch, or the implementer can only pass by editing a file outside its scope (one task's open test needed another's seed code and was rejected for scope three times).
+Test commands fail fast on a hang: give Go tests `-timeout 60s` (e.g. `go test ./store -run TestOpen -timeout 60s`) and keep a task's test under the CLI's 120 s limit (`test_timeout:` in the block raises it for a slow suite). A hung test reads as a deadlock to the implementer and costs seconds, not minutes.
 List each test under `protected:`. The CLI rejects any attempt that changes a protected file.
 It must fail on HEAD; `run` refuses a task whose test already passes.
 Tests are proportional to the code they test:
