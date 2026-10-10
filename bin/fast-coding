@@ -35,10 +35,22 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 # ---------- global config and workspaces ----------
 # ~/.fast-coding/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
 #   {"workspace": "work",
-#    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:..."},
+#    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:...",
+#               "crew": {"orchestrator": "claude:<id>", "<role>": "claude:<id>", "default": "claude:<id>", "small": "claude:<id>"}},
 #    "env": {"TYPESAFE_API_KEY": "..."},
 #    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
+# A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
+# `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions are always Claude Code.
+
+CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
+
+def is_claude(model):
+    return model == "claude" or str(model).startswith("claude:")
+
+def claude_id(model):
+    """The --model value for a Claude model id, or None for bare `claude` (Claude Code's own default)."""
+    return (model.split(":", 1)[1] or None) if str(model).startswith("claude:") else None
 
 def read_config():
     return json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
@@ -62,9 +74,10 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS
     name, st = settings(read_config())
     models = st.get("models", {})
+    CREW_MODELS = models.get("crew") or {}
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     if "fix" in models:
@@ -129,6 +142,8 @@ def cmd_workspace(a):
     _, st = settings(cfg)
     m = st.get("models", {})
     print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
+    for role, model in (m.get("crew") or {}).items():
+        print(f"crew {role:14} {model}")
 
 # ---------- output and cost ledger ----------
 
@@ -398,7 +413,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=300):
 
 def fallback_for(model):
     """The model to switch to after a miss, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
-    return FALLBACK_MODEL if FALLBACK_MODEL and model not in (FALLBACK_MODEL, "claude") else None
+    return FALLBACK_MODEL if FALLBACK_MODEL and model != FALLBACK_MODEL and not is_claude(model) else None
 
 def implementer(cwd, model, prompt, session=None, task=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -406,6 +421,8 @@ def implementer(cwd, model, prompt, session=None, task=None):
     fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
     if fake and os.environ.get("FAST_CODING_FAKE_402_MATCH", "") in prompt:
         raise PaymentRequired(fake, "Payment required to access this resource (simulated)")
+    if is_claude(model):
+        return claude_once(cwd, prompt, model=claude_id(model))
     if model.startswith("pi:"):
         if herdr_env() and task and task.get("space"):
             return herdr_pi(cwd, model[3:], prompt, session, task)
@@ -447,10 +464,10 @@ class RateLimited(Exception):
         super().__init__("provider rate limit hit; session compacted")
         self.usage = usage
 
-def claude_once(cwd, prompt, timeout=900):
+def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
            "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     try:
@@ -617,6 +634,23 @@ def crew_preamble(proj, name, title):
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
             f"and a test failing on the stubs plus the orchestrator's read of it is the proof.\n\n")
 
+def crew_model(role, explicit=None):
+    """The model a crew session runs: `--model` (a `claude:<id>`, or a name under models.crew such as `small`), else
+    models.crew[<role>], else models.crew.default, else bare `claude` (Claude Code's default). Crew are always Claude Code."""
+    if explicit:
+        key, model = (f"models.crew.{explicit}", CREW_MODELS[explicit]) if explicit in CREW_MODELS else ("--model", explicit)
+    elif role in CREW_MODELS:
+        key, model = f"models.crew.{role}", CREW_MODELS[role]
+    elif "default" in CREW_MODELS:
+        key, model = "models.crew.default", CREW_MODELS["default"]
+    else:
+        return "claude"
+    if not is_claude(model):
+        where = "" if key == "--model" else f" in {CONFIG_PATH}"
+        sys.exit(f"{key} is {model!r}, but crew sessions run in Claude Code: use claude:<model-id> (e.g. claude:claude-sonnet-5-5)"
+                 f"{where}; pi: and OpenCode ids are for implementers only")
+    return model
+
 def cmd_crew(a):
     """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows
     each with its last report; `crew stop` closes a finished one's tab."""
@@ -627,7 +661,7 @@ def cmd_crew(a):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
             live = (herdr("agent", "get", c["name"]) or {}).get("agent") or {}
-            print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {c['title'][:30]:30} {last.get('message', '')[:70]}")
+            print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {c.get('model', 'claude'):26} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
         sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
@@ -652,6 +686,7 @@ def cmd_crew(a):
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"crew {name} stopped")
         return
+    model = crew_model(a.role, getattr(a, "model", None))
     if not herdr_env():
         sys.exit("crew sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     if herdr("agent", "get", name):
@@ -665,13 +700,14 @@ def cmd_crew(a):
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(getattr(a, "cwd", None) or wt), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
-    herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", "--permission-mode", "auto", check=True, timeout=90)
+    herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
+          *(["--model", claude_id(model)] if claude_id(model) else []), "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
-    print(f"crew {name} started in tab {title!r} of space {slug}; it reports with `fast-coding report`, `watch` wakes on it")
+    print(f"crew {name} started in tab {title!r} of space {slug} on {model}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config
@@ -1114,10 +1150,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         attempt += 1
         t0 = time.time()
         try:
-            if meta["model"] == "claude":
-                session, reply, tools, usage = claude_once(wt, prompt)
-            else:
-                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)})
+            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)})
         except RateLimited as e:
             cost += e.usage["cost"]
             if fall():
@@ -1510,7 +1543,7 @@ def preflight(models):
             return f"{model}: {str(e)[-400:]}"
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    models = sorted(m for m in models if m and m != "claude")
+    models = sorted(m for m in models if m and not is_claude(m))  # Claude Code is the subscription; nothing to resolve
     say(f"preflight  {', '.join(models)}")
     with ThreadPoolExecutor(max_workers=max(1, len(models))) as ex:
         bad = [b for b in ex.map(probe, models) if b]
@@ -2776,6 +2809,7 @@ def main():
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
             s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
+            s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug")
