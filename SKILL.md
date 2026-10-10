@@ -1,11 +1,11 @@
 ---
 name: fast-coding
-description: The full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until the decisions are settled, as tickets on the repo's Linear project, plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running gpt-oss-120b, pinned to Cerebras by an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack, keep every task's Linear issue in step, and inside herdr run the implementers as named agents in a per-project space that the orchestrator steers. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
+description: The full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until the decisions are settled, as tickets on the repo's Linear project, plan, split into tiny numbered tasks with tests, fan the tasks out to parallel implementers (pi running GLM 5.3 Flash through an OpenRouter preset; OpenCode and Claude available per task), verify locally with jev-ultrafast browser runs and a Mercury review, register each chain as a gh stack, keep every task's Linear issue in step, and inside herdr run the implementers as named agents in a per-project space that the orchestrator steers. Use when the user says "fast-coding", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # fast-coding
 
-You are the orchestrator, or, inside herdr, the first mate who hands the project to one (0h). The implementer is pi running gpt-oss-120b on Cerebras (through the OpenRouter preset `gpt-oss-120b-cerebras`); OpenCode or Claude can take a task via `model:`. Verification is local; nothing is pushed.
+You are the orchestrator, or, inside herdr, the first mate who hands the project to one (0h). The implementer is pi running GLM 5.3 Flash (through the OpenRouter preset `glm-5-3-flash-fast`); OpenCode or Claude can take a task via `model:`. Verification is local; nothing is pushed.
 This skill is the whole flow: the moment the user invokes it with a task, start at step 0 and carry it through to verified, stacked branches.
 
 | Who | Does | Never does |
@@ -148,10 +148,12 @@ Decisions already made in the spec are not reopened.
 
 ### 2. Split into tasks
 Turn each plan step into a task issue on Linear (format below). There is no task file: the CLI reads the issue.
+Tasks are tiny. A task is one function, one component, or one resolver: something the fast model finishes in one short turn, well under a minute. Small tasks pass first try; every miss so far was on the biggest task of its wave. When a task is not obviously tiny, split it; three tiny tasks finish sooner than one medium task that misses.
 A task is right-sized when all of these hold:
-- one to three files, one test command, under ten acceptance criteria
+- one or two files in `files:`, one test command, at most five acceptance criteria
+- its brief (the issue description) stays under 2500 characters. `fast-coding tasks` prints `WARNING TASK TOO BIG` for a task over either limit: split it before 3b, never ship it to the gate
 - no open design choices; every "how" is stated or obvious from the named files
-- the whole task plus the files it touches fits comfortably in 40K tokens
+- the whole task plus the files it touches fits comfortably in 20K tokens
 - its branch will change at most 350 lines (added plus deleted). The CLI rejects a bigger branch, so size the task for it
 - it adds no documents. Implementers never create .md, .txt, .rst, or docs/ files; the CLI rejects a branch that does. Docs are crew work after the reviewer has merged the PRs, only when the user asked for them
 - it names every file it may touch in `files:`. The CLI rejects a change to any other file, so a task that needs a new file lists it. Two tasks never share a file; a shared file means they are one task or one is `after:` the other
@@ -183,6 +185,7 @@ Green is the implementer's job. Refactor goes through review and the verify fix 
 
 ### 4. Dispatch
 `fast-coding run --repo <path> --project <name>` runs tasks in dependency order: independent tasks in parallel, one clone and one implementer session (pi by default) each; a task with `after:` starts as soon as that task passes, on top of its branch. Test failures, an over-limit diff, a new document, or a change outside `files:` are fed back into the same session up to `--attempts` (default 3).
+Each clone, and the worktree verify runs in, borrows the main checkout's git-ignored installs (`node_modules` at any depth, `vendor`, `.venv`) as symlinks that never show in `git status`, and graft never edits `.gitignore` there. So install dependencies once in the project worktree before `run`; do not patch test commands to link them.
 The trunk is the branch the user is on when you run it (`--trunk` overrides). That checkout is never switched: clones are separate repos, and every `gh stack` operation runs in a CLI-owned detached worktree under `.fast-coding/<project>/worktrees/.stackroot`, with the stack state mirrored into the user's `.git` so `gh stack view` works from a task branch there.
 When the run ends, all passed task branches of the project are rebased into one linear chain on the trunk tip and registered as one stack: `(my-feature) <- fast/<project>/001 <- fast/<project>/002 <- fast/<project>/003`, printed on a `stack ok` line. A later wave grows the same stack; before it starts, the existing layers are rebased onto the current trunk so new tests and task files are present on every base. A rebase conflict stops the chain at that layer with the exact commands to resolve it. `--no-stack` skips registration.
 Use `--only 003,004` for a subset.
@@ -215,7 +218,7 @@ Verify runs at the top of the stack, in the CLI's worktree, since layers are nev
   "e2e_setup": "cd ... && python -m server.server", "e2e_setup_wait": 3, "e2e_env": {"API_KEY": "..."},
   "e2e": [{"name": "greenhouse fill", "url": "https://...", "goal": "Fill the application ... stop before Submit.",
            "assert": "python scripts/check_greenhouse.py", "prices": {"typesafe_per_call": 0.0}}],
-  "review": true, "review_base": "main", "fix_model": "openrouter/openai/gpt-oss-120b",
+  "review": true, "review_base": "main", "fix_model": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
   "review_context": "Design facts reviewers must respect, e.g. test credentials come from env by design and never reach the server."
 }
 ```
@@ -223,7 +226,7 @@ Verify runs at the top of the stack, in the CLI's worktree, since layers are nev
 2. **review**: parallel fast-model reviews (Mercury 2.5 via the jev-ultrafast `.env`), one per perspective, then a confirmation call per high or medium finding that must quote the code. Unconfirmed findings are dropped and shown as dropped. Only confirmed highs fail the stage.
 3. **jev acceptance**: every bullet under `## Acceptance criteria` in every task issue becomes one choice question to Jev (TypeSafe): MET, NOT_MET, UNCLEAR, with probabilities, one request per task against that task's own files, then a confirmation call per NOT_MET. Advisory by default, since the tests already cover every criterion; set `acceptance_gate: true` to make confirmed NOT_MET fail the stage.
 4. **e2e**: each case drives a real browser with jev-ultrafast to the goal, then runs `assert`, an independent check (written by the tests crew) that reads the real DOM or run log. A DONE from the model is never the proof.
-5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. After N rounds it escalates to you with the findings. `--fix 0` reports only.
+5. **fix loop** (`--fix N`, default 2): confirmed findings go to the fast implementer in the repo itself, protected files are reverted if touched, the fix is committed, and every stage runs again. A fixer has the tasks' scope: a round that touches any file the stack does not already change (a lockfile, `setupTests.js`, a new `package-lock.json`) is reverted whole and verify ends FAIL. Treat that FAIL as an environment problem for crew, not a finding. After N rounds it escalates to you with the findings. `--fix 0` reports only.
 
 Every line prints its clock time and duration. The last line is the cost ledger: dollars and tokens per provider (openrouter for implementers, fixes, Mercury reviews, and jev's text helper; cerebras when a task pins it; typesafe for Jev decisions) and the total. `+?` after a provider means tokens were counted but no price is configured; set `prices` in verify.json to price it.
 
@@ -253,8 +256,9 @@ A rebase conflict while stacking (`after: ... could not be chained`) is crew wor
 
 ## Task issue format
 
-`model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, which pins gpt-oss-120b to Cerebras through the OpenRouter preset `gpt-oss-120b-cerebras`.
-When a gpt-oss attempt errors, times out, is rate-limited, or misses, the task moves to `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast` (Together, then CoreWeave) in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
+`model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, or `claude`. Omit it for the CLI default, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (GLM 5.3 Flash; the preset pins Together, then CoreWeave). gpt-oss-120b on Cerebras was the default until 2026-10-10 and was dropped for missing too often.
+There is no fallback by default. When `models.fallback` is set, an attempt that errors, times out, is rate-limited, or misses moves the task to it in a fresh session that carries the failure; fix rounds after the first use it too. `bench` never falls back.
+`run` and `resume` probe every model they may call (each task's, and the fallback) with one tiny prompt before cloning anything; a wrong model id or preset slug stops the run there with the provider's message.
 Models, the fallback, and the OpenRouter key come from the active workspace in `~/.fast-coding/config.json` (`fast-coding workspace [name | add | key | remove <name>]`, or `/fast-coding:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
 
 The issue's title is the task's title. Its description is the brief, then the block the CLI reads, last:
@@ -279,7 +283,7 @@ id: 001
 files: extension/deny_list.js
 protected: tests/deny_list.test.js
 test: node --test tests/deny_list.test.js
-model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
+model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 ```
 ````
 
@@ -293,12 +297,14 @@ model: pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras
 - The first mate and the orchestrator never write or edit code: no source, test, stub, fixture, build or CI config, generated file, or repo doc, not even a one-line fix. They read code to review it, write Linear, write the CLI's JSON (`.fast-coding/linear.json`, `.fast-coding/<slug>/linear.json`, `verify.json`), and run `fast-coding`, `git` reads, and `herdr`. Every change to the repo is crew work or a task for `run`. For the orchestrator a hook enforces it: its tab carries `FAST_CODING_ROLE=orchestrator`, and the plugin's `fast-coding guard` denies its Write and Edit calls inside a repository. Do not route around the hook through Bash.
 - Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, plans, stories, tasks, grilling notes, steers), and the briefs you give crew. That skill is user-invoked only, so the Skill tool cannot load it; before writing the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write from then on. Writing-plans and the task issue format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type. Talk to the captain in outcomes, not mechanics; empty polls and no-change updates are not progress. Your final message stands alone: what finished, the stack, the cost, and the decision needed.
+- Every captain round-trip stalls the whole project, so ask once. Collect every decision you can see coming (scoring, toolchain, dependency bumps, the 3b go) and send them as one `needs-user` with a numbered list and your recommendation on each, instead of one question, a wait, then the next. Ask mid-run only when the run cannot continue without the answer.
+- The CLI's own config is yours to fix without asking: a wrong model id, preset slug, or typo in `~/.fast-coding/config.json` `models`, `verify.json`, or `linear.json`. Fix it, re-run, and mention it in your next report. Switching to a different model or provider, keys, and anything that costs money are still the captain's.
 - Linear is the source of truth and the ticket tracker. What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it, so the next session finds it. Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.fast-coding/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and git-ignored `results/`); everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step, at every level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.
 - Fresh session per task. Never chain tasks in one session.
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
-- Build a graft graph in the repo (`graft build .`, free, git-ignored). The CLI prepends a `graft ask` context pack with exact `file:line` and source to every implementer and fixer prompt, and tells the model to use `graft ask` and `graft callers` instead of exploring. Without graft the fast model reads whole files and every extra tool call resends the full context at Cerebras prices.
+- Build a graft graph in the repo (`graft build .`, free, git-ignored). The CLI prepends a `graft ask` context pack with exact `file:line` and source to every implementer and fixer prompt, and tells the model to use `graft ask` and `graft callers` instead of exploring. Without graft the fast model reads whole files and every extra tool call resends the full context.
 - Report honestly: attempts per task, what escalated, what crew did outside `run`, and the verify output.
 - Always show timing and cost. Paste the CLI's `run start` and `run done` lines, the per-task table, the `verify` stage lines, and the final `cost` line into your report. The user wants to see when it started, how fast it finished, and what each implement cost, every time.
