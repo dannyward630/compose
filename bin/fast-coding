@@ -9,7 +9,7 @@ Layout inside any repo:
   .fast-coding/<project>/worktrees/     one git worktree per task (git-ignored)
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -606,6 +606,7 @@ def crew_preamble(proj, name, title):
             f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the captain (they may answer here in "
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
+            f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n\n")
 
 def cmd_crew(a):
@@ -640,6 +641,7 @@ def cmd_crew(a):
             sys.exit(f"{name} has not reported done (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); "
                      f"read it with `herdr agent read {name} --lines 60`, or pass --force to close it anyway")
         herdr("tab", "close", json.loads(rec.read_text())["tab"])
+        crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"crew {name} stopped")
         return
     if not herdr_env():
@@ -739,6 +741,70 @@ def cmd_report(a):
     crew_attention(proj, a.as_, a.state, message)
     told = broadcast_decision(proj, a.as_, message) if a.state == "done" else []
     print(f"reported {a.as_} {a.state}" + (f"; told {', '.join(told)}" if told else ""))
+    if a.state == "done":
+        if a.as_ == agent_name(proj.name, "orchestrator"):
+            teardown(proj)  # the project is finished: nothing it started should stay open
+        else:
+            close_after_turn(proj, a.as_)
+
+def close_after_turn(proj, name):
+    """Close a crew session's tab once the turn that reported `done` has ended. This runs inside that session's own pane,
+    so the close is a detached process (its own session, so the tab's hangup cannot reach it) that waits for the agent to
+    settle first."""
+    c = crew_record(proj, name)
+    if not c or not c.get("tab") or not herdr_env():
+        return
+    me = shutil.which("herdr") or "herdr"
+    subprocess.Popen(["sh", "-c", f'"$0" agent wait "$1" --timeout 900000; "$0" tab close "$2"', me, name, c["tab"]],
+                     start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    crew_closed(proj, name, "reported done; tab closes when the turn ends")
+
+def crew_closed(proj, name, why):
+    f = crew_dir(proj) / f"{name}.json"
+    c = json.loads(f.read_text())
+    c["closed"] = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "why": why}
+    f.write_text(json.dumps(c, indent=2))
+
+TASK_TAB = re.compile(r"(\d{3}) ")  # the per-task tabs runs made before implementers shared one tab: `NNN <title>`
+VERIFY_TAB = re.compile(r"verify( \d\d:\d\d)?")
+
+def teardown(proj):
+    """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
+    and every crew tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
+    space = herdr_env() and herdr_find_space(project_worktree(proj))
+    if not space:
+        return []
+    slug, orch = proj.name, agent_name(proj.name, "orchestrator")
+    tabs = (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])
+    hosted = {}  # tab id -> live agent names in it
+    for ag in (herdr("agent", "list") or {}).get("agents", []):
+        if ag.get("workspace_id") == space and ag.get("name"):
+            hosted.setdefault(ag.get("tab_id"), []).append(ag["name"])
+    crew = {c["tab"]: c for c in (json.loads(f.read_text()) for f in sorted(crew_dir(proj).glob("*.json"))) if c.get("tab")}
+    closed = []
+    for t in tabs:
+        tid, label, names = t["tab_id"], t.get("label") or "", hosted.get(t["tab_id"], [])
+        c = crew.get(tid)
+        if label in ("shell", "status") or orch in names or (c and c["name"] == orch):
+            continue
+        if c:
+            last = (crew_reports(proj, c["name"]) or [{}])[-1]
+            if last.get("state") != "done":
+                print(f"teardown left {c['name']} open (last report: {last.get('state', 'nothing')})")
+                continue
+            crew_closed(proj, c["name"], "teardown")
+        elif not (label == "implementers" or VERIFY_TAB.fullmatch(label)
+                  or ((m := TASK_TAB.match(label)) and all(n == agent_name(slug, m.group(1)) for n in names))):
+            continue  # not ours
+        herdr("tab", "close", tid)
+        closed.append(label)
+        print(f"teardown closed {label!r}")
+    return closed
+
+def cmd_teardown(a):
+    """Close every tab the project's runs, verifies, and finished crew left in its herdr space."""
+    closed = teardown(project_dir(a))
+    print(f"teardown: {len(closed)} tab(s) closed" if closed else "teardown: nothing to close")
 
 def herdr_tabs(space):
     return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
@@ -2489,6 +2555,7 @@ def main():
                             ("clean", cmd_clean, "remove worktrees and branches"),
                             ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
+                            ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
