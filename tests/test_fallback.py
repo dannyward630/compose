@@ -7,9 +7,12 @@ fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
 
+PRIMARY, BACKUP = "pi:p/primary", "pi:b/backup"
+
+
 class Fallback(unittest.TestCase):
     def run_once(self, first, reset_files=False):
-        """gpt-oss behaves as `first` ("error" or "miss"); GLM writes the answer. Returns (result, models called)."""
+        """The primary model behaves as `first` ("error" or "miss"); the fallback writes the answer. Returns (result, models called)."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -18,34 +21,40 @@ class Fallback(unittest.TestCase):
         (repo / "a.txt").write_text("no\n")
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
-                "model": fc.DEFAULT_MODEL, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         calls = []
         def impl(cwd, model, prompt, session=None, task=None):
             calls.append(model)
-            if "gpt-oss" in model and first == "error":
+            if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
-            (Path(cwd) / "a.txt").write_text("yes\n" if "glm" in model else "nope\n")
+            (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+                mock.patch.object(fc, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.run_task(repo, proj, task, 3, reset_files=reset_files), calls
 
     def test_error_falls_back(self):
         r, calls = self.run_once("error")
         self.assertEqual(r["status"], "passed")
-        self.assertEqual(calls, [fc.DEFAULT_MODEL, fc.FALLBACK_MODEL])
-        self.assertEqual(r["model"], fc.FALLBACK_MODEL)
+        self.assertEqual(calls, [PRIMARY, BACKUP])
+        self.assertEqual(r["model"], BACKUP)
         self.assertEqual(r["attempts"], 2)
         self.assertEqual(r["log"][0]["fallback"]["why"], "errored")
 
     def test_miss_falls_back_with_feedback(self):
         r, calls = self.run_once("miss")
         self.assertEqual(r["status"], "passed")
-        self.assertEqual(calls, [fc.DEFAULT_MODEL, fc.FALLBACK_MODEL])
+        self.assertEqual(calls, [PRIMARY, BACKUP])
 
-    def test_glm_has_no_fallback(self):
-        self.assertIsNone(fc.fallback_for(fc.FALLBACK_MODEL))
-        self.assertIsNone(fc.fallback_for("claude"))
+    def test_fallback_has_no_fallback(self):
+        with mock.patch.object(fc, "FALLBACK_MODEL", BACKUP):
+            self.assertIsNone(fc.fallback_for(BACKUP))
+            self.assertIsNone(fc.fallback_for("claude"))
+
+    def test_glm_is_the_default_with_no_fallback(self):
+        self.assertIn("glm-5.3-flash@preset/glm-5-3-flash-fast", fc.DEFAULT_MODEL)
+        self.assertIsNone(fc.fallback_for(fc.DEFAULT_MODEL))
 
 
 def ws(name=None, target=None, stdin=""):
@@ -56,7 +65,7 @@ def ws(name=None, target=None, stdin=""):
 class Workspaces(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "config.json"
-        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fix": "pi:f/x"},'
+        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fix": "pi:f/x"},'
                              ' "workspaces": {"work": {"openrouter_api_key": "sk-work"},'
                              ' "personal": {"openrouter_api_key": "sk-home", "models": {"fallback": null}, "env": {"X_FC": "1"}}}}')
         self.patches = [mock.patch.object(fc, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
@@ -75,7 +84,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(fc.DEFAULT_MODEL, "pi:a/b")
         self.assertEqual(os.environ["FAST_CODING_FIX_MODEL"], "pi:f/x")
         self.assertIn("sk-work", os.environ["OPENCODE_CONFIG_CONTENT"])
-        self.assertEqual(fc.fallback_for("pi:a/b"), fc.FALLBACK_MODEL)
+        self.assertEqual(fc.fallback_for("pi:a/b"), "pi:g/h")
 
     def test_switch_overrides_top_level(self):
         ws("personal")

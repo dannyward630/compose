@@ -12,14 +12,15 @@ import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-DEFAULT_MODEL = "pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras"  # pi harness; the OpenRouter preset pins Cerebras
-# Takes over when a gpt-oss attempt errors, times out, is rate-limited, or misses. The preset pins Together, then CoreWeave.
-FALLBACK_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast"
+DEFAULT_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"  # pi harness; the OpenRouter preset pins Together, then CoreWeave
+# Takes over when an attempt errors, times out, is rate-limited, or misses. None by default: GLM passes where gpt-oss kept missing,
+# so a second model is opt-in (`models.fallback` in the config).
+FALLBACK_MODEL = None
 JEV_DIR = Path.home() / "code" / "jev-ultrafast"
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
 PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75),
-          "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast": (0.15, 0.50)}
+          "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast": (0.15, 0.50)}
 CONFIG_PATH = Path(os.environ.get("FAST_CODING_CONFIG", Path.home() / ".fast-coding" / "config.json"))
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
@@ -335,7 +336,7 @@ RATE_LIMIT_MARK = "exceeded the provider's size limit"
 def pi_turn(cwd, model, prompt, session=None, timeout=300):
     """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
     OpenCode's ~12K. Same contract as opencode(): (session, reply_text, tool_calls, usage). The session lives outside the
-    task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras."""
+    task clone so `git add -A` never commits it. Model ids are pi's `provider/model`, e.g. openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast."""
     sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
     sdir.mkdir(exist_ok=True)
     import uuid
@@ -1724,7 +1725,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         before = digests(repo, protected)
         t1 = time.time()
         model = cfg.get("fix_model") or os.environ.get("FAST_CODING_FIX_MODEL") or DEFAULT_MODEL
-        if rnd and fallback_for(model):  # the gpt-oss fix did not clear the findings; the fallback takes later rounds
+        if rnd and fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
             model = fallback_for(model)
         say(f"fix    start round {rnd + 1}  model={model}")
         pack = graft_pack(repo, findings[:400])
@@ -2314,7 +2315,7 @@ def main():
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes branches and opens draft PRs")
         if name == "bench":
-            s.add_argument("--models", default="pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,openrouter/openai/gpt-oss-120b,claude",
+            s.add_argument("--models", default="pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast,pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,claude",
                            help="comma-separated model ids: OpenCode ids, 'pi:<provider/model>' for the pi harness, 'claude' = Claude Code one-shot")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
