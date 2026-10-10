@@ -136,9 +136,9 @@ Everything the CLI shells out to, and where each one is used. Install the requir
 | Node 22.19+ | pi, and `node --test` in repos that use it | `brew install node` | yes |
 | pi | default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | yes |
 | OpenRouter account and key | every implementer, fixer, and reviewer call | key in `~/.pi/agent/auth.json` (`openrouter`, `openrouter-fast`) and in `~/code/jev-ultrafast/.env` as `TEXT_MODEL_API_KEY` | yes |
-| OpenRouter preset `gpt-oss-120b-cerebras` | pins the implementer to Cerebras from the model string | dashboard, Settings > Presets: model `openai/gpt-oss-120b`, provider order Cerebras, fallbacks off, nothing else included | yes |
-| OpenRouter preset `glm-5.3-flash-fast` | the fallback: takes a task (or a later fix round) when a gpt-oss attempt errors, times out, is rate-limited, or misses | dashboard, Settings > Presets: model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, fallbacks off, nothing else included | yes |
-| `~/.pi/agent/models.json` | declares provider `openrouter-fast` (base `https://openrouter.ai/api/v1`, api `openai-completions`, key `$OPENROUTER_API_KEY` or the auth store) with models `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` priced 0.35/0.75 per M and `z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast` priced 0.15/0.50 per M | written by hand once | yes |
+| OpenRouter preset `glm-5-3-flash-fast` | pins the default implementer (GLM 5.3 Flash) to its hosts from the model string | dashboard, Settings > Presets: model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, fallbacks off, nothing else included | yes |
+| OpenRouter preset `gpt-oss-120b-cerebras` | gpt-oss-120b on Cerebras, the default until 2026-10-10; now only for `bench` or an opt-in `models.fallback` | dashboard, Settings > Presets: model `openai/gpt-oss-120b`, provider order Cerebras, fallbacks off, nothing else included | optional |
+| `~/.pi/agent/models.json` | declares provider `openrouter-fast` (base `https://openrouter.ai/api/v1`, api `openai-completions`, key `$OPENROUTER_API_KEY` or the auth store) with models `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per M and, optionally, `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` priced 0.35/0.75 per M | written by hand once | yes |
 | gh CLI + gh-stack | `run` registers passed chains as stacks; `stack --submit` opens PRs | `brew install gh && gh extension install github/gh-stack`; `git config rerere.enabled true` | yes for stacks; `run --no-stack` without |
 | jev-ultrafast checkout at `~/code/jev-ultrafast` with `.env` | `verify`: Mercury review (`TEXT_MODEL*`), Jev acceptance (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`), browser e2e (`jev_ultrafast.Agent`) | clone it, fill `.env`, `uv sync` | yes for `verify` |
 | uv | runs jev-ultrafast and the Python test commands in verify.json | `brew install uv` | yes for `verify` |
@@ -230,16 +230,17 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
 
 ```json
 {"workspace": "work",
- "models": {"implementer": "pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras",
-            "fallback": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5.3-flash-fast", "fix": "<optional, default: implementer>"},
+ "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
+            "fallback": "<optional, default: none>", "fix": "<optional, default: implementer>"},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
                 "personal": {"openrouter_api_key": "sk-or-...", "models": {"fallback": null}}}}
 ```
 
 The workspace key goes to pi (`--api-key`, which beats its auth store), OpenCode (`OPENCODE_CONFIG_CONTENT`), the Mercury review, and jev's e2e text helper (`TEXT_MODEL_API_KEY`), so every OpenRouter call bills that account.
-OpenRouter presets belong to an account: create `gpt-oss-120b-cerebras` and `glm-5.3-flash-fast` in each workspace's account too.
-`fallback: null` turns the fallback off; a project's `verify.json` `fix_model` still wins over `models.fix`.
+OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any preset an opt-in fallback names) in each workspace's account too.
+`run` and `resume` send each model they may call one tiny prompt before cloning anything, so a wrong id or preset slug stops the run with the provider's message.
+`fallback: null` (the default) turns the fallback off; a project's `verify.json` `fix_model` still wins over `models.fix`.
 `default` always exists: it is the top level itself, active when `workspace` is unset, and with no top-level `openrouter_api_key` the harnesses keep their own auth stores.
 `/fast-coding:workspace` comes from the repo being a skills-dir plugin too (`.claude-plugin/plugin.json`, `commands/workspace.md`).
 Keys are read from piped stdin or a hidden prompt, never an argument, so they stay out of shell history and the process list.
@@ -270,7 +271,7 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
    ```
 3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key the jev-ultrafast `.env` uses as `TEXT_MODEL_API_KEY`.
-   pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras`: an OpenRouter preset (dashboard, Settings > Presets) that pins provider order to Cerebras with fallbacks off, so a harness with no request-body options still gets the pinned host. Priced at the Cerebras rate so the ledger is honest.
+   pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast`: an OpenRouter preset (dashboard, Settings > Presets) that pins provider order to Together then CoreWeave with fallbacks off, so a harness with no request-body options still gets the pinned hosts. Priced at their rate so the ledger is honest.
    OpenCode pins the host explicitly instead: `~/.config/opencode/opencode.jsonc` sets `options.provider.order: ["cerebras", "groq"]` with fallbacks off.
    Workspaces override all of that per account: see [Workspaces](#workspaces).
 4. Fill `verify.json` with the repo's lint and test commands, and list the docs the docs perspective should check.
@@ -413,7 +414,9 @@ If you cannot write the test, it is not a task yet.
     CLI                 red check, protected-file guard, timing, cost ledger
 ```
 
-Implementer model: `pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` (default since 2026-10-02): gpt-oss-120b through the pi harness, with the OpenRouter preset `gpt-oss-120b-cerebras` pinning the host to Cerebras, fallbacks off. Bench on the frozen deny-list task, same host: pi 4.2 to 6.5 s (p50 5.0 s) at ~32K input tokens per task; OpenCode `openrouter/openai/gpt-oss-120b` (pinned in its own config) 8.5 to 11 s at ~100K, because its fixed context is ~12K tokens per turn against pi's ~1K. Both pass 100%. OpenCode stays available per task via `model:`.
+Implementer model: `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (default since 2026-10-10), with no fallback.
+On a real seven-task project gpt-oss-120b on Cerebras missed the largest task four times in four different ways and was rate-limited on two more, while GLM 5.3 Flash passed every one of those on its first try at 9 to 20 s.
+Before that the default was `pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` (2026-10-02 to 2026-10-10): gpt-oss-120b through the pi harness, with the OpenRouter preset `gpt-oss-120b-cerebras` pinning the host to Cerebras, fallbacks off. Bench on the frozen deny-list task, same host: pi 4.2 to 6.5 s (p50 5.0 s) at ~32K input tokens per task; OpenCode `openrouter/openai/gpt-oss-120b` (pinned in its own config) 8.5 to 11 s at ~100K, because its fixed context is ~12K tokens per turn against pi's ~1K. Both pass 100%. OpenCode stays available per task via `model:`.
 Groq measures 342 t/s at 0.16 s latency with prompt caching at $0.15/$0.60 per M; Cerebras direct was 538 t/s at $0.35/$0.75 with no caching and a 150K tokens-per-minute dev-tier limit, which is what made Qwen 3.8 27B cost about $10 for one prototype build.
 With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
 Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
