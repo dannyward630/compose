@@ -1,7 +1,11 @@
 # fast-coding
 
 With fast-coding, a feature idea becomes a reviewed, verified stack of small branches in one sitting.
-A frontier model makes the decisions and checks the work, while cheap fast models write the code in parallel.
+A frontier model does the thinking up front.
+It asks you every open question, records your answers in Linear, plans the work, and specifies a failing test for every tiny task.
+Then cheap fast models type the code in parallel, each boxed into one task, one test, a few named files, and 350 lines.
+A local pipeline checks the result, reviews it, and drives a real browser through it before anything reaches you.
+You get a gh stack on your branch, one layer per task, and each layer takes about a minute to read.
 
 ## Quick start
 
@@ -13,34 +17,56 @@ A frontier model makes the decisions and checks the work, while cheap fast model
 
 Nothing is pushed until you say so, and fast-coding never merges anything.
 
-## What you get
+## Why we built it
 
-Each feature becomes one gh stack.
-Every task is a small layer in dependency order, and each layer takes about a minute to read.
+The expensive part of software is deciding what to build and checking that it works.
+Typing the code is the cheap part.
+fast-coding spends the frontier model only on deciding and checking, and it makes the typing nearly free.
+On the prototype that built fast-coding, the typing came to about a cent per task.
 
-Tests come first.
+Here is what that buys you over a single Claude session.
+
+**It is cheaper, and it runs in parallel.**
+One Claude session is one worker on a subscription with rate limits.
+fast-coding runs its implementers side by side for cents, and it saves the subscription for the planning and review that only a frontier model does well.
+
+**Tests come before code, by construction.**
 Every task's test exists and fails before an implementer starts, and it includes holdout cases the implementer never sees.
+A lone model tends to write the code first and then write tests that fit the code.
 
-Each task stays inside its fence.
-An implementer may only touch the files its task names, it cannot change the protected tests, and its branch stays under 350 changed lines.
+**Scope stays where you put it.**
+Each task is fenced in.
+An implementer may only touch the files its task names, it cannot change the protected tests, it adds no documents, and its branch stays under 350 changed lines.
+A long single session drifts, and a fenced task has nowhere to drift to.
 
-Verification happens for real.
-Every finding from the model review is confirmed against the code, every acceptance criterion gets its own check, and a real browser runs the feature against an assert you wrote.
+**The output is sized for review.**
+Each feature becomes one stack, with one layer per task in dependency order.
+A 2,000-line branch turns into ten 100-line layers a reviewer can read one at a time.
 
-Changes of course happen in the open.
-When the plan turns out to be wrong, only the affected tasks pause, and you make the call on anything you already settled.
-Every change is recorded in Linear, and any change can be undone.
+**The proof comes from outside the model.**
+Parallel fast-model reviews raise findings, and each high or medium finding stands only if a second call can quote the code that proves it.
+Jev checks every acceptance criterion, a real browser runs the feature against an assert you wrote, and a fix loop handles what fails.
+A model saying it is done never counts as proof.
 
-The accounting is honest.
-Every run prints the wall time of each task and the dollars spent with each provider.
+**The plan can change without losing the run.**
+When evidence shows a decision was wrong, only the tasks that rest on it pause.
+You make the call on anything you settled, every change is recorded in Linear, and any change can be undone.
+
+**The accounting is honest.**
+Every run ends with the wall time of each task and the dollars spent with each provider.
+
+The speed and cost figures here come from small benchmarks and one prototype.
+Every real run prints its own numbers, and those are the ones to trust.
 
 ## When to use it
 
 Use fast-coding for features that split into small, independent pieces with clear tests.
-Endpoints, a module and its callers, a batch of related fixes, and throwaway prototypes are all good fits.
+Endpoints, a module and its callers, a fixture and the code that handles it, a batch of related fixes, and throwaway prototypes are all good fits.
+Use it for anything you would rather review as a stack of small layers than as one big diff.
 
 Skip it for one-line fixes and exploratory debugging, where the setup costs more than it saves.
-Skip it when a task's test can't be written first, or when every task would edit the same hot file.
+Skip it when a task's test can't be written first, because that work isn't a task yet.
+Skip it when every task would edit the same hot file, because tasks never share files.
 
 ## How it works
 
