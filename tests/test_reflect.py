@@ -351,5 +351,102 @@ class AutoReflect(unittest.TestCase):
             reflect.assert_not_called()
 
 
+BLOCK = "\n\n```fast-coding\nid: {tid}\nfiles: {tid}.txt\ntest: true\n```\n"
+
+
+def issue(tid, goal, status="Todo", blocked=()):
+    return {"title": f"task {tid}", "description": f"## Goal\n{goal}" + BLOCK.format(tid=tid), "status": status, "blockedBy": sorted(blocked)}
+
+
+BEFORE = {"ENG-3": issue("003", "Save to localStorage."), "ENG-4": issue("004", "Read from localStorage.", blocked=["ENG-3"])}
+AFTER = {"ENG-3": issue("003", "Save to the server."), "ENG-4": issue("004", "Read from localStorage.", status="Canceled"),
+         "ENG-5": issue("005", "Read from the server.", blocked=["ENG-3"])}
+MAP_AFTER = MAP.replace("- Store drafts in localStorage\n",
+                        "- ~~Store drafts in localStorage~~ (C1)\n- Store drafts on the server (C1: the sandbox wipes localStorage)\n")
+
+
+def synced(proj, description, issues, ahead=0):
+    """Sync the feature and `issues` (id -> issue) the way the orchestrator does, stamped `ahead` seconds from now."""
+    fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "Drafts", "description": description},
+                         "issues": [{"id": i, **v} for i, v in issues.items()]})
+    cache = json.loads((proj / "results" / "tasks.json").read_text())
+    cache["synced_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + ahead))
+    (proj / "results" / "tasks.json").write_text(json.dumps(cache))
+
+
+def git_repo(branches):
+    """A repo with one commit and a task branch fast/hw/<id> for each id. Returns (path, git)."""
+    repo = Path(tempfile.mkdtemp())
+    git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    (repo / "a.txt").write_text("1\n")
+    git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    for b in branches:
+        git("branch", f"fast/hw/{b}")
+    return repo, git
+
+
+def change(proj, repo, action, cid=None, why=None):
+    out = io.StringIO()
+    with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+        fc.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why))
+    return out.getvalue()
+
+
+class Changes(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        self.repo, self.git = git_repo(("003", "004"))
+        for name, value in (("say", lambda m: None), ("LINEAR_KEY", None)):
+            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        synced(self.proj, MAP, BEFORE)
+
+    def test_sync_keeps_every_issue_whole(self):
+        issues = fc.linear_cache(self.proj)["issues"]
+        self.assertEqual(issues["ENG-4"], BEFORE["ENG-4"])
+
+    def test_start_snapshots_linear_and_saves_each_branch_tip(self):
+        self.assertIn("C1 open: localStorage is wiped", change(self.proj, self.repo, "start", why="localStorage is wiped"))
+        rec = fc.load_change(self.proj, "C1")
+        self.assertEqual(rec["before"]["issues"]["ENG-4"]["blockedBy"], ["ENG-3"])
+        tip = self.git("rev-parse", "fast/hw/003")
+        self.assertEqual(rec["tips"]["003"], tip)
+        self.assertEqual(self.git("rev-parse", "refs/fast-coding/hw/C1/003"), tip)
+        self.assertEqual(fc.open_change(self.proj), "C1")
+        self.assertEqual(fc.change_line(self.proj), "  CHANGE C1 open: localStorage is wiped")
+
+    def test_start_needs_a_fresh_sync_and_no_open_change(self):
+        synced(self.proj, MAP, BEFORE, ahead=-600)
+        with self.assertRaises(SystemExit):
+            change(self.proj, self.repo, "start", why="x")
+        synced(self.proj, MAP, BEFORE)
+        change(self.proj, self.repo, "start", why="x")
+        with self.assertRaises(SystemExit):
+            change(self.proj, self.repo, "start", why="y")
+
+    def test_done_records_what_changed_and_why(self):
+        change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox.")
+        with self.assertRaises(SystemExit):
+            change(self.proj, self.repo, "done")  # no sync since the start
+        synced(self.proj, MAP_AFTER, AFTER, ahead=2)
+        out = change(self.proj, self.repo, "done")
+        self.assertIn("C1: localStorage is wiped by the sandbox. Superseded: Store drafts in localStorage. "
+                      "Canceled 004. New 005. Edited 003. Evidence: none recorded.", out)
+        self.assertIn("post the comment above on ENG-1 through Linear", out)
+        self.assertIsNone(fc.open_change(self.proj))
+        self.assertTrue(fc.load_change(self.proj, "C1")["diff"]["feature"])
+
+    def test_keeping_the_plan_is_recorded_too(self):
+        change(self.proj, self.repo, "start", why="the captain keeps localStorage")
+        synced(self.proj, MAP, BEFORE, ahead=2)
+        self.assertIn("C1: the captain keeps localStorage. No changes: the plan stays as it was.", change(self.proj, self.repo, "done"))
+
+    def test_a_canceled_issue_the_sync_no_longer_lists_still_counts(self):
+        change(self.proj, self.repo, "start", why="x")
+        synced(self.proj, MAP, {"ENG-3": BEFORE["ENG-3"]}, ahead=2)
+        change(self.proj, self.repo, "done")
+        self.assertEqual(fc.load_change(self.proj, "C1")["diff"]["canceled"], ["ENG-4"])
+
+
 if __name__ == "__main__":
     unittest.main()

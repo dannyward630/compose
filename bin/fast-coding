@@ -300,8 +300,12 @@ def sync_tasks(proj, data):
     tasks.sort(key=lambda t: t["id"])
     (proj / "results").mkdir(exist_ok=True)
     f = data["feature"]
+    issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status", ""),
+                        "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or [])}
+              for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
     (proj / "results" / "tasks.json").write_text(json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks}, indent=2))
+        "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks,
+        "issues": issues}, indent=2))
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
@@ -2732,6 +2736,117 @@ def cmd_hold(a):
     tmp.write_text(json.dumps(hold, indent=2))
     os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
+CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
+CHANGE_FIELDS = ("title", "description", "status", "blockedBy")
+
+def load_change(proj, cid):
+    f = changes_dir(proj) / f"{cid}.json"
+    return json.loads(f.read_text()) if f.exists() else None
+
+def change_ids(proj):
+    return sorted((f.stem for f in changes_dir(proj).glob("C*.json")), key=lambda c: int(c[1:]))
+
+def open_change(proj):
+    return next((c for c in change_ids(proj) if not load_change(proj, c).get("done_at")), None)
+
+def change_line(proj):
+    """`status`'s note on an open change of course: held tasks wait on it."""
+    cid = open_change(proj)
+    return f"  CHANGE {cid} open: {load_change(proj, cid)['why'][:60]}" if cid else ""
+
+def fresh_sync(proj):
+    cache = linear_cache(proj)
+    if not cache.get("synced_at") or time.time() - report_time(cache["synced_at"]) > CHANGE_SYNC_MAX:
+        sys.exit(f"sync first: a change of course is read from the last sync, and that is older than {CHANGE_SYNC_MAX // 60} minutes")
+    return cache
+
+def begin_change(proj, repo, why):
+    """Open change C<n>: snapshot Linear as last synced, each task's result, and every task branch tip, kept under a ref so a
+    layer the re-plan rebuilds can be brought back."""
+    if open_change(proj):
+        sys.exit(f"{open_change(proj)} is still open: close it with `fast-coding change done` first")
+    cache = fresh_sync(proj)
+    ids = change_ids(proj)
+    cid = f"C{int(ids[-1][1:]) + 1 if ids else 1}"
+    tips, results = {}, {}
+    for m in cache["tasks"]:
+        tip = sh(["git", "rev-parse", "--verify", "-q", f"fast/{proj.name}/{m['id']}"], repo, check=False).stdout.strip()
+        if tip:
+            tips[m["id"]] = tip
+            sh(["git", "update-ref", f"refs/fast-coding/{proj.name}/{cid}/{m['id']}", tip], repo)
+        res = proj / "results" / f"{m['id']}.json"
+        if res.exists():
+            results[m["id"]] = json.loads(res.read_text())
+    reflects = sorted((proj / "results").glob("reflect-*.json"))
+    rec = {"id": cid, "why": why.strip().rstrip("."), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "reflect": reflects[-1].name if reflects else None, "before": {"feature": cache["feature"], "issues": cache.get("issues", {})},
+           "tips": tips, "results": results, "done_at": None}
+    changes_dir(proj).mkdir(parents=True, exist_ok=True)
+    (changes_dir(proj) / f"{cid}.json").write_text(json.dumps(rec, indent=2))
+    return cid, rec
+
+def change_diff(before, after):
+    """What a change of course did, read from two syncs. Linear's list may leave canceled issues out, so an issue the second
+    sync no longer has counts as canceled."""
+    b, a = before["issues"], after["issues"]
+    gone = [l for l in decision_lines(before["feature"].get("description")) if l not in decision_lines(after["feature"].get("description"))]
+    canceled = sorted(i for i in b if i not in a or (a[i]["status"] != b[i]["status"] and a[i]["status"].lower() in ("canceled", "cancelled")))
+    return {"superseded": gone, "new": sorted(i for i in a if i not in b), "canceled": canceled,
+            "edited": sorted(i for i in a if i in b and i not in canceled and any(a[i].get(k) != b[i].get(k) for k in CHANGE_FIELDS)),
+            "feature": before["feature"].get("description") != after["feature"].get("description")}
+
+def issue_label(ident, issue):
+    """A task's id (`004`) when the issue carries a fast-coding block, else the issue's own id."""
+    m = TASK_BLOCK.search((issue or {}).get("description") or "")
+    tid = re.search(r"^id:\s*(\S+)", m.group(1), re.M) if m else None
+    return tid.group(1) if tid else ident
+
+def change_comment(rec):
+    d, issues = rec["diff"], {**rec["before"]["issues"], **rec["after"]["issues"]}
+    parts = ([f"Superseded: {'; '.join(d['superseded'])}."] if d["superseded"] else []) + \
+            [f"{name} {', '.join(issue_label(i, issues.get(i)) for i in d[key])}."
+             for name, key in (("Canceled", "canceled"), ("New", "new"), ("Edited", "edited")) if d[key]]
+    return f"{rec['id']}: {rec['why']}. {' '.join(parts) or 'No changes: the plan stays as it was.'} Evidence: {rec.get('reflect') or 'none recorded'}."
+
+def change_start(a, proj, repo):
+    if not a.why:
+        sys.exit('change start needs --why "<one line>"')
+    cid, rec = begin_change(proj, repo, a.why)
+    print(f"{cid} open: {rec['why']}\nEdit Linear, sync, then `fast-coding change done`.")
+
+def change_done(a, proj, repo):
+    cid = open_change(proj)
+    if not cid:
+        sys.exit('no change is open; `fast-coding change start --why "<one line>"` opens one')
+    rec, cache = load_change(proj, cid), linear_cache(proj)
+    if (cache.get("synced_at") or "") <= rec["started_at"]:
+        sys.exit(f"sync after your Linear edits: {cid} is read from a sync newer than its start ({rec['started_at']})")
+    rec["after"] = {"feature": cache["feature"], "issues": cache.get("issues", {})}
+    rec["diff"] = change_diff(rec["before"], rec["after"])
+    rec["done_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    (changes_dir(proj) / f"{cid}.json").write_text(json.dumps(rec, indent=2))
+    body, feature = change_comment(rec), cache["feature"]["id"]
+    print(body)
+    if not linear_ready():
+        print(f"post the comment above on {feature} through Linear")
+        return
+    try:
+        linear_comment(linear_issue(feature), body)
+        print(f"commented on {feature}")
+    except Exception as e:  # noqa: BLE001
+        print(f"linear {feature}: comment failed ({str(e)[:200]}); post the comment above through Linear")
+
+def change_undo(a, proj, repo):
+    sys.exit("change undo is not built yet")
+
+def cmd_change(a):
+    """A change of course as one recorded unit: `start` snapshots Linear as last synced, `done` records what changed and why on
+    the feature, `undo C<n>` puts back what C<n> touched, as a new change."""
+    proj = project_dir(a); repo = Path(a.repo).resolve()
+    if a.action == "undo" and not a.id:
+        sys.exit("usage: fast-coding change undo C<n>")
+    {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
+
 def cmd_reflect(a):
     """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer."""
     proj = project_dir(a)
@@ -3305,7 +3420,7 @@ def render_status(repo, projects):
                (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> fast-coding resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {project_after(proj)})" if project_after(proj) else ""
-        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}")
+        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{change_line(proj)}")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
@@ -4058,6 +4173,7 @@ def main():
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
+                            ("change", cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
@@ -4119,6 +4235,10 @@ def main():
             s.add_argument("--only", help="comma-separated task ids to hold")
             s.add_argument("--reason", help="one line: why they wait")
             s.add_argument("--release", help="comma-separated task ids, or all")
+        if name == "change":
+            s.add_argument("action", choices=("start", "done", "undo"))
+            s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
+            s.add_argument("--why", help="start: one line, the reason for the change")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator, wayfinder, or a helper's job; the agent is named <slug>-<role>")
