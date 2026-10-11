@@ -154,7 +154,7 @@ class Reflect(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc, "project_dir", lambda a: proj), \
                 mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
-                mock.patch("sys.stdin", io.StringIO("captain: drafts must sync across devices\n")), redirect_stdout(out):
+                mock.patch("sys.stdin", io.StringIO("product owner: drafts must sync across devices\n")), redirect_stdout(out):
             fc.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
         self.assertIn("BROKEN", out.getvalue())
         self.assertIn("Store drafts in localStorage", out.getvalue())
@@ -540,9 +540,9 @@ class Changes(unittest.TestCase):
         self.assertTrue(fc.load_change(self.proj, "C1")["diff"]["feature"])
 
     def test_keeping_the_plan_is_recorded_too(self):
-        change(self.proj, self.repo, "start", why="the captain keeps localStorage")
+        change(self.proj, self.repo, "start", why="the product owner keeps localStorage")
         synced(self.proj, MAP, BEFORE, ahead=2)
-        self.assertIn("C1: the captain keeps localStorage. No changes: the plan stays as it was.", change(self.proj, self.repo, "done"))
+        self.assertIn("C1: the product owner keeps localStorage. No changes: the plan stays as it was.", change(self.proj, self.repo, "done"))
 
     def test_a_task_the_run_only_moved_is_not_an_edit(self):
         change(self.proj, self.repo, "start", why="x")

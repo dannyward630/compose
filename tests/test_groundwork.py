@@ -137,7 +137,7 @@ class CondenseFailure(unittest.TestCase):
 
 
 class CrewWorkdir(unittest.TestCase):
-    """A crew pointed at another repo works in its own worktree; the repo's checkout never switches branches."""
+    """A teammate pointed at another repo works in its own worktree; the repo's checkout never switches branches."""
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
         self.project, _ = repo_with({"README.md": "project\n"})

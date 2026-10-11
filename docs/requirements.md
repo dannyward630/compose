@@ -13,7 +13,7 @@ Install each of these once per machine.
 | git 2.30+ | task clones, branches, diffs | Xcode Command Line Tools or Homebrew |
 | Node 22.19+ | pi, Lavish, the Frame0 MCP server, `node --test` repos | `brew install node` |
 | pi | the default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` |
-| Claude Code | the orchestrator, every crew session, model probes, `frame0` registration | [claude.com/claude-code](https://claude.com/claude-code) |
+| Claude Code | the orchestrator, every teammate session, model probes, `frame0` registration | [claude.com/claude-code](https://claude.com/claude-code) |
 | OpenRouter account and key | implementers, fixers, Mercury review | see [Keys](#keys) |
 | Linear account | the plan, stories, tasks, and decisions | Linear MCP connected in Claude Code; optional API key per [workspace](workspaces.md) |
 | gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true` |
@@ -38,7 +38,7 @@ Each optional tool adds one feature.
 
 | Tool | Unlocks | Install |
 |---|---|---|
-| herdr | the visible fleet: crews, panes, one space per project ([herdr.md](herdr.md)) | herdr's installer; without it everything runs headless in one session |
+| herdr | the visible fleet: teammates, panes, one space per project ([herdr.md](herdr.md)) | herdr's installer; without it everything runs headless in one session |
 | treehouse | worktrees from a pool inside the repo | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh`; plain git worktrees without it |
 | graft | `file:line` context packs for implementers | `brew install graft` |
 | Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); the MCP server comes through `npx` |
@@ -78,7 +78,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.fast-coding/.env` | verify's model keys |
 | `~/.fast-coding/model-probe.json` | the day's model availability probes |
 | `~/.fast-coding/tool-bugs.jsonl` | every project's tool-bug reports |
-| `~/.claude.json` | read for folder trust; each crew directory's local `frame0` MCP server is written here |
+| `~/.claude.json` | read for folder trust; the local `frame0` MCP server for each teammate's directory is written here |
 | `~/.pi/agent/` | pi's `models.json`, `auth.json`, and the herdr extension |
 
 ## Environment variables

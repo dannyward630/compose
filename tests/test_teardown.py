@@ -8,7 +8,7 @@ _spec.loader.exec_module(fc)
 
 
 class Teardown(unittest.TestCase):
-    """Nothing a project started stays open: done crew close themselves, the orchestrator's done tears down the rest."""
+    """Nothing a project started stays open: done teammates close themselves, the orchestrator's done tears down the rest."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         self.proj.mkdir(parents=True)
@@ -37,7 +37,7 @@ class Teardown(unittest.TestCase):
 
     def test_closes_runs_verify_and_done_crew_only(self):
         self.assertEqual(sorted(self.teardown()), sorted(["implementers", "006 006 Question", "verify", "verify 12:10", "tests"]))
-        self.assertEqual(sorted(self.tabs), ["t1", "t10", "t11", "t2", "t3", "t6"])  # shell, status, orchestrator, unfinished crew, others' tabs stay
+        self.assertEqual(sorted(self.tabs), ["t1", "t10", "t11", "t2", "t3", "t6"])  # shell, status, orchestrator, unfinished teammate, others' tabs stay
         self.assertEqual(fc.crew_record(self.proj, "shop-tests")["closed"]["why"], "teardown")
         self.assertEqual(self.teardown(), [])  # idempotent
 

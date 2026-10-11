@@ -36,7 +36,7 @@ Three more rules apply to the block and the issue around it:
 - The `after` field comes from the issue's "blocked by" links to other tasks of the feature.
   Each linked task becomes the layer this task stacks on.
 - The `model:` field picks another implementer for one task.
-  Leave it unset unless the captain decided otherwise.
+  Leave it unset unless the product owner decided otherwise.
 - Only an issue with the block counts as a task.
   Stories, for example, have none.
 

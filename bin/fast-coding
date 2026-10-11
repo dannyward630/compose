@@ -42,7 +42,7 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 #    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
 # A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
-# `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions run in pi or Claude Code.
+# `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Teammate sessions run in pi or Claude Code.
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
@@ -768,10 +768,10 @@ def herdr_space(proj):
         herdr_status_tab(space, wt, slug)
     return space
 
-# ---------- crew: Claude sessions in the project's space, reporting upward ----------
-# The captain talks to the team lead (the session they started), which stays where it was launched. Each project gets an
-# orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts crew of its own (a wayfinder
-# question, a researcher). Every crew session reports with `fast-coding report`; `watch` turns new reports into wake events.
+# ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
+# The product owner talks to the team lead (the session they started), which stays where it was launched. Each project gets an
+# orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts teammates of its own (a wayfinder
+# question, a researcher). Every teammate session reports with `fast-coding report`; `watch` turns new reports into wake events.
 CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
 TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the team lead
@@ -789,7 +789,7 @@ def scratch_dir(proj, name=None):
     return proj / "scratch" / name if name else proj / "scratch"
 
 def listeners_under(root):
-    """Pids listening on a TCP port whose working directory is inside `root`: the servers and dev watchers a crew or run
+    """Pids listening on a TCP port whose working directory is inside `root`: the servers and dev watchers a teammate or run
     left behind. Listening narrows it to servers, so the herdr shells and agent sessions that also sit in the worktree stay."""
     pids = set(sh("lsof -nP -iTCP -sTCP:LISTEN -t", ".", check=False).stdout.split())
     root, out = str(Path(root).resolve()), []
@@ -807,11 +807,11 @@ def stop_listeners_under(root):
     return pids
 
 def crew_preamble(proj, name, title):
-    up = "the team lead, who relays to the captain" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
+    up = "the team lead, who relays to the product owner" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
     report = f"fast-coding report --repo {project_worktree(proj)} --project {proj.name} --as {name}"
-    return (f"You are {name}, crew of fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
+    return (f"You are {name}, a teammate on fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
-            f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the captain (they may answer here in "
+            f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the product owner (they may answer here in "
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
@@ -821,7 +821,7 @@ def crew_preamble(proj, name, title):
             f"`{report} contradiction \"<what you found>; Linear says: <quoted line> (<issue>); evidence: <file:line or command output>\"`, "
             f"then keep working on what it does not touch, and never re-scope your brief.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
-            f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
+            f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, teammates, or Linear. "
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
             f"Fact-check before you say it: every claim about the code, a tool, or a result comes from evidence you gathered (graft "
             f"output with file:line, a command and its output, a test run). Keep facts apart from hypotheses, write 'not verified' "
@@ -895,11 +895,11 @@ def model_available(model):
     return ok, why
 
 def crew_pick(role, explicit=None):
-    """(model, effort, note) for a crew session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
+    """(model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
     models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator
-    and the wayfinder crew), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
+    and the wayfinder teammate), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
-    unprobed. Crew sessions run in pi or Claude Code."""
+    unprobed. Teammate sessions run in pi or Claude Code."""
     if explicit and explicit not in CREW_MODELS:
         key, chain = "--model", [(explicit, None)]
     else:
@@ -913,7 +913,7 @@ def crew_pick(role, explicit=None):
     for m, _ in chain:
         if not (is_claude(m) or str(m).startswith("pi:")):
             where = "" if key == "--model" else f" in {CONFIG_PATH}"
-            sys.exit(f"{label} is {m!r}, but crew sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
+            sys.exit(f"{label} is {m!r}, but teammate sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
                      f"or pi:<provider/model> (e.g. pi:openai/gpt-6-astra){where}; OpenCode ids are for implementers only")
     skipped = []
     for i, (model, effort) in enumerate(chain):
@@ -931,7 +931,7 @@ def crew_effort(role, explicit=None):
 
 def claude_trusted(path):
     """Whether Claude Code has accepted its folder-trust dialog for `path` or a parent (None when it cannot tell).
-    An untrusted folder parks a new session at the trust prompt, so crew start says so instead of starting one."""
+    An untrusted folder parks a new session at the trust prompt, so `crew start` says so instead of starting one."""
     try:
         projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
     except (OSError, json.JSONDecodeError):
@@ -940,10 +940,10 @@ def claude_trusted(path):
 
 def untrusted(path):
     return (f"Claude Code has never trusted {path}, so a session there would wait at its trust prompt. Run `claude` in "
-            f"{path} once and accept the prompt (the captain decides that), then start this crew again.")
+            f"{path} once and accept the prompt (the product owner decides that), then start this teammate again.")
 
 def crew_workdir(cwd, wt, name):
-    """(directory, branch) a crew session works in. A --cwd in another git repo (a toolsmith in the fast-coding repo) gets its
+    """(directory, branch) a teammate session works in. A --cwd in another git repo (a toolsmith in the fast-coding repo) gets its
     own worktree on a new branch under that repo's .claude/worktrees, so the repo's checkout, which may be what every
     session runs, never switches branches. Anything else runs where it was pointed (default: the project worktree)."""
     if not cwd:
@@ -1011,7 +1011,7 @@ def cmd_triage(a):
     if not triage(repo, proj, ids):
         sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
 
-# ---------- groundwork: the boilerplate brief, then one test crew per task on a shared contract ----------
+# ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
 
 def detect_stacks(wt):
     """One line per toolchain the probe must cover, from the manifests at the root and one level down."""
@@ -1030,7 +1030,7 @@ def detect_stacks(wt):
             found.append(f"- Rust crate in {rel}: cargo build, cargo test")
     return "\n".join(found) or "- no manifest found: read the README for how it builds and starts"
 
-GROUNDWORK_BRIEF = """You are the groundwork crew for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
+GROUNDWORK_BRIEF = """You are the groundwork teammate for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
 read them first with `fast-coding tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
 Commit on {trunk} in small commits with plain messages. Nothing is pushed.
 
@@ -1046,7 +1046,7 @@ Phase B, after the go:
 3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.fast-coding or /tmp.
 4. Commit.
 
-Phase C, the contract (you write no tests: one crew per task writes them in parallel from your contract):
+Phase C, the contract (you write no tests: one teammate per task writes them in parallel from your contract):
 Write {contract} (outside the repo; never commit it) with exactly what a test writer needs and must not guess:
 - every type, struct, and generated model a test touches, with its package and whether it is a value or a pointer
 - every stub's exact signature, and which task implements it
@@ -1063,7 +1063,7 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
-WAYFINDER_BRIEF = """You are the wayfinder crew for project {slug}. Worktree: {wt}. The map is the feature issue {feature} on Linear:
+WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. The map is the feature issue {feature} on Linear:
 its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
 1. Read the map, the spec or README named below, and the repo (`graft ask "<question>" --source`). Before asking anything, look
    for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
@@ -1074,20 +1074,20 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    Every question is a card with data-lavish-question: the question, why it matters, the options with one line each, your
    recommended option preselected and marked, and a free-text box. Each card has one answer button, and the top of the page has
    one "accept every recommendation" button; each sends exactly one window.lavish.queuePrompt with data {{question, answer}}.
-   Never choose for the captain: every card carries a recommendation, the captain answers.
+   Never choose for the product owner: every card carries a recommendation, the product owner answers.
 3. Open it: `npx -y lavish-axi {page}`, then report
    `fast-coding report --project {slug} --as {name} needs-user "questions are open in Lavish: {page}"`.
 4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
-   captain ended. If the poll is interrupted, run it again: queued answers wait for you.
+   product owner ended. If the poll is interrupted, run it again: queued answers wait for you.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
    whole-description write.
-6. New questions the answers open, and the groundwork crew's toolchain findings when the orchestrator forwards them, become new
+6. New questions the answers open, and the groundwork teammate's toolchain findings when the orchestrator forwards them, become new
    cards on the same page; then `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}`, then report `done` with the
    decisions in one line each.
 """
 
-CHANGE_BRIEF = """You are the wayfinder crew for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
+CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
 1. Read the map, the evidence (the screen file above, its `evidence` field, and the orchestrator's notes at the end of this brief),
@@ -1097,11 +1097,11 @@ The screen that raised it: {reflect}
    One card per decision line the evidence calls into question, each with data-lavish-question: the line as recorded, the evidence
    quoted verbatim with its source, the options with one line each with "keep it as is" always among them, your recommended option
    preselected and marked, and a free-text box. One answer button per card and one "accept every recommendation" button at the top;
-   each sends exactly one window.lavish.queuePrompt with data {{question, answer}}. Never choose for the captain.
+   each sends exactly one window.lavish.queuePrompt with data {{question, answer}}. Never choose for the product owner.
 3. Open it: `npx -y lavish-axi {page}`, then report
    `fast-coding report --project {slug} --as {name} needs-user "change {cid}: questions are open in Lavish: {page}"`.
 4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
-   captain ended. If the poll is interrupted, run it again: queued answers wait for you.
+   product owner ended. If the poll is interrupted, run it again: queued answers wait for you.
 5. Record each answer as it arrives, a `save_issue` patch, never a whole-description write. A line that changes is struck through
    and tagged, with the new line right after it:
    - ~~<old line>~~ ({cid})
@@ -1113,7 +1113,7 @@ The screen that raised it: {reflect}
    Do not touch tasks, stories, or the plan: the orchestrator re-plans from your answers.
 """
 
-EXPLORE_BRIEF = """You are the explore crew for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
+EXPLORE_BRIEF = """You are the explore teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
 Map the existing code for this feature fast, through graft only: `graft map`, `graft ask "<question>" --source`, `graft callers <symbol>`,
 `graft skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
 Time box: under 3 minutes. Write no code and change no file.
@@ -1128,7 +1128,7 @@ write), then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
-    """Print the explore crew's brief: a fast graft-only map of an existing repo for the planners."""
+    """Print the explore teammate's brief: a fast graft-only map of an existing repo for the planners."""
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
@@ -1136,7 +1136,7 @@ def cmd_explore(a):
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_wayfinder(a):
-    """Print the wayfinder crew's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`). With
+    """Print the wayfinder teammate's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`). With
     --change, the brief for an open change of course: its own page, only what the evidence questions."""
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
@@ -1156,7 +1156,7 @@ def cmd_wayfinder(a):
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
 TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
-TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's crews wrote 2044 lines for 727 of code
+TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 
 def test_brief(meta, contract, budget=None):
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
@@ -1170,7 +1170,7 @@ def test_brief(meta, contract, budget=None):
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
             "no CSS values, no tooling tests.\n"
             f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
-            "You work in your own worktree on your own branch; the CLI collects every crew's commits onto the project branch. "
+            "You work in your own worktree on your own branch; the CLI collects every test-writing teammate's commits onto the project branch. "
             "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
             f"`git add {paths} && git commit {paths} -m \"<plain message>\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
@@ -1179,14 +1179,14 @@ def test_brief(meta, contract, budget=None):
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
 
 def cmd_testcrews(a):
-    """Start one test-writing crew per task, in parallel, each briefed with its task and the groundwork's shared contract.
+    """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead."""
     proj = project_dir(a)
     if getattr(a, "collect", False):
         return collect_tests(proj, a.only)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
-        sys.exit(f"no contract at {contract_file}: the groundwork crew writes it after the stubs (fast-coding groundwork, phase C)")
+        sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (fast-coding groundwork, phase C)")
     contract, budget = contract_file.read_text(), getattr(a, "budget", None)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     metas = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
@@ -1210,8 +1210,8 @@ def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
 
 def test_worktree(proj, tid):
-    """Each test crew writes on its own branch in its own worktree off the stubs commit: crews sharing one branch raced
-    (an amend landed on another crew's commit). The collect step brings their commits back in task order."""
+    """Each test-writing teammate writes on its own branch in its own worktree off the stubs commit: teammates sharing one
+    branch raced (an amend landed on another teammate's commit). The collect step brings their commits back in task order."""
     wt = project_worktree(proj)
     branch, held = test_branch(proj, tid), slots(proj).get(f"tests-{tid}")
     if held and Path(held).exists():
@@ -1229,8 +1229,8 @@ def test_worktree(proj, tid):
     return path
 
 def collect_tests(proj, only=None):
-    """Cherry-pick every test crew's own commits onto the project branch in task order, then remove their worktrees and
-    branches. A conflict stops with the task named and leaves that crew's branch for a look."""
+    """Cherry-pick every test-writing teammate's own commits onto the project branch in task order, then remove their worktrees and
+    branches. A conflict stops with the task named and leaves that teammate's branch for a look."""
     wt = project_worktree(proj)
     want = {x.strip() for x in only.split(",")} if only else None
     ids = sorted(m["id"] for m in load_tasks(proj, required=True) if not want or m["id"] in want)
@@ -1255,7 +1255,7 @@ def collect_tests(proj, only=None):
     sh(["git", "worktree", "prune"], wt, check=False)
 
 def cmd_crew(a):
-    """`crew start` a Claude session in the project's space (own tab, named `<slug>-<role>`) and brief it; `crew list` shows
+    """`crew start` a teammate, a Claude session in the project's space (own tab, named `<slug>-<role>`), and brief it; `crew list` shows
     each with its last report; `crew stop` closes a finished one's tab."""
     proj = project_dir(a)
     slug, wt = proj.name, project_worktree(proj)
@@ -1272,7 +1272,7 @@ def cmd_crew(a):
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":
         if not rec.exists():
-            sys.exit(f"no crew {name}")
+            sys.exit(f"no teammate {name}")
         c = json.loads(rec.read_text())
         herdr("workspace", "focus", c["space"])
         herdr("tab", "focus", c["tab"])
@@ -1280,18 +1280,18 @@ def cmd_crew(a):
         return
     if a.action == "stop":
         if not rec.exists():
-            sys.exit(f"no crew {name}")
+            sys.exit(f"no teammate {name}")
         last = (crew_reports(proj, name) or [{}])[-1]
-        if last.get("state") != "done" and not a.force:  # closing mid-conversation loses what the captain was saying there
+        if last.get("state") != "done" and not a.force:  # closing mid-conversation loses what the product owner was saying there
             sys.exit(f"{name} has not reported done (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); "
                      f"read it with `herdr agent read {name} --lines 60`, or pass --force to close it anyway")
         herdr("tab", "close", json.loads(rec.read_text())["tab"])
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
-        print(f"crew {name} stopped")
+        print(f"teammate {name} stopped")
         return
     model, effort, why_model = crew_pick(a.role, getattr(a, "model", None))
     if not herdr_env():
-        sys.exit("crew sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
+        sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     if herdr("agent", "get", name):
         sys.exit(f"{name} is already running; steer it with: herdr agent prompt {name} \"...\"")
     brief = sys.stdin.read() if a.brief == "-" else a.brief
@@ -1304,7 +1304,7 @@ def cmd_crew(a):
     try:
         frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
     except (RuntimeError, OSError) as e:
-        print(f"crew {name} starts without the project's frame0 tools: {e}")
+        print(f"teammate {name} starts without the project's frame0 tools: {e}")
     if branch:
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
@@ -1313,7 +1313,7 @@ def cmd_crew(a):
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
-    if model.startswith("pi:"):  # the same crew in pi: its skills dir is this repo, its thinking level is the entry's effort
+    if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
         herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
               *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
               *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), check=True, timeout=90)
@@ -1326,14 +1326,14 @@ def cmd_crew(a):
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
-    print(f"crew {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
+    print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config
 
 def guard_decision(tool, path, role):
-    """None to allow, else why not. The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are crew work."""
+    """None to allow, else why not. The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
     if role != "orchestrator" or tool not in GUARDED_TOOLS or not path:
         return None
     p = Path(path).expanduser().resolve()
@@ -1342,7 +1342,7 @@ def guard_decision(tool, path, role):
     d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
     if sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
-    return (f"The orchestrator never edits code, tests, config, or docs ({p.name}). Hand it to crew: "
+    return (f"The orchestrator never edits code, tests, config, or docs ({p.name}). Hand it to a teammate: "
             f"`fast-coding crew start --role <job> --brief -`, or put it in a task issue for `run`.")
 
 def cmd_guard(a):
@@ -1365,8 +1365,8 @@ def crew_record(proj, name):
     return json.loads(f.read_text()) if f.exists() else None
 
 def crew_attention(proj, name, state, message):
-    """The captain's attention, done by the CLI so no session can forget it: a needs-user or blocked report notifies the
-    captain and badges the pane; it never steals focus (`crew focus` jumps there on request)."""
+    """The product owner's attention, done by the CLI so no session can forget it: a needs-user or blocked report notifies
+    the product owner and badges the pane; it never steals focus (`crew focus` jumps there on request)."""
     c = crew_record(proj, name)
     if not c:
         return
@@ -1377,7 +1377,7 @@ def crew_attention(proj, name, state, message):
     herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
 
 def cmd_report(a):
-    """A crew session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
+    """A teammate session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
     proj = project_dir(a)
     if a.state not in CREW_STATES:
         sys.exit(f"state is one of {', '.join(CREW_STATES)}")
@@ -1409,7 +1409,7 @@ def log_tool_bug(proj, reporter, message):
                             "message": message, "cli_commit": commit, "cli_repo": str(CLI_REPO)}) + "\n")
 
 def close_after_turn(proj, name):
-    """Close a crew session's tab once the turn that reported `done` has ended. This runs inside that session's own pane,
+    """Close a teammate session's tab once the turn that reported `done` has ended. This runs inside that session's own pane,
     so the close is a detached process (its own session, so the tab's hangup cannot reach it) that waits for the agent to
     settle first."""
     c = crew_record(proj, name)
@@ -1459,7 +1459,7 @@ def frame0_pid(proj):
 
 def frame0_register(cwd, port):
     """Point the `frame0` MCP server of sessions started in `cwd` at `port` (local scope: ~/.claude.json, nothing in the repo).
-    Sessions read it at start, so this runs before a crew starts."""
+    Sessions read it at start, so this runs before a teammate starts."""
     cwd = Path(cwd).resolve()
     args = ["-y", "frame0-mcp-server", f"--api-port={port}"]
     try:
@@ -1541,7 +1541,7 @@ def cmd_frame0(a):
         port, started = frame0_up(proj)
         print(f"frame0 for {proj.name} {'started' if started else 'already running'} on port {port}, file {design}")
         if started:
-            print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first tool call reaches it: the captain clicks Allow")
+            print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first tool call reaches it: the product owner clicks Allow")
     elif a.action == "save":
         print(f"saved {design}" if frame0_save(proj) else f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
     else:
@@ -1549,7 +1549,7 @@ def cmd_frame0(a):
 
 def teardown(proj):
     """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
-    and every crew tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
+    and every teammate tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
     if frame0_down(proj):
         print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
     stopped = stop_listeners_under(project_worktree(proj))
@@ -1587,7 +1587,7 @@ def teardown(proj):
     return closed
 
 def cmd_teardown(a):
-    """Close every tab the project's runs, verifies, and finished crew left in its herdr space."""
+    """Close every tab the project's runs, verifies, and finished teammates left in its herdr space."""
     closed = teardown(project_dir(a))
     print(f"teardown: {len(closed)} tab(s) closed" if closed else "teardown: nothing to close")
 
@@ -1595,7 +1595,7 @@ def herdr_tabs(space):
     return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
 
 def herdr_status_tab(space, wt, slug):
-    """A `status` tab running `fast-coding status --watch`, so the captain sees every task's state without asking."""
+    """A `status` tab running `fast-coding status --watch`, so the product owner sees every task's state without asking."""
     if "status" in herdr_tabs(space):
         return
     r = herdr("tab", "create", "--workspace", space, "--label", "status", "--cwd", str(wt), "--no-focus") or {}
@@ -1605,7 +1605,7 @@ def herdr_status_tab(space, wt, slug):
         herdr("pane", "run", pane, f"clear; {me} status --repo {wt} --project {slug} --watch")
 
 def herdr_label(session, label, cost, state="working"):
-    """Display-only pane metadata: the state label the captain reads next to the agent, and the running cost."""
+    """Display-only pane metadata: the state label the product owner reads next to the agent, and the running cost."""
     if session and session.get("pane"):
         herdr("pane", "report-metadata", session["pane"], "--source", "fast-coding", "--state-label", f"{state}={label}",
               "--state-label", f"done={label}", "--token", f"cost=${cost:.4f}")
@@ -2123,7 +2123,7 @@ TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.
 
 def use_treehouse():
     """Slots come from a treehouse pool when treehouse is installed (FAST_CODING_NO_TREEHOUSE=1 turns it off), else from plain
-    git worktrees. The pool lives inside the repository (`.treehouse/`, git-ignored): a crew started in a slot then sits under
+    git worktrees. The pool lives inside the repository (`.treehouse/`, git-ignored): a teammate started in a slot then sits under
     a folder Claude Code already trusts, where a slot under ~/.treehouse would stop at the trust prompt."""
     return bool(shutil.which("treehouse")) and os.environ.get("FAST_CODING_NO_TREEHOUSE") != "1"
 
@@ -2372,13 +2372,13 @@ def cmd_run(a):
         sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
     if getattr(a, "redo", False):
         os.environ["FAST_CODING_REDO"] = "1"
-    # Test crews write on their own branches; their tests must be on the project branch before any implementer starts.
+    # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
     wt = project_worktree(proj)
     pending = [m["id"] for m in tasks if sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, m["id"])], wt, check=False).returncode == 0]
     if pending:
         busy = [t for t in pending if (crew_reports(proj, agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
         if busy:
-            sys.exit(f"test crews still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
+            sys.exit(f"test-writing teammates still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
         collect_tests(proj, ",".join(pending))
     run_tasks(repo, proj, tasks, a)
 
@@ -3011,7 +3011,7 @@ def cmd_change(a):
     {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
 
 def cmd_reflect(a):
-    """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer.
+    """Screen the settled decisions against evidence you hand it: the product owner's words, a report, why you rejected a layer.
     `--dismiss` records that the evidence so far is answered (a false alarm, a task-sized fix), so no later screen flags it again."""
     proj = project_dir(a)
     load_tasks(proj, required=True)
@@ -3113,7 +3113,7 @@ def kill_listeners(ports):
 def harness_daemons(name):
     """Pids of the browser-harness daemons running under BU_NAME=`name`. A daemon carries no name on its command line, only
     in its environment, and jev never sets BU_NAME, so the daemons its runs start inherit the stage's: matching the name
-    finds exactly one stage's daemons, never another project's stage or the captain's running at the same time."""
+    finds exactly one stage's daemons, never another project's stage or the product owner's running at the same time."""
     found = set()
     for pid in sh("pgrep -f browser_harness.daemon", ".", check=False).stdout.split():
         try:
@@ -3246,7 +3246,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
     # pass, fail, exception or Ctrl-C, so no server or browser outlives a round to answer the next one.
     env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
     env.update(E2E_PORT=str(free_port()), E2E_CLIENT_PORT=str(free_port()))
-    # Never the captain's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
+    # Never the product owner's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
     # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env).
     profile = None if "BU_CDP_URL" in env else tempfile.mkdtemp(prefix="fc-e2e-browser-")
     if profile:
@@ -3260,7 +3260,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
     try:
         if profile:
             # A project's verify shows its browser. Only fast-coding's own test suite runs it headless (FAST_CODING_E2E_HEADLESS=1),
-            # so testing the tool never pops a window on the captain's screen.
+            # so testing the tool never pops a window on the product owner's screen.
             headless = os.environ.get("FAST_CODING_E2E_HEADLESS") == "1"
             p = sh(["bp", "launch", "about:blank", "--profile", profile, *(["--headless"] if headless else [])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
@@ -3719,7 +3719,7 @@ def watch_snapshot(repo, proj):
         except (json.JSONDecodeError, OSError):
             pass
     # The newest sign of life anywhere in the project, and when the last run ended: the stall rules read these.
-    marks = [(report_time(r[-1]["at"]), f"crew {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
+    marks = [(report_time(r[-1]["at"]), f"teammate {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
     marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if not f.name.startswith("watch")]
     snap["last"] = list(max(marks)) if marks else [0, ""]
     cost = proj / "results" / "run-cost.json"
@@ -3772,7 +3772,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     orch = agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
     if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
-        return []  # finished, or waiting on the captain: silence is expected
+        return []  # finished, or waiting on the product owner: silence is expected
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
     on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
@@ -3783,7 +3783,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         seen[orch] = [status, now_s]
     ev = []
     hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
-    tail = f"orchestrator {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, crews working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
+    tail = f"orchestrator {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
     def fire(key, what):
         if key not in fired:
             fired.add(key)
@@ -3796,7 +3796,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
             and all(snap["tasks"][t]["state"] == "pending" for t in pending):
         done_at = max(t for _, t in tests.values())
         if now_s - done_at >= limit:
-            fire(f"undispatched:{done_at}", f"undispatched agent={orch} every test crew was done by {hm(done_at)} and nothing is dispatched")
+            fire(f"undispatched:{done_at}", f"undispatched agent={orch} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
     ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
     if ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
         fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the orchestrator has not reported since")
@@ -3826,7 +3826,7 @@ def watch_events(before, after):
                   + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
     if after.get("halt") and after["halt"] != before.get("halt"):
         at_, provider, left = after["halt"]
-        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the captain's stop: tell them, wait for "
+        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
                   f"their word, then `fast-coding resume`)")
     if after["verify"] and after["verify"] != before["verify"]:
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
@@ -3844,9 +3844,9 @@ def watch_events(before, after):
     return ev
 
 def watch_filter(events, slug, sources):
-    """`--from` names the crew whose reports wake you (the team lead watches only its orchestrator); without it you get
+    """`--from` names the teammates whose reports wake you (the team lead watches only its orchestrator); without it you get
     everything except the orchestrator's own reports, which go up to the team lead."""
-    if sources:  # a tool-bug from any crew wakes the team lead too: it owns fixing the tool; a stall is its to supervise
+    if sources:  # a tool-bug from any teammate wakes the team lead too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
@@ -3866,7 +3866,7 @@ def cmd_watch(a, rewake=False):
     if a.now:
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
-                 "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each crew's latest report, once
+                 "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
         lines = watch_filter(watch_events(empty, cur), proj.name, sources)
         if cur["run"]:
             lines.append(f"event run=live pid={(run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
@@ -3908,7 +3908,7 @@ def cmd_watch(a, rewake=False):
                 watch_save(proj, key, base=after)
                 pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
                 working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
-                print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}: pending tasks {pending}, crews working "
+                print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}: pending tasks {pending}, teammates working "
                       f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
                       f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")
                 sys.exit(2)
@@ -4197,7 +4197,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     if has_remote:
         sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = current_branch(repo)
-    for held in slots(proj).values():  # test-crew and stack slots go back to the pool
+    for held in slots(proj).values():  # test-writing teammates' slots and stack slots go back to the pool
         release_slot(repo, held)
     slots(proj, {r: None for r in slots(proj)})
     for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
@@ -4341,19 +4341,19 @@ def main():
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
-                            ("groundwork", cmd_groundwork, "print the groundwork crew's brief; --extra adds the project's notes"),
-                            ("explore", cmd_explore, "print the explore crew's brief (a fast graft-only map of an existing repo); --extra adds notes"),
+                            ("groundwork", cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
+                            ("explore", cmd_explore, "print the explore teammate's brief (a fast graft-only map of an existing repo); --extra adds notes"),
                             ("graft", cmd_graft, "set graft up in the project's worktree again: wire it for Claude Code and build the graph"),
-                            ("wayfinder", cmd_wayfinder, "print the wayfinder crew's brief (questions on one Lavish page); --extra adds the project's notes"),
-                            ("testcrews", cmd_testcrews, "start one test-writing crew per task in parallel from the groundwork contract"),
+                            ("wayfinder", cmd_wayfinder, "print the wayfinder teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("testcrews", cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
                             ("change", cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
-                            ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
-                            ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
+                            ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
+                            ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
-                            ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
+                            ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the orchestrator's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
                             ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each orchestrator turn; its event wakes the session"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
@@ -4381,7 +4381,7 @@ def main():
             s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
             s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
             s.add_argument("--interval", type=float, default=WATCH_INTERVAL)
-            s.add_argument("--from", dest="from_", help="only these crew wake you (roles or agent names, comma-separated); the team lead passes orchestrator")
+            s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the team lead passes orchestrator")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":
@@ -4401,13 +4401,13 @@ def main():
         if name == "testcrews":
             s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
-            s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting crews")
+            s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting teammates")
             s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
-            s.add_argument("--collect", action="store_true", help="cherry-pick every test crew's commits onto the project branch in task order")
+            s.add_argument("--collect", action="store_true", help="cherry-pick every test-writing teammate's commits onto the project branch in task order")
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "reflect":
-            s.add_argument("--evidence", help="what was found: the captain's words, a report, a rejection reason; `-` reads stdin")
+            s.add_argument("--evidence", help="what was found: the product owner's words, a report, a rejection reason; `-` reads stdin")
             s.add_argument("--dismiss", help="why the evidence so far needs no change of course (a false alarm, a task-sized fix): later screens skip it")
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
         if name == "hold":

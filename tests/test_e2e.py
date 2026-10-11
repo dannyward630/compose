@@ -53,10 +53,10 @@ class E2eLifecycle(unittest.TestCase):
         ua = Path(self.dir) / "ua"
         ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version > {ua} && echo $BU_CDP_URL $BU_NAME > {out}"}]})
         self.assertTrue(ok, report)
-        self.assertIn("Headless", ua.read_text())  # no window on the captain's screen
+        self.assertIn("Headless", ua.read_text())  # no window on the product owner's screen
         url, name = out.read_text().split()
         port = int(url.rsplit(":", 1)[1])
-        self.assertNotIn(port, (9222, 9333))  # never the captain's Chrome or a fixed shared port
+        self.assertNotIn(port, (9222, 9333))  # never the product owner's Chrome or a fixed shared port
         self.assertTrue(name)
         time.sleep(0.5)
         self.assertFalse(fc.port_listening(port))

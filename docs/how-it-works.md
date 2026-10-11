@@ -50,10 +50,10 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 
 ## Finding the way
 
-In a repo that already has code, an explore crew maps it through graft first and adds a short codebase brief to the feature.
+In a repo that already has code, an explore teammate maps it through graft first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, one wayfinder crew puts every open decision on a single Lavish page, each with its options and a recommendation.
+Next, one wayfinder teammate puts every open decision on a single Lavish page, each with its options and a recommendation.
 You answer them all at once, or accept every recommendation with one button.
 Your answers go to the feature issue's "Decisions so far".
 
@@ -88,7 +88,7 @@ Each task moves to In Progress when it is dispatched, In Review when its layer p
 
 When the plan turns out to be wrong, the fleet notices and changes it in the open.
 
-1. Evidence arrives when a task ends without passing, an implementer or crew reports a contradiction with Linear, verify fails, or you say the plan changed.
+1. Evidence arrives when a task ends without passing, an implementer or teammate reports a contradiction with Linear, verify fails, or you say the plan changed.
 2. Jev screens every line of the feature's Decisions so far against that evidence and marks each one HOLDS, BROKEN, or UNCLEAR.
 3. The orchestrator holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
    Everything else keeps running.
@@ -139,7 +139,7 @@ Reasoning has to be on.
 With reasoning `none`, the model plans but never edits, and `low` fixed that at about twice the cost.
 
 The reviewer is whichever model `~/.fast-coding/.env` names as `TEXT_MODEL`, and it defaults to Mercury 2.5.
-You set the planner and crew models per role in the config, as [workspaces.md](workspaces.md#crew-models) describes.
+You set the planner and teammate models per role in the config, as [workspaces.md](workspaces.md#crew-models) describes.
 
 These figures come from small benchmarks and one prototype.
 Every real run prints its own time and cost, and those are the ones to trust.

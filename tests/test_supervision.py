@@ -13,7 +13,7 @@ ORCH = "hw-orchestrator"
 
 
 class Stalls(unittest.TestCase):
-    """Silence with work pending wakes the supervisor once; expected silence (done, waiting on the captain) never does."""
+    """Silence with work pending wakes the supervisor once; expected silence (done, waiting on the product owner) never does."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
@@ -21,7 +21,7 @@ class Stalls(unittest.TestCase):
     def snap(self, tasks=("pending",), crew=None, status="working", last_ago=60, run=False, run_end=0, verify=None):
         return {"tasks": {f"00{i}": {"state": s} for i, s in enumerate(tasks, 1)}, "agents": {ORCH: status},
                 "crew": {n: [{"at": at(ago), "state": st, "message": "m"}] for n, (st, ago) in (crew or {}).items()},
-                "run": run, "verify": verify, "run_end": run_end, "last": (NOW - last_ago, "crew x reported working")}
+                "run": run, "verify": verify, "run_end": run_end, "last": (NOW - last_ago, "teammate x reported working")}
 
     def stalls(self, snap, now=NOW):
         return fc.watch_stalls(self.proj, snap, 240, now_s=now)
@@ -37,7 +37,7 @@ class Stalls(unittest.TestCase):
     def test_recent_activity_is_not_a_stall(self):
         self.assertEqual(self.stalls(self.snap(crew={ORCH: ("working", 60)}, last_ago=60)), [])
 
-    def test_done_or_waiting_on_the_captain_is_not_a_stall(self):
+    def test_done_or_waiting_on_the_product_owner_is_not_a_stall(self):
         self.assertEqual(self.stalls(self.snap(crew={ORCH: ("done", 900)}, last_ago=900)), [])
         self.assertEqual(self.stalls(self.snap(crew={ORCH: ("needs-user", 900)}, last_ago=900)), [])
 
@@ -82,7 +82,7 @@ class WatchTimeout(unittest.TestCase):
                 fc.cmd_watch(a)
         self.assertEqual(e.exception.code, 2)
         self.assertIn("event timeout", out[-1])
-        self.assertIn("pending tasks 1, crews working hw-tests-001, run not live, verify not run", out[-1])
+        self.assertIn("pending tasks 1, teammates working hw-tests-001, run not live, verify not run", out[-1])
 
 
 def wsnap(state="pending", run=False, crashed=False, halt=None):

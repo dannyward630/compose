@@ -50,7 +50,7 @@ class Crew(unittest.TestCase):
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             return {}
-        a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the captain."})
+        a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
@@ -68,7 +68,7 @@ class Crew(unittest.TestCase):
         prompt = calls[4][3]
         self.assertIn("fast-coding report", prompt)
         self.assertIn("shop-orchestrator, your orchestrator", prompt)
-        self.assertTrue(prompt.endswith("Resolve NEB-12 with the captain."))
+        self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
     def test_orchestrator_reports_to_team_lead(self):
@@ -120,7 +120,7 @@ class Crew(unittest.TestCase):
 
 
 class Attention(unittest.TestCase):
-    """The CLI, not a session's memory, gets the captain's attention."""
+    """The CLI, not a session's memory, gets the product owner's attention."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         self.proj.mkdir(parents=True)
@@ -147,7 +147,7 @@ class Attention(unittest.TestCase):
         self.assertNotIn(("tab", "focus"), verbs)
 
     def test_done_prompts_no_other_crew(self):
-        """Decisions live on the map in Linear, recorded by the one wayfinder crew; nothing is broadcast between crews."""
+        """Decisions live on the map in Linear, recorded by the one wayfinder teammate; nothing is broadcast between teammates."""
         self.report("shop-q-neb-1", "done", "Provider: Stripe (NEB-1)")
         self.assertEqual([c for c in self.calls if c[:2] == ("agent", "prompt")], [])
 
@@ -160,7 +160,7 @@ class Attention(unittest.TestCase):
 
 
 class Guard(unittest.TestCase):
-    """The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are crew work."""
+    """The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         fc.sh(["git", "init", "-q"], self.repo)
@@ -204,7 +204,7 @@ class ToolBug(unittest.TestCase):
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
         self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
         ev = fc.watch_events(before, snap(self.proj))
-        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the team lead wakes on a crew's tool-bug too
+        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the team lead wakes on a teammate's tool-bug too
         self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the orchestrator sees it
 
     def test_every_brief_says_how_to_report_a_tool_bug(self):

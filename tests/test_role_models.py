@@ -12,7 +12,7 @@ CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-s
 
 
 class RoleModels(unittest.TestCase):
-    """Crew sessions are Claude Code; models.crew picks the model per role, and a model id always names its harness."""
+    """Teammate sessions are Claude Code; models.crew picks the model per role, and a model id always names its harness."""
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
@@ -82,7 +82,7 @@ PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model":
 
 
 class PlannerChain(unittest.TestCase):
-    """Planning (the orchestrator, the wayfinder crew) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    """Planning (the orchestrator, the wayfinder teammate) runs on `planner`: its model when Claude Code can run it, else its fallback."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))

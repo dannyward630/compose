@@ -1,7 +1,7 @@
 # Workspaces
 
 Setting up a workspace takes a few commands and one config file.
-When you finish, every OpenRouter call bills the account you chose, and each crew role runs the model you picked for it.
+When you finish, every OpenRouter call bills the account you chose, and each teammate role runs the model you picked for it.
 
 A workspace is one OpenRouter account and its settings.
 It sets which key every call bills to, plus optional models and env.
@@ -66,7 +66,7 @@ A Linear error never stops a run.
 
 ## Crew models
 
-`models.crew` picks each crew session's model by role, then `default`.
+`models.crew` picks each teammate's model by role, then `default`.
 
 - An entry is a model id, or `{"model": ..., "effort": "high"}`.
   The second form sets Claude Code's `--effort`, or pi's `--thinking` for a `pi:` model.
@@ -75,12 +75,12 @@ A Linear error never stops a run.
   It takes the first one that answers and prints which one and why.
   It never probes the last entry.
 - The orchestrator and wayfinder use `planner` when they have no entry.
-  Groundwork and test crews use `groundwork`.
+  Groundwork and test-writing teammates use `groundwork`.
 - `crew start --model small` overrides the role.
   The value can be any name under `models.crew`, or a `claude:<model-id>`.
 
-Crew sessions run in pi or Claude Code, so an OpenCode id under `models.crew` stops `crew start`.
-A pi crew session loads this repo as its skill but not Claude Code's plugin hooks, so the orchestrator's edit guard does not apply to it.
+Teammate sessions run in pi or Claude Code, so an OpenCode id under `models.crew` stops `crew start`.
+A pi teammate session loads this repo as its skill but not Claude Code's plugin hooks, so the orchestrator's edit guard does not apply to it.
 
 ## Billing halts
 

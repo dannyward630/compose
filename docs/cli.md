@@ -77,16 +77,16 @@ These commands check the finished work and turn it into a stack.
 | `stack` | Registers passed chains as gh stacks. `--submit` pushes and opens draft PRs |
 | `top` | Checks out the stack top for manual testing. `--detach` releases it |
 
-### Crews and supervision
+### Teammates and supervision
 
-These commands start the crews, collect their reports, and supervise the orchestrator.
+These commands start the teammates, collect their reports, and supervise the orchestrator.
 
 | Command | Does |
 |---|---|
-| `crew start\|list\|focus\|stop` | Manages Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
-| `explore`, `wayfinder`, `groundwork` | Prints that crew's brief. `--extra -` appends notes from stdin |
-| `testcrews` | Runs one test-writing crew per task, in parallel |
-| `report` | Lets a crew report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |
+| `crew start\|list\|focus\|stop` | Manages teammates, the Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
+| `explore`, `wayfinder`, `groundwork` | Prints that teammate's brief. `--extra -` appends notes from stdin |
+| `testcrews` | Runs one test-writing teammate per task, in parallel |
+| `report` | Lets a teammate report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |
 | `watch` | Blocks until something happens, prints one event line, and exits. `--now` prints the current state and marks it seen |
 | `teardown` | Closes finished tabs, stops leftover servers, and saves and quits Frame0 |
 | `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |

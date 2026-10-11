@@ -24,7 +24,7 @@ def repo():
 
 
 class TestCrewWorktrees(unittest.TestCase):
-    """Test crews write on their own branches; collect brings their commits back in task order."""
+    """Test-writing teammates write on their own branches; collect brings their commits back in task order."""
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
         self.repo, self.run = repo()
@@ -66,7 +66,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertTrue((self.repo / "a_test.go").exists())  # collected before the run
 
     def test_a_conflict_names_the_task_and_keeps_its_branch(self):
-        self.crew_commits("001", "a.txt", "crew\n")
+        self.crew_commits("001", "a.txt", "teammate\n")
         (self.repo / "a.txt").write_text("main\n"); self.run("commit", "-qam", "main moved")
         with self.assertRaises(SystemExit) as e:
             fc.collect_tests(self.proj)
@@ -92,7 +92,7 @@ def server(cwd):
 
 
 class Leftovers(unittest.TestCase):
-    """Servers a crew or run leaves in the project end with teardown; anything else is left alone."""
+    """Servers a teammate or run leaves in the project end with teardown; anything else is left alone."""
     def test_teardown_stops_servers_in_the_project_only(self):
         proj_wt = Path(tempfile.mkdtemp()).resolve()
         proj = proj_wt / ".fast-coding" / "p"
