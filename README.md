@@ -1,8 +1,5 @@
 # fast-coding
 
-Turn a feature idea into a reviewed, verified stack of small branches in one sitting.
-A frontier model decides and checks; cheap fast models type the code in parallel.
-
 fast-coding runs the entire engineering workflow, from the first question to pull requests you can review in minutes.
 You make the decisions and read the result.
 A fleet of agents does everything in between, and you can watch and steer every one of them.
