@@ -2743,16 +2743,26 @@ def load_change(proj, cid):
     f = changes_dir(proj) / f"{cid}.json"
     return json.loads(f.read_text()) if f.exists() else None
 
+def write_change(proj, rec):
+    changes_dir(proj).mkdir(parents=True, exist_ok=True)
+    f = changes_dir(proj) / f"{rec['id']}.json"
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(rec, indent=2))
+    os.replace(tmp, f)  # atomic: a kill mid-write never leaves a torn record for `status` to trip on
+
 def change_ids(proj):
-    return sorted((f.stem for f in changes_dir(proj).glob("C*.json")), key=lambda c: int(c[1:]))
+    return sorted((f.stem for f in changes_dir(proj).glob("C*.json") if re.fullmatch(r"C\d+", f.stem)), key=lambda c: int(c[1:]))
 
 def open_change(proj):
     return next((c for c in change_ids(proj) if not load_change(proj, c).get("done_at")), None)
 
 def change_line(proj):
-    """`status`'s note on an open change of course: held tasks wait on it."""
-    cid = open_change(proj)
-    return f"  CHANGE {cid} open: {load_change(proj, cid)['why'][:60]}" if cid else ""
+    """`status`'s note on an open change of course: held tasks wait on it. Never raises: one torn record must not take `status` down."""
+    try:
+        cid = open_change(proj)
+        return f"  CHANGE {cid} open: {load_change(proj, cid)['why'][:60]}" if cid else ""
+    except (OSError, ValueError) as e:
+        return f"  CHANGE records unreadable: {e}"
 
 def fresh_sync(proj):
     cache = linear_cache(proj)
@@ -2781,8 +2791,7 @@ def begin_change(proj, repo, why):
     rec = {"id": cid, "why": why.strip().rstrip("."), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
            "reflect": reflects[-1].name if reflects else None, "before": {"feature": cache["feature"], "issues": cache.get("issues", {})},
            "tips": tips, "results": results, "done_at": None}
-    changes_dir(proj).mkdir(parents=True, exist_ok=True)
-    (changes_dir(proj) / f"{cid}.json").write_text(json.dumps(rec, indent=2))
+    write_change(proj, rec)
     return cid, rec
 
 def change_diff(before, after):
@@ -2824,7 +2833,7 @@ def change_done(a, proj, repo):
     rec["after"] = {"feature": cache["feature"], "issues": cache.get("issues", {})}
     rec["diff"] = change_diff(rec["before"], rec["after"])
     rec["done_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    (changes_dir(proj) / f"{cid}.json").write_text(json.dumps(rec, indent=2))
+    write_change(proj, rec)
     body, feature = change_comment(rec), cache["feature"]["id"]
     print(body)
     if not linear_ready():

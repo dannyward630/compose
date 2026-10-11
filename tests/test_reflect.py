@@ -447,6 +447,29 @@ class Changes(unittest.TestCase):
         change(self.proj, self.repo, "done")
         self.assertEqual(fc.load_change(self.proj, "C1")["diff"]["canceled"], ["ENG-4"])
 
+    def test_records_are_written_atomically(self):
+        d = fc.changes_dir(self.proj)
+        change(self.proj, self.repo, "start", why="x")
+        self.assertEqual([f.name for f in d.iterdir()], ["C1.json"])
+        synced(self.proj, MAP_AFTER, AFTER, ahead=2)
+        change(self.proj, self.repo, "done")
+        self.assertEqual([f.name for f in d.iterdir()], ["C1.json"])
+        self.assertTrue(fc.load_change(self.proj, "C1")["done_at"])
+
+    def test_stray_files_do_not_break_numbering(self):
+        d = fc.changes_dir(self.proj)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "C1.json.tmp").write_text('{"id": "C1", "wh')
+        (d / "Cx.json").write_text("{}")
+        self.assertIn("C1 open", change(self.proj, self.repo, "start", why="x"))
+        self.assertEqual(fc.change_ids(self.proj), ["C1"])
+
+    def test_status_survives_an_unreadable_change_record(self):
+        d = fc.changes_dir(self.proj)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "C1.json").write_text('{"id": "C1", "wh')
+        self.assertTrue(fc.change_line(self.proj).startswith("  CHANGE records unreadable"))
+
 
 if __name__ == "__main__":
     unittest.main()
