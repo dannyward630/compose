@@ -1,6 +1,10 @@
 # Workspaces
 
-A workspace is one OpenRouter account and its settings: which key every call bills to, plus optional models and env.
+Setting up a workspace takes a few commands and one config file.
+When you finish, every OpenRouter call bills the account you chose, and each crew role runs the model you picked for it.
+
+A workspace is one OpenRouter account and its settings.
+It sets which key every call bills to, plus optional models and env.
 `default` always exists.
 
 ## Commands
@@ -13,12 +17,14 @@ pbpaste | fast-coding workspace key client-x  # set or rotate its key; add --lin
 fast-coding workspace remove client-x         # delete; removing the active one switches to default
 ```
 
-From Claude Code: `/fast-coding:workspace`, `/fast-coding:workspace personal`, `/fast-coding:workspace add client-x`.
-The slash command never asks for a key in chat; type `! pbpaste | fast-coding workspace key <name>` instead.
+From Claude Code, run `/fast-coding:workspace`, `/fast-coding:workspace personal`, or `/fast-coding:workspace add client-x`.
+The slash command never asks for a key in chat.
+Type `! pbpaste | fast-coding workspace key <name>` instead.
 
-- Keys come from piped stdin or a hidden prompt, never an argument.
-- A workspace added without a key stops every command while active, instead of billing another account.
-- Names are letters, digits, `-`, and `_`; `add`, `key`, `remove`, and `default` are reserved.
+- Keys come from piped stdin or a hidden prompt, and never from an argument.
+- A workspace added without a key stops every command while it is active, so nothing bills another account.
+- Names are letters, digits, `-`, and `_`.
+  The names `add`, `key`, `remove`, and `default` are reserved.
 
 ## Config
 
@@ -38,8 +44,9 @@ The active workspace is merged over the top level:
 ```
 
 The workspace key reaches pi, OpenCode, the Mercury review, and jev, so every OpenRouter call bills that account.
-OpenRouter presets belong to an account: create `glm-5-3-flash-fast` in each workspace's account.
-`run` and `resume` send each model one tiny prompt first, so a wrong id or preset stops the run with the provider's message.
+OpenRouter presets belong to an account, so create `glm-5-3-flash-fast` in each workspace's account.
+`run` and `resume` send each model one tiny prompt first.
+If an id or preset is wrong, the run stops with the provider's message.
 
 A model id names its harness:
 
@@ -52,31 +59,41 @@ A model id names its harness:
 
 ## Linear key
 
-A workspace's `linear_api_key` lets the CLI keep Linear's states true: tasks In Progress and In Review, stories and the feature rolled up, the feature In Review on verify PASS.
-Without it the CLI prints one `linear skipped` line and carries on; a Linear error never stops a run.
+A workspace's `linear_api_key` lets the CLI keep Linear's states true.
+It moves tasks to In Progress and In Review, rolls up the stories and the feature, and moves the feature to In Review on verify PASS.
+Without the key, the CLI prints one `linear skipped` line and carries on.
+A Linear error never stops a run.
 
 ## Crew models
 
 `models.crew` picks each crew session's model by role, then `default`.
 
-- An entry is a model id, or `{"model": ..., "effort": "high"}` to set Claude Code's `--effort` (pi's `--thinking` for a `pi:` model).
-- An entry may carry a `fallback`: another entry or an ordered list.
-- `crew start` probes the primary, then each fallback, once a day each, takes the first that answers, and prints which and why; the last entry is never probed.
-- The orchestrator and wayfinder use `planner` when they have no entry; groundwork and test crews use `groundwork`.
-- `crew start --model small` (any name under `models.crew`, or a `claude:<model-id>`) overrides the role.
+- An entry is a model id, or `{"model": ..., "effort": "high"}`.
+  The second form sets Claude Code's `--effort`, or pi's `--thinking` for a `pi:` model.
+- An entry may carry a `fallback`, which is another entry or an ordered list.
+- `crew start` probes the primary and then each fallback, once a day each.
+  It takes the first one that answers and prints which one and why.
+  It never probes the last entry.
+- The orchestrator and wayfinder use `planner` when they have no entry.
+  Groundwork and test crews use `groundwork`.
+- `crew start --model small` overrides the role.
+  The value can be any name under `models.crew`, or a `claude:<model-id>`.
 
 Crew sessions run in pi or Claude Code, so an OpenCode id under `models.crew` stops `crew start`.
 A pi crew session loads this repo as its skill but not Claude Code's plugin hooks, so the orchestrator's edit guard does not apply to it.
 
 ## Billing halts
 
-Any provider can answer "payment required": OpenRouter, Cerebras or Groq through OpenCode, TypeSafe, or jev's own calls.
-`run` and `verify` treat it as a halt, not a failure:
+Any provider can answer "payment required".
+That includes OpenRouter, Cerebras or Groq through OpenCode, TypeSafe, and jev's own calls.
+When one does, `run` and `verify` halt, and three things follow:
 
-- no attempt is consumed and nothing is retried;
-- running tasks finish and no new task starts;
-- the banner names the provider, quotes its message, and prints the top-up link; exit code 3.
+- No attempt is consumed and nothing is retried.
+- Running tasks finish and no new task starts.
+- The banner names the provider, quotes its message, and prints the top-up link.
+  The exit code is 3.
 
 After topping up, run `fast-coding resume --project <name>`.
-Passed tasks keep their branches; a halted verify reruns from its first stage.
+Passed tasks keep their branches.
+A halted verify reruns from its first stage.
 `FAST_CODING_FAKE_402=openrouter` simulates a halt for testing.

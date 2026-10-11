@@ -1,8 +1,12 @@
 # Task issues
 
+Each task is a Linear issue with a brief the implementer follows and a block the CLI reads.
+This page shows that format and what `sync` does with it.
+
 A task is a Linear issue under the project's feature, directly or under a story.
 Its title is the task's title.
-Its description is the implementer's brief and ends with the block the CLI reads:
+Its description is the implementer's brief and ends with the block the CLI reads.
+A complete description looks like this:
 
 ````markdown
 ## Goal
@@ -27,22 +31,30 @@ test: node --test 'tests/**/*.test.js'
 ```
 ````
 
-- `after` is the issue's "blocked by" links to other tasks of the feature; each becomes the layer this task stacks on.
-- `model:` picks another implementer for one task; leave it unset unless the captain decided otherwise.
-- Issues without the block, such as stories, are not tasks.
+Three more rules apply to the block and the issue around it:
+
+- The `after` field comes from the issue's "blocked by" links to other tasks of the feature.
+  Each linked task becomes the layer this task stacks on.
+- The `model:` field picks another implementer for one task.
+  Leave it unset unless the captain decided otherwise.
+- Only an issue with the block counts as a task.
+  Stories, for example, have none.
 
 ## Right-sized
 
-- One to three files.
-- One test command.
-- Under ten criteria.
-- The test fails on HEAD.
+A task is ready when it meets all four of these:
+
+- It touches one to three files.
+- It has one test command.
+- It has under ten criteria.
+- Its test fails on HEAD.
 
 If you cannot write the test, it is not a task yet.
 
 ## Sync
 
-The orchestrator reads the feature and every issue under it with its Linear MCP tools and pipes them to `fast-coding sync`:
+The orchestrator reads the feature and every issue under it with its Linear MCP tools and pipes them to `fast-coding sync`.
+The JSON has this shape:
 
 ```json
 {"feature": {"id": "ENG-123", "title": "...", "description": "<the feature's description, plan included>"},
@@ -53,7 +65,8 @@ The orchestrator reads the feature and every issue under it with its Linear MCP 
 `run`, `verify`, `resume`, `bench`, and `tasks` read what was last synced, so the orchestrator syncs right before each.
 
 The CLI writes to Linear only to keep states true, and only when the active workspace has a Linear key.
-Everything else on Linear is written by the orchestrator through the Linear MCP.
+The orchestrator writes everything else on Linear through the Linear MCP.
 
-`.fast-coding/<project>/` holds only the CLI's files: `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.
+`.fast-coding/<project>/` holds only the CLI's files.
+Those are `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.
 Nothing about the work is written to a file in the repo.

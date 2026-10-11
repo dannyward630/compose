@@ -1,7 +1,11 @@
 # CLI
 
+This page lists every fast-coding command and its flags.
+The orchestrator runs them for you, and you run them yourself only in manual mode.
+
 Every command takes `--repo <path>` (default `.`) and `--project <name>`.
-`--project` works from any checkout of the repository; it can be left out when the repo has one project.
+`--project` works from any checkout of the repository.
+You can leave it out when the repo has one project.
 
 ## Normal mode
 
@@ -16,80 +20,95 @@ You review the plan, the task list, and the stack.
 
 ## Manual mode
 
-1. `fast-coding init --project my-feature`, then work in the worktree it prints.
-2. On Linear: write the feature issue (its description is the plan) and one task issue per task, each ending with a [fast-coding block](tasks.md).
+1. Run `fast-coding init --project my-feature`, then work in the worktree it prints.
+2. On Linear, write the feature issue (its description is the plan) and one task issue per task.
+   End each task issue with a [fast-coding block](tasks.md).
 3. Write `{"feature": "ENG-123"}` to `.fast-coding/my-feature/linear.json`, write each task's test, and commit.
-4. `fast-coding sync --project my-feature < issues.json`, again after any Linear edit ([shape](tasks.md#sync)).
-5. `fast-coding run --project my-feature`, then `fast-coding verify --project my-feature`.
+4. Run `fast-coding sync --project my-feature < issues.json`, and run it again after any Linear edit ([shape](tasks.md#sync)).
+5. Run `fast-coding run --project my-feature`, then `fast-coding verify --project my-feature`.
 
-When asked, `fast-coding stack --project my-feature --submit` pushes and opens one draft PR per layer.
+When you ask, `fast-coding stack --project my-feature --submit` pushes and opens one draft PR per layer.
 After the PRs merge, `fast-coding clean --project my-feature` removes what merged and keeps what did not.
 
-Before the first run in a new repo:
+Before the first run in a new repo, do these three things:
 
-- commit everything: `run` refuses a dirty tree;
-- fill `verify.json` with the repo's lint and test commands ([verify.md](verify.md));
-- for OpenCode tasks only, add an `opencode.jsonc` allowing `edit` and `bash` so it never blocks on a prompt.
+- Commit everything, because `run` refuses a dirty tree.
+- Fill `verify.json` with the repo's lint and test commands ([verify.md](verify.md)).
+- For OpenCode tasks only, add an `opencode.jsonc` allowing `edit` and `bash` so it never blocks on a prompt.
 
 ## Commands
 
 ### Projects
 
+These commands create, list, and clean up projects.
+
 | Command | Does |
 |---|---|
-| `init` | Create branch `fast-coding/<name>`, its worktree, and `.fast-coding/<name>/`; `--here` uses this checkout, `--after <project>` branches from another project |
-| `projects` | Every project: done/total, last activity, title, states |
-| `status` | Every project with every task; `--watch` redraws every 2 s |
-| `clean` | Drop merged layers; remove a fully merged project's worktree and branch; `--delete-unmerged` also drops unreviewed layers |
-| `graft` | Set graft up in the project's worktree again |
+| `init` | Creates branch `fast-coding/<name>`, its worktree, and `.fast-coding/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
+| `projects` | Lists every project with done/total, last activity, title, and states |
+| `status` | Shows every project with every task. `--watch` redraws every 2 s |
+| `clean` | Drops merged layers and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
+| `graft` | Sets graft up again in the project's worktree |
 
 ### Tasks
 
+These commands load the tasks, dispatch them, and steer the run.
+
 | Command | Does |
 |---|---|
-| `sync` | Store the feature and its task issues from JSON on stdin |
-| `tasks` | The task list to review: files, `after`, tests; warns on shared files |
-| `run` | Dispatch tasks; `--only 003,004`, `--attempts 3`, `--parallel 3`, `--redo`, `--no-stack`, `--trunk <branch>` |
-| `done` | Record tasks finished by hand: `--only <ids> --note <why>` |
-| `triage` | Fast-model clean or flag per passed task (`run` ends with it) |
-| `resume` | Continue a run or verify that stopped on a billing halt |
-| `reflect` | Screen the settled decisions against evidence with Jev: `--evidence -`, `--against "<line>"`; `--dismiss "<why>"` marks the evidence so far answered, so later screens skip it |
-| `hold` | Hold tasks back from dispatch: `--only <ids> --reason "<why>"`; `--release <ids>` or `all` |
-| `change start\|done\|undo` | Record a change of course; `undo C<n>` puts back what it touched |
-| `bench` | Frozen task set across models: pass rate, attempts, p50/p95 time, cost |
+| `sync` | Stores the feature and its task issues from JSON on stdin |
+| `tasks` | Prints the task list to review, with files, `after`, and tests. It warns on shared files |
+| `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel 3`, `--redo`, `--no-stack`, and `--trunk <branch>` |
+| `done` | Records tasks finished by hand with `--only <ids> --note <why>` |
+| `triage` | Has a fast model clean or flag each passed task (`run` ends with it) |
+| `resume` | Continues a run or verify that stopped on a billing halt |
+| `reflect` | Screens the settled decisions against evidence with Jev, using `--evidence -` and `--against "<line>"`. `--dismiss "<why>"` marks the evidence so far as answered, so later screens skip it |
+| `hold` | Holds tasks back from dispatch with `--only <ids> --reason "<why>"`. `--release <ids>` or `all` releases them |
+| `change start\|done\|undo` | Records a change of course. `undo C<n>` puts back what it touched |
+| `bench` | Runs a frozen task set across models and reports pass rate, attempts, p50/p95 time, and cost |
 
 ### Verify and stack
 
+These commands check the finished work and turn it into a stack.
+
 | Command | Does |
 |---|---|
-| `verify` | The local pipeline; `--fix 0` reports only, `--skip-e2e`, `--skip-review` |
-| `stack` | Register passed chains as gh stacks; `--submit` pushes and opens draft PRs |
-| `top` | Check out the stack top for manual testing; `--detach` releases it |
+| `verify` | Runs the local pipeline. `--fix 0` reports only, and `--skip-e2e` and `--skip-review` skip those stages |
+| `stack` | Registers passed chains as gh stacks. `--submit` pushes and opens draft PRs |
+| `top` | Checks out the stack top for manual testing. `--detach` releases it |
 
 ### Crews and supervision
 
+These commands start the crews, collect their reports, and supervise the orchestrator.
+
 | Command | Does |
 |---|---|
-| `crew start\|list\|focus\|stop` | Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
-| `explore`, `wayfinder`, `groundwork` | Print that crew's brief; `--extra -` appends notes from stdin |
-| `testcrews` | One test-writing crew per task, in parallel |
-| `report` | A crew reports up: `working`, `needs-user`, `blocked`, `done`, `tool-bug`, `contradiction` |
-| `watch` | Block until something happens, print one event line, exit; `--now` prints the current state and marks it seen |
-| `teardown` | Close finished tabs, stop leftover servers, save and quit Frame0 |
-| `frame0 up\|save\|down` | The project's own Frame0 app |
-| `guard` | The PreToolUse hook that keeps the orchestrator from editing code |
-| `rewake` | The Stop hook that parks the orchestrator's next `watch` after each turn and wakes it on the event |
+| `crew start\|list\|focus\|stop` | Manages Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
+| `explore`, `wayfinder`, `groundwork` | Prints that crew's brief. `--extra -` appends notes from stdin |
+| `testcrews` | Runs one test-writing crew per task, in parallel |
+| `report` | Lets a crew report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |
+| `watch` | Blocks until something happens, prints one event line, and exits. `--now` prints the current state and marks it seen |
+| `teardown` | Closes finished tabs, stops leftover servers, and saves and quits Frame0 |
+| `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |
+| `guard` | Runs as the PreToolUse hook that keeps the orchestrator from editing code |
+| `rewake` | Runs as the Stop hook that parks the orchestrator's next `watch` after each turn and wakes it on the event |
 
 ### Workspaces
 
+One command lists, switches, and manages workspaces.
+
 | Command | Does |
 |---|---|
-| `workspace [<name>\|add\|key\|remove]` | List, switch, or manage workspaces ([workspaces.md](workspaces.md)) |
+| `workspace [<name>\|add\|key\|remove]` | Lists, switches, or manages workspaces ([workspaces.md](workspaces.md)) |
 
 ## Results
 
+Everything a run produces lands in `.fast-coding/<project>/results/`.
 Each task run writes `.fast-coding/<project>/results/NNN.json` with every attempt's test output, timing, and cost.
 Verify writes `results/verify.json`.
-A run that dies shows as `interrupted` in `status`; `resume` re-runs what did not pass and keeps passed layers.
-`run`, `verify`, and `resume` work in their own session and write `results/<command>.log`; the terminal that started one only streams that log.
-Closing it, or a crashed Claude session, leaves the work running; Ctrl-C stops it.
+A run that dies shows as `interrupted` in `status`.
+`resume` re-runs what did not pass and keeps passed layers.
+`run`, `verify`, and `resume` work in their own session and write `results/<command>.log`.
+The terminal that started one only streams that log.
+Closing that terminal, or a crashed Claude session, leaves the work running.
+Ctrl-C stops it.

@@ -1,9 +1,11 @@
 # Requirements
 
-Install the required rows once per machine.
-Each optional row unlocks one feature.
+Setup is one install pass per machine, then four steps to wire up your keys.
+When you finish, fast-coding can run implementers on OpenRouter.
 
 ## Required
+
+Install each of these once per machine.
 
 | Tool | Needed for | Install |
 |---|---|---|
@@ -17,9 +19,11 @@ Each optional row unlocks one feature.
 | gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true` |
 | macOS userland | `lsof`, `ps`, `pgrep`, `kill`, `open`: cleanup and launching Frame0 | ships with macOS |
 
-`run --no-stack` works without gh-stack.
+If you skip gh-stack, you can still use `run --no-stack`.
 
 ## For verify
+
+Verify needs these tools on top of the required ones.
 
 | Tool | Needed for | Install |
 |---|---|---|
@@ -30,6 +34,8 @@ Each optional row unlocks one feature.
 
 ## Optional
 
+Each optional tool adds one feature.
+
 | Tool | Unlocks | Install |
 |---|---|---|
 | herdr | the visible fleet: crews, panes, one space per project ([herdr.md](herdr.md)) | herdr's installer; without it everything runs headless in one session |
@@ -38,24 +44,31 @@ Each optional row unlocks one feature.
 | Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); the MCP server comes through `npx` |
 | OpenCode | an alternative implementer per task, a `bench` column | `curl -fsSL https://opencode.ai/install \| bash` |
 
-Also used when present: gofmt and the target repo's own prettier (formatting a task's files), and the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` (pi implementers report their state to herdr).
+fast-coding also uses gofmt and the target repo's own prettier when they are present.
+They format a task's files.
+When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
-Two tools are fetched by `npx` on every use, unpinned: `lavish-axi` (the wayfinder page) and `frame0-mcp-server`.
+`npx` fetches two tools on every use, with no pinned version.
+They are `lavish-axi` (the wayfinder page) and `frame0-mcp-server`.
 
 ## Keys
 
 The implementers run on OpenRouter.
 
 1. Put the key in pi's auth store, `~/.pi/agent/auth.json`, under `openrouter` and `openrouter-fast`.
-2. Declare the provider `openrouter-fast` in `~/.pi/agent/models.json`: base `https://openrouter.ai/api/v1`, api `openai-completions`, model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per million tokens.
-3. Create the OpenRouter preset `glm-5-3-flash-fast` (Settings > Presets): model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, fallbacks off.
-4. Write `~/.fast-coding/.env` (mode 600) with `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY` (the same OpenRouter key), `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
+2. Declare the provider `openrouter-fast` in `~/.pi/agent/models.json`.
+   Use base `https://openrouter.ai/api/v1`, api `openai-completions`, and model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per million tokens.
+3. Create the OpenRouter preset `glm-5-3-flash-fast` under Settings > Presets.
+   Use model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, and fallbacks off.
+4. Write `~/.fast-coding/.env` (mode 600) with `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`, `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
+   `TEXT_MODEL_API_KEY` takes the same OpenRouter key.
 
-The active [workspace](workspaces.md) key overrides all of these, and the process environment wins over `~/.fast-coding/.env`.
+The active [workspace](workspaces.md) key overrides all of these.
+The process environment wins over `~/.fast-coding/.env`.
 Secrets never live in this repo or on Linear issues.
 
 For OpenCode, keep the key in `~/.local/share/opencode/auth.json` and pin `options.provider.order: ["cerebras", "groq"]` in `~/.config/opencode/opencode.jsonc`.
-The `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provider Cerebras) is only needed for `bench` or an opt-in fallback.
+You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provider Cerebras) only for `bench` or an opt-in fallback.
 
 ## Files outside the repo
 
