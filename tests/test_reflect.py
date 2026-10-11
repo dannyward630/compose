@@ -262,5 +262,43 @@ class Holds(unittest.TestCase):
         self.assertEqual((row["state"], row["note"]), ("held", "D2 broken"))
 
 
+class ImplementerContradiction(unittest.TestCase):
+    def run_with(self, reply):
+        """One task whose test can never pass, with an implementer that always answers `reply`. Returns (result, prompts)."""
+        root = Path(tempfile.mkdtemp())
+        repo, proj = root / "repo", root / "proj"
+        repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        meta = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nCall answer() from a.txt."}
+        prompts = []
+        def impl(cwd, model, prompt, session=None, task=None):
+            prompts.append(prompt)
+            return "s", reply, 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+                mock.patch.object(fc, "say", lambda m: None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.run_task(repo, proj, meta, 3), prompts
+
+    def test_a_contradiction_ends_the_task_without_more_attempts(self):
+        found = "the brief says a.txt exports answer() / a.txt is plain text, a.txt:1"
+        r, prompts = self.run_with(f"Read a.txt.\nCONTRADICTION: {found}")
+        self.assertEqual((r["status"], r["attempts"], len(prompts)), ("contradiction", 1, 1))
+        self.assertEqual(r["log"][-1]["contradiction"], found)
+        self.assertIn("CONTRADICTION: <what the brief says>", prompts[0])
+        self.assertIn("contradiction", fc.FINAL_STATES)
+
+    def test_echoing_the_template_is_not_a_contradiction(self):
+        r, prompts = self.run_with("Rules noted.\nCONTRADICTION: <what the brief says> / <what the code shows, file:line>")
+        self.assertEqual((r["status"], len(prompts)), ("failed", 3))
+
+    def test_only_a_line_that_starts_with_it_counts(self):
+        self.assertIsNone(fc.contradiction("I would write CONTRADICTION: x / y if I found one"))
+        self.assertEqual(fc.contradiction("a\nCONTRADICTION: first / one\nCONTRADICTION: last / two"), "last / two")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -578,7 +578,7 @@ def linear_event(proj, meta, event, result=None):
             linear_move(issue, "In Progress")
             last = (result.get("log") or [{}])[-1]
             tail = (last.get("test_output") or "").strip().splitlines()
-            why = last.get("error") or (tail[-1] if tail else "no detail")
+            why = last.get("contradiction") or last.get("error") or (tail[-1] if tail else "no detail")
             linear_comment(issue, f"{result['status']} after {result['attempts']} attempt(s) (${result['cost']:.4f}, model `{result['model']}`): {why[:400]}")
         parent = (issue.get("parent") or {}).get("identifier")
         if parent:
@@ -1831,7 +1831,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "hardening, helpers, or comments the task does not ask for. Do not explain, just edit.\n"
               f"Hard limits: the whole change must stay under {MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
               "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
-              "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.")
+              "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.\n"
+              "If a fact this brief states is wrong (a function, file, or API it names is missing or behaves differently), do not "
+              "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
     def progress(state):  # `fast-coding status --watch` reads this while the task runs
@@ -1898,6 +1900,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 continue
             break
         cost += usage["cost"]
+        found = contradiction(reply)
+        if found:  # the brief states something the code disproves: more attempts would only work around it
+            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
+                        "contradiction": found, "reply": reply[-1500:]})
+            say(f"{tid} attempt {attempt} contradiction  {found[:160]}")
+            status = "contradiction"
+            break
         test = run_test(meta, wt)
         tampered = [f for f, d in digests(wt, meta["protected"]).items() if d != before[f]]
         lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
@@ -3344,8 +3353,15 @@ def too_big(meta):
         why.append(f"brief is {len(meta['body'])} chars (max {MAX_TASK_BRIEF})")
     return "; ".join(why) or None
 
+CONTRADICTION_RE = re.compile(r"^CONTRADICTION:[ \t]*(.+)$", re.M)
+
+def contradiction(reply):
+    """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back is not one."""
+    found = [x.strip() for x in CONTRADICTION_RE.findall(reply or "") if "<what the brief says>" not in x]
+    return found[-1] if found else None
+
 # ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
+FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
 
 def watch_snapshot(repo, proj):
     """Everything an orchestrator decides on: each task's state, each herdr agent's status, run and verify markers."""
