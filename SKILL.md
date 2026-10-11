@@ -126,6 +126,7 @@ In a repo that already has code, the first crew is an explore crew, started at t
 `fast-coding explore --project <slug> | fast-coding crew start --project <slug> --role explore --title explore --brief -`.
 It maps the code through graft only, in under 3 minutes, and appends a codebase brief of at most 40 lines to the feature's Notes: entry points, where the feature plugs in (file:line), patterns and helpers to reuse, the test setup and commands, risks.
 Wayfinder (0b) and the plan read that brief: ask only what the code does not already answer, and plan tasks onto the files and helpers it names.
+It is a gate, not a nicety: in a repo with code, no wayfinder question is asked and no plan, story, or task is written until the brief is on the feature. A question or task built on what the code "probably" does is an assumption the captain never agreed to; check it in the code first (`graft ask`, `graft callers`), and if the code cannot settle it, say so in the question.
 A new or empty repo has nothing to explore: skip this step.
 
 ### 0b. Find the way first, always
@@ -375,6 +376,11 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
 
 ## Rules
+- Fact-check before you say it. Every claim about an existing codebase, tool, system, or result comes from evidence gathered in this session: graft output with file:line, a command and its output, a test run, a doc you read. Cite it where it matters. Keep observed facts apart from hypotheses, and when you have not verified something, say "not verified" or "unknown" instead of stating a guess. Never present a likely-enough answer as fact, and never fill a gap with what the code probably does.
+- Report outcomes faithfully: if work failed, partly passed, or was skipped, say so plainly with the evidence. Never round a partial result up to done.
+- Before investigating or asking, read what is already established (the feature's Notes and Decisions, the codebase brief, earlier reports); do not re-derive or re-ask it.
+- Evidence is not authorization: a diagnosis, a report, or a recommendation changes nothing by itself; the change still goes through its task or the captain.
+- A bug is diagnosed from an end-to-end reproduction of what the user sees, not from an internal error string or a hunch: name the trigger and the symptom, test the leading explanation with the smallest change that should flip the outcome, and look for the observation that would prove it wrong. When a faithful reproduction is impossible, say so instead of presenting a stand-in as equivalent.
 - Nothing is implemented beyond what the captain settled. Intake, wayfinder, stories, the plan, task issues, and tests are all preparation; `fast-coding run` is the first implementing action. It starts without a further go when the task list matches the settled spec, and waits for an explicit go whenever it departs from it (step 3b), every wave.
 - Tests are the contract. The implementer never edits them.
 - A failure of fast-coding itself is a `tool-bug` report, never a silent workaround and never an edit to the fast-coding repo from a project (0h): the project works around it, the first mate's toolsmith fixes the tool, and the captain approves the merge.

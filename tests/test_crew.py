@@ -74,6 +74,8 @@ class Crew(unittest.TestCase):
         self.assertIn("never mention fast-coding", pre)
         self.assertIn("one test file per unit", pre)
         self.assertIn("not even a throwaway reference", pre)
+        self.assertIn("Fact-check before you say it", pre)
+        self.assertIn("not verified", pre)
 
     def test_start_outside_herdr_says_so(self):
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
