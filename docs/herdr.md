@@ -71,4 +71,5 @@ The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the 
 A lock keeps one watch per watcher: a second hook exits at once, and a second `watch` waits its turn.
 The hook does nothing in any other session, and its watch ends with the session that parked it.
 Restarting the orchestrator in its tab loses nothing: its first turn end reports whatever happened while it was down.
+A `run` or `verify` it started keeps going meanwhile: those work in their own session, so a closed tab or a crashed session never ends them.
 The first mate, and an orchestrator outside herdr, still run `watch` in the background themselves.

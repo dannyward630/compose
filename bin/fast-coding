@@ -9,7 +9,7 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, fcntl, hashlib, shlex, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import argparse, fcntl, hashlib, shlex, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -1720,7 +1720,6 @@ HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely 
 def timed(cmd, cwd, limit, env=None):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint."""
-    import signal
     p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     try:
@@ -2580,7 +2579,6 @@ def port_listening(port):
 def stop_group(proc):
     """End a setup command and everything it started in its process group, even after the shell itself exited
     (its pid is the group id, so `getpgid` on a reaped leader is not needed)."""
-    import signal
     for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 0)):
         try:
             os.killpg(proc.pid, sig)
@@ -3295,7 +3293,7 @@ def watch_events(before, after):
     if before["run"] and not after["run"]:
         passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
         ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
-                  + ("  CRASHED: the run process died without finishing; read its log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
+                  + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
     if after.get("halt") and after["halt"] != before.get("halt"):
         at_, provider, left = after["halt"]
         ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the captain's stop: tell them, wait for "
@@ -3332,7 +3330,11 @@ def cmd_watch(a, rewake=False):
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each crew's latest report, once
-        for line in watch_filter(watch_events(empty, cur), proj.name, sources) or ["event idle  nothing running"]:
+        lines = watch_filter(watch_events(empty, cur), proj.name, sources)
+        if cur["run"]:
+            lines.append(f"event run=live pid={(run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
+                         f"read results/run.log; do not start a second)")
+        for line in lines or ["event idle  nothing running"]:
             print(line)
         watch_save(proj, key, base=cur)  # the reconcile is the acknowledgement: the next watch reports only what changes after it
         return
@@ -3731,6 +3733,58 @@ def cmd_clean(a):
     for name, (wt, proj) in projects.items():
         clean_project(main_repo, name, wt, proj, delete_unmerged=a.delete_unmerged)
 
+DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
+
+def follow(cmd, log):
+    """Run cmd detached, writing to log, and stream the log here until it exits; return its exit code. The work is double
+    forked into its own session under launchd: a closed herdr tab makes Claude Code kill its background task's whole process
+    tree, and that must end only this follower. Ctrl-C here stops the work too."""
+    log, done = Path(log), Path(f"{log}.exit")
+    log.write_bytes(b"")
+    done.unlink(missing_ok=True)
+    env = os.environ | {"FAST_CODING_DETACHED": "1", "PYTHONUNBUFFERED": "1"}
+    group = os.fork()
+    if group == 0:
+        try:
+            os.setsid()
+            if os.fork() == 0:
+                out = os.open(log, os.O_WRONLY | os.O_APPEND)
+                os.dup2(out, 1)
+                os.dup2(out, 2)
+                os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+                os.execve("/bin/sh", ["/bin/sh", "-c", '"$@"; echo $? > "$0"', str(done), *cmd], env)
+        finally:
+            os._exit(0)
+    os.waitpid(group, 0)  # the middle process exits at once; its pid stays the work's process group
+    def ended():
+        try:
+            os.killpg(group, 0)
+            return done.exists() and done.read_text().strip() != ""
+        except ProcessLookupError:
+            return True
+    with open(log, "rb") as f:
+        while True:
+            try:
+                finished = ended()  # before the read: everything the work wrote is in the log once it has ended
+                chunk = f.read()
+                if chunk:
+                    sys.stdout.write(chunk.decode(errors="replace"))
+                    sys.stdout.flush()
+                if finished:
+                    code = done.read_text().strip() if done.exists() else ""
+                    return int(code) if code else 1  # no code: it was killed before it could write one
+                if not chunk:
+                    time.sleep(0.2)
+            except KeyboardInterrupt:
+                os.killpg(group, signal.SIGINT)  # a person stopping it means the work, not just this view of it
+
+def detach(a):
+    proj = project_dir(argparse.Namespace(repo=a.repo, project=a.project))
+    log = proj / "results" / f"{a.cmd}.log"
+    log.parent.mkdir(exist_ok=True)
+    print(f"[{now()}] {a.cmd} runs in its own session; it outlives this terminal. Log: {log}", flush=True)
+    sys.exit(follow([sys.executable, *sys.argv], log))
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return cmd_timed(sys.argv[2:])
@@ -3835,11 +3889,17 @@ def main():
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
     a = ap.parse_args()
+    if a.cmd in DETACHED and not os.environ.get("FAST_CODING_DETACHED"):
+        return detach(a)
     if a.fn not in (cmd_workspace, cmd_guard, cmd_rewake):  # the hooks run in every session: no config, no output
         ws = apply_config()  # "default" when no workspace is chosen
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             say(f"workspace {ws}")
-    a.fn(a)
+    try:
+        a.fn(a)
+    except KeyboardInterrupt:
+        print(f"\n[{now()}] {a.cmd} stopped by Ctrl-C" + ("; `fast-coding resume` continues it" if a.cmd in ("run", "resume") else ""), file=sys.stderr)
+        sys.exit(130)
 
 if __name__ == "__main__":
     main()

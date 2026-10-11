@@ -1,4 +1,4 @@
-import contextlib, importlib.machinery, importlib.util, io, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -164,6 +164,60 @@ class Rewake(unittest.TestCase):
         code, err, _ = self.rewake([wsnap("passed")])
         self.assertEqual((code, err), (0, ""))
         held.close()
+
+
+class Detach(unittest.TestCase):
+    """run, verify, and resume work in their own session: a closed herdr tab or a dead Claude session ends only the
+    follower that streams their log, never the work."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.log = self.dir / "run.log"
+
+    def test_the_log_streams_here_and_the_exit_code_comes_back(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = fc.follow([sys.executable, "-c", "print('layer 001 passed'); raise SystemExit(3)"], self.log)
+        self.assertEqual(code, 3)
+        self.assertIn("layer 001 passed", out.getvalue())
+        self.assertIn("layer 001 passed", self.log.read_text())
+
+    def test_the_work_runs_in_its_own_session(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            fc.follow([sys.executable, "-c", "import os; print(os.getsid(0))"], self.log)
+        self.assertNotEqual(int(self.log.read_text().split()[0]), os.getsid(0))
+
+    def test_killing_the_follower_leaves_the_work_running(self):
+        done = self.dir / "done"
+        work = f"import time; time.sleep(1.5); open({str(done)!r}, 'w').write('ok')"
+        cli = Path(__file__).resolve().parents[1] / "bin" / "fast-coding"
+        follower = subprocess.Popen([sys.executable, "-c",
+            "import importlib.machinery as m, importlib.util as u, sys; "
+            f"s = u.spec_from_loader('fc', m.SourceFileLoader('fc', {str(cli)!r})); fc = u.module_from_spec(s); s.loader.exec_module(fc); "
+            f"fc.follow([sys.executable, '-c', {work!r}], fc.Path({str(self.log)!r}))"], stdout=subprocess.DEVNULL)
+        time.sleep(0.5)
+        def tree(pid):  # what Claude Code does to a background task when its tab closes: the whole process tree
+            kids = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
+            return [pid] + [p for k in kids for p in tree(int(k))]
+        for pid in tree(follower.pid):
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+        follower.wait()
+        for _ in range(40):
+            if done.exists():
+                break
+            time.sleep(0.1)
+        self.assertEqual(done.read_text(), "ok")
+
+    def test_now_says_a_run_is_live(self):
+        proj = Path(tempfile.mkdtemp()) / "hw"
+        out = []
+        a = SimpleNamespace(repo=".", now=True, from_=None)
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "watch_snapshot", return_value=wsnap("running", run=True)), \
+                mock.patch("builtins.print", out.append):
+            fc.cmd_watch(a)
+        self.assertTrue(any(line.startswith("event run=live") for line in out), out)
 
 
 if __name__ == "__main__":

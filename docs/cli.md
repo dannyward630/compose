@@ -88,3 +88,5 @@ Before the first run in a new repo:
 Each task run writes `.fast-coding/<project>/results/NNN.json` with every attempt's test output, timing, and cost.
 Verify writes `results/verify.json`.
 A run that dies shows as `interrupted` in `status`; `resume` re-runs what did not pass and keeps passed layers.
+`run`, `verify`, and `resume` work in their own session and write `results/<command>.log`; the terminal that started one only streams that log.
+Closing it, or a crashed Claude session, leaves the work running; Ctrl-C stops it.
