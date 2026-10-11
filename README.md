@@ -1,50 +1,58 @@
 # fast-coding
 
-You talk to one agent, and it runs a whole engineering team for you.
+You talk to one agent, and it runs a whole software team for you.
+The team ships the way real teams do.
+Product decisions come first, then tickets and wireframes, then technical specs and estimates, then the code, its tests, code review, and QA.
+Whenever the team learns something new, the plan changes with it.
 
 ```
-you
+you, the product owner
  └── team lead             the one agent you talk to
-      ├── orchestrator     feature A: plans, decides with you, steers, reviews
-      │    └── fleet       explore, decide, test, build, verify
+      ├── orchestrator     feature A: specs, steers, reviews
+      │    └── teammates   explore, decide, test, build, verify
       └── orchestrator     feature B, running at the same time
-           └── fleet       explore, decide, test, build, verify
+           └── teammates   explore, decide, test, build, verify
 ```
 
 The team lead takes your request and hands each feature to its own orchestrator, so the features of one epic move forward at the same time.
-Each orchestrator runs its own fleet of agents through the whole engineering workflow, from exploring the code to pull requests you can review in minutes.
-The strongest models do the planning and bring every decision to you.
+Each orchestrator leads its own teammates through the full software development life cycle, from discovery to pull requests you can review in minutes.
+The strongest models do the planning and bring every product decision to you.
 Fast, cheap agents write the code and verify it.
-The orchestrators steer their agents while they work, and the team lead nudges any orchestrator that stalls.
-When the fleet learns something that breaks the plan, it changes the plan in real time and asks you whenever the decision is yours.
+The orchestrators steer their teammates while they work, and the team lead nudges any orchestrator that stalls.
 
-## What every fleet does
+## It ships software the way a real team does
 
-Run `/fast-coding <what you want>` and each feature moves through every stage on its own.
+Run `/fast-coding <what you want>` and each feature moves through the same life cycle a good software team follows.
 
-1. **Explore.**
-   An explore crew maps your codebase through graft, so no question or plan rests on a guess about the code.
-2. **Decide.**
-   A wayfinder puts every open decision on one Lavish page, each with options and a recommendation, and draws screen questions as Frame0 wireframes.
-   You answer them all in one pass, or accept every recommendation with one click, and your answers go to the feature in Linear.
-3. **Plan.**
-   The strongest model writes the plan, the stories, and one Linear issue per task, each small enough for a fast model to finish in one short turn.
-4. **Test first.**
-   Test crews write every task's failing test from the spec in parallel, with holdout cases the implementers never see.
-5. **Build.**
-   Fast implementers each make one test pass in their own clone, side by side, in seconds per task.
-6. **Review.**
-   The orchestrator reviews each layer the moment it passes, and a fast triage flags the layers that need a closer read.
-7. **Verify.**
-   Lint and tests run first, then a confirmed model review, a Jev check of every acceptance criterion, and a real browser run against an assert you wrote, with a fix loop for anything that fails.
-8. **Stack.**
-   Passed tasks become one gh stack, and when you say so, each layer becomes a draft pull request.
-9. **Change the plan in real time.**
-   When a failure or a discovery shows a decision was wrong, Jev screens every settled decision against the new evidence, and only the tasks that rest on the broken one pause.
-   The orchestrator fixes what is objective, brings what is yours to you, records each change in Linear with its reason, and hands the new work out while the rest of the run keeps going.
-   Any change can be undone.
+1. **Discovery.**
+   An explore teammate maps your codebase through graft, so no question, ticket, or plan rests on a guess about the code.
+2. **Product decisions.**
+   You are the product owner.
+   A wayfinder teammate puts every open decision on one Lavish page, each with options and a recommendation, and you settle them in one pass or accept every recommendation with one click.
+3. **Design.**
+   Questions about how a screen should look come with low-fi Frame0 wireframes, so you decide on something you can see.
+   High-fi designs are on the roadmap.
+4. **Tickets.**
+   Your decisions land in Linear the way a PM would file them, with an epic when the work spans several features, a feature issue, and stories with acceptance criteria.
+5. **Technical specs and estimates.**
+   The orchestrator specs one technical ticket per task, with its goal, its files, its test plan, and its acceptance criteria.
+   Every ticket is sized to finish in one short turn, and the CLI flags any ticket that is too big before work starts.
+6. **Implementation, tests first.**
+   Test-writing teammates write each ticket's failing test from the spec, with holdout cases the implementer never sees.
+   Then fast implementers make those tests pass in parallel, each in its own clone, in seconds per ticket.
+7. **Code review.**
+   The orchestrator reviews each change the moment it passes, and a fast triage flags the changes that need a closer read.
+8. **QA.**
+   Verify runs lint and tests, a confirmed model review, a Jev check of every acceptance criterion, and a real browser run against an assert you wrote, with a fix loop for anything that fails.
+9. **The board keeps itself current.**
+   Every ticket moves from Todo to In Progress, In Review, and Done in Linear as the work does.
+10. **The plan changes when the team learns something.**
+    When a failure or a discovery shows a decision was wrong, Jev screens every settled decision against the new evidence, and only the tickets that rest on the broken one pause.
+    The orchestrator fixes what is objective, brings what is yours to you, records each change in Linear with its reason, and hands out the new work while everything else keeps moving.
+    Any change can be undone.
+11. **Pull requests.**
+    Passed tickets become one gh stack, and when you say so, each layer becomes a draft pull request for your reviewers to read and merge.
 
-Linear tracks the whole run, so the feature, its stories, and every task move through their states as the work does.
 Inside herdr, every agent works in its own pane, and you can type into any of them.
 Nothing is pushed until you say so, and fast-coding never merges anything.
 
@@ -124,7 +132,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | [requirements.md](docs/requirements.md) | Tools, accounts, keys, and files outside the repo |
 | [how-it-works.md](docs/how-it-works.md) | The loop, changing course, projects, Linear levels, and model choices |
 | [cli.md](docs/cli.md) | Every command, manual mode, and flags |
-| [herdr.md](docs/herdr.md) | Running the fleet visibly inside herdr |
+| [herdr.md](docs/herdr.md) | Watching and steering every agent inside herdr |
 | [tasks.md](docs/tasks.md) | The task issue format and `sync` |
 | [verify.md](docs/verify.md) | `verify.json`, the stages, e2e, and jev |
 | [workspaces.md](docs/workspaces.md) | Workspaces, model config, and billing halts |
@@ -138,4 +146,4 @@ Run the jev tests with `cd jev && uv run pytest`.
 ## Credits
 
 The way fast-coding organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
-Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the team lead, orchestrator, and crew roles here are adapted from.
+Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the team lead, orchestrator, and teammate roles here are adapted from.
