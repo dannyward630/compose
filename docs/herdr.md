@@ -60,3 +60,15 @@ The orchestrator steers a working or blocked implementer with `herdr agent promp
 It prints one `event ...` line and exits, so a waiting orchestrator spends no tokens.
 `--from orchestrator` makes the first mate wake only on the orchestrator's reports.
 A run left silent with work pending raises a stall event after 240 s (`stall_seconds` in `verify.json`, or `watch --stall`).
+
+Each watcher remembers what it last reported in `results/watch-<who>.json`: `all` for the orchestrator, `<slug>-orchestrator` for the first mate.
+A watch started later still reports what happened while none ran, and `watch --now` marks the current state as seen.
+A billing halt is an event too: `event halt=payment`.
+
+The orchestrator never starts `watch` itself.
+Its tab carries `FAST_CODING_ROLE`, `FAST_CODING_PROJECT`, and `FAST_CODING_REPO`, and the plugin's Stop hook (`fast-coding rewake`) parks a watch whenever one of its turns ends.
+The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the next turn end parks the next watch.
+A lock keeps one watch per watcher: a second hook exits at once, and a second `watch` waits its turn.
+The hook does nothing in any other session, and its watch ends with the session that parked it.
+Restarting the orchestrator in its tab loses nothing: its first turn end reports whatever happened while it was down.
+The first mate, and an orchestrator outside herdr, still run `watch` in the background themselves.

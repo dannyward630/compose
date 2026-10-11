@@ -71,10 +71,11 @@ Before the first run in a new repo:
 | `explore`, `wayfinder`, `groundwork` | Print that crew's brief; `--extra -` appends notes from stdin |
 | `testcrews` | One test-writing crew per task, in parallel |
 | `report` | A crew reports up: `working`, `needs-user`, `blocked`, `done`, `tool-bug` |
-| `watch` | Block until something happens, print one event line, exit |
+| `watch` | Block until something happens, print one event line, exit; `--now` prints the current state and marks it seen |
 | `teardown` | Close finished tabs, stop leftover servers, save and quit Frame0 |
 | `frame0 up\|save\|down` | The project's own Frame0 app |
 | `guard` | The PreToolUse hook that keeps the orchestrator from editing code |
+| `rewake` | The Stop hook that parks the orchestrator's next `watch` after each turn and wakes it on the event |
 
 ### Workspaces
 

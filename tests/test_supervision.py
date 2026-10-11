@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -57,9 +57,10 @@ class Stalls(unittest.TestCase):
         self.assertTrue(any("stall=idle agent=hw-orchestrator" in e for e in ev), ev)
 
     def test_the_first_mate_receives_stalls_and_the_orchestrator_too(self):
-        ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'"]
-        self.assertEqual(fc.watch_filter(ev, "hw", [ORCH]), ev[:1])
-        self.assertEqual(fc.watch_filter(ev, "hw", []), ev)
+        ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'",
+              "event stall=idle agent=hw-orchestrator the orchestrator has been idle"]
+        self.assertEqual(fc.watch_filter(ev, "hw", [ORCH]), [ev[0], ev[2]])
+        self.assertEqual(fc.watch_filter(ev, "hw", []), ev[:2])  # the orchestrator is idle because it waits on this watch
 
 
 class WatchTimeout(unittest.TestCase):
@@ -76,6 +77,93 @@ class WatchTimeout(unittest.TestCase):
         self.assertEqual(e.exception.code, 2)
         self.assertIn("event timeout", out[-1])
         self.assertIn("pending tasks 1, crews working hw-tests-001, run not live, verify not run", out[-1])
+
+
+def wsnap(state="pending", run=False, crashed=False, halt=None):
+    return {"tasks": {"001": {"state": state, "attempts": 1, "cost": 0.0, "note": "", "linear": "", "title": "t"}}, "agents": {},
+            "crew": {}, "run": run, "crashed": crashed, "verify": None, "halt": halt, "run_end": 0, "last": [0, ""]}
+
+
+class WatchMemory(unittest.TestCase):
+    """Each watcher remembers what it last reported, so what happens while no watch runs is reported by the next one."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+
+    def watch(self, snap, **kw):
+        a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.05, interval=0.01, stall=10_000, rewake=False)
+        a.__dict__.update(kw)
+        out = []
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=snap), \
+                mock.patch("builtins.print", out.append):
+            try:
+                fc.cmd_watch(a)
+            except SystemExit:
+                pass
+        return out
+
+    def test_a_change_between_two_watches_is_reported_by_the_next(self):
+        self.watch(wsnap("running"), now=True)
+        out = self.watch(wsnap("passed"))  # the task passed while nobody watched
+        self.assertTrue(any("event task=001 state=passed" in line for line in out), out)
+        self.assertIn("event timeout", self.watch(wsnap("passed"))[-1])  # reported once, not again
+
+    def test_now_marks_the_current_state_seen(self):
+        self.assertTrue(any("task=001 state=passed" in line for line in self.watch(wsnap("passed"), now=True)))
+        self.assertIn("event timeout", self.watch(wsnap("passed"))[-1])
+
+    def test_each_watcher_keeps_its_own_memory(self):
+        self.watch(wsnap("running"), now=True)
+        self.watch(wsnap("running"), now=True, from_="orchestrator")
+        later = wsnap("passed")
+        later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
+        self.watch(later)  # the orchestrator's own watch reports the task first
+        out = self.watch(later, from_="orchestrator")  # the first mate's watch still gets the orchestrator's question
+        self.assertTrue(any(f"event crew={ORCH} state=needs-user" in line for line in out), out)
+
+    def test_a_payment_halt_is_an_event(self):
+        ev = fc.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
+        self.assertTrue(any(e.startswith("event halt=payment provider=openrouter remaining=2") for e in ev), ev)
+
+    def test_now_reports_a_crashed_run(self):
+        out = self.watch(wsnap("running", crashed=True), now=True)
+        self.assertTrue(any("run=ended" in line and "CRASHED" in line for line in out), out)
+
+
+class Rewake(unittest.TestCase):
+    """The orchestrator's Stop hook: park one watch per turn end, wake the idle session with the event on stderr, exit 2."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.env = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r"}
+
+    def rewake(self, snaps, env=None):
+        err = io.StringIO()
+        with mock.patch.dict(fc.os.environ, env or self.env), mock.patch.object(fc, "project_dir", return_value=self.proj) as pd, \
+                mock.patch.object(fc, "watch_snapshot", side_effect=snaps), mock.patch.object(fc, "WATCH_INTERVAL", 0.01), \
+                contextlib.redirect_stderr(err):
+            try:
+                fc.cmd_rewake(SimpleNamespace())
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, err.getvalue(), pd
+
+    def test_an_event_wakes_the_session(self):
+        code, err, _ = self.rewake([wsnap("running"), wsnap("running"), wsnap("passed")])
+        self.assertEqual(code, 2)
+        self.assertIn("event task=001 state=passed", err)
+
+    def test_sessions_that_are_not_the_orchestrator_return_at_once(self):
+        code, err, pd = self.rewake([], env={"FAST_CODING_ROLE": "crew", "FAST_CODING_PROJECT": "hw"})
+        self.assertEqual((code, err), (0, ""))
+        pd.assert_not_called()
+
+    def test_a_second_hook_leaves_the_parked_one_alone(self):
+        held = fc.watch_lock(self.proj, "all", wait=False)
+        self.assertIsNotNone(held)
+        code, err, _ = self.rewake([wsnap("passed")])
+        self.assertEqual((code, err), (0, ""))
+        held.close()
 
 
 if __name__ == "__main__":

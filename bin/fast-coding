@@ -9,7 +9,7 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, hashlib, shlex, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import argparse, fcntl, hashlib, shlex, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -890,6 +890,10 @@ def claude_trusted(path):
         return None
     return any((projects.get(str(p)) or {}).get("hasTrustDialogAccepted") for p in (path, *path.parents))
 
+def untrusted(path):
+    return (f"Claude Code has never trusted {path}, so a session there would wait at its trust prompt. Run `claude` in "
+            f"{path} once and accept the prompt (the captain decides that), then start this crew again.")
+
 def crew_workdir(cwd, wt, name):
     """(directory, branch) a crew session works in. A --cwd in another git repo (a toolsmith in the fast-coding repo) gets its
     own worktree on a new branch under that repo's .claude/worktrees, so the repo's checkout, which may be what every
@@ -903,8 +907,7 @@ def crew_workdir(cwd, wt, name):
         return cwd, None
     top = Path(sh(["git", "rev-parse", "--show-toplevel"], cwd).stdout.strip())
     if claude_trusted(top) is False:
-        sys.exit(f"Claude Code has never trusted {top}, so a session there would wait at its trust prompt. Run `claude` in "
-                 f"{top} once and accept the prompt (the captain decides that), then start this crew again.")
+        sys.exit(untrusted(top))
     exclude = Path(theirs) / "info" / "exclude"
     if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
         exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,6 +1216,8 @@ def cmd_crew(a):
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
     cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name)
+    if not model.startswith("pi:") and claude_trusted(Path(cwd).resolve()) is False:
+        sys.exit(untrusted(Path(cwd).resolve()))
     try:
         frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
     except (RuntimeError, OSError) as e:
@@ -1222,7 +1227,7 @@ def cmd_crew(a):
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = herdr_space(proj)
     role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     if model.startswith("pi:"):  # the same crew in pi: its skills dir is this repo, its thinking level is the entry's effort
@@ -3174,9 +3179,14 @@ def watch_snapshot(repo, proj):
     tasks = load_tasks(proj)
     trunk_head = sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
-    snap = {"tasks": {}, "agents": {}, "run": run_alive(proj), "crashed": bool(run_marker(proj)) and not run_alive(proj), "verify": None,
+    snap = {"tasks": {}, "agents": {}, "run": run_alive(proj), "crashed": bool(run_marker(proj)) and not run_alive(proj), "verify": None, "halt": None,
             "crew": {f.stem: crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
             if (proj / "results" / "crew").exists() else {}}
+    try:
+        h = json.loads((proj / "results" / "resume.json").read_text())
+        snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or [])]
+    except (OSError, json.JSONDecodeError, KeyError):
+        pass
     for m in tasks:
         r = task_state(repo, proj, m, trunk_head)
         snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
@@ -3187,13 +3197,13 @@ def watch_snapshot(repo, proj):
     v = proj / "results" / "verify.json"
     if v.exists():
         try:
-            snap["verify"] = (int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed")))
+            snap["verify"] = [int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed"))]  # a list: snapshots round-trip JSON
         except (json.JSONDecodeError, OSError):
             pass
     # The newest sign of life anywhere in the project, and when the last run ended: the stall rules read these.
     marks = [(report_time(r[-1]["at"]), f"crew {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
-    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if f.name != "watch.json"]
-    snap["last"] = max(marks) if marks else (0, "")
+    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if not f.name.startswith("watch")]
+    snap["last"] = list(max(marks)) if marks else [0, ""]
     cost = proj / "results" / "run-cost.json"
     snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
     return snap
@@ -3203,9 +3213,34 @@ STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
 def report_time(at):
     return time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
 
-def watch_stalls(proj, snap, limit, now_s=None):
-    """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once (results/watch.json
-    remembers it), so a supervisor that nudges is not woken again for the same silence."""
+def watch_mem(proj, key):
+    """What one watcher (key: `all`, or its --from agents) last reported and which stalls it fired, in results/watch-<key>.json."""
+    try:
+        return json.loads((proj / "results" / f"watch-{key}.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+def watch_save(proj, key, **kv):
+    mem = watch_mem(proj, key) | kv
+    f = proj / "results" / f"watch-{key}.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.with_suffix(".tmp").write_text(json.dumps(mem))
+    f.with_suffix(".tmp").replace(f)  # atomic: a reader never sees half a file
+
+def watch_lock(proj, key, wait=True):
+    """One live watch per watcher, held until the returned file closes. None when another holds it and wait is False."""
+    (proj / "results").mkdir(parents=True, exist_ok=True)
+    f = open(proj / "results" / f"watch-{key}.lock", "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        return f
+    except BlockingIOError:
+        f.close()
+        return None
+
+def watch_stalls(proj, snap, limit, now_s=None, key="all"):
+    """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once per watcher
+    (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence."""
     now_s = now_s or time.time()
     orch = agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
@@ -3213,11 +3248,7 @@ def watch_stalls(proj, snap, limit, now_s=None):
         return []  # finished, or waiting on the captain: silence is expected
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
-    f = proj / "results" / "watch.json"
-    try:
-        mem = json.loads(f.read_text())
-    except (OSError, json.JSONDecodeError):
-        mem = {}
+    mem = watch_mem(proj, key)
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
     status = snap["agents"].get(orch, "gone")
     if (seen.get(orch) or [None])[0] != status:
@@ -3245,7 +3276,7 @@ def watch_stalls(proj, snap, limit, now_s=None):
     if status in ("idle", "done") and pending and now_s - since >= limit:
         fire(f"idle:{since}", f"idle agent={orch} the orchestrator has been {status} since {hm(since)} with {len(pending)} task(s) pending")
     try:
-        f.write_text(json.dumps({"fired": sorted(fired), "seen": seen}))
+        watch_save(proj, key, fired=sorted(fired), seen=seen)
     except OSError:
         pass
     return ev
@@ -3265,6 +3296,10 @@ def watch_events(before, after):
         passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
         ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
                   + ("  CRASHED: the run process died without finishing; read its log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
+    if after.get("halt") and after["halt"] != before.get("halt"):
+        at_, provider, left = after["halt"]
+        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the captain's stop: tell them, wait for "
+                  f"their word, then `fast-coding resume`)")
     if after["verify"] and after["verify"] != before["verify"]:
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
     for n, reports in after.get("crew", {}).items():
@@ -3280,43 +3315,73 @@ def watch_filter(events, slug, sources):
         return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
-    return [e for e in events if f"crew={me} " not in e]
+    return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
 
-def cmd_watch(a):
+WATCH_INTERVAL = 2.0
+
+def cmd_watch(a, rewake=False):
     """Sleep on the project until something an orchestrator must act on happens, print it, exit. Zero tokens while waiting:
-    run it in the background and let its exit wake you. `--now` prints the current state as events and exits."""
+    run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
+    Each watcher (`all`, or its --from) remembers what it last reported, so a watch started later still reports what
+    happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
     sources = [agent_name(proj.name, x.strip()) if not x.strip().startswith(agent_name(proj.name, "")) else x.strip()
                for x in (a.from_ or "").split(",") if x.strip()]
-    before = watch_snapshot(repo, proj)
+    key = ",".join(sorted(sources)) or "all"
     if a.now:
-        empty = {"tasks": {}, "agents": {}, "run": before["run"], "verify": None,
-                 "crew": {n: r[:-1] for n, r in before["crew"].items()}}  # each crew's latest report, once
-        for line in watch_filter(watch_events(empty, before), proj.name, sources) or ["event idle  nothing running"]:
+        cur = watch_snapshot(repo, proj)
+        empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
+                 "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each crew's latest report, once
+        for line in watch_filter(watch_events(empty, cur), proj.name, sources) or ["event idle  nothing running"]:
             print(line)
+        watch_save(proj, key, base=cur)  # the reconcile is the acknowledgement: the next watch reports only what changes after it
         return
-    deadline = time.time() + a.timeout if a.timeout else None
-    try:
-        cfg_stall = json.loads((proj / "verify.json").read_text()).get("stall_seconds")
-    except (OSError, json.JSONDecodeError):
-        cfg_stall = None
-    limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
-    while True:
-        time.sleep(a.interval)
-        after = watch_snapshot(repo, proj)
-        ev = watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit), proj.name, sources)
-        if ev:
-            for line in ev:
-                print(f"[{now()}] {line}")
-            return
-        before = after
-        if deadline and time.time() > deadline:
-            pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
-            working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
-            print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}: pending tasks {pending}, crews working "
-                  f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
-                  f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")
-            sys.exit(2)
+    lock = watch_lock(proj, key, wait=not rewake)  # a second watch waits its turn; a second hook leaves it to the parked one
+    if not lock:
+        return
+    with lock:  # held until this watch returns or exits
+        before = watch_mem(proj, key).get("base") or watch_snapshot(repo, proj)
+        emit = (lambda s: print(s, file=sys.stderr)) if rewake else print
+        parent = os.getppid()
+        deadline = time.time() + a.timeout if a.timeout else None
+        try:
+            cfg_stall = json.loads((proj / "verify.json").read_text()).get("stall_seconds")
+        except (OSError, json.JSONDecodeError):
+            cfg_stall = None
+        limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
+        while True:
+            time.sleep(a.interval)
+            if rewake and os.getppid() != parent:
+                return  # the session that parked this hook is gone
+            after = watch_snapshot(repo, proj)
+            ev = watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources)
+            if ev:
+                if rewake:
+                    emit("fast-coding watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
+                for line in ev:
+                    emit(f"[{now()}] {line}")
+                watch_save(proj, key, base=after)  # after printing: a watch killed in between reports it again rather than never
+                if rewake:
+                    sys.exit(2)
+                return
+            before = after
+            if deadline and time.time() > deadline:
+                watch_save(proj, key, base=after)
+                pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
+                working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
+                print(f"[{now()}] event timeout  nothing changed in {fmt(a.timeout)}: pending tasks {pending}, crews working "
+                      f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
+                      f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")
+                sys.exit(2)
+
+def cmd_rewake(a):
+    """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when an orchestrator's turn ends, park a watch whose event
+    wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once."""
+    project = os.environ.get("FAST_CODING_PROJECT")
+    if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project:
+        return
+    cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
+                                 timeout=0, stall=None, interval=WATCH_INTERVAL), rewake=True)
 
 def cmd_projects(a):
     """Every project (feature) across this repository's worktrees with its task progress; `status --project <name>` drills in."""
@@ -3696,6 +3761,7 @@ def main():
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
+                            ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each orchestrator turn; its event wakes the session"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -3720,7 +3786,7 @@ def main():
             s.add_argument("--now", action="store_true", help="print the current state as events and exit (session-start reconcile)")
             s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
             s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
-            s.add_argument("--interval", type=float, default=2.0)
+            s.add_argument("--interval", type=float, default=WATCH_INTERVAL)
             s.add_argument("--from", dest="from_", help="only these crew wake you (roles or agent names, comma-separated); the first mate passes orchestrator")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
@@ -3769,7 +3835,7 @@ def main():
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
     a = ap.parse_args()
-    if a.fn not in (cmd_workspace, cmd_guard):  # guard runs on every edit in every session: no config, no output
+    if a.fn not in (cmd_workspace, cmd_guard, cmd_rewake):  # the hooks run in every session: no config, no output
         ws = apply_config()  # "default" when no workspace is chosen
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             say(f"workspace {ws}")

@@ -53,12 +53,15 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the captain."})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register") as frame0, mock.patch("builtins.print"):
+                mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
+                mock.patch("builtins.print"):
             fc.cmd_crew(a)
         frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "get"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the orchestrator's tab is marked for the guard
+        self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
+        self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
@@ -78,6 +81,16 @@ class Crew(unittest.TestCase):
         self.assertIn("not even a throwaway reference", pre)
         self.assertIn("Fact-check before you say it", pre)
         self.assertIn("not verified", pre)
+
+    def test_start_in_an_untrusted_worktree_says_so_before_opening_a_tab(self):
+        calls = []
+        a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", lambda *x, **k: calls.append(x)), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "claude_trusted", return_value=False), \
+                self.assertRaises(SystemExit) as e:
+            fc.cmd_crew(a)
+        self.assertIn("never trusted", str(e.exception.code))
+        self.assertNotIn(("tab", "create"), [c[:2] for c in calls])  # no half-started tab left behind
 
     def test_start_outside_herdr_says_so(self):
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
@@ -209,7 +222,7 @@ class ToolBug(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch("builtins.print"):
+                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
