@@ -1,11 +1,7 @@
 # fast-coding
 
-With fast-coding, a feature idea becomes a reviewed, verified stack of small branches in one sitting.
-A frontier model does the thinking up front.
-It asks you every open question, records your answers in Linear, plans the work, and specifies a failing test for every tiny task.
-Then cheap fast models type the code in parallel, each boxed into one task, one test, a few named files, and 350 lines.
-A local pipeline checks the result, reviews it, and drives a real browser through it before anything reaches you.
-You get a gh stack on your branch, one layer per task, and each layer takes about a minute to read.
+Turn a feature idea into a reviewed, verified stack of small branches in one sitting.
+A frontier model decides and checks; cheap fast models type the code in parallel.
 
 ## Quick start
 
