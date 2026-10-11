@@ -2646,6 +2646,11 @@ def cmd_reflect(a):
         print(f"  {v['choice'] or '?':8} broken {v['p_broken']:.2f} unclear {v['p_unclear']:.2f}  {v['line']}")
     print(f"reflect {path}  " + (f"error: {rec['error']}" if rec.get("error") else f"flagged {len(rec['flagged'])} of {len(rec['verdicts'])}"))
 
+def reflect_counts(rec):
+    """(broken, unclear) among a screen's flagged lines; BROKEN wins when both pass the threshold."""
+    broken = sum(v["p_broken"] >= REFLECT_THRESHOLD for v in rec.get("flagged", []))
+    return broken, len(rec.get("flagged", [])) - broken
+
 TOOL_ERROR_RE = re.compile(r"JEV_GAVE_UP|/jev_ultrafast/|/browser_harness/|command not found|address already in use|EADDRINUSE|"
                            r"No module named|Chromium not found|did not open the debug port", re.I)
 
@@ -3294,6 +3299,15 @@ def watch_snapshot(repo, proj):
     snap["last"] = list(max(marks)) if marks else [0, ""]
     cost = proj / "results" / "run-cost.json"
     snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
+    cut = last_change_done(proj)  # a screen a closed change already answered is not news, not even to `--now`
+    snap["reflects"] = {}
+    for f in sorted((proj / "results").glob("reflect-*.json")):
+        try:
+            r = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if r.get("at", "") > cut:
+            snap["reflects"][str(f)] = {"trigger": r.get("trigger"), "error": r.get("error"), "counts": reflect_counts(r)}
     return snap
 
 STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
@@ -3394,6 +3408,13 @@ def watch_events(before, after):
         for r in reports[len(before.get("crew", {}).get(n, [])):]:
             if r["message"] != "started":
                 ev.append(f"event crew={n} state={r['state']} message={r['message']!r}")
+    for path, r in after.get("reflects", {}).items():
+        if path in before.get("reflects", {}):
+            continue
+        if r["error"]:
+            ev.append(f"event reflect={path} error={r['error']!r}  (the screen did not run: judge the evidence yourself)")
+        elif sum(r["counts"]):
+            ev.append(f"event reflect={path} broken={r['counts'][0]} unclear={r['counts'][1]} trigger={r['trigger']}")
     return ev
 
 def watch_filter(events, slug, sources):
