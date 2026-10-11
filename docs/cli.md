@@ -53,6 +53,9 @@ Before the first run in a new repo:
 | `done` | Record tasks finished by hand: `--only <ids> --note <why>` |
 | `triage` | Fast-model clean or flag per passed task (`run` ends with it) |
 | `resume` | Continue a run or verify that stopped on a billing halt |
+| `reflect` | Screen the settled decisions against evidence with Jev: `--evidence -`, `--against "<line>"` |
+| `hold` | Hold tasks back from dispatch: `--only <ids> --reason "<why>"`; `--release <ids>` or `all` |
+| `change start\|done\|undo` | Record a change of course; `undo C<n>` puts back what it touched |
 | `bench` | Frozen task set across models: pass rate, attempts, p50/p95 time, cost |
 
 ### Verify and stack
@@ -70,7 +73,7 @@ Before the first run in a new repo:
 | `crew start\|list\|focus\|stop` | Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
 | `explore`, `wayfinder`, `groundwork` | Print that crew's brief; `--extra -` appends notes from stdin |
 | `testcrews` | One test-writing crew per task, in parallel |
-| `report` | A crew reports up: `working`, `needs-user`, `blocked`, `done`, `tool-bug` |
+| `report` | A crew reports up: `working`, `needs-user`, `blocked`, `done`, `tool-bug`, `contradiction` |
 | `watch` | Block until something happens, print one event line, exit; `--now` prints the current state and marks it seen |
 | `teardown` | Close finished tabs, stop leftover servers, save and quit Frame0 |
 | `frame0 up\|save\|down` | The project's own Frame0 app |

@@ -87,6 +87,11 @@ The first mate's loop: `fast-coding watch --repo <wt> --project <slug> --from or
 The first mate supervises, it does not only relay. `watch --from orchestrator` also wakes it on `event stall=...`: work is pending and nothing has moved for the stall window (`quiet`), every test crew is done and nothing is dispatched (`undispatched`), a run or verify ended with no orchestrator report since (`no-next-step`), or the orchestrator has sat idle with tasks pending (`idle`).
 On a stall, read the orchestrator's pane, find what it is waiting on, and nudge it: `herdr agent prompt <slug>-orchestrator "<what you saw and the next step>"`, or `herdr agent send-keys <slug>-orchestrator esc` first to interrupt a stuck command.
 Each stall fires once; escalate to the captain only if the next stall window passes with no progress after your nudge.
+
+**A change of course reaches the captain through you.**
+Relay the orchestrator's `needs-user "change <id> on <slug>: ..."` line as it is: what was found, what is held, that the rest keeps running, the page, and the recommendation.
+When the captain says the plan changed, forward their words: `herdr agent prompt <slug>-orchestrator "change of plans: <their words>"`; the orchestrator screens them and holds what they touch (step 8).
+When the line in question is the epic's, not one feature's, tell every orchestrator under that epic: `herdr agent prompt <slug>-orchestrator "the epic's decision '<line>' is in question: <evidence>. Hold what rests on it and run fast-coding reflect with this evidence."`.
 The window is 240 seconds by default; set `stall_seconds` in the project's `verify.json`, or pass `watch --stall <seconds>`.
 **When fast-coding itself fails** (the CLI crashes, behaves wrongly, or lacks what the project needs), the two jobs split:
 - The orchestrator unblocks its own project with a crew workaround, never edits the fast-coding repo, and reports `fast-coding report ... tool-bug "<symptom, evidence, workaround used>"`. Every crew brief says the same.
@@ -185,6 +190,7 @@ Everything is on disk, so a restart is a non-event. At the start of a session on
 - `event run=live`: a run is in progress, possibly started by the session before you; it outlives the session that started it. Supervise with `watch` and read `results/run.log`; do not start a second run.
 - Inside herdr, as the first mate: `fast-coding crew list --project <slug>`. A live `<slug>-orchestrator` owns the project: resume the relay loop (0h) and do nothing else. None, or its tab is closed: start it again with `crew start --role orchestrator`, briefed to continue from 0r.
 - As the orchestrator: `crew list` too; a live wayfinder crew and helpers keep their work, so watch them rather than starting duplicates. A wayfinder page with unanswered cards and no live wayfinder crew: start one again, briefed to run `npx -y lavish-axi poll` on the same file (queued answers are still waiting there).
+- `status` shows `CHANGE <id> open`: a change of course was under way. Its questions unanswered and no live wayfinder crew: start one again with `fast-coding wayfinder --change <id>`, briefed to poll the same page. Its answers in: continue step 8 from the re-plan.
 - Herdr agents of a dead run are closed by the next run of their task; do not close them by hand.
 
 ### 1. Plan from the spec
@@ -342,6 +348,50 @@ A rebase conflict while stacking (`after: ... could not be chained`) is crew wor
 `fast-coding status --repo <path> [--watch]` shows every project with each task's state, attempts, time, cost, and stack layer; use it to report progress instead of describing it from memory. `fast-coding watch` is how you wait for it to change.
 `fast-coding clean --repo <path>` is the post-merge step, run after the reviewer has merged PRs on GitHub (or the user merged locally): it fetches, removes task clones and the CLI's stack worktree, deletes task branches that are proven merged (contained in the trunk or its remote, or a merged PR on GitHub, which also covers squash and rebase merges), and once every layer and the project branch are merged it removes the project's worktree and branch too. Unmerged work is kept and named. It never deletes unmerged layers unless `--delete-unmerged`. Run it whenever the user says PRs were merged, and at the end of a feature. Then move each merged task's issue to Done and roll its story, feature, and epic up (0s): the feature is Done once every layer and the project branch are merged. A task you did by hand (`fast-coding done`) goes to Done with the same note.
 
+### 8. Change course
+The fleet changes course when evidence shows the plan is wrong, or when the captain says the plan changed.
+Every change of course goes through `fast-coding change`, so it is recorded, and can be undone or updated.
+
+**What wakes you.**
+- `event reflect=<file> broken=N unclear=N trigger=...`: Jev screened every live line of Decisions so far against new evidence (a task that ended without passing, a contradiction, a verify FAIL) and flagged at least one.
+- `task=NNN state=contradiction`: the implementer found a fact in its brief wrong and stopped.
+- A crew's `contradiction` report: something it found contradicts Linear.
+- `event reflect=<file> error=...`: the screen could not run; judge the evidence yourself.
+- The captain's change of plans, from the first mate: run `fast-coding reflect --project <slug> --evidence -` with their words to find what they touch.
+- A layer you reject for a reason that may be the plan's: run `reflect --evidence -` with your reason.
+
+**Then, in order.**
+1. Hold first: `fast-coding hold --project <slug> --only <ids> --reason "<one line>"` for every task whose brief rests on a flagged line. Tasks run in under a minute, so hold before you confirm; a hold is cheap to undo.
+2. Steer any crew whose work rests on the flagged line: `herdr agent prompt <slug>-<role> "stop <that part>; keep going on the rest"`.
+3. Confirm: read the reflect file, the evidence at its file:line, and the Linear line. Jev is a screen, never the verdict. Then:
+
+| It is | Do |
+|---|---|
+| a false alarm | `hold --release <ids>`, a one-line comment on the task, and `run --only NNN` for a `contradiction` task |
+| task-sized | step 7 |
+| objective, inside the settled decisions (a missing `after:`, a split, a wrong owner) | re-plan yourself, below, with no page |
+| complex, subjective, or a reversal of anything the captain settled | escalate, below; everything stays held |
+
+A decision the captain settled goes back to the captain, even when the evidence is clear: choosing its replacement is a choice too.
+
+**Escalate.**
+1. Sync, then `fast-coding change start --project <slug> --why "<one line>"`.
+2. Start the change's wayfinder with the reflect file, the evidence, and the held tasks: `fast-coding wayfinder --project <slug> --change <id> --extra - <<'EOF' | fast-coding crew start --project <slug> --role wayfinder --title "change <id>" --brief -`.
+3. When it reports `needs-user`, report `needs-user "change <id> on <slug>: <what was found>. Held <ids>; the rest keeps running. Questions: <page>. Recommended: <...>"`.
+4. Evidence that arrives while the change is open goes to that crew as new cards: `herdr agent prompt <slug>-wayfinder "<evidence>"`.
+5. When it reports `done`, re-plan.
+
+**Re-plan.**
+1. If no change is open: sync, then `fast-coding change start --why "<one line>"`.
+2. Edit Linear: `## Plan`; cancel the tasks that rest on the old line (a canceled task loses its `fast-coding` block); edit the briefs that change; add new tasks with the next ids, and `fast-coding testcrews --only <new ids>` for their tests.
+3. The 3b gate applies unchanged: a list that matches what the captain just settled dispatches at once, and anything past it goes back up.
+4. Sync, then `fast-coding change done`: it comments the change on the feature.
+5. `fast-coding hold --release <ids>`, then `fast-coding run --only <new and redone ids> --redo` for the layers built on the old line.
+
+**Undo and update.**
+- `fast-coding change undo <id>` opens a new change that puts back every issue and task branch the change touched; sync, then `change done`. It refuses when something it touched has changed since: undo the later change first.
+- An update is a new change whose reason names the one it updates: `change start --why "update C2: <why>"`.
+
 ## Task issue format
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, `claude:<model-id>` for Claude Code on that model, or bare `claude` for Claude Code's default. A Claude model is always written with its `claude` prefix, never as a bare id, so it is never mistaken for a pi or OpenCode model. Omit it for the CLI default, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (GLM 5.3 Flash; the preset pins Together, then CoreWeave). gpt-oss-120b on Cerebras was the default until 2026-10-10 and was dropped for missing too often.
@@ -399,6 +449,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - Every captain round-trip stalls the whole project, so ask once, up front, through wayfinder (0b): start groundwork and the smoke check (0g) at once so its toolchain findings join the map, put every decision you can see coming (scoring, toolchain, dependency bumps, the quality bar where it is unclear) on the wayfinder's Lavish page, every card with a recommendation, instead of one question, a wait, then the next. Keep groundwork running while the captain answers. Ask mid-run only when the run cannot continue without the answer.
 - The CLI's own config is yours to fix without asking: a wrong model id, preset slug, or typo in `~/.fast-coding/config.json` `models`, `verify.json`, or `linear.json`. Fix it, re-run, and mention it in your next report. Switching to a different model or provider, keys, and anything that costs money are still the captain's.
 - Linear is the source of truth and the ticket tracker. What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it, so the next session finds it. Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.fast-coding/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the wayfinder's Lavish page under `lavish/` and the Frame0 wireframes in `design.f0` (with its app's data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, and its state is kept true at every step, at every level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
+- After the first dispatch, a change to the map, the plan, or a task brief is a change of course (step 8): opened with `change start` and closed with `change done`, never an untracked edit, so it can be undone.
 - A `PAYMENT REQUIRED` stop is the user's, not yours. When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, the provider's own words, the top-up link the banner printed, and that `fast-coding resume --repo <path> --project <name>` continues from exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns). Do not switch providers, re-dispatch, hand-implement, or retry around a billing stop. When the user says the account is fixed, run `resume`.
 - A task branch changes at most 350 lines and never adds a document. These are CLI-enforced; plan tasks that fit, do not fight the guard.
 - Never push or submit a stack without the user's explicit permission for that push. `run` registers stacks locally only.

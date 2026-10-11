@@ -20,7 +20,8 @@ For the orchestrator this is enforced: its tab is marked `FAST_CODING_ROLE=orche
 ## Talking to the fleet
 
 - You talk to the first mate; you can also type into any crew tab directly.
-- Crews report up with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`).
+- Crews report up with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`, `tool-bug`, `contradiction`).
+- A `contradiction` report screens the feature's decisions with Jev and wakes the orchestrator when one is in question.
 - A `needs-user` or `blocked` report pops a herdr notification and badges the pane `needs you`; nothing steals focus.
 - `fast-coding crew focus --role <role>` jumps to a tab when you ask.
 

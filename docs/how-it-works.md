@@ -77,6 +77,18 @@ fast-coding accepts any of them by link and creates the missing ones.
 The repo's Linear project link is asked for once and kept in `.fast-coding/linear.json`.
 Tasks move to In Progress when dispatched, In Review when their layer passes, and Done when their PR merges.
 
+## Changing course
+
+The fleet notices when the plan is wrong and changes it in the open.
+
+1. Evidence arrives: a task ends without passing, an implementer or crew reports a contradiction with Linear, verify fails, or you say the plan changed.
+2. Jev screens every line of the feature's Decisions so far against it: HOLDS, BROKEN, or UNCLEAR.
+3. The orchestrator holds only the tasks a flagged line touches (`fast-coding hold`) and confirms; everything else keeps running.
+4. Complex or subjective calls, and anything you settled, come to you on a change page in Lavish, through the first mate.
+5. The re-plan is one recorded change (`fast-coding change start`, then `done`): the old decision struck through and tagged, the new one beside it, and a comment on the feature saying what changed and why.
+
+`fast-coding change undo C2` puts back every issue and layer that change touched, as a new change of its own.
+
 ## Projects
 
 A project is one feature in its own worktree.
