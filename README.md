@@ -139,20 +139,46 @@ Everything the CLI shells out to, and where each one is used. Install the requir
 | git 2.30+ | task clones (`git clone --shared`), branches, diffs | Xcode CLT or Homebrew | yes |
 | Node 22.19+ | pi, and `node --test` in repos that use it | `brew install node` | yes |
 | pi | default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | yes |
-| OpenRouter account and key | every implementer, fixer, and reviewer call | key in `~/.pi/agent/auth.json` (`openrouter`, `openrouter-fast`) and in `~/code/jev-ultrafast/.env` as `TEXT_MODEL_API_KEY` | yes |
+| OpenRouter account and key | every implementer, fixer, and reviewer call | key in `~/.pi/agent/auth.json` (`openrouter`, `openrouter-fast`) and in `~/.fast-coding/.env` as `TEXT_MODEL_API_KEY` | yes |
 | OpenRouter preset `glm-5-3-flash-fast` | pins the default implementer (GLM 5.3 Flash) to its hosts from the model string | dashboard, Settings > Presets: model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, fallbacks off, nothing else included | yes |
 | OpenRouter preset `gpt-oss-120b-cerebras` | gpt-oss-120b on Cerebras, the default until 2026-10-10; now only for `bench` or an opt-in `models.fallback` | dashboard, Settings > Presets: model `openai/gpt-oss-120b`, provider order Cerebras, fallbacks off, nothing else included | optional |
 | `~/.pi/agent/models.json` | declares provider `openrouter-fast` (base `https://openrouter.ai/api/v1`, api `openai-completions`, key `$OPENROUTER_API_KEY` or the auth store) with models `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per M and, optionally, `openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` priced 0.35/0.75 per M | written by hand once | yes |
 | gh CLI + gh-stack | `run` registers passed chains as stacks; `stack --submit` opens PRs | `brew install gh && gh extension install github/gh-stack`; `git config rerere.enabled true` | yes for stacks; `run --no-stack` without |
-| jev-ultrafast checkout at `~/code/jev-ultrafast` with `.env` | `verify`: Mercury review (`TEXT_MODEL*`), Jev acceptance (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`), browser e2e (`jev_ultrafast.Agent`) | clone it, fill `.env`, `uv sync` | yes for `verify` |
-| uv | runs jev-ultrafast and the Python test commands in verify.json | `brew install uv` | yes for `verify` |
-| Chrome plus browser-harness | `verify` e2e cases drive a real browser | installed by jev-ultrafast; `uv run browser-harness --doctor` there | only with e2e cases |
+| `~/.fast-coding/.env` | `verify`: Mercury review (`TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`), Jev acceptance and jev e2e (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`); the process env wins over it, and a verify.json `env_file` replaces it | write it once with those keys, mode 600 | yes for `verify` |
+| TypeSafe account (`api.typesafe.ai`) | Jev acceptance checks and every jev e2e step | key in `~/.fast-coding/.env` | yes for `verify` |
+| uv | runs `jev/` (its own project, Python 3.12+, fetched by uv on first use) and the Python test commands in verify.json | `brew install uv`; `uv sync --project jev` once to skip the first-run install | yes for `verify` |
+| Chrome plus browser-harness | `verify` e2e cases drive a real browser | browser-harness comes with `jev/`; `cd jev && uv run browser-harness --doctor` | only with e2e cases |
 | `bp` (browser-probe) | every browser exploration and extension e2e: launches a Chromium with the extension, `e2e_env` points jev at it | `cd ~/code/browser-probe && npm link` | yes for extension work |
 | OpenCode | alternative implementer, `model: openrouter/openai/gpt-oss-120b`; bench column | `curl -fsSL https://opencode.ai/install \| bash`; key in `~/.local/share/opencode/auth.json`; `~/.config/opencode/opencode.jsonc` pins `options.provider.order: ["cerebras", "groq"]` | optional |
-| Claude Code | `model: claude` baseline through the subscription (`claude -p`) | already installed if you are reading this from it | optional |
+| Claude Code | the orchestrator and every crew session, model probes (`claude -p`), `frame0` registration (`claude mcp add -s local`), and the `model: claude` baseline | already installed if you are reading this from it | yes |
+| herdr | crews, implementer panes, and the per-project workspace (`HERDR_ENV=1` and `HERDR_SOCKET_PATH` mark a session inside it) | herdr's own installer (lives at `~/.local/bin/herdr` on the reference machine) | yes for crews; outside herdr everything runs headless in one session |
+| pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` | reports pi implementers' state to herdr | part of herdr's pi integration; not installed by fast-coding | optional; used when present |
+| treehouse | project, test-crew, stack, and toolsmith worktrees come from its pool | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh` | optional; plain git worktrees without it (`FAST_CODING_NO_TREEHOUSE=1` forces that) |
+| Linear account and API key | the plan, stories, tasks, and decisions; the CLI moves states over `api.linear.app/graphql`, the agent writes through the Linear MCP server | key per workspace (`fast-coding workspace key <name> --linear`); Linear MCP connected in Claude Code | yes |
+| Lavish (`npx -y lavish-axi`, unpinned) | the wayfinder's question page | nothing: npx fetches it on use (Node) | yes for wayfinder |
+| Frame0 app at `/Applications/Frame0.app` (1.7.0+) and `frame0-mcp-server` (`npx -y`, unpinned) | wireframes for prototype questions, one Frame0 per project (`fast-coding frame0`) | https://frame0.app; the MCP server comes through npx | only for prototype questions; macOS only |
+| gofmt, the target repo's own prettier | formatting the files a task touched before its test runs | Go toolchain; the repo's `node_modules/.bin/prettier` | optional; skipped when missing |
+| macOS userland: `lsof`, `ps`, `pgrep`, `kill`, `open` | stopping leftover servers and browser-harness daemons, finding and launching Frame0 | ships with macOS | yes |
 | graft | `graft build .` gives implementers a `file:line` context pack instead of exploring | `brew install graft` (or the project's installer); free, git-ignored | optional, recommended |
 
-Secrets never live in this repo or on Linear issues: the active workspace's key comes from `~/.fast-coding/config.json` (see [Workspaces](#workspaces)); without one, pi and OpenCode read their auth stores and verify reads the jev-ultrafast `.env`.
+Secrets never live in this repo or on Linear issues: the active workspace's key comes from `~/.fast-coding/config.json` (see [Workspaces](#workspaces)); without one, pi and OpenCode read their auth stores and verify reads `~/.fast-coding/.env`.
+
+Files outside the repo that fast-coding reads or writes:
+
+| Path | What |
+|---|---|
+| `~/.fast-coding/config.json` | workspaces, their OpenRouter and Linear keys, model choices (`FAST_CODING_CONFIG` moves it) |
+| `~/.fast-coding/.env` | verify's model keys (above) |
+| `~/.fast-coding/model-probe.json`, `tool-bugs.jsonl` | the day's model availability probes; every project's tool-bug reports |
+| `~/.claude.json` | read for folder trust before a crew starts; each crew directory's local `frame0` MCP server is written here |
+| `~/.pi/agent/` | pi's `models.json`, `auth.json`, and the herdr extension |
+
+### jev
+
+`jev/` is the browser agent verify's e2e cases drive, moved here from [jev-ultrafast](https://github.com/browser-use/jev-ultrafast) at `05b841f`: its library (`jev_ultrafast/`: the agent loop, browser, model calls, questions, and `snapshot.js`) and its tests, nothing else.
+It is its own uv project (`jev/pyproject.toml`, Python 3.12+, `browser-harness` and `httpx`), so `bin/fast-coding` stays stdlib-only; the CLI runs it with `uv run` from `jev/` and passes `~/.fast-coding/.env` when it exists.
+Its tests run with `cd jev && uv run pytest`; the CLI's own suite is `python3 -m unittest discover -s tests`.
+jev-ultrafast keeps what fast-coding never used: the `jev` demo CLI and its web UI (`demo.py`, `static/`), the flight examples, scripts, and docs.
 
 - `SKILL.md` is the orchestrator's instructions, linked into `~/.claude/skills/fast-coding`.
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
@@ -265,7 +291,7 @@ A workspace added without a key stops every command while active, rather than bi
 
 ### When a provider stops for billing
 
-Any provider call can come back with payment required: OpenRouter credits (implementers, fixer, Mercury reviews), Cerebras or Groq through OpenCode, TypeSafe (Jev acceptance), or the jev-ultrafast e2e driver's own calls.
+Any provider call can come back with payment required: OpenRouter credits (implementers, fixer, Mercury reviews), Cerebras or Groq through OpenCode, TypeSafe (Jev acceptance), or jev's own calls during e2e.
 `run` and `verify` treat that as a halt, not a failure: no attempt is consumed, nothing is retried, running tasks finish, no new task starts, and the state goes to `.fast-coding/<project>/results/resume.json`.
 The banner names the provider, quotes its message, prints the top-up link, and lists what is left. Exit code is 3.
 
@@ -287,7 +313,7 @@ Results land in `.fast-coding/my-feature/results/NNN.json` and `verify.json`, wi
    ```json
    { "permission": { "edit": "allow", "bash": "allow", "webfetch": "deny" } }
    ```
-3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key the jev-ultrafast `.env` uses as `TEXT_MODEL_API_KEY`.
+3. Keys. The implementer runs on OpenRouter: OpenCode reads the key from its auth store (`~/.local/share/opencode/auth.json`, entry `openrouter`), pi from `~/.pi/agent/auth.json` (entries `openrouter` and `openrouter-fast`). Both hold the same OpenRouter key `~/.fast-coding/.env` uses as `TEXT_MODEL_API_KEY`.
    pi itself: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` (Node 22.19+). Its `~/.pi/agent/models.json` declares the provider `openrouter-fast` (OpenRouter base URL, `openai-completions` API) with the model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast`: an OpenRouter preset (dashboard, Settings > Presets) that pins provider order to Together then CoreWeave with fallbacks off, so a harness with no request-body options still gets the pinned hosts. Priced at their rate so the ledger is honest.
    OpenCode pins the host explicitly instead: `~/.config/opencode/opencode.jsonc` sets `options.provider.order: ["cerebras", "groq"]` with fallbacks off.
    Workspaces override all of that per account: see [Workspaces](#workspaces).
@@ -410,7 +436,7 @@ If you cannot write the test, it is not a task yet.
   │  3 jev         one choice question per acceptance criterion             │
   │                MET / NOT_MET / UNCLEAR with probabilities   ~0.3 s       │
   │       │                                                                  │
-  │  4 e2e         jev-ultrafast drives a real browser to the goal          │
+  │  4 e2e         jev drives a real browser to the goal                    │
   │                then YOUR assert reads the real DOM                       │
   │       │                                                                  │
   │       ▼                                                                  │
@@ -436,8 +462,8 @@ On a real seven-task project gpt-oss-120b on Cerebras missed the largest task fo
 Before that the default was `pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras` (2026-10-02 to 2026-10-10): gpt-oss-120b through the pi harness, with the OpenRouter preset `gpt-oss-120b-cerebras` pinning the host to Cerebras, fallbacks off. Bench on the frozen deny-list task, same host: pi 4.2 to 6.5 s (p50 5.0 s) at ~32K input tokens per task; OpenCode `openrouter/openai/gpt-oss-120b` (pinned in its own config) 8.5 to 11 s at ~100K, because its fixed context is ~12K tokens per turn against pi's ~1K. Both pass 100%. OpenCode stays available per task via `model:`.
 Groq measures 342 t/s at 0.16 s latency with prompt caching at $0.15/$0.60 per M; Cerebras direct was 538 t/s at $0.35/$0.75 with no caching and a 150K tokens-per-minute dev-tier limit, which is what made Qwen 3.8 27B cost about $10 for one prototype build.
 With reasoning `none` the model reads a few files, writes a plan-shaped summary, and never edits; on retries it returns nothing. `low` fixed it at roughly 2x the cost per task.
-Reviewer model: whatever `~/code/jev-ultrafast/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
-Browser e2e: jev-ultrafast's `Agent`, with an independent `assert` command per case.
+Reviewer model: whatever `~/.fast-coding/.env` names as `TEXT_MODEL`, Mercury 2.5 by default.
+Browser e2e: jev's `Agent` (`jev/`), with an independent `assert` command per case.
 Acceptance review: Jev (TypeSafe) answers one MET/NOT_MET/UNCLEAR question per acceptance criterion.
 Every run and verify ends with a cost line per provider and a total.
 

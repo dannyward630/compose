@@ -13,3 +13,4 @@ __pycache__/
 /AGENTS.md
 /GEMINI.md
 /.ignore
+.venv/
