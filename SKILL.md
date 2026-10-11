@@ -111,6 +111,7 @@ A project is one feature: its own git worktree and branch, one plan, one set of 
 - Otherwise create one: `fast-coding init --repo <path> --project <slug>`, where `<slug>` is a short kebab-case name for the feature in the user's words (`custom-dropdowns`, `workday-login`), not the repo's name and not a date. This creates branch `fast-coding/<slug>` from the branch the user is on and a worktree `../fast-coding-<slug>` next to the repo, with `.fast-coding/<slug>/` there, untracked.
 Before anything else it ignores the tool's files: `graft/` and `.fast-coding/` go into an existing `.gitignore` as one commit of its own (`Ignore local tool directories`), and into the repo's `info/exclude` (with graft's `.ignore`) whether or not a `.gitignore` exists, so no tool file ever enters the branch.
 Projects created before this keep their already-tracked `.fast-coding/<slug>/`; nothing about them changes.
+In a repo that already has code, `init` then sets graft up in the worktree: wired for Claude Code (`graft init --no-agents --no-global`, skipped if it would edit a tracked file) and built, with every file graft writes kept out of git through `info/exclude`. Without graft installed it prints the install command; `fast-coding graft --project <slug>` sets it up later or rebuilds the graph.
 Tell the user the project name and the worktree path in your first reply.
 - Inside herdr, right after `init` and the feature issue exist, hand the project to its orchestrator (0h) and become the first mate. The rest of this skill is the orchestrator's.
 - Every project is one **feature issue** on Linear (label `Feature`, title in the user's words, under its epic when there is one). Create it if the user did not hand you one, and record its identifier in `.fast-coding/<slug>/linear.json` as `{"feature": "ENG-123"}`. Its stories, their tasks, and any decision tickets are its sub-issues, so the whole feature reads as one tree in Linear.
@@ -119,6 +120,13 @@ Tell the user the project name and the worktree path in your first reply.
 - A project made with `init --after <other-slug>` starts from `fast-coding/<other-slug>`, records it as `review_base` in its `verify.json`, and shows `(after <other-slug>)` in `projects` and `status`. Its final PR targets that project's branch until that one merges, then the user's branch. `clean` counts a merge into either.
 - Never mix two features in one project, and never spread one feature over two. If a request is really two features, make two projects and say so.
 `fast-coding status --repo <path>` shows every project in every worktree with all its tasks; `--project <name>` shows one; `--watch` follows a run live. Use these when reporting progress.
+
+### 0e. Explore an existing repo first
+In a repo that already has code, the first crew is an explore crew, started at the same time as groundwork's probe (0g; neither changes a file):
+`fast-coding explore --project <slug> | fast-coding crew start --project <slug> --role explore --title explore --brief -`.
+It maps the code through graft only, in under 3 minutes, and appends a codebase brief of at most 40 lines to the feature's Notes: entry points, where the feature plugs in (file:line), patterns and helpers to reuse, the test setup and commands, risks.
+Wayfinder (0b) and the plan read that brief: ask only what the code does not already answer, and plan tasks onto the files and helpers it names.
+A new or empty repo has nothing to explore: skip this step.
 
 ### 0b. Find the way first, always
 Wayfinder runs on every project, never skipped, not even when a README, ticket, or spec seems to settle everything: a spec still leaves choices open (data model, scoring, toolchain, UX), and a choice made silently is a choice the captain never saw.
