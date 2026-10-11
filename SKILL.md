@@ -367,8 +367,8 @@ Every change of course goes through `fast-coding change`, so it is recorded, and
 
 | It is | Do |
 |---|---|
-| a false alarm | `hold --release <ids>`, a one-line comment on the task, and `run --only NNN` for a `contradiction` task |
-| task-sized | step 7 |
+| a false alarm | `fast-coding reflect --project <slug> --dismiss "<why>"`, `hold --release <ids>`, a one-line comment on the task, and `run --only NNN` for a `contradiction` task |
+| task-sized | `fast-coding reflect --project <slug> --dismiss "<why>"`, then step 7 |
 | objective, inside the settled decisions (a missing `after:`, a split, a wrong owner) | re-plan yourself, below, with no page |
 | complex, subjective, or a reversal of anything the captain settled | escalate, below; everything stays held |
 

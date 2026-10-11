@@ -53,7 +53,7 @@ Before the first run in a new repo:
 | `done` | Record tasks finished by hand: `--only <ids> --note <why>` |
 | `triage` | Fast-model clean or flag per passed task (`run` ends with it) |
 | `resume` | Continue a run or verify that stopped on a billing halt |
-| `reflect` | Screen the settled decisions against evidence with Jev: `--evidence -`, `--against "<line>"` |
+| `reflect` | Screen the settled decisions against evidence with Jev: `--evidence -`, `--against "<line>"`; `--dismiss "<why>"` marks the evidence so far answered, so later screens skip it |
 | `hold` | Hold tasks back from dispatch: `--only <ids> --reason "<why>"`; `--release <ids>` or `all` |
 | `change start\|done\|undo` | Record a change of course; `undo C<n>` puts back what it touched |
 | `bench` | Frozen task set across models: pass rate, attempts, p50/p95 time, cost |

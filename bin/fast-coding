@@ -2701,9 +2701,22 @@ def last_change_done(proj):
             continue
     return max(done, default="")
 
+def evidence_cut(proj):
+    """When the evidence so far was last acted on: the newer of the last closed change and the last `reflect --dismiss`.
+    Evidence and screens from before it are not news. A torn line is skipped: watch_snapshot calls this on every poll."""
+    cuts, f = [last_change_done(proj)], proj / "results" / "evidence.jsonl"
+    for l in f.read_text().splitlines() if f.exists() else []:
+        try:
+            r = json.loads(l)
+        except json.JSONDecodeError:
+            continue
+        if r.get("cut"):
+            cuts.append(r.get("at") or "")
+    return max(cuts)
+
 def evidence_since(proj):
-    """Every piece of evidence since the last closed change of course, newest first: a pattern across failures is the signal."""
-    f, cut = proj / "results" / "evidence.jsonl", last_change_done(proj)
+    """Every piece of evidence since it was last acted on, newest first: a pattern across failures is the signal."""
+    f, cut = proj / "results" / "evidence.jsonl", evidence_cut(proj)
     rows = [json.loads(l) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
     return "\n\n".join(f"[{r['at']}] {r['trigger']}: {r['text']}" for r in reversed(rows) if r["at"] > cut)[:REFLECT_EVIDENCE_CAP]
 
@@ -2987,10 +3000,19 @@ def cmd_change(a):
     {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
 
 def cmd_reflect(a):
-    """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer."""
+    """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer.
+    `--dismiss` records that the evidence so far is answered (a false alarm, a task-sized fix), so no later screen flags it again."""
     proj = project_dir(a)
     load_tasks(proj, required=True)
-    evidence = (sys.stdin.read() if a.evidence == "-" else a.evidence or "").strip()
+    if bool(a.evidence) == bool(a.dismiss):
+        sys.exit('reflect needs one of --evidence "<what was found>" (`-` reads stdin) or --dismiss "<why it needs no change of course>"')
+    if a.dismiss:
+        at = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(proj / "results" / "evidence.jsonl", "a") as f:
+            f.write(json.dumps({"at": at, "trigger": "dismissed", "text": a.dismiss.strip(), "cut": True}) + "\n")
+        print(f"dismissed the evidence up to {at}: later screens start after it")
+        return
+    evidence = (sys.stdin.read() if a.evidence == "-" else a.evidence).strip()
     if not evidence:
         sys.exit('reflect needs evidence: --evidence "<what was found>", or `-` to read it from stdin')
     path, rec = reflect(proj, "manual", evidence, against=a.against or [])
@@ -3688,7 +3710,7 @@ def watch_snapshot(repo, proj):
     snap["last"] = list(max(marks)) if marks else [0, ""]
     cost = proj / "results" / "run-cost.json"
     snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
-    cut = last_change_done(proj)  # a screen a closed change already answered is not news, not even to `--now`
+    cut = evidence_cut(proj)  # a screen a closed change or a dismissal already answered is not news, not even to `--now`
     snap["reflects"] = {}
     for f in sorted((proj / "results").glob("reflect-*.json")):
         try:
@@ -4370,7 +4392,8 @@ def main():
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "reflect":
-            s.add_argument("--evidence", required=True, help="what was found: the captain's words, a report, a rejection reason; `-` reads stdin")
+            s.add_argument("--evidence", help="what was found: the captain's words, a report, a rejection reason; `-` reads stdin")
+            s.add_argument("--dismiss", help="why the evidence so far needs no change of course (a false alarm, a task-sized fix): later screens skip it")
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
         if name == "hold":
             s.add_argument("--only", help="comma-separated task ids to hold")

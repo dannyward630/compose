@@ -99,6 +99,29 @@ class Reflect(unittest.TestCase):
         self.assertNotIn("first failure", ev)  # a closed change already acted on it
         self.assertIn("second failure", ev)
 
+    def test_a_dismissal_cuts_the_evidence_like_a_closed_change(self):
+        proj = project()
+        (proj / "results" / "evidence.jsonl").write_text(json.dumps({"at": "2026-10-11 10:00:00", "trigger": "task:001", "text": "first failure"}) + "\n")
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+            fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="the sandbox flake, not the plan", against=None))
+        self.assertIn("dismissed", out.getvalue())
+        self.assertEqual(json.loads((proj / "results" / "evidence.jsonl").read_text().splitlines()[-1])["cut"], True)
+        time.sleep(1)  # the next screen is a second later than the dismissal
+        with mock.patch.object(fc, "jev_ask", return_value=answers()) as ask:
+            fc.reflect(proj, "task:002", "second failure")
+        ev = ask.call_args.args[2]["evidence"]
+        self.assertNotIn("first failure", ev)
+        self.assertNotIn("the sandbox flake", ev)
+        self.assertIn("second failure", ev)
+
+    def test_the_command_takes_evidence_or_a_dismissal(self):
+        proj = project()
+        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(io.StringIO()):
+            for kw in ({"evidence": None, "dismiss": None}, {"evidence": "x", "dismiss": "y"}):
+                with self.assertRaises(SystemExit):
+                    fc.cmd_reflect(SimpleNamespace(against=None, **kw))
+
     def test_reflects_in_the_same_second_get_their_own_files(self):
         proj = project()
         with mock.patch.object(fc, "jev_ask", return_value=answers()):
@@ -111,7 +134,7 @@ class Reflect(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", lambda a: proj), \
                 mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
                 mock.patch("sys.stdin", io.StringIO("captain: drafts must sync across devices\n")), redirect_stdout(out):
-            fc.cmd_reflect(SimpleNamespace(evidence="-", against=None))
+            fc.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
         self.assertIn("BROKEN", out.getvalue())
         self.assertIn("Store drafts in localStorage", out.getvalue())
         self.assertIn("flagged 1 of 3", out.getvalue())
@@ -145,6 +168,16 @@ class WatchReflect(unittest.TestCase):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"][str(path)]["counts"], (1, 0))
             fc.changes_dir(proj).mkdir(parents=True)
             (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
+            self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
+
+    def test_the_snapshot_drops_screens_a_dismissal_answered(self):
+        proj = project()
+        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc, "say", lambda m: None), \
+                mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
+            fc.reflect(proj, "task:001", "x")
+        with open(proj / "results" / "evidence.jsonl", "a") as f:
+            f.write(json.dumps({"at": "2999-01-01 00:00:00", "trigger": "dismissed", "text": "a false alarm", "cut": True}) + "\n")
+        with mock.patch.object(fc, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
 
     def test_a_screen_written_between_two_watches_is_reported_by_the_next(self):
