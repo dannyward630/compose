@@ -2661,11 +2661,19 @@ def reflect(proj, trigger, evidence, against=()):
         path.write_text(json.dumps(rec, indent=2))
         return path, rec
 
+_hold_warned = []
+
 def held(proj):
-    """{task id: {"reason", "at"}} for every held task. A missing or unreadable file holds nothing."""
+    """{task id: {"reason", "at"}} for every held task. A missing file holds nothing; so does an unreadable one, said once, so a broken file never freezes a run."""
+    path = proj / "results" / "hold.json"
     try:
-        return json.loads((proj / "results" / "hold.json").read_text())
-    except (OSError, json.JSONDecodeError):
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as e:
+        if not _hold_warned:
+            _hold_warned.append(1)
+            say(f"hold.json unreadable ({e}); nothing is held until it is fixed: {path}")
         return {}
 
 def held_behind(pending, hold, failed):
@@ -2699,7 +2707,9 @@ def cmd_hold(a):
             hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
             print(f"{tid} held  {a.reason}")
             linear_note(tasks[tid], f"Held: {a.reason}")
-    (proj / "results" / "hold.json").write_text(json.dumps(hold, indent=2))
+    tmp = proj / "results" / "hold.json.tmp"
+    tmp.write_text(json.dumps(hold, indent=2))
+    os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
 def cmd_reflect(a):
     """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer."""

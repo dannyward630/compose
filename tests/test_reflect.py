@@ -194,6 +194,7 @@ class Holds(unittest.TestCase):
         self.proj = project()
         with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002"), task("004")])
         self.said, self.notes = [], []
+        fc._hold_warned.clear()
         for name, value in (("say", self.said.append), ("project_dir", lambda a: self.proj),
                             ("linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
             p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
@@ -240,6 +241,19 @@ class Holds(unittest.TestCase):
     def test_an_unreadable_hold_file_holds_nothing(self):
         (self.proj / "results" / "hold.json").write_text("{not json")
         self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(len(self.said), 1)
+        self.assertTrue(self.said[0].startswith("hold.json unreadable"))
+        fc.held(self.proj)
+        self.assertEqual(len(self.said), 1)
+
+    def test_a_missing_hold_file_is_not_a_warning(self):
+        self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(self.said, [])
+
+    def test_hold_leaves_no_temp_file_and_a_parseable_hold_json(self):
+        self.hold(only="002", reason="x")
+        self.assertFalse((self.proj / "results" / "hold.json.tmp").exists())
+        self.assertIn("002", json.loads((self.proj / "results" / "hold.json").read_text()))
 
     def test_status_shows_held_with_the_reason(self):
         self.hold(only="002", reason="D2 broken")
