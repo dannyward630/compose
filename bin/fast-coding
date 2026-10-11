@@ -2595,13 +2595,24 @@ def kill_listeners(ports):
         if pids:
             sh(["kill", "-9", *pids], ".", check=False)
 
-def harness_daemons():
-    return set(sh("pgrep -f browser_harness.daemon", ".", check=False).stdout.split())
+def harness_daemons(name):
+    """Pids of the browser-harness daemons running under BU_NAME=`name`. A daemon carries no name on its command line, only
+    in its environment, and jev never sets BU_NAME, so the daemons its runs start inherit the stage's: matching the name
+    finds exactly one stage's daemons, never another project's stage or the captain's running at the same time."""
+    found = set()
+    for pid in sh("pgrep -f browser_harness.daemon", ".", check=False).stdout.split():
+        try:
+            env = Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace").split("\0")
+        except OSError:  # macOS: `ps -E` appends the environment to the command
+            env = sh(["ps", "-Eww", "-o", "command=", "-p", pid], ".", check=False).stdout.split()
+        if f"BU_NAME={name}" in env:
+            found.add(pid)
+    return found
 
-def end_new_daemons(before):
-    """restart_daemon starts a fresh browser-harness daemon and jev's own runs leave theirs: end every daemon that was not
-    running before the stage, never one that was (another project or the captain may be using it)."""
-    new = harness_daemons() - before
+def end_new_daemons(name, before):
+    """restart_daemon starts a fresh browser-harness daemon and jev's own runs leave theirs: end every daemon under the
+    stage's BU_NAME that was not running before the stage, never one that was (a project may share one through e2e_env)."""
+    new = harness_daemons(name) - before
     if new:
         sh(["kill", *new], ".", check=False)
     return new
@@ -2725,10 +2736,11 @@ def e2e_stage(repo, cfg, panes, report, findings):
     if profile:
         cdp = free_port()
         env.update(BU_CDP_URL=f"http://127.0.0.1:{cdp}", BU_NAME=f"fc-e2e-{cdp}")
+    env.setdefault("BU_NAME", f"fc-e2e-{free_port()}")  # every stage names its daemons, so it ends its own and no one else's
     cfg = {**cfg, "e2e": [{k: expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
     ports = e2e_ports(cfg, env)
     busy = {p for p in ports if port_listening(p)}
-    daemons = harness_daemons()
+    daemons = harness_daemons(env["BU_NAME"])
     try:
         if profile:
             # A project's verify shows its browser. Only fast-coding's own test suite runs it headless (FAST_CODING_E2E_HEADLESS=1),
@@ -2773,7 +2785,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
             sh(["uv", "run", "python", "-c", f"from browser_harness.admin import restart_daemon; restart_daemon({env['BU_NAME']!r})"],
                JEV_DIR, timeout=30, check=False)
         kill_listeners(ports - busy)
-        end_new_daemons(daemons)
+        end_new_daemons(env["BU_NAME"], daemons)
         if profile:
             shutil.rmtree(profile, ignore_errors=True)
     return ok

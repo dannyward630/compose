@@ -113,16 +113,21 @@ class Leftovers(unittest.TestCase):
         self.assertIn(str(proj / "scratch" / "shop-groundwork"), pre)
         self.assertIn("never /tmp", pre)
 
-    def test_only_daemons_started_since_the_snapshot_end(self):
-        spawn = lambda: subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "browser_harness.daemon"])
-        old = spawn(); self.addCleanup(lambda: (old.kill(), old.wait()))
+    def test_a_stage_ends_only_its_own_new_daemons(self):
+        def spawn(name):
+            p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "browser_harness.daemon"], env={**os.environ, "BU_NAME": name})
+            self.addCleanup(lambda: (p.kill(), p.wait()))
+            return p
+        mine_name, other_name = f"fc-test-{os.getpid()}-a", f"fc-test-{os.getpid()}-b"  # unique: suites may run at once
+        shared = spawn(mine_name)  # running before the stage under its name (shared through e2e_env): kept
         time.sleep(0.2)
-        before = fc.harness_daemons()
-        new = spawn(); self.addCleanup(lambda: (new.kill(), new.wait()))
+        before = fc.harness_daemons(mine_name)
+        mine, other = spawn(mine_name), spawn(other_name)  # another project's stage starts one meanwhile: kept
         time.sleep(0.2)
-        self.assertIn(str(new.pid), fc.end_new_daemons(before))
-        self.assertIsNotNone(new.wait(timeout=5))
-        self.assertIsNone(old.poll())
+        self.assertEqual(fc.end_new_daemons(mine_name, before), {str(mine.pid)})
+        self.assertIsNotNone(mine.wait(timeout=5))
+        self.assertIsNone(shared.poll())
+        self.assertIsNone(other.poll())
 
 
 class StartOver(unittest.TestCase):
