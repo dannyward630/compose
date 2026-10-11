@@ -98,7 +98,7 @@ Every run leaves `results/run.json` with its pid; a run that dies shows as `inte
 
 ## Projects
 
-A project is one feature in its own worktree: `fast-coding init --project <name>` creates branch `fast-coding/<name>` from the branch you are on and checks it out at `../fast-coding-<name>` next to the repo, with `.fast-coding/<name>/` (Linear link, verify config, results) beside it, untracked: `init` first ignores `graft/` and `.fast-coding/` (in an existing `.gitignore`, as one commit of its own, and in the repo's `info/exclude`), so no tool file ever enters the branch, and no commit message names the tool.
+A project is one feature in its own worktree: `fast-coding init --project <name>` creates branch `fast-coding/<name>` from the branch you are on and checks it out in a [treehouse](https://github.com/kunchenguid/treehouse) slot from the repo's own pool (`<repo>/.treehouse/`, git-ignored; test-crew, stack, and toolsmith worktrees come from the same pool and go back to it with their installs intact; without treehouse it falls back to a plain worktree at `../fast-coding-<name>`), with `.fast-coding/<name>/` (Linear link, verify config, results) beside it, untracked: `init` first ignores `graft/` and `.fast-coding/` (in an existing `.gitignore`, as one commit of its own, and in the repo's `info/exclude`), so no tool file ever enters the branch, and no commit message names the tool.
 The orchestrator does all of the feature's work in that worktree, so your checkout and branch are never touched, and several features can run at once, each with its own stack.
 The stack's trunk is the project branch; its PRs target that branch, and one final PR brings the project branch to yours.
 Every command accepts `--project <name>` from any checkout of the repository and resolves it to the right worktree.
@@ -158,7 +158,7 @@ Secrets never live in this repo or on Linear issues: the active workspace's key 
 - `bin/fast-coding` is the dispatcher, linked into `~/.local/bin/fast-coding`. Python stdlib only.
 
 ```bash
-fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + worktree ../fast-coding-<name> with .fast-coding/<name>/ untracked, graft/ and .fast-coding/ ignored first (--here: in this checkout; --after <project>: branch from that project's branch)
+fast-coding init   --repo . --project <name>   # branch fast-coding/<name> + a treehouse slot (or ../fast-coding-<name> without treehouse) with .fast-coding/<name>/ untracked, graft/ and .fast-coding/ ignored first (--here: in this checkout; --after <project>: branch from that project's branch)
 fast-coding run    --repo . --project <name>   # one clone + one pi session per task; dependency order; one gh stack on your branch
 fast-coding stack  --repo . --project <name>   # re-register stacks; --submit pushes and opens draft PRs (ask first)
 fast-coding verify --repo . --project <name>   # checks, confirmed Mercury review, Jev acceptance, jev e2e, fix loop, cost
