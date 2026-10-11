@@ -235,7 +235,7 @@ It has top-level settings and a `workspaces` map; the active one (`workspace`) i
 {"workspace": "work",
  "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
             "fallback": "<optional, default: none>", "fix": "<optional, default: implementer>",
-            "crew": {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model": "claude:claude-opus-5-5", "effort": "high"}},
+            "crew": {"planner": {"model": "pi:openai/gpt-6-astra", "effort": "high", "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<optional, any env var the CLI and its tools read>"},
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
@@ -249,11 +249,14 @@ OpenRouter presets belong to an account: create `glm-5-3-flash-fast` (and any pr
 `run` and `resume` send each model they may call one tiny prompt before cloning anything, so a wrong id or preset slug stops the run with the provider's message.
 `fallback: null` (the default) turns the fallback off; a project's `verify.json` `fix_model` still wins over `models.fix`.
 A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare `claude` runs Claude Code with its default model, anything else is an OpenCode id.
-`models.crew` picks the model of each Claude crew session by role (`orchestrator`, `groundwork`, `tests`, any role name), then `default`; `crew start --model small` (or any name under `models.crew`, or a `claude:<model-id>`) overrides it.
-An entry is a model id, or `{"model": "claude:<model-id>", "effort": "high"}` to also set Claude Code's `--effort`.
-An entry may carry a `fallback` (another entry): `crew start` probes the primary model once a day (`claude -p --model <id>`, cached in `~/.fast-coding/model-probe.json`) and uses the fallback when the probe fails, printing which it chose.
-The planning roles, the `orchestrator` and the `wayfinder` crew, use `planner` when they have no entry of their own: Fable, else Opus 5.5 at high effort. Groundwork and test crews use `groundwork` (Opus); everything else `default`.
-Crew sessions are always Claude Code, so a `pi:` or OpenCode id under `models.crew` stops `crew start` with the key named; without `models.crew` every crew gets Claude Code's default model.
+`models.crew` picks the model of each crew session by role (`orchestrator`, `groundwork`, `tests`, any role name), then `default`; `crew start --model small` (or any name under `models.crew`, or a `claude:<model-id>`) overrides it.
+An entry is a model id, or `{"model": "claude:<model-id>", "effort": "high"}` to also set Claude Code's `--effort` (for a `pi:` model, pi's `--thinking`).
+An entry may carry a `fallback`: another entry, or an ordered list of them.
+`crew start` probes the primary model, then each fallback in order, once a day each (`claude -p --model <id>` or `pi -p --model <id>`, cached in `~/.fast-coding/model-probe.json`), takes the first that answers, and prints which it chose and why.
+The last entry is never probed: it is what you get when everything before it is down.
+The planning roles, the `orchestrator` and the `wayfinder` crew, use `planner` when they have no entry of their own: above, GPT-6 Astra in pi, else Opus 5.5 at high effort. Groundwork and test crews use `groundwork` (Opus); everything else `default`.
+Crew sessions run in pi (`pi:<provider/model>`) or Claude Code, so an OpenCode id under `models.crew` stops `crew start` with the key named; without `models.crew` every crew gets Claude Code's default model.
+A pi crew session loads this repo as its skill and the herdr state extension, but not Claude Code's plugin hooks, so the orchestrator's edit guard does not apply to it.
 `default` always exists: it is the top level itself, active when `workspace` is unset, and with no top-level `openrouter_api_key` the harnesses keep their own auth stores.
 `/fast-coding:workspace` comes from the repo being a skills-dir plugin too (`.claude-plugin/plugin.json`, `commands/workspace.md`).
 Keys are read from piped stdin or a hidden prompt, never an argument, so they stay out of shell history and the process list.

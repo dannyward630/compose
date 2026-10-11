@@ -39,14 +39,15 @@ class RoleModels(unittest.TestCase):
         self.assertEqual(fc.crew_model("groundwork"), "claude")
         self.assertIsNone(fc.claude_id("claude"))
 
-    def test_pi_for_a_crew_is_refused_naming_the_key(self):
-        self.config({"tests": "pi:openrouter-fast/z-ai/glm-5.3-flash"})
+    def test_an_opencode_id_for_a_crew_is_refused_naming_the_key(self):
+        self.config({"tests": "openai/gpt-x"})
         with self.assertRaises(SystemExit) as e:
             fc.crew_model("tests")
         self.assertIn("models.crew.tests", str(e.exception))
         with self.assertRaises(SystemExit) as e:
             fc.crew_model("tests", "openai/gpt-x")
         self.assertIn("--model", str(e.exception))
+        self.assertEqual(fc.crew_model("tests", "pi:openai/gpt-6-astra"), "pi:openai/gpt-6-astra")
 
     def test_crew_start_passes_the_model_to_claude_code(self):
         self.config(CREW)
@@ -109,6 +110,29 @@ class PlannerChain(unittest.TestCase):
             model, effort, note = fc.crew_pick("orchestrator")
         self.assertEqual((model, effort), ("claude:claude-opus-5-5", "high"))
         self.assertIn("unavailable", note); self.assertIn("model not found", note)
+
+    def test_the_fallbacks_are_tried_in_order(self):
+        astra, fable, opus = "pi:openai/gpt-6-astra", "claude:claude-fable-5-1", "claude:claude-opus-5-5"
+        chain = {"planner": {"model": astra, "effort": "high", "fallback": [fable, {"model": opus, "effort": "high"}]}}
+        d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": chain}}))
+        with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
+            fc.apply_config()
+        for up, want in (({astra}, astra), ({fable, astra}, astra), ({fable}, fable), (set(), opus)):  # the last is never probed
+            fc._PROBED.clear()
+            with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
+                model, effort, note = fc.crew_pick("orchestrator")
+            self.assertEqual(model, want)
+        self.assertEqual(effort, "high")
+        self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
+
+    def test_a_pi_model_is_probed_with_pi_and_judged_by_its_events(self):
+        ok = fc.subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}), "")
+        bad = fc.subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": "Model not found: x"}}), "")
+        self.assertEqual(fc.probe_result("pi:openai/gpt-6-astra", ok), (True, "answered"))
+        self.assertEqual(fc.probe_result("pi:openai/x", bad)[0], False)
+        self.assertIn("Model not found", fc.probe_result("pi:openai/x", bad)[1])
+        self.assertEqual(fc.probe_command("pi:openai/gpt-6-astra")[0], "pi")
+        self.assertIn("openai/gpt-6-astra", fc.probe_command("pi:openai/gpt-6-astra"))
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:

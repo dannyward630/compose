@@ -40,13 +40,13 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 #    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
 # A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
-# `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions are always Claude Code.
+# `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Crew sessions run in pi or Claude Code.
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
-CREW_FALLBACK = {}  # the same keys -> (model, effort) to use when the entry's own model fails its availability probe
+CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("orchestrator", "wayfinder")  # they plan, so they get `planner`
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
@@ -87,7 +87,8 @@ def apply_config():
     CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
     CREW_EFFORT = {k: v["effort"] for k, v in crew.items() if isinstance(v, dict) and v.get("effort")}
     entry = lambda e: (e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)
-    CREW_FALLBACK = {k: entry(v["fallback"]) for k, v in crew.items() if isinstance(v, dict) and v.get("fallback")}
+    CREW_FALLBACK = {k: [entry(f) for f in (v["fallback"] if isinstance(v["fallback"], list) else [v["fallback"]])]
+                     for k, v in crew.items() if isinstance(v, dict) and v.get("fallback")}  # one entry or an ordered list
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     if "fix" in models:
@@ -781,10 +782,44 @@ def crew_preamble(proj, name, title):
 
 _PROBED = {}
 
+def pi_id(model):
+    """The --model value for a `pi:<provider/model>` id."""
+    return model.split(":", 1)[1]
+
+def pi_key_args(model):
+    """pi's --api-key for the workspace's OpenRouter key, only for models routed through OpenRouter (others keep pi's own auth)."""
+    return ["--api-key", OPENROUTER_KEY] if OPENROUTER_KEY and "openrouter" in pi_id(model) else []
+
+def probe_command(model):
+    if model.startswith("pi:"):
+        return ["pi", "-p", "--mode", "json", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
+                "--thinking", "off", "--model", pi_id(model), *pi_key_args(model), "Reply with exactly: ok"]
+    return ["claude", "-p", "--model", claude_id(model), "--output-format", "json", "Reply with exactly: ok"]
+
+def probe_result(model, p):
+    """(ok, why) from a finished probe process: Claude Code reports `is_error` in its JSON; pi streams events, so a clean exit
+    plus an assistant text reply is ok and anything else is the error it printed."""
+    if model.startswith("pi:"):
+        events = []
+        for line in p.stdout.splitlines():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+        done = [e["message"] for e in events if e.get("type") == "message_end" and (e.get("message") or {}).get("role") == "assistant"]
+        failed = next((m.get("errorMessage") or "error" for m in done if m.get("stopReason") == "error"), None)  # a refused model still ends its turn
+        replied = any(c.get("type") == "text" and c.get("text") for m in done for c in m.get("content") or [])
+        if p.returncode == 0 and replied and not failed:
+            return True, "answered"
+        return False, (failed or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+    out = json.loads(p.stdout.strip()) if p.stdout.strip().startswith("{") else {}
+    ok = p.returncode == 0 and out.get("is_error") is False
+    return ok, "answered" if ok else (out.get("result") or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+
 def model_available(model):
-    """Whether Claude Code can run `model` (a claude:<id>) on this account: one tiny `claude -p` turn, cached for the day
-    in ~/.fast-coding/model-probe.json. Returns (ok, why)."""
-    mid, today = claude_id(model), time.strftime("%Y-%m-%d")
+    """Whether the harness named by `model` (a claude:<id> or pi:<provider/model>) can run it on this account: one tiny
+    non-interactive turn, cached for the day in ~/.fast-coding/model-probe.json. Returns (ok, why)."""
+    mid, today = model.split(":", 1)[1] if ":" in model else "", time.strftime("%Y-%m-%d")
     if not mid:
         return True, "Claude Code's default model"
     if mid in _PROBED:
@@ -798,11 +833,8 @@ def model_available(model):
         _PROBED[mid] = (hit["ok"], hit["why"])
         return _PROBED[mid]
     try:
-        p = subprocess.run(["claude", "-p", "--model", mid, "--output-format", "json", "Reply with exactly: ok"],
-                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        out = json.loads((p.stdout or "{}").strip() or "{}") if p.stdout.strip().startswith("{") else {}
-        ok = p.returncode == 0 and out.get("is_error") is False
-        why = "answered" if ok else (out.get("result") or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         ok, why = False, f"{type(e).__name__}: {e}"[:160]
     _PROBED[mid] = (ok, why)
@@ -812,30 +844,32 @@ def model_available(model):
     return ok, why
 
 def crew_pick(role, explicit=None):
-    """(model, effort, note) for a crew session. `--model` (a `claude:<id>`, or a name under models.crew such as `small`)
-    wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator and the wayfinder
-    crew), then `default`, then bare `claude`. An entry with a `fallback` probes its model first and uses the fallback
-    when Claude Code cannot run it. Crew are always Claude Code."""
+    """(model, effort, note) for a crew session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
+    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator
+    and the wayfinder crew), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
+    probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
+    unprobed. Crew sessions run in pi or Claude Code."""
     if explicit and explicit not in CREW_MODELS:
-        key, model, effort = "--model", explicit, None
+        key, chain = "--model", [(explicit, None)]
     else:
         key = explicit or (role if role in CREW_MODELS else
                            "planner" if role in PLANNING_ROLES and "planner" in CREW_MODELS else
                            "default" if "default" in CREW_MODELS else None)
         if key is None:
             return "claude", None, ""
-        model, effort = CREW_MODELS[key], CREW_EFFORT.get(key)
-    note = f"models.crew.{key}" if key != "--model" else "--model"
-    if key in CREW_FALLBACK:
-        ok, why = model_available(model)
-        if not ok:
-            note = f"models.crew.{key}: {model} unavailable ({why}), using its fallback"
-            model, effort = CREW_FALLBACK[key]
-    if not is_claude(model):
-        where = "" if key == "--model" else f" in {CONFIG_PATH}"
-        sys.exit(f"{'--model' if key == '--model' else 'models.crew.' + key} is {model!r}, but crew sessions run in Claude Code: "
-                 f"use claude:<model-id> (e.g. claude:claude-sonnet-5-5){where}; pi: and OpenCode ids are for implementers only")
-    return model, effort, note
+        chain = [(CREW_MODELS[key], CREW_EFFORT.get(key)), *CREW_FALLBACK.get(key, [])]
+    label = "--model" if key == "--model" else f"models.crew.{key}"
+    for m, _ in chain:
+        if not (is_claude(m) or str(m).startswith("pi:")):
+            where = "" if key == "--model" else f" in {CONFIG_PATH}"
+            sys.exit(f"{label} is {m!r}, but crew sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
+                     f"or pi:<provider/model> (e.g. pi:openai/gpt-6-astra){where}; OpenCode ids are for implementers only")
+    skipped = []
+    for i, (model, effort) in enumerate(chain):
+        if i == len(chain) - 1 or (ok := model_available(model))[0]:
+            break
+        skipped.append(f"{model} unavailable ({ok[1]})")
+    return model, effort, label + (": " + ", ".join(skipped) + ", using its fallback" if skipped else "")
 
 def crew_model(role, explicit=None):
     return crew_pick(role, explicit)[0]
@@ -1167,9 +1201,14 @@ def cmd_crew(a):
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
-    herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
-          *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-          "--permission-mode", "auto", check=True, timeout=90)
+    if model.startswith("pi:"):  # the same crew in pi: its skills dir is this repo, its thinking level is the entry's effort
+        herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
+              *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
+              *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), check=True, timeout=90)
+    else:
+        herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
+              *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
+              "--permission-mode", "auto", check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
