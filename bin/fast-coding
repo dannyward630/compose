@@ -2897,18 +2897,30 @@ def change_undo(a, proj, repo):
     if moved:
         sys.exit(f"{a.id} cannot be undone: changed since it closed: {', '.join(moved)}. Undo the later change first, or make this a new change.")
     cid, _ = begin_change(proj, repo, f"undo {a.id}")
-    reset = []
+    reset, stuck = [], []
     for i in d["canceled"] + d["edited"]:
         tid = issue_label(i, rec["before"]["issues"][i])
         tip, branch = rec["tips"].get(tid), f"fast/{proj.name}/{tid}"
         if tip and sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip() != tip:
-            sh(["git", "branch", "-f", branch, tip], repo)
+            try:
+                sh(["git", "branch", "-f", branch, tip], repo)
+            except RuntimeError as e:  # a branch git refuses (checked out elsewhere) is listed for hand reset, its result goes with it
+                say(f"{branch}: git refused to reset it ({str(e).strip().splitlines()[-1][:200]})")
+                stuck.append((branch, tip))
+                continue
             if tid in rec.get("results", {}):
                 (proj / "results" / f"{tid}.json").write_text(json.dumps(rec["results"][tid], indent=2))
             reset.append(tid)
     if reset:
         say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
-        register_stack(repo, proj, current_branch(repo))
+        try:
+            register_stack(repo, proj, current_branch(repo))
+        except Exception as e:  # noqa: BLE001  the branches are reset; the stack can be registered by hand
+            say(f"stack not re-registered ({str(e)[:200]})")
+    if stuck:
+        print("reset these branches by hand, then sync:")
+        for branch, tip in stuck:
+            print(f"  git branch -f {branch} {tip}")
     edits, left = undo_edits(rec), None
     if linear_ready():
         for n, (ident, fields) in enumerate(edits):

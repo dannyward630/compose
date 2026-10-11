@@ -561,6 +561,16 @@ class Undo(unittest.TestCase):
         self.assertNotIn("  ENG-5: ", out)
         self.assertEqual(fc.open_change(self.proj), "C2")
 
+    def test_a_branch_git_refuses_to_move_is_listed_and_the_undo_still_finishes(self):
+        tip = self.git("rev-parse", "refs/fast-coding/hw/C1/003")
+        self.git("worktree", "add", str(Path(tempfile.mkdtemp()) / "wt"), "fast/hw/003")  # checked out elsewhere: `branch -f` refuses
+        out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertIn("reset these branches by hand, then sync:", out)
+        self.assertIn(f"  git branch -f fast/hw/003 {tip}", out)
+        self.assertEqual(self.lin.issues["ENG-4"]["status"], "Todo")  # the Linear step still ran
+        self.assertIn("C2 open: undo C1", out)
+        self.assertEqual(fc.open_change(self.proj), "C2")
+
     def test_blockers_are_set_to_exactly_the_snapshot(self):
         self.lin.issues["ENG-4"]["blockedBy"] = ["ENG-3", "ENG-5"]
         fc.linear_blocked_by(fc.linear_issue("ENG-4"), ["ENG-3"])
