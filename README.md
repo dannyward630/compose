@@ -3,6 +3,71 @@
 Turn a feature idea into a reviewed, verified stack of small branches in one sitting.
 A frontier model decides and checks; cheap fast models type the code in parallel.
 
+fast-coding runs the entire engineering workflow, from the first question to pull requests you can review in minutes.
+You make the decisions and read the result.
+A fleet of agents does everything in between, and you can watch and steer every one of them.
+
+## The whole workflow, one command
+
+Run `/fast-coding <what you want>` and the feature moves through every stage on its own.
+
+1. **Explore.**
+   An explore crew maps your codebase through graft, so no question or plan rests on a guess about the code.
+2. **Decide.**
+   A wayfinder puts every open decision on one Lavish page, each with options and a recommendation, and draws screen questions as Frame0 wireframes.
+   You answer them all in one pass, or accept every recommendation with one click, and your answers go to the feature in Linear.
+3. **Plan.**
+   The strongest model writes the plan, the stories, and one Linear issue per task, each small enough for a fast model to finish in one short turn.
+4. **Test first.**
+   Test crews write every task's failing test from the spec in parallel, with holdout cases the implementers never see.
+5. **Build.**
+   Fast implementers each make one test pass in their own clone, side by side, in seconds per task.
+6. **Review.**
+   The orchestrator reviews each layer the moment it passes, and a fast triage flags the layers that need a closer read.
+7. **Verify.**
+   Lint and tests run first, then a confirmed model review, a Jev check of every acceptance criterion, and a real browser run against an assert you wrote, with a fix loop for anything that fails.
+8. **Stack.**
+   Passed tasks become one gh stack, and when you say so, each layer becomes a draft pull request.
+9. **Correct course.**
+   When a failure or a discovery shows a decision was wrong, only the tasks that rest on it pause.
+   You make the call, the change is recorded in Linear with its reason, and any change can be undone.
+
+Linear tracks the whole run, so the feature, its stories, and every task move through their states as the work does.
+Inside herdr, every agent works in its own pane, and you can type into any of them.
+Nothing is pushed until you say so, and fast-coding never merges anything.
+
+The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
+
+## Why we built it
+
+Code was never the bottleneck.
+The hard parts are deciding what to build and proving that it works.
+fast-coding puts its strongest model on exactly those two jobs and hands the typing to fast models that cost about a cent a task.
+You stay the one who decides.
+
+**Tests come from your intent.**
+Each task's test is written from the spec before any code exists.
+It hides holdout cases the implementer never sees, so the only way to pass is to build the real behavior.
+
+**Every task gets a fresh agent in a fence.**
+One task runs in one fresh session, in its own clone, on the files it names, under 350 changed lines.
+There is no long context to rot and no room to drift.
+
+**Each job runs on the model that fits it.**
+By default the strongest model plans, Opus writes the tests, GLM 5.3 Flash types the code, and Haiku handles the chores.
+On a real seven-task project, GLM 5.3 Flash passed each task on its first try in 9 to 20 seconds.
+
+**Done means proven.**
+A finding from review stands only when a second call can quote the code that proves it.
+A model saying it is done never counts.
+
+**You review layers, one minute each.**
+A 2,000-line branch turns into ten 100-line layers in dependency order, and a reviewer reads them one at a time.
+
+**Every run shows its bill.**
+Each run ends with the time every task took and the dollars spent with each provider.
+The figures in this README come from small benchmarks and one prototype, and the numbers your own runs print are the ones to trust.
+
 ## Quick start
 
 1. Install the tools listed in [docs/requirements.md](docs/requirements.md).
@@ -10,49 +75,6 @@ A frontier model decides and checks; cheap fast models type the code in parallel
 3. In the target repo, check out the branch the feature belongs on and open Claude Code.
 4. Run `/fast-coding <what you want>` and answer the questions on the Lavish page it opens.
 5. Review the task list, say go, and read the stack it builds.
-
-Nothing is pushed until you say so, and fast-coding never merges anything.
-
-## Why we built it
-
-The expensive part of software is deciding what to build and checking that it works.
-Typing the code is the cheap part.
-fast-coding spends the frontier model only on deciding and checking, and it makes the typing nearly free.
-On the prototype that built fast-coding, the typing came to about a cent per task.
-
-Here is what that buys you over a single Claude session.
-
-**It is cheaper, and it runs in parallel.**
-One Claude session is one worker on a subscription with rate limits.
-fast-coding runs its implementers side by side for cents, and it saves the subscription for the planning and review that only a frontier model does well.
-
-**Tests come before code, by construction.**
-Every task's test exists and fails before an implementer starts, and it includes holdout cases the implementer never sees.
-A lone model tends to write the code first and then write tests that fit the code.
-
-**Scope stays where you put it.**
-Each task is fenced in.
-An implementer may only touch the files its task names, it cannot change the protected tests, it adds no documents, and its branch stays under 350 changed lines.
-A long single session drifts, and a fenced task has nowhere to drift to.
-
-**The output is sized for review.**
-Each feature becomes one stack, with one layer per task in dependency order.
-A 2,000-line branch turns into ten 100-line layers a reviewer can read one at a time.
-
-**The proof comes from outside the model.**
-Parallel fast-model reviews raise findings, and each high or medium finding stands only if a second call can quote the code that proves it.
-Jev checks every acceptance criterion, a real browser runs the feature against an assert you wrote, and a fix loop handles what fails.
-A model saying it is done never counts as proof.
-
-**The plan can change without losing the run.**
-When evidence shows a decision was wrong, only the tasks that rest on it pause.
-You make the call on anything you settled, every change is recorded in Linear, and any change can be undone.
-
-**The accounting is honest.**
-Every run ends with the wall time of each task and the dollars spent with each provider.
-
-The speed and cost figures here come from small benchmarks and one prototype.
-Every real run prints its own numbers, and those are the ones to trust.
 
 ## When to use it
 
@@ -63,28 +85,6 @@ Use it for anything you would rather review as a stack of small layers than as o
 Skip it for one-line fixes and exploratory debugging, where the setup costs more than it saves.
 Skip it when a task's test can't be written first, because that work isn't a task yet.
 Skip it when every task would edit the same hot file, because tasks never share files.
-
-## How it works
-
-1. **Find the way.**
-   In a repo that already has code, an explore crew maps it first.
-   A wayfinder crew then puts every open decision on one Lavish page, and your answers go to the feature in Linear.
-2. **Plan.**
-   The orchestrator writes the plan and the stories, plus one Linear issue per task, each with a failing test.
-3. **Run.**
-   Parallel implementers each make one test pass in their own clone.
-   By default they are pi sessions running GLM 5.3 Flash.
-4. **Verify.**
-   Checks run first, then the model review, the acceptance checks, and the browser e2e.
-   A fix loop takes another pass at anything that fails.
-5. **Stack.**
-   Passed tasks become a gh stack.
-   When you ask, `stack --submit` opens one draft PR per layer.
-6. **Change course.**
-   A failure, a contradiction with Linear, or your own word makes Jev screen the settled decisions.
-   The affected tasks are held, the plan changes as one recorded change, and the rest of the run keeps going.
-
-The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Main commands
 
