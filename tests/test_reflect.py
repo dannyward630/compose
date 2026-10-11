@@ -331,6 +331,12 @@ class ImplementerContradiction(unittest.TestCase):
         self.assertIsNone(fc.contradiction("I would write CONTRADICTION: x / y if I found one"))
         self.assertEqual(fc.contradiction("a\nCONTRADICTION: first / one\nCONTRADICTION: last / two"), "last / two")
 
+    def test_markdown_around_the_line_still_counts(self):
+        found = "brief says x / code shows y, a.txt:1"
+        for line in (f"`CONTRADICTION: {found}`", f"**CONTRADICTION:** {found}", f"- CONTRADICTION: {found}", f"  CONTRADICTION: {found}"):
+            self.assertEqual(fc.contradiction(f"Read a.txt.\n{line}\n"), found, line)
+        self.assertIsNone(fc.contradiction("`CONTRADICTION: <what the brief says> / <what the code shows, file:line>`"))
+
 
 class AutoReflect(unittest.TestCase):
     def setUp(self):

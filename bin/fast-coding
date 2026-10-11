@@ -3646,7 +3646,7 @@ def too_big(meta):
         why.append(f"brief is {len(meta['body'])} chars (max {MAX_TASK_BRIEF})")
     return "; ".join(why) or None
 
-CONTRADICTION_RE = re.compile(r"^CONTRADICTION:[ \t]*(.+)$", re.M)
+CONTRADICTION_RE = re.compile(r"^[ \t>*_`-]*CONTRADICTION[*_`]*:[*_]*[ \t]*(.+?)[`*_ \t]*$", re.M)  # markdown around it too
 
 def contradiction(reply):
     """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back is not one."""
