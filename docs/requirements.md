@@ -24,7 +24,7 @@ Each optional row unlocks one feature.
 | Tool | Needed for | Install |
 |---|---|---|
 | uv | runs `jev/` (Python 3.12+, fetched on first use) and Python test commands | `brew install uv`; `uv sync --project jev` once |
-| TypeSafe account | Jev acceptance checks and every jev e2e step | key in `~/.fast-coding/.env` |
+| TypeSafe account | Jev acceptance checks, every jev e2e step, and the decision screen (`reflect`) | key in `~/.fast-coding/.env` |
 | Chrome and browser-harness | browser e2e cases | browser-harness comes with `jev/`; check with `cd jev && uv run browser-harness --doctor` |
 | `bp` (browser-probe) | browser exploration and extension e2e | `npm link` in a browser-probe checkout |
 

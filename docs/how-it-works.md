@@ -37,7 +37,7 @@
 | Frontier model (Claude) | plan, tests, layer review, escalations; never merges |
 | Fast implementer (GLM 5.3 Flash in pi) | makes one test green in one session; never writes tests |
 | Mercury | raises review findings, then confirms or drops them |
-| Jev (TypeSafe) | scores acceptance criteria, drives the browser |
+| Jev (TypeSafe) | scores acceptance criteria, drives the browser, screens settled decisions against new evidence |
 | CLI | red check, protected-file guard, timing, cost ledger |
 
 A task that fails three attempts is re-split into smaller tasks, never typed by hand.

@@ -19,6 +19,7 @@ Nothing is pushed until you say so, and fast-coding never merges.
 - **Tests first**: every task's test exists and fails before an implementer starts, with holdout cases it cannot see.
 - **Fenced tasks**: named files only, protected tests untouched, under 350 changed lines.
 - **Real verification**: confirmed model review, acceptance checks per criterion, and a real browser run with an assert you wrote.
+- **Changes of course in the open**: when the plan turns out wrong, only the affected tasks pause, you decide what you settled, and every change is recorded in Linear and can be undone.
 - **Honest accounting**: every run prints wall time per task and dollars per provider.
 
 ## When to use it
@@ -38,6 +39,7 @@ Skip it for:
 3. **Run**: parallel implementers (pi on GLM 5.3 Flash by default) each make one test pass in their own clone.
 4. **Verify**: checks, then model review, acceptance checks, and browser e2e, with a fix loop.
 5. **Stack**: passed tasks become a gh stack; `stack --submit` opens one draft PR per layer when you ask.
+6. **Change course**: a failure, a contradiction with Linear, or your word makes Jev screen the settled decisions; affected tasks are held, the plan changes as one recorded change, and the rest keeps running.
 
 Details: [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -64,7 +66,7 @@ Every command: [docs/cli.md](docs/cli.md).
 | Page | Read it for |
 |---|---|
 | [requirements.md](docs/requirements.md) | Tools, accounts, keys, and files outside the repo |
-| [how-it-works.md](docs/how-it-works.md) | The loop, projects, Linear levels, and model choices |
+| [how-it-works.md](docs/how-it-works.md) | The loop, changing course, projects, Linear levels, and model choices |
 | [cli.md](docs/cli.md) | Every command, manual mode, and flags |
 | [herdr.md](docs/herdr.md) | Running the fleet visibly inside herdr |
 | [tasks.md](docs/tasks.md) | The task issue format and `sync` |
