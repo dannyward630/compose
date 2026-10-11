@@ -1,5 +1,6 @@
 import importlib.machinery, importlib.util, os, tempfile, time, unittest
 from pathlib import Path
+os.environ["FAST_CODING_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
 fc = importlib.util.module_from_spec(_spec)
