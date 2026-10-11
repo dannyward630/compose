@@ -993,6 +993,28 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    decisions in one line each.
 """
 
+EXPLORE_BRIEF = """You are the explore crew for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
+Map the existing code for this feature fast, through graft only: `graft map`, `graft ask "<question>" --source`, `graft callers <symbol>`,
+`graft skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
+Time box: under 3 minutes. Write no code and change no file.
+Write a codebase brief of at most 40 lines:
+- structure and entry points (server, client, how they start)
+- where this feature plugs in: files and symbols with file:line
+- existing patterns and helpers to reuse instead of rewriting
+- test setup: frameworks, where tests live, the exact commands
+- risks and unknowns the plan must settle
+Append it to the feature's description under Notes as `### Codebase brief` (a `save_issue` patch append, never a whole-description
+write), then report `done "<one-line summary>"`.
+"""
+
+def cmd_explore(a):
+    """Print the explore crew's brief: a fast graft-only map of an existing repo for the planners."""
+    proj = project_dir(a); wt = project_worktree(proj)
+    extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
+    feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
+    print(EXPLORE_BRIEF.format(slug=proj.name, wt=wt, feature=feature)
+          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+
 def cmd_wayfinder(a):
     """Print the wayfinder crew's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`)."""
     proj = project_dir(a); wt = project_worktree(proj)
@@ -3192,6 +3214,42 @@ def project_after(proj):
     base = json.loads(f.read_text()).get("review_base", "") if f.exists() else ""
     return base.removeprefix("fast-coding/") if base.startswith("fast-coding/") else None
 
+GRAFT_INIT = ["graft", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
+
+def existing_repo(wt):
+    """True when the repository already has code: a tracked file beyond a README, a license, or git's own dotfiles."""
+    files = sh(["git", "ls-files"], wt, check=False).stdout.split()
+    return any(not re.match(r"(?i)(readme|licen[cs]e|\.git)", Path(f).name) for f in files)
+
+def setup_graft(wt):
+    """An existing repo gets graft before anyone reads its code: wired for Claude Code (unless that would touch a tracked
+    file) and built. graft's files stay out of git through info/exclude. Safe to run again."""
+    if os.environ.get("FAST_CODING_NO_GRAFT"):
+        return say("graft    skipped: FAST_CODING_NO_GRAFT is set")
+    if not existing_repo(wt):
+        return say("graft    skipped: a new repository has no code to map yet")
+    if not shutil.which("graft"):
+        return say("graft    not installed: `npm i -g @nanonets/graft`, then `fast-coding graft --project <slug>`")
+    if not (wt / ".claude" / "helpers" / "graft-hooks.cjs").exists():
+        p = sh(GRAFT_INIT + ["--dry-run", str(wt)], wt, timeout=120, check=False)
+        dry = p.stdout + p.stderr  # graft prints the list on stderr
+        section = dry.split("this repo:", 1)[1].split("\n\n", 1)[0] if "this repo:" in dry else ""
+        paths = sorted(set(re.findall(r"^\s+(\S+)", section, re.M)))
+        tracked = [f for f in paths if sh(["git", "ls-files", "--error-unmatch", f], wt, check=False).returncode == 0]
+        if tracked:
+            say(f"graft    init skipped: it would edit tracked {', '.join(tracked)}; building the graph only")
+        else:
+            sh(GRAFT_INIT + [str(wt)], wt, timeout=300, check=False)
+            exclude_paths(wt, ["/" + f for f in paths])
+            say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
+    exclude_paths(wt, ["/graft/"])  # the graph itself, also when `fast-coding graft` runs without init
+    sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
+    say("graft    graph built")
+
+def cmd_graft(a):
+    """Set graft up in the project's worktree again (after installing graft, or to rebuild the graph)."""
+    setup_graft(project_worktree(project_dir(a)))
+
 def cmd_init(a):
     """Create the project's worktree `../fast-coding-<name>` on branch `fast-coding/<name>` (from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
@@ -3224,6 +3282,7 @@ def cmd_init(a):
         sh(["git", "add", ".gitignore"], wt)
         sh(["git", "commit", "-qm", "Ignore local tool directories"], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
+    setup_graft(wt)
     repo_link = here / ".fast-coding" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
     if repo_link.exists() and not (wt / ".fast-coding" / "linear.json").exists():
         (wt / ".fast-coding" / "linear.json").write_text(repo_link.read_text())
@@ -3353,6 +3412,8 @@ def main():
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
                             ("groundwork", cmd_groundwork, "print the groundwork crew's brief; --extra adds the project's notes"),
+                            ("explore", cmd_explore, "print the explore crew's brief (a fast graft-only map of an existing repo); --extra adds notes"),
+                            ("graft", cmd_graft, "set graft up in the project's worktree again: wire it for Claude Code and build the graph"),
                             ("wayfinder", cmd_wayfinder, "print the wayfinder crew's brief (questions on one Lavish page); --extra adds the project's notes"),
                             ("testcrews", cmd_testcrews, "start one test-writing crew per task in parallel from the groundwork contract"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
@@ -3398,7 +3459,7 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
-        if name in ("groundwork", "wayfinder"):
+        if name in ("groundwork", "wayfinder", "explore"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")

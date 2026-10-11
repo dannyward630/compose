@@ -8,7 +8,7 @@ fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
-ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+ENV = {"FAST_CODING_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
 def repo():
