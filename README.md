@@ -1,12 +1,26 @@
 # fast-coding
 
-fast-coding runs the entire engineering workflow, from the first question to pull requests you can review in minutes.
-You make the decisions and read the result.
-A fleet of agents does everything in between, and you can watch and steer every one of them.
+You talk to one agent, and it runs a whole engineering team for you.
 
-## The whole workflow, one command
+```
+you
+ └── first mate            the one agent you talk to
+      ├── orchestrator     feature A: plans, decides with you, steers, reviews
+      │    └── fleet       explore, decide, test, build, verify
+      └── orchestrator     feature B, running at the same time
+           └── fleet       explore, decide, test, build, verify
+```
 
-Run `/fast-coding <what you want>` and the feature moves through every stage on its own.
+The first mate takes your request and hands each feature to its own orchestrator, so the features of one epic move forward at the same time.
+Each orchestrator runs its own fleet of agents through the whole engineering workflow, from exploring the code to pull requests you can review in minutes.
+The strongest models do the planning and bring every decision to you.
+Fast, cheap agents write the code and verify it.
+The orchestrators steer their agents while they work, and the first mate nudges any orchestrator that stalls.
+When the fleet learns something that breaks the plan, it changes the plan in real time and asks you whenever the decision is yours.
+
+## What every fleet does
+
+Run `/fast-coding <what you want>` and each feature moves through every stage on its own.
 
 1. **Explore.**
    An explore crew maps your codebase through graft, so no question or plan rests on a guess about the code.
@@ -25,9 +39,10 @@ Run `/fast-coding <what you want>` and the feature moves through every stage on 
    Lint and tests run first, then a confirmed model review, a Jev check of every acceptance criterion, and a real browser run against an assert you wrote, with a fix loop for anything that fails.
 8. **Stack.**
    Passed tasks become one gh stack, and when you say so, each layer becomes a draft pull request.
-9. **Correct course.**
-   When a failure or a discovery shows a decision was wrong, only the tasks that rest on it pause.
-   You make the call, the change is recorded in Linear with its reason, and any change can be undone.
+9. **Change the plan in real time.**
+   When a failure or a discovery shows a decision was wrong, Jev screens every settled decision against the new evidence, and only the tasks that rest on the broken one pause.
+   The orchestrator fixes what is objective, brings what is yours to you, records each change in Linear with its reason, and hands the new work out while the rest of the run keeps going.
+   Any change can be undone.
 
 Linear tracks the whole run, so the feature, its stories, and every task move through their states as the work does.
 Inside herdr, every agent works in its own pane, and you can type into any of them.
