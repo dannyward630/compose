@@ -147,6 +147,25 @@ class WatchReflect(unittest.TestCase):
             (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
 
+    def test_a_screen_written_between_two_watches_is_reported_by_the_next(self):
+        proj = project()
+        def watch(now):
+            out, a = [], SimpleNamespace(repo=".", now=now, from_=None, timeout=0.05, interval=0.01, stall=10_000)
+            with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", return_value={}), \
+                    mock.patch("builtins.print", out.append):
+                try:
+                    fc.cmd_watch(a)
+                except SystemExit:
+                    pass
+            return out
+        watch(now=True)
+        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc, "say", lambda m: None), \
+                mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
+            path, _ = fc.reflect(proj, "task:001", "x")  # while no watch runs
+        out = watch(now=False)
+        self.assertTrue(any(f"event reflect={path} broken=1" in line for line in out), out)
+        self.assertIn("event timeout", watch(now=False)[-1])  # reported once
+
     def test_an_unreadable_change_file_does_not_hide_the_closed_ones(self):
         proj = project()
         fc.changes_dir(proj).mkdir(parents=True)
