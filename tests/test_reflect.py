@@ -460,6 +460,13 @@ class Changes(unittest.TestCase):
         synced(self.proj, MAP, BEFORE, ahead=2)
         self.assertIn("C1: the captain keeps localStorage. No changes: the plan stays as it was.", change(self.proj, self.repo, "done"))
 
+    def test_a_task_the_run_only_moved_is_not_an_edit(self):
+        change(self.proj, self.repo, "start", why="x")
+        synced(self.proj, MAP, dict(BEFORE, **{"ENG-3": dict(BEFORE["ENG-3"], status="In Review")}), ahead=2)
+        out = change(self.proj, self.repo, "done")
+        self.assertNotIn("Edited", out)
+        self.assertIn("No changes: the plan stays as it was.", out)
+
     def test_a_canceled_issue_the_sync_no_longer_lists_still_counts(self):
         change(self.proj, self.repo, "start", why="x")
         synced(self.proj, MAP, {"ENG-3": BEFORE["ENG-3"]}, ahead=2)
@@ -562,6 +569,37 @@ class Undo(unittest.TestCase):
             change(self.proj, self.repo, "undo", cid="C1")
         self.assertIn("003", str(e.exception))
         self.assertIsNone(fc.open_change(self.proj))
+
+    def test_the_runs_own_state_moves_do_not_block_the_undo(self):
+        for i in ("ENG-3", "ENG-5"):  # the run dispatched them after `change done`
+            self.lin.issues[i]["status"] = "In Review"
+        synced(self.proj, MAP_AFTER, {**AFTER, **{i: dict(AFTER[i], status="In Review") for i in ("ENG-3", "ENG-5")}}, ahead=3)
+        self.assertIn("C2 open: undo C1", change(self.proj, self.repo, "undo", cid="C1"))
+        self.assertEqual(self.lin.issues["ENG-5"]["status"], "Canceled")
+        self.assertEqual(self.lin.issues["ENG-3"]["description"], BEFORE["ENG-3"]["description"])
+        self.assertEqual(self.lin.issues["ENG-3"]["status"], "In Review")  # content goes back; the run's state move is the run's
+
+    def test_a_canceled_task_brought_back_blocks_the_undo(self):
+        synced(self.proj, MAP_AFTER, dict(AFTER, **{"ENG-4": dict(AFTER["ENG-4"], status="Todo")}), ahead=3)
+        with self.assertRaises(SystemExit) as e:
+            change(self.proj, self.repo, "undo", cid="C1")
+        self.assertIn("004", str(e.exception))
+
+    def test_undoing_the_undo_puts_the_change_back(self):
+        rebuilt = self.git("rev-parse", "fast/hw/003")
+        def sync_linear(ahead):
+            synced(self.proj, self.lin.issues["ENG-1"]["description"],
+                   {i: {"title": AFTER[i]["title"], **v} for i, v in self.lin.issues.items() if i != "ENG-1"}, ahead=ahead)
+        change(self.proj, self.repo, "undo", cid="C1")
+        sync_linear(4)
+        change(self.proj, self.repo, "done")
+        self.assertEqual(fc.load_change(self.proj, "C2")["diff"]["new"], ["ENG-4"])  # back from Canceled: new to the plan again
+        sync_linear(5)
+        change(self.proj, self.repo, "undo", cid="C2")
+        self.assertEqual({i: self.lin.issues[i]["status"] for i in AFTER}, {"ENG-3": "Todo", "ENG-4": "Canceled", "ENG-5": "Todo"})
+        self.assertEqual(self.lin.issues["ENG-3"]["description"], AFTER["ENG-3"]["description"])
+        self.assertEqual(self.lin.issues["ENG-1"]["description"], MAP_AFTER)
+        self.assertEqual(self.git("rev-parse", "fast/hw/003"), rebuilt)
 
     def test_without_a_key_it_prints_the_edits(self):
         with mock.patch.object(fc, "LINEAR_KEY", None):

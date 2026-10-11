@@ -2796,7 +2796,8 @@ def cmd_hold(a):
     os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
-CHANGE_FIELDS = ("title", "description", "status", "blockedBy")
+CHANGE_CONTENT = ("title", "description", "blockedBy")  # what a change of course edits; status moves are the run's own
+CANCELED = ("canceled", "cancelled")
 
 def load_change(proj, cid):
     f = changes_dir(proj) / f"{cid}.json"
@@ -2855,12 +2856,14 @@ def begin_change(proj, repo, why):
 
 def change_diff(before, after):
     """What a change of course did, read from two syncs. Linear's list may leave canceled issues out, so an issue the second
-    sync no longer has counts as canceled."""
+    sync no longer has counts as canceled; one brought back from Canceled is new to the plan again. Edited is content only:
+    a task the run moved to In Progress or In Review was not changed by the change."""
     b, a = before["issues"], after["issues"]
     gone = [l for l in decision_lines(before["feature"].get("description")) if l not in decision_lines(after["feature"].get("description"))]
-    canceled = sorted(i for i in b if i not in a or (a[i]["status"] != b[i]["status"] and a[i]["status"].lower() in ("canceled", "cancelled")))
-    return {"superseded": gone, "new": sorted(i for i in a if i not in b), "canceled": canceled,
-            "edited": sorted(i for i in a if i in b and i not in canceled and any(a[i].get(k) != b[i].get(k) for k in CHANGE_FIELDS)),
+    canceled = sorted(i for i in b if i not in a or (a[i]["status"] != b[i]["status"] and a[i]["status"].lower() in CANCELED))
+    new = sorted(i for i in a if i not in b or (b[i]["status"].lower() in CANCELED and a[i]["status"].lower() not in CANCELED))
+    return {"superseded": gone, "new": new, "canceled": canceled,
+            "edited": sorted(i for i in a if i in b and i not in canceled + new and any(a[i].get(k) != b[i].get(k) for k in CHANGE_CONTENT)),
             "feature": before["feature"].get("description") != after["feature"].get("description")}
 
 def issue_label(ident, issue):
@@ -2909,8 +2912,9 @@ def undo_edits(rec):
     failure part way leaves no new task live with its old one restored next to it."""
     d, before, after = rec["diff"], rec["before"]["issues"], rec["after"]["issues"]
     edits = [(i, {"status": "Canceled"}) for i in d["new"]]
-    for i in d["canceled"] + d["edited"]:
-        edits.append((i, {k: before[i].get(k) for k in CHANGE_FIELDS if before[i].get(k) != (after.get(i) or {}).get(k)}))
+    for i in d["canceled"] + d["edited"]:  # an edited issue keeps the state the run moved it to; a canceled one is reopened
+        keys = ("status",) + CHANGE_CONTENT if i in d["canceled"] else CHANGE_CONTENT
+        edits.append((i, {k: before[i].get(k) for k in keys if before[i].get(k) != (after.get(i) or {}).get(k)}))
     if d["feature"]:
         edits.append((rec["before"]["feature"]["id"], {"description": rec["before"]["feature"].get("description") or ""}))
     return edits
@@ -2924,8 +2928,10 @@ def change_undo(a, proj, repo):
     if not rec.get("done_at"):
         sys.exit(f"{a.id} is still open: close it with `fast-coding change done`, then undo it")
     cache, d, after = fresh_sync(proj), rec["diff"], rec["after"]
-    moved = [issue_label(i, after["issues"].get(i) or rec["before"]["issues"].get(i)) for i in d["new"] + d["canceled"] + d["edited"]
-             if cache.get("issues", {}).get(i) != after["issues"].get(i)]
+    now, was = cache.get("issues", {}), after["issues"]
+    content = lambda x: [(x or {}).get(k) for k in CHANGE_CONTENT]  # the run moves a new or edited task's state; only content counts
+    moved = [issue_label(i, was.get(i) or rec["before"]["issues"].get(i)) for i in d["new"] + d["canceled"] + d["edited"]
+             if (now.get(i) != was.get(i) if i in d["canceled"] else content(now.get(i)) != content(was.get(i)))]
     if d["feature"] and cache["feature"].get("description") != after["feature"].get("description"):
         moved.append(after["feature"]["id"])
     if moved:
