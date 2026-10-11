@@ -300,5 +300,56 @@ class ImplementerContradiction(unittest.TestCase):
         self.assertEqual(fc.contradiction("a\nCONTRADICTION: first / one\nCONTRADICTION: last / two"), "last / two")
 
 
+class AutoReflect(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        with_tasks(self.proj, [task("001"), task("002")])
+        self.said = []
+        p = mock.patch.object(fc, "say", self.said.append); p.start(); self.addCleanup(p.stop)
+
+    def test_a_task_that_does_not_pass_is_screened(self):
+        _, _, reflect = run_all(self.proj, status={"001": "failed"})
+        self.assertEqual(reflect.call_count, 1)
+        trigger, evidence = reflect.call_args.args[1:3]
+        self.assertEqual(trigger, "task:001")
+        self.assertIn("ended failed after 1 attempt(s): AssertionError: expected 2, got 3", evidence)
+
+    def test_a_contradiction_is_screened_against_the_brief_line(self):
+        _, _, reflect = run_all(self.proj, status={"002": "contradiction"})
+        self.assertEqual(reflect.call_args.args[1], "task:002")
+        self.assertEqual(reflect.call_args.kwargs["against"], ["the brief says x"])
+
+    def test_a_screen_that_crashes_never_stops_the_run(self):
+        calls, table, _ = run_all(self.proj, status={"001": "failed"}, reflect=mock.MagicMock(side_effect=RuntimeError("disk full")))
+        self.assertEqual(calls, ["001", "002"])
+        self.assertTrue(any(m.startswith("001 reflect failed (disk full)") for m in self.said), self.said)
+        self.assertIn("002", table)
+
+    def test_a_crew_contradiction_is_screened(self):
+        reflect = mock.MagicMock(return_value=(Path("/p/reflect.json"), {"flagged": []}))
+        msg = "the API returns a list; Linear says: returns a dict (ENG-7); evidence: api.py:40".split()
+        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc, "project_dir", lambda a: self.proj), \
+                mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(io.StringIO()):
+            fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=msg))
+        self.assertEqual(reflect.call_args.args[1], "contradiction:hw-tests-003")
+        self.assertEqual(reflect.call_args.kwargs["against"], ["returns a dict"])
+
+    def test_every_crew_brief_says_how_to_report_one(self):
+        with mock.patch.object(fc, "project_worktree", lambda p: Path("/wt")):
+            text = fc.crew_preamble(self.proj, "hw-groundwork", "groundwork")
+        self.assertIn('contradiction "<what you found>; Linear says: <quoted line> (<issue>); evidence:', text)
+
+    def test_a_failed_verify_is_screened_with_its_findings(self):
+        reflect = mock.MagicMock(return_value=(Path("/p/reflect-1.json"), {}))
+        with mock.patch.object(fc, "reflect", reflect):
+            fc.verify_failed(self.proj, [{}, {}], "confirmed [high] s.go: a query per answer")
+            self.assertEqual(reflect.call_args.args[1], "verify")
+            self.assertIn("after 2 round(s)", reflect.call_args.args[2])
+            self.assertIn("a query per answer", reflect.call_args.args[2])
+            reflect.reset_mock()
+            fc.verify_failed(self.proj, [{}], "  ")  # only tool errors failed: nothing about the app to screen
+            reflect.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

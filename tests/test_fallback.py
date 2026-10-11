@@ -118,7 +118,8 @@ class FixScope(unittest.TestCase):
             return "s", "", 1, {"cost": 0.0}
         stages = iter([(False, {}, "finding"), (True, {}, "")])
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])):
+                mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])), \
+                mock.patch.object(fc, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
                 fc.verify_rounds(repo, proj, {"review_base": "main"}, type("A", (), {"fix": 2})(), [], fc.time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())

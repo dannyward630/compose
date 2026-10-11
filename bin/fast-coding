@@ -742,7 +742,7 @@ def herdr_space(proj):
 # The captain talks to the first mate (the session they started), which stays where it was launched. Each project gets an
 # orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts crew of its own (a wayfinder
 # question, a researcher). Every crew session reports with `fast-coding report`; `watch` turns new reports into wake events.
-CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug")
+CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
 TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the first mate
 
@@ -787,6 +787,9 @@ def crew_preamble(proj, name, title):
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
             f"When fast-coding itself fails (the CLI crashes, behaves wrongly, or lacks something you need), as opposed to the project's code: "
             f"work around it to keep going, never edit the fast-coding repo, and report `{report} tool-bug \"<symptom, evidence, workaround used>\"`.\n"
+            f"When something you find contradicts what Linear says (a decision, a brief, a criterion), report it at once: "
+            f"`{report} contradiction \"<what you found>; Linear says: <quoted line> (<issue>); evidence: <file:line or command output>\"`, "
+            f"then keep working on what it does not touch, and never re-scope your brief.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
             f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, crews, or Linear. "
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
@@ -1317,6 +1320,10 @@ def cmd_report(a):
     write_report(proj, a.as_, a.state, message)
     if a.state == "tool-bug":
         log_tool_bug(proj, a.as_, message)
+    if a.state == "contradiction":
+        quoted = re.search(r"Linear says:\s*(.+?)\s*(?:\(|;|$)", message)
+        path, _ = reflect(proj, f"contradiction:{a.as_}", message, against=[quoted.group(1)] if quoted else [])
+        print(f"reflect {path}")
     crew_attention(proj, a.as_, a.state, message)
     print(f"reported {a.as_} {a.state}")
     if a.state == "done":
@@ -1930,7 +1937,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         problems = []
         if test.returncode != 0:
-            summary = condense_failure(test.stdout + test.stderr)
+            summary = entry["summary"] = condense_failure(test.stdout + test.stderr)
             problems.append(f"The test still fails.\nCommand: {meta['test']}\nExit code: {test.returncode}\n"
                             + (f"What failed:\n{summary}\n" if summary else "") + f"Output (tail):\n{entry['test_output']}")
         if over:
@@ -2349,7 +2356,7 @@ def run_tasks(repo, proj, tasks, a):
     metas = {m["id"]: m for m in tasks}
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
-    results, pending, failed_ids, halt = [], dict(deps), set(), None
+    results, pending, failed_ids, halt, reflecting = [], dict(deps), set(), None, []
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
@@ -2375,6 +2382,9 @@ def run_tasks(repo, proj, tasks, a):
                 p = running.pop(f)
                 r = f.result()
                 results.append(r)
+                if r["status"] in REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
+                    reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
+                    reflecting[-1].start()
                 tid = metas[p]["id"]
                 if r["status"] == "payment_required":
                     pay = next(x["payment_required"] for x in r["log"] if "payment_required" in x)
@@ -2383,6 +2393,8 @@ def run_tasks(repo, proj, tasks, a):
                     failed_ids.add(tid)
                 for q in pending:
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids]
+    for t in reflecting:  # every screen is on disk before the run reports its end
+        t.join()
     results.sort(key=lambda r: r["id"])
     total = time.time() - t0
     print()
@@ -2739,6 +2751,32 @@ def reflect_counts(rec):
 
 TOOL_ERROR_RE = re.compile(r"JEV_GAVE_UP|/jev_ultrafast/|/browser_harness/|command not found|address already in use|EADDRINUSE|"
                            r"No module named|Chromium not found|did not open the debug port", re.I)
+
+REFLECT_ON = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered")
+
+def reflect_task(proj, r):
+    """A task ended without passing: screen the settled lines against what its last attempt showed. It runs beside the run,
+    so nothing here may stop it."""
+    try:
+        last = (r.get("log") or [{}])[-1]
+        head = f"task {r['id']} {r.get('title') or ''}".strip()
+        if r["status"] == "contradiction":
+            found = last.get("contradiction", "")
+            reflect(proj, f"task:{r['id']}", f"{head}: the implementer found its brief wrong: {found}",
+                    against=[found.split(" / ")[0].strip()])
+            return
+        why = (last.get("error") or (f"changed files outside its task: {', '.join(last['stray'])}" if last.get("stray") else "")
+               or last.get("summary") or (last.get("test_output") or "").strip()[-1500:] or "no detail")
+        reflect(proj, f"task:{r['id']}", f"{head} ended {r['status']} after {r['attempts']} attempt(s): {why}")
+    except Exception as e:  # noqa: BLE001
+        say(f"{r['id']} reflect failed ({str(e)[:200]}); the run goes on")
+
+def verify_failed(proj, rounds, findings):
+    """verify ended FAIL after its fix rounds: screen the settled lines against the confirmed findings. Tool errors are not
+    findings, so a FAIL with none is not screened."""
+    if findings.strip():
+        path, _ = reflect(proj, "verify", f"verify failed after {len(rounds)} round(s); confirmed findings:\n{findings[:15000]}")
+        say(f"reflect {path.name}")
 
 def tool_error(output):
     """A failure the harness caused (a jev or browser crash, a missing tool, a port taken), not the app: retried once and
@@ -3195,6 +3233,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
     say(LEDGER.line())
     if not ok:
         print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
+        verify_failed(proj, rounds, findings)
     sys.exit(0 if ok else 1)
 
 def run_marker(proj):
@@ -4092,7 +4131,7 @@ def main():
             s.add_argument("action", choices=("up", "save", "down"))
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
-            s.add_argument("state", help="working | needs-user | blocked | done | tool-bug")
+            s.add_argument("state", help="working | needs-user | blocked | done | tool-bug | contradiction")
             s.add_argument("message", nargs="+")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
