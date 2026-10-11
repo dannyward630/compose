@@ -31,9 +31,9 @@ Do not use it for one-line fixes or exploratory debugging, where the overhead be
 
 Check out the branch the feature belongs on and tell Claude `fast-coding <what you want>`.
 It first asks for the repo's Linear project link once (kept in `.fast-coding/linear.json`) and opens one feature issue there per project.
-With no settled spec, it runs wayfinder: the open decisions become sub-issues of the feature issue, worked with you one question at a time with a recommendation on each, until the way is clear; then it writes the plan and the tasks with their tests and shows you the plan.
+It always runs wayfinder first: every open decision becomes a card on one Lavish page in your browser, each with options and a recommendation, and you answer them all at once (or accept every recommendation with one button); the answers are recorded in the feature issue's Decisions so far. Then it writes the plan and the tasks with their tests and shows you the plan.
 Work is five levels in Linear: the project is the repo, an epic is a wayfinder map, a feature is one fast-coding project and stack, a story is one user-visible slice of it, and a task is one stack layer; fast-coding accepts any of them by link, creates the missing ones, and never runs an implementer until you have seen the task list and said go.
-Wayfinder prototype tickets about screens or flows are drawn as low-fi wireframes in Frame0 through its MCP server and attached to the ticket as images.
+Wayfinder questions about screens or flows are drawn as low-fi wireframes in Frame0 through its MCP server and shown on their card as images.
 Every task is a sub-issue of the feature issue too, moved to In Progress when dispatched, In Review when its layer passes, and Done when its PR merges, so the feature's progress is visible in Linear without asking.
 It writes the tasks and their failing tests, shows you the task list (`fast-coding tasks`: files each task owns, what it builds on, its test, stack order) and waits for your go; you can combine, split, reorder, or drop tasks first.
 Then it dispatches, reviews each layer's diff, runs verify, and reports the run and cost lines.
@@ -53,14 +53,13 @@ Three roles, after [firstmate](https://github.com/kunchenguid/firstmate); you ar
 |---|---|---|
 | first mate | the Claude session you started: takes your request, creates the project, then only relays | stays in the pane you started it in |
 | orchestrator | a Claude session that runs the project from wayfinder to a verified stack | tab `orchestrator` in the project's space, agent `<slug>-orchestrator` |
-| crew | wayfinder question agents (one per independent question, at most three at once), helpers, implementers | one tab each in the project's space |
+| crew | the wayfinder (one, on the planner model), helpers, implementers | one tab each in the project's space |
 
 The first mate and the orchestrator write no code, not one line: tests, groundwork, escalated work, conflict fixes, and docs are crew work, and tasks go to `run`.
 For the orchestrator this is enforced: `crew start` marks its tab `FAST_CODING_ROLE=orchestrator`, and the plugin's PreToolUse hook (`hooks/hooks.json` runs `fast-coding guard`) denies its Write and Edit calls inside a repository, except the CLI's JSON under `.fast-coding/`. Other sessions are untouched.
-You talk to the first mate. A question agent grills you in its own tab; answer there, or tell the first mate, who forwards it. You can type into any crew tab directly.
+You talk to the first mate. Wayfinder's questions open as one Lavish page in your browser; answer there, and the wayfinder crew records each answer as it arrives. You can type into any crew tab directly.
 Crew report upward with `fast-coding report` (`working`, `needs-user`, `blocked`, `done`); `watch` turns each report into a wake event, so a session that is waiting costs nothing.
 A `needs-user` or `blocked` report also pops a herdr notification naming the tab and badges that pane `needs you`; nothing steals focus, and `fast-coding crew focus --role <role>` jumps there when you ask.
-A question agent's `done` is forwarded by the CLI to every other open question agent, and each re-reads Linear before every question, so parallel questions never ask what another just settled.
 The orchestrator reviews each layer's diff as soon as it passes, as the senior engineer over the fast models, so a bad layer is caught before the tasks stacked on it build further.
 
 ```bash
@@ -85,7 +84,7 @@ fast-coding watch --project <slug> --from orchestrator        # the first mate w
 | pane | one task's interactive pi, steerable with `herdr agent prompt` | `NNN <title>`, agent `<slug>-NNN` |
 | tab | the latest verify run, one pane per stage | `verify` |
 | tab | the project's orchestrator, a Claude session | `orchestrator`, agent `<slug>-orchestrator` |
-| tab | one crew session: a wayfinder question, a helper | its title, agent `<slug>-<role>` |
+| tab | one crew session: the wayfinder, groundwork, a test writer, a helper | its title, agent `<slug>-<role>` |
 | the first mate's pane | stays where you started it | yours |
 
 Each task pane carries state labels (`attempt 2/3`, `passed`) and tokens (`model`, `cost`); verify panes go `working`, then `idle` ok or `blocked` FAIL.
@@ -253,7 +252,7 @@ A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>`
 `models.crew` picks the model of each Claude crew session by role (`orchestrator`, `groundwork`, `tests`, any role name), then `default`; `crew start --model small` (or any name under `models.crew`, or a `claude:<model-id>`) overrides it.
 An entry is a model id, or `{"model": "claude:<model-id>", "effort": "high"}` to also set Claude Code's `--effort`.
 An entry may carry a `fallback` (another entry): `crew start` probes the primary model once a day (`claude -p --model <id>`, cached in `~/.fast-coding/model-probe.json`) and uses the fallback when the probe fails, printing which it chose.
-The planning roles, the `orchestrator` and every wayfinder question agent (`q-<ticket>`), use `planner` when they have no entry of their own: Fable, else Opus 5.5 at high effort. Groundwork and test crews use `groundwork` (Opus); everything else `default`.
+The planning roles, the `orchestrator` and the `wayfinder` crew, use `planner` when they have no entry of their own: Fable, else Opus 5.5 at high effort. Groundwork and test crews use `groundwork` (Opus); everything else `default`.
 Crew sessions are always Claude Code, so a `pi:` or OpenCode id under `models.crew` stops `crew start` with the key named; without `models.crew` every crew gets Claude Code's default model.
 `default` always exists: it is the top level itself, active when `workspace` is unset, and with no top-level `openrouter_api_key` the harnesses keep their own auth stores.
 `/fast-coding:workspace` comes from the repo being a skills-dir plugin too (`.claude-plugin/plugin.json`, `commands/workspace.md`).
@@ -322,7 +321,7 @@ model: openrouter/openai/gpt-oss-120b
 ````
 
 `after` is the issue's "blocked by" links to other tasks of the same feature: each becomes the layer this task stacks on.
-Issues without the block (stories, decision tickets) are not tasks.
+Issues without the block (stories) are not tasks.
 The plan is the feature issue's description; nothing about the work is written to a file in the repo.
 The CLI never calls Linear and needs no Linear key: the orchestrator reads the feature and every issue under it (stories' children included) with its Linear MCP tools (`list_issues` for the ids, then `get_issue` for each whole description and its relations, since `list_issues` truncates descriptions) and pipes them to `fast-coding sync`:
 
@@ -343,7 +342,7 @@ If you cannot write the test, it is not a task yet.
 ```
                           ORCHESTRATOR  (Claude, frontier)
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │  spec (Linear feature issue + wayfinder tickets, DESIGN.md, PRD)         │
+  │  spec (Linear feature issue + its decisions, DESIGN.md, PRD)             │
   │     │                                                                    │
   │     ▼                                                                    │
   │  Linear: plan in the feature ──▶ task issues 001 002 003 (+ CLI block)   │
