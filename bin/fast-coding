@@ -6,6 +6,7 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/verify.json    local verification config
   .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results
   .fast-coding/<project>/worktrees/     one git clone per task
+  .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
 import argparse, hashlib, shlex, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
@@ -1193,6 +1194,10 @@ def cmd_crew(a):
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
     cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name)
+    try:
+        frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
+    except (RuntimeError, OSError) as e:
+        print(f"crew {name} starts without the project's frame0 tools: {e}")
     if branch:
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
@@ -1314,9 +1319,125 @@ def crew_closed(proj, name, why):
 TASK_TAB = re.compile(r"(\d{3}) ")  # the per-task tabs runs made before implementers shared one tab: `NNN <title>`
 VERIFY_TAB = re.compile(r"verify( \d\d:\d\d)?")
 
+# ---------- frame0: one wireframing app per project ----------
+
+# Frame0 sends every API command to its newest window, so sessions sharing one app draw over each other. Each project gets
+# its own app process instead: its own user-data dir (which holds the API port), one window on .fast-coding/<project>/design.f0,
+# and a local-scope `frame0` MCP server pointed at that port in every directory the project's sessions run in. The MCP server
+# only reaches the app when a tool is called, so registering costs nothing until something draws.
+FRAME0_APP = Path("/Applications/Frame0.app")
+FRAME0_PORTS = range(58400, 59000)
+FRAME0_CLIENT = "Frame0 MCP Server"  # the app name frame0-mcp-server asks with; once allowed, Frame0 gives it the token again without asking
+
+def frame0_port(proj):
+    """The project's API port: stable, so registering the MCP server never waits for the app."""
+    h = int(hashlib.sha1(str(proj.resolve()).encode()).hexdigest(), 16)
+    return FRAME0_PORTS[h % len(FRAME0_PORTS)]
+
+def frame0_pid(proj):
+    """Pid of the project's Frame0 main process, or None. Its helper processes carry the same flag, so only the app binary counts."""
+    flag = f"--user-data-dir={proj.resolve() / 'frame0'}"
+    for line in sh(["ps", "-axo", "pid=,command="], ".", check=False).stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if command.startswith(str(FRAME0_APP / "Contents" / "MacOS" / "Frame0") + " ") and command.endswith(flag):
+            return int(pid)
+    return None
+
+def frame0_register(cwd, port):
+    """Point the `frame0` MCP server of sessions started in `cwd` at `port` (local scope: ~/.claude.json, nothing in the repo).
+    Sessions read it at start, so this runs before a crew starts."""
+    cwd = Path(cwd).resolve()
+    args = ["-y", "frame0-mcp-server", f"--api-port={port}"]
+    try:
+        projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
+    except (OSError, json.JSONDecodeError):
+        projects = {}
+    current = ((projects.get(str(cwd)) or {}).get("mcpServers") or {}).get("frame0")
+    if current and current.get("args") == args:
+        return
+    if current:
+        sh(["claude", "mcp", "remove", "frame0", "-s", "local"], cwd, check=False)
+    sh(["claude", "mcp", "add", "-s", "local", "frame0", "--", "npx", *args], cwd)
+
+def frame0_command(port, command, args=None):
+    """Run one Frame0 command over its API, as the MCP server does."""
+    def post(path, body, token=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                out = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            out = json.loads(e.read() or b"{}")
+        if not out.get("success"):
+            raise RuntimeError(f"frame0 {path}: {out.get('error', out)}")
+        return out.get("data")
+    return post("/execute_command", {"command": command, "args": args or {}}, post("/request_api_token", {"appName": FRAME0_CLIENT}))
+
+def frame0_empty_doc():
+    doc, page = os.urandom(8).hex(), os.urandom(8).hex()
+    return {"id": doc, "type": "Doc", "parent": None,
+            "children": [{"id": page, "type": "Page", "parent": doc, "name": "Page 1", "enable": False, "pageOrigin": [0, 0], "children": []}]}
+
+def frame0_up(proj):
+    if not FRAME0_APP.exists():
+        sys.exit(f"Frame0 is not installed at {FRAME0_APP}; install it from https://frame0.app")
+    port, data, design = frame0_port(proj), proj / "frame0", proj / "design.f0"
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "config.json").write_text(json.dumps({"api-server": True, "api-server-port": port}))
+    if not design.exists():
+        design.write_text(json.dumps(frame0_empty_doc()))
+    frame0_register(project_worktree(proj), port)
+    if frame0_pid(proj):
+        return port, False
+    if port_listening(port):
+        sys.exit(f"port {port}, {proj.name}'s Frame0 port, is taken by another process; stop it and run `frame0 up` again")
+    sh(["open", "-n", "-a", str(FRAME0_APP), str(design.resolve()), "--args", f"--user-data-dir={data.resolve()}"], ".")
+    for _ in range(60):
+        if port_listening(port):
+            return port, True
+        time.sleep(0.5)
+    sys.exit(f"Frame0 started but its API never listened on port {port}")
+
+def frame0_save(proj):
+    """Write the drawing to design.f0. Returns False when the project's Frame0 is not running."""
+    if not frame0_pid(proj):
+        return False
+    frame0_command(frame0_port(proj), "file:save", {"allowSaveAs": False})
+    return True
+
+def frame0_down(proj):
+    """Save, then quit the project's Frame0. Returns whether one was running."""
+    pid = frame0_pid(proj)
+    if not pid:
+        return False
+    frame0_save(proj)  # a window with unsaved changes would stop the quit at a Save Changes dialog
+    os.kill(pid, 15)
+    for _ in range(20):
+        if not frame0_pid(proj):
+            break
+        time.sleep(0.5)
+    return True
+
+def cmd_frame0(a):
+    """`frame0 up` starts the project's own Frame0 on design.f0, `save` writes the drawing to it, `down` saves and quits."""
+    proj = project_dir(a)
+    design = proj / "design.f0"
+    if a.action == "up":
+        port, started = frame0_up(proj)
+        print(f"frame0 for {proj.name} {'started' if started else 'already running'} on port {port}, file {design}")
+        if started:
+            print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first tool call reaches it: the captain clicks Allow")
+    elif a.action == "save":
+        print(f"saved {design}" if frame0_save(proj) else f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
+    else:
+        print(f"frame0 for {proj.name} saved to {design} and stopped" if frame0_down(proj) else f"{proj.name}'s Frame0 is not running")
+
 def teardown(proj):
     """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
     and every crew tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
+    if frame0_down(proj):
+        print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
     stopped = stop_listeners_under(project_worktree(proj))
     if stopped:
         print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")
@@ -3464,6 +3585,7 @@ def main():
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
+                            ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
@@ -3522,6 +3644,8 @@ def main():
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
             s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
+        if name == "frame0":
+            s.add_argument("action", choices=("up", "save", "down"))
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug")

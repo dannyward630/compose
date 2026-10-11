@@ -52,8 +52,9 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the captain."})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
-                mock.patch("builtins.print"):
+                mock.patch.object(fc, "frame0_register") as frame0, mock.patch("builtins.print"):
             fc.cmd_crew(a)
+        frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "get"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the orchestrator's tab is marked for the guard
@@ -207,7 +208,7 @@ class ToolBug(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
-                mock.patch("builtins.print"):
+                mock.patch.object(fc, "frame0_register"), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
