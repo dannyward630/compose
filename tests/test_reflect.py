@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, time, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, threading, time, unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -185,7 +185,7 @@ def with_tasks(proj, tasks):
     (proj / "results" / "tasks.json").write_text(json.dumps(cache))
 
 
-def run_all(proj, status=None, during=None, reflect=None):
+def run_all(proj, status=None, during=None, reflect=None, parallel=1):
     """run_tasks over every synced task with run_task faked: each passes unless `status` says otherwise, and `during(id)` runs
     inside it. Returns (ids run in order, the printed table, the reflect mock)."""
     calls, reflect = [], reflect or mock.MagicMock(return_value=(Path("/p/reflect.json"), {}))
@@ -202,7 +202,7 @@ def run_all(proj, status=None, during=None, reflect=None):
             mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc, "herdr_space", lambda p: None), \
             mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
         try:
-            fc.run_tasks(Path("."), proj, fc.load_tasks(proj), SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
+            fc.run_tasks(Path("."), proj, fc.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
         except SystemExit:
             pass
     return calls, out.getvalue(), reflect
@@ -256,6 +256,19 @@ class Holds(unittest.TestCase):
         self.hold(only="004", reason="x")
         calls, _, _ = run_all(self.proj, during=lambda tid: tid == "001" and self.hold(release="004"))
         self.assertIn("004", calls)
+
+    def test_a_hold_stops_a_task_waiting_for_a_free_slot(self):
+        with_tasks(self.proj, [task("001"), task("002"), task("003"), task("004")])
+        placed = threading.Event()
+        def during(tid):
+            if tid == "001":
+                self.hold(only="004", reason="x")
+                placed.set()
+            else:
+                placed.wait(5)  # 002 and 003 keep their slots until the hold is placed
+        calls, _, _ = run_all(self.proj, during=during, parallel=3)
+        self.assertNotIn("004", calls)
+        self.assertIn("004 held    x", self.said)
 
     def test_an_unreadable_hold_file_holds_nothing(self):
         (self.proj / "results" / "hold.json").write_text("{not json")

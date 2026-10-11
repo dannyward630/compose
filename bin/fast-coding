@@ -2426,7 +2426,7 @@ def run_tasks(repo, proj, tasks, a):
         while pending or running:
             hold = held(proj)  # re-read every pass: a hold or a release lands while the run goes on
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
-            for p in ready:
+            for p in ready[:a.parallel - len(running)]:  # only into free slots: a task queued inside the pool is out of a hold's reach
                 del pending[p]
                 running[ex.submit(run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
