@@ -2587,8 +2587,15 @@ def changes_dir(proj):
     return proj / "results" / "changes"
 
 def last_change_done(proj):
-    """When the newest change of course closed ("" when none has): evidence from before it was already acted on."""
-    return max((json.loads(f.read_text()).get("done_at") or "" for f in changes_dir(proj).glob("C*.json")), default="")
+    """When the newest change of course closed ("" when none has): evidence from before it was already acted on.
+    A change file that cannot be read or parsed is skipped: watch_snapshot calls this on every poll, so one partly written file must not kill it."""
+    done = []
+    for f in changes_dir(proj).glob("C*.json"):
+        try:
+            done.append(json.loads(f.read_text()).get("done_at") or "")
+        except (OSError, json.JSONDecodeError):
+            continue
+    return max(done, default="")
 
 def evidence_since(proj):
     """Every piece of evidence since the last closed change of course, newest first: a pattern across failures is the signal."""

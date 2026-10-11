@@ -147,6 +147,13 @@ class WatchReflect(unittest.TestCase):
             (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
 
+    def test_an_unreadable_change_file_does_not_hide_the_closed_ones(self):
+        proj = project()
+        fc.changes_dir(proj).mkdir(parents=True)
+        (fc.changes_dir(proj) / "C1.json").write_text("{not json")
+        (fc.changes_dir(proj) / "C2.json").write_text(json.dumps({"id": "C2", "done_at": "2026-10-11 10:03:00"}))
+        self.assertEqual(fc.last_change_done(proj), "2026-10-11 10:03:00")
+
 
 if __name__ == "__main__":
     unittest.main()
