@@ -471,5 +471,101 @@ class Changes(unittest.TestCase):
         self.assertTrue(fc.change_line(self.proj).startswith("  CHANGE records unreadable"))
 
 
+STATE_TYPES = {"Todo": "unstarted", "In Progress": "started", "In Review": "started", "Done": "completed", "Canceled": "canceled"}
+
+
+class LinearIssues:
+    """Linear's GraphQL API in memory, enough for undo: issues with a description, a state, and their blockers."""
+    def __init__(self, issues, feature_description):
+        self.issues = {i: {"description": v["description"], "status": v["status"], "blockedBy": list(v["blockedBy"])} for i, v in issues.items()}
+        self.issues["ENG-1"] = {"description": feature_description, "status": "In Progress", "blockedBy": []}
+        self.fail_on, self.comments = None, []
+
+    def __call__(self, query, v):
+        if "inverseRelations" in query:
+            i = v["id"]
+            return {"issue": {"inverseRelations": {"nodes": [{"id": f"{b}|{i}", "type": "blocks", "issue": {"id": b, "identifier": b}}
+                                                             for b in self.issues[i]["blockedBy"]]}}}
+        if "issueRelationDelete" in query:
+            b, i = v["id"].split("|")
+            self.issues[i]["blockedBy"].remove(b)
+            return {"issueRelationDelete": {"success": True}}
+        if "issueRelationCreate" in query:
+            self.issues[v["b"]]["blockedBy"].append(v["a"])
+            return {"issueRelationCreate": {"success": True}}
+        if "issueUpdate" in query:
+            if v["id"] == self.fail_on:
+                raise RuntimeError("Linear is down")
+            if "in" in v:
+                self.issues[v["id"]].update(v["in"])
+            else:
+                self.issues[v["id"]]["status"] = v["s"][2:]
+            return {"issueUpdate": {"success": True}}
+        if "commentCreate" in query:
+            self.comments.append((v["id"], v["b"]))
+            return {"commentCreate": {"success": True}}
+        i = v["id"]
+        return {"issue": {"id": i, "identifier": i, "state": {"name": self.issues[i]["status"], "type": STATE_TYPES[self.issues[i]["status"]]},
+                          "team": {"states": {"nodes": [{"id": f"s-{n}", "name": n, "type": t} for n, t in STATE_TYPES.items()]}},
+                          "parent": None, "children": {"nodes": []}}}
+
+
+class Undo(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        self.repo, self.git = git_repo(("003", "004"))
+        self.lin = LinearIssues(AFTER, MAP_AFTER)
+        for name, value in (("say", lambda m: None), ("LINEAR_KEY", "lin_test"), ("linear_gql", self.lin),
+                            ("register_stack", lambda *a, **k: None)):
+            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        synced(self.proj, MAP, BEFORE)
+        change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
+        rebuilt = self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "rebuilt")
+        self.git("branch", "-f", "fast/hw/003", rebuilt)  # the re-plan redid layer 003
+        synced(self.proj, MAP_AFTER, AFTER, ahead=2)
+        change(self.proj, self.repo, "done")
+        synced(self.proj, MAP_AFTER, AFTER, ahead=3)
+
+    def test_undo_puts_back_every_issue_and_layer(self):
+        old = self.git("rev-parse", "refs/fast-coding/hw/C1/003")
+        out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertEqual(self.lin.issues["ENG-3"]["description"], BEFORE["ENG-3"]["description"])
+        self.assertEqual((self.lin.issues["ENG-4"]["status"], self.lin.issues["ENG-4"]["blockedBy"]), ("Todo", ["ENG-3"]))
+        self.assertEqual(self.lin.issues["ENG-5"]["status"], "Canceled")
+        self.assertEqual(self.lin.issues["ENG-1"]["description"], MAP)
+        self.assertEqual(self.git("rev-parse", "fast/hw/003"), old)
+        self.assertEqual(fc.load_change(self.proj, "C2")["why"], "undo C1")
+        self.assertIn("C2 open: undo C1", out)
+
+    def test_undo_refuses_when_something_it_touched_moved_since(self):
+        synced(self.proj, MAP_AFTER, dict(AFTER, **{"ENG-3": issue("003", "Save to the server, batched.")}), ahead=3)
+        with self.assertRaises(SystemExit) as e:
+            change(self.proj, self.repo, "undo", cid="C1")
+        self.assertIn("003", str(e.exception))
+        self.assertIsNone(fc.open_change(self.proj))
+
+    def test_without_a_key_it_prints_the_edits(self):
+        with mock.patch.object(fc, "LINEAR_KEY", None):
+            out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertIn("apply these through Linear (save_issue), then sync:", out)
+        self.assertIn('ENG-4: {"status": "Todo", "blockedBy": ["ENG-3"]}', out)
+        self.assertEqual(self.lin.issues["ENG-4"]["status"], "Canceled")  # nothing was written
+        self.assertEqual(fc.open_change(self.proj), "C2")
+
+    def test_linear_failing_midway_lists_what_is_left_and_leaves_the_undo_open(self):
+        self.lin.fail_on = "ENG-3"
+        out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertEqual(self.lin.issues["ENG-5"]["status"], "Canceled")  # applied before the failure
+        self.assertIn("  ENG-3: ", out)
+        self.assertIn("  ENG-1: ", out)
+        self.assertNotIn("  ENG-5: ", out)
+        self.assertEqual(fc.open_change(self.proj), "C2")
+
+    def test_blockers_are_set_to_exactly_the_snapshot(self):
+        self.lin.issues["ENG-4"]["blockedBy"] = ["ENG-3", "ENG-5"]
+        fc.linear_blocked_by(fc.linear_issue("ENG-4"), ["ENG-3"])
+        self.assertEqual(self.lin.issues["ENG-4"]["blockedBy"], ["ENG-3"])
+
+
 if __name__ == "__main__":
     unittest.main()

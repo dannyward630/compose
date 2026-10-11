@@ -535,6 +535,31 @@ def linear_note(meta, body):
     except Exception as e:  # noqa: BLE001
         say(f"linear {meta['linear']}: comment failed ({str(e)[:200]})")
 
+LINEAR_BLOCKERS = "query($id: String!) { issue(id: $id) { inverseRelations { nodes { id type issue { id identifier } } } } }"
+
+def linear_blocked_by(issue, want):
+    """Make exactly the issues in `want` (identifiers) block `issue`."""
+    rels = [r for r in linear_gql(LINEAR_BLOCKERS, {"id": issue["id"]})["issue"]["inverseRelations"]["nodes"] if r["type"] == "blocks"]
+    have = {r["issue"]["identifier"]: r["id"] for r in rels}
+    for ident, rid in have.items():
+        if ident not in want:
+            linear_gql("mutation($id: String!) { issueRelationDelete(id: $id) { success } }", {"id": rid})
+    for ident in want:
+        if ident not in have:
+            linear_gql("mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }",
+                       {"a": linear_issue(ident)["id"], "b": issue["id"]})
+
+def linear_restore(ident, fields):
+    """Put an issue's title, description, state, and blockers back as `fields` names them."""
+    issue = linear_issue(ident)
+    text = {k: fields[k] for k in ("title", "description") if k in fields}
+    if text:
+        linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": text})
+    if "status" in fields:
+        linear_move(issue, fields["status"])
+    if "blockedBy" in fields:
+        linear_blocked_by(issue, fields["blockedBy"])
+
 def rollup_state(children):
     """The state table for a story or epic: Done when every child is Done, In Review when every child is In Review or
     Done, In Progress once any child started, else None (leave it)."""
@@ -2845,8 +2870,61 @@ def change_done(a, proj, repo):
     except Exception as e:  # noqa: BLE001
         print(f"linear {feature}: comment failed ({str(e)[:200]}); post the comment above through Linear")
 
+def undo_edits(rec):
+    """[(issue id, {field: value})] that put every issue a change touched back as it was before it. New issues come first, so a
+    failure part way leaves no new task live with its old one restored next to it."""
+    d, before, after = rec["diff"], rec["before"]["issues"], rec["after"]["issues"]
+    edits = [(i, {"status": "Canceled"}) for i in d["new"]]
+    for i in d["canceled"] + d["edited"]:
+        edits.append((i, {k: before[i].get(k) for k in CHANGE_FIELDS if before[i].get(k) != (after.get(i) or {}).get(k)}))
+    if d["feature"]:
+        edits.append((rec["before"]["feature"]["id"], {"description": rec["before"]["feature"].get("description") or ""}))
+    return edits
+
 def change_undo(a, proj, repo):
-    sys.exit("change undo is not built yet")
+    """Put back every issue and task branch change C<n> touched, as a new change. It refuses when anything it touched has
+    moved since C<n> closed: undo the later change first, the way stacked reverts go."""
+    rec = load_change(proj, a.id)
+    if not rec:
+        sys.exit(f"no change {a.id} in {changes_dir(proj)}")
+    if not rec.get("done_at"):
+        sys.exit(f"{a.id} is still open: close it with `fast-coding change done`, then undo it")
+    cache, d, after = fresh_sync(proj), rec["diff"], rec["after"]
+    moved = [issue_label(i, after["issues"].get(i) or rec["before"]["issues"].get(i)) for i in d["new"] + d["canceled"] + d["edited"]
+             if cache.get("issues", {}).get(i) != after["issues"].get(i)]
+    if d["feature"] and cache["feature"].get("description") != after["feature"].get("description"):
+        moved.append(after["feature"]["id"])
+    if moved:
+        sys.exit(f"{a.id} cannot be undone: changed since it closed: {', '.join(moved)}. Undo the later change first, or make this a new change.")
+    cid, _ = begin_change(proj, repo, f"undo {a.id}")
+    reset = []
+    for i in d["canceled"] + d["edited"]:
+        tid = issue_label(i, rec["before"]["issues"][i])
+        tip, branch = rec["tips"].get(tid), f"fast/{proj.name}/{tid}"
+        if tip and sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip() != tip:
+            sh(["git", "branch", "-f", branch, tip], repo)
+            if tid in rec.get("results", {}):
+                (proj / "results" / f"{tid}.json").write_text(json.dumps(rec["results"][tid], indent=2))
+            reset.append(tid)
+    if reset:
+        say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
+        register_stack(repo, proj, current_branch(repo))
+    edits, left = undo_edits(rec), None
+    if linear_ready():
+        for n, (ident, fields) in enumerate(edits):
+            try:
+                linear_restore(ident, fields)
+            except Exception as e:  # noqa: BLE001  stop here: the rest is listed, and the open change records what landed
+                say(f"linear {ident}: restore failed ({str(e)[:200]})")
+                left = edits[n:]
+                break
+    else:
+        left = edits
+    if left:
+        print("apply these through Linear (save_issue), then sync:")
+        for ident, fields in left:
+            print(f"  {ident}: {json.dumps(fields)}")
+    print(f"{cid} open: undo {a.id}. Sync, then `fast-coding change done`.")
 
 def cmd_change(a):
     """A change of course as one recorded unit: `start` snapshots Linear as last synced, `done` records what changed and why on
