@@ -909,6 +909,9 @@ def crew_workdir(cwd, wt, name):
         with exclude.open("a") as f:
             f.write("/.claude/worktrees/\n")
     branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    if use_treehouse():
+        sh(["git", "branch", branch, "HEAD"], top)
+        return slot_on(top, branch, f"fast-coding:{name}"), branch
     path = top / ".claude" / "worktrees" / branch
     sh(["git", "worktree", "add", "-q", "-b", branch, str(path), "HEAD"], top)
     return path, branch
@@ -1122,10 +1125,19 @@ def test_worktree(proj, tid):
     """Each test crew writes on its own branch in its own worktree off the stubs commit: crews sharing one branch raced
     (an amend landed on another crew's commit). The collect step brings their commits back in task order."""
     wt = project_worktree(proj)
-    path, branch = proj / "worktrees" / f"tests-{tid}", test_branch(proj, tid)
-    if not path.exists():
+    branch, held = test_branch(proj, tid), slots(proj).get(f"tests-{tid}")
+    if held and Path(held).exists():
+        return Path(held)
+    if use_treehouse():
+        sh(["git", "branch", "-f", branch, "HEAD"], wt)
+        path = slot_on(wt, branch, f"fast-coding:{proj.name}:tests-{tid}")
+        slots(proj, {f"tests-{tid}": str(path)})
+    else:
+        path = proj / "worktrees" / f"tests-{tid}"
+        if path.exists():
+            return path
         sh(["git", "worktree", "add", "-q", "-B", branch, str(path), "HEAD"], wt)
-        ready_checkout(wt, path)
+    ready_checkout(wt, path)
     return path
 
 def collect_tests(proj, only=None):
@@ -1144,7 +1156,12 @@ def collect_tests(proj, only=None):
             if p.returncode:
                 sh(["git", "cherry-pick", "--abort"], wt, check=False)
                 sys.exit(f"tests-{tid}: {c[:7]} conflicts with the project branch; its branch {branch} is kept.\n{(p.stdout + p.stderr)[-600:]}")
-        sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
+        held = slots(proj).get(f"tests-{tid}")
+        if held:
+            release_slot(wt, held)
+            slots(proj, {f"tests-{tid}": None})
+        else:
+            sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
         sh(["git", "branch", "-D", branch], wt, check=False)
         say(f"tests-{tid} collected  {len(commits)} commit(s)")
     sh(["git", "worktree", "prune"], wt, check=False)
@@ -1995,16 +2012,75 @@ def stack_order(repo, proj):
             break
     return [f"fast/{proj.name}/{t}" for t in order]
 
+TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
+
+def use_treehouse():
+    """Slots come from a treehouse pool when treehouse is installed (FAST_CODING_NO_TREEHOUSE=1 turns it off), else from plain
+    git worktrees. The pool lives inside the repository (`.treehouse/`, git-ignored): a crew started in a slot then sits under
+    a folder Claude Code already trusts, where a slot under ~/.treehouse would stop at the trust prompt."""
+    return bool(shutil.which("treehouse")) and os.environ.get("FAST_CODING_NO_TREEHOUSE") != "1"
+
+def treehouse(repo, *args, check=True):
+    return sh(["treehouse", "--root", ".", *args], repo, check=check)
+
+def slot_on(repo, branch, holder, detach=False):
+    """Lease a treehouse slot and check `branch` out in it (detached for a read-and-rebase worktree). The branch must exist:
+    the work lives on branches, a slot is only a place to stand, and returning it keeps the branch."""
+    exclude_paths(repo, ["/.treehouse/"])
+    out = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", branch, "--lease-holder", holder).stdout
+    path = Path(json.loads(out)["path"])
+    sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
+    return path
+
+def is_slot(repo, path):
+    """Whether a path is a treehouse slot of this repository's pool, asked of treehouse rather than guessed from the path."""
+    if not use_treehouse():
+        return False
+    p = treehouse(repo, "status", "--json", check=False)
+    try:
+        return any(Path(e["path"]).resolve() == Path(path).resolve() for e in json.loads(p.stdout or "[]"))
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return False
+
+def release_slot(repo, path):
+    """Hand a slot back to the pool with its installs intact. fast-coding's own leftovers go first: `return` keeps ignored
+    files, so a project's `.fast-coding/` results or graph would otherwise reach the next agent that leases the slot."""
+    for d in (".fast-coding", "graft"):
+        t = Path(path) / d
+        if t.is_symlink() or t.is_file():
+            t.unlink()
+        elif t.is_dir():
+            shutil.rmtree(t, ignore_errors=True)
+    treehouse(repo, "return", "--force", str(path), check=False)
+
+def slots(proj, update=None):
+    """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them."""
+    f = Path(proj) / "results" / "slots.json"
+    have = json.loads(f.read_text()) if f.exists() else {}
+    if update is not None:
+        have = {k: v for k, v in {**have, **update}.items() if v}
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(have, indent=2))
+    return have
+
 def stack_worktree(repo, proj, trunk):
     """A detached worktree the CLI owns for every gh stack operation, so the user's checkout is never switched.
     Detached because a branch checked out in the user's tree cannot be checked out again elsewhere."""
-    wt = proj / "worktrees" / ".stackroot"
     with STACK_LOCK:
-        if not (wt / ".git").exists():
-            sh(["git", "worktree", "prune"], repo, check=False)
-            sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
-        else:
+        held = slots(proj).get("stackroot")
+        if held and (Path(held) / ".git").exists():
+            wt = Path(held)
             sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        elif use_treehouse():
+            wt = slot_on(repo, trunk, f"fast-coding:{proj.name}:stackroot", detach=True)
+            slots(proj, {"stackroot": str(wt)})
+        else:
+            wt = proj / "worktrees" / ".stackroot"
+            if not (wt / ".git").exists():
+                sh(["git", "worktree", "prune"], repo, check=False)
+                sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
+            else:
+                sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         ready_checkout(repo, wt)  # verify runs its checks here
         tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
         if tools.is_dir() and not link.exists() and not link.is_symlink():
@@ -3436,12 +3512,17 @@ def cmd_init(a):
         wt, proj = here, here / ".fast-coding" / name
     else:
         base = after or current_branch(here)
-        wt = here.parent / f"fast-coding-{name}"
-        if wt.exists():
-            sys.exit(f"{wt} exists already; remove it or pass --here")
         if sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
             sh(["git", "branch", branch, after or "HEAD"], here)
-        sh(["git", "worktree", "add", "-q", str(wt), branch], here)
+        if use_treehouse():
+            wt = slot_on(here, branch, f"fast-coding:{name}:project")
+        else:
+            if not shutil.which("treehouse"):
+                print(f"treehouse is not installed, so the project gets a plain git worktree; for a reusable pool install it: {TREEHOUSE_INSTALL}")
+            wt = here.parent / f"fast-coding-{name}"
+            if wt.exists():
+                sys.exit(f"{wt} exists already; remove it or pass --here")
+            sh(["git", "worktree", "add", "-q", str(wt), branch], here)
         proj = wt / ".fast-coding" / name
         print(f"worktree {wt}  branch {branch} (from {base})")
     if ignore_tool_files(wt):
@@ -3495,6 +3576,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     if has_remote:
         sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = current_branch(repo)
+    for held in slots(proj).values():  # test-crew and stack slots go back to the pool
+        release_slot(repo, held)
+    slots(proj, {r: None for r in slots(proj)})
     for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
         sh(["git", "worktree", "remove", "--force", str(w)], repo, check=False)
         if w.exists():
@@ -3521,8 +3605,15 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
             why = "UNMERGED, removed on --delete-unmerged"
         if why:
             stop_listeners_under(wt)
-            sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
-            if wt.exists():
+            if is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
+                space = herdr_find_space(wt)
+                if space:
+                    herdr("workspace", "close", space)
+                sh(["git", "checkout", "-q", "--detach"], wt, check=False)
+                release_slot(main_repo, wt)
+            else:
+                sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
+            if wt.exists() and not is_slot(main_repo, wt):
                 space = herdr_find_space(wt)
                 if space:
                     herdr("workspace", "close", space)

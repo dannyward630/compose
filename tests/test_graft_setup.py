@@ -2,6 +2,7 @@ import importlib.machinery, importlib.util, json, os, stat, subprocess, tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
 fc = importlib.util.module_from_spec(_spec)
