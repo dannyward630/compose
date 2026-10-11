@@ -289,7 +289,8 @@ def sync_tasks(proj, data):
         sys.exit(f"sync reads JSON on stdin shaped {SYNC_SHAPE}")
     if data["feature"].get("id") != feature:
         sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
-    tasks = [t for t in (task_from_issue(i) for i in data["issues"]) if t]
+    # A canceled issue is no task even with its block still on: a re-plan or an undo canceled it, and it must not run or stack.
+    tasks = [t for t in (task_from_issue(i) for i in data["issues"] if (i.get("status") or "").lower() not in CANCELED) if t]
     ids = [t["id"] for t in tasks]
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     if dupes:
@@ -2092,10 +2093,12 @@ def task_branches(repo, proj):
 
 def stack_order(repo, proj):
     """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
-    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time."""
+    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are synced, a
+    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone."""
     bases = task_branches(repo, proj)
     metas = {m["id"]: m for m in load_tasks(proj)}
-    ids = sorted(b.rsplit("/", 1)[1] for b in bases)
+    synced = (proj / "results" / "tasks.json").exists()
+    ids = sorted(t for t in (b.rsplit("/", 1)[1] for b in bases) if t in metas or not synced)
     order, placed = [], set()
     while len(order) < len(ids):
         progressed = False

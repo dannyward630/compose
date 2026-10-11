@@ -525,6 +525,16 @@ class Changes(unittest.TestCase):
         change(self.proj, self.repo, "done")
         self.assertEqual(fc.load_change(self.proj, "C1")["diff"]["canceled"], ["ENG-4"])
 
+    def test_a_canceled_task_is_no_task_and_no_layer(self):
+        for t in ("003", "004"):  # both layers were built
+            self.git("branch", "-f", f"fast/hw/{t}", self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", t))
+        synced(self.proj, MAP, dict(BEFORE, **{"ENG-4": dict(BEFORE["ENG-4"], status="Canceled")}))  # canceled, block and all
+        self.assertEqual([m["id"] for m in fc.load_tasks(self.proj)], ["003"])
+        self.assertIn("ENG-4", fc.linear_cache(self.proj)["issues"])  # still stored whole: undo can bring it back
+        self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003"])
+        (self.proj / "results" / "tasks.json").unlink()
+        self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003", "fast/hw/004"])  # nothing synced: every branch
+
     def test_records_are_written_atomically(self):
         d = fc.changes_dir(self.proj)
         change(self.proj, self.repo, "start", why="x")
@@ -637,16 +647,26 @@ class Undo(unittest.TestCase):
             change(self.proj, self.repo, "undo", cid="C1")
         self.assertIn("004", str(e.exception))
 
+    def sync_linear(self, ahead):
+        """Sync Linear as it now is, the way the orchestrator does after an undo."""
+        synced(self.proj, self.lin.issues["ENG-1"]["description"],
+               {i: {"title": AFTER[i]["title"], **v} for i, v in self.lin.issues.items() if i != "ENG-1"}, ahead=ahead)
+
+    def test_the_task_an_undo_cancels_leaves_the_stack(self):
+        self.git("branch", "fast/hw/005", self.git("rev-parse", "fast/hw/003"))  # 005 was built on the re-plan
+        self.assertIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
+        change(self.proj, self.repo, "undo", cid="C1")
+        self.sync_linear(4)
+        self.assertNotIn("005", [m["id"] for m in fc.load_tasks(self.proj)])
+        self.assertNotIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
+
     def test_undoing_the_undo_puts_the_change_back(self):
         rebuilt = self.git("rev-parse", "fast/hw/003")
-        def sync_linear(ahead):
-            synced(self.proj, self.lin.issues["ENG-1"]["description"],
-                   {i: {"title": AFTER[i]["title"], **v} for i, v in self.lin.issues.items() if i != "ENG-1"}, ahead=ahead)
         change(self.proj, self.repo, "undo", cid="C1")
-        sync_linear(4)
+        self.sync_linear(4)
         change(self.proj, self.repo, "done")
         self.assertEqual(fc.load_change(self.proj, "C2")["diff"]["new"], ["ENG-4"])  # back from Canceled: new to the plan again
-        sync_linear(5)
+        self.sync_linear(5)
         change(self.proj, self.repo, "undo", cid="C2")
         self.assertEqual({i: self.lin.issues[i]["status"] for i in AFTER}, {"ENG-3": "Todo", "ENG-4": "Canceled", "ENG-5": "Todo"})
         self.assertEqual(self.lin.issues["ENG-3"]["description"], AFTER["ENG-3"]["description"])
