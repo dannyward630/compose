@@ -49,6 +49,8 @@ class Reflect(unittest.TestCase):
                                                  "Show a toast on save"])
         self.assertEqual(fc.decision_lines("## Destination\nx\n"), [])
         self.assertEqual(fc.map_section(MAP, "Destination"), "Drafts survive a reload.")
+        self.assertEqual(fc.decision_lines("## Decisions so far:\n- a\n"), ["a"])
+        self.assertEqual(fc.decision_lines("## Decisions so far (C1)\n- b\n## Next\n- c\n"), ["b"])
 
     def test_one_question_per_line_and_flags_at_the_threshold(self):
         proj = project()
@@ -80,6 +82,25 @@ class Reflect(unittest.TestCase):
         with mock.patch.object(fc, "jev_ask", side_effect=fc.PaymentRequired("typesafe", "out of credits")):
             _, rec = fc.reflect(proj, "verify", "x")
         self.assertIn("out of credits", rec["error"])
+        (proj / "results" / "tasks.json").write_text("{not json")
+        path, rec = fc.reflect(proj, "verify", "x")
+        self.assertTrue(rec["error"])
+        self.assertTrue(path.exists())
+
+    def test_parallel_screens_neither_wait_on_each_other_nor_share_a_file(self):
+        proj, recs = project(), []
+        meet = threading.Barrier(6, timeout=5)  # every screen is inside its Jev call at once: none holds a lock across it
+        def ask(*a):
+            meet.wait()
+            return answers()
+        with mock.patch.object(fc, "jev_ask", ask):
+            threads = [threading.Thread(target=lambda i=i: recs.append(fc.reflect(proj, f"task:00{i}", "x")[1])) for i in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual([r.get("error") for r in recs], [None] * 6)
+        self.assertEqual(len(list((proj / "results").glob("reflect-*.json"))), 6)
 
     def test_evidence_builds_up_until_a_change_closes(self):
         proj = project()
@@ -405,6 +426,15 @@ class AutoReflect(unittest.TestCase):
         self.assertEqual(reflect.call_args.args[1], "contradiction:hw-tests-003")
         self.assertEqual(reflect.call_args.kwargs["against"], ["returns a dict"])
 
+    def test_a_screen_that_crashes_never_stops_a_report_or_a_verify(self):
+        reflect, out = mock.MagicMock(side_effect=RuntimeError("disk full")), io.StringIO()
+        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc, "project_dir", lambda a: self.proj), \
+                mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(out):
+            fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
+            fc.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
+        self.assertIn("reported hw-tests-003 contradiction", out.getvalue())
+        self.assertEqual(len([m for m in self.said if "reflect failed (disk full)" in m]), 2, self.said)
+
     def test_every_crew_brief_says_how_to_report_one(self):
         with mock.patch.object(fc, "project_worktree", lambda p: Path("/wt")):
             text = fc.crew_preamble(self.proj, "hw-groundwork", "groundwork")
@@ -475,6 +505,8 @@ class Changes(unittest.TestCase):
     def test_sync_keeps_every_issue_whole(self):
         issues = fc.linear_cache(self.proj)["issues"]
         self.assertEqual(issues["ENG-4"], BEFORE["ENG-4"])
+        synced(self.proj, MAP, dict(BEFORE, **{"ENG-6": {"title": "story", "description": "A story.", "status": None, "blockedBy": []}}))
+        self.assertEqual(fc.linear_cache(self.proj)["issues"]["ENG-6"]["status"], "")  # a null status never reaches .lower()
 
     def test_start_snapshots_linear_and_saves_each_branch_tip(self):
         self.assertIn("C1 open: localStorage is wiped", change(self.proj, self.repo, "start", why="localStorage is wiped"))
@@ -726,6 +758,7 @@ class ChangeBrief(unittest.TestCase):
         page = str(self.proj / "lavish" / "change-C1.html")
         self.assertIn(f"npx -y lavish-axi poll {page}", brief)
         self.assertIn("localStorage is wiped by the sandbox", brief)
+        self.assertIn("its `evidence` field", brief)
         self.assertIn("- ~~<old line>~~ (C1)", brief)
         self.assertIn('"keep it as is"', brief)
         self.assertIn("Do not touch tasks, stories, or the plan", brief)

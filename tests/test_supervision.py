@@ -56,6 +56,12 @@ class Stalls(unittest.TestCase):
         ev = self.stalls(s, now=NOW + 300)
         self.assertTrue(any("stall=idle agent=hw-orchestrator" in e for e in ev), ev)
 
+    def test_held_tasks_are_still_work(self):
+        s = self.snap(tasks=("held",), status="idle", crew={ORCH: ("working", 600)}, last_ago=600)
+        self.assertTrue(any("stall=quiet" in e for e in self.stalls(s)))
+        ev = self.stalls(s, now=NOW + 300)
+        self.assertTrue(any("stall=idle" in e and "1 task(s) pending" in e for e in ev), ev)
+
     def test_the_first_mate_receives_stalls_and_the_orchestrator_too(self):
         ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'",
               "event stall=idle agent=hw-orchestrator the orchestrator has been idle"]

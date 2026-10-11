@@ -301,7 +301,7 @@ def sync_tasks(proj, data):
     tasks.sort(key=lambda t: t["id"])
     (proj / "results").mkdir(exist_ok=True)
     f = data["feature"]
-    issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status", ""),
+    issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status") or "",
                         "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or [])}
               for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
     (proj / "results" / "tasks.json").write_text(json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1090,7 +1090,8 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 CHANGE_BRIEF = """You are the wayfinder crew for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
-1. Read the map, the screen and the evidence below, and the code each piece of evidence cites (`graft ask "<question>" --source`).
+1. Read the map, the evidence (the screen file above, its `evidence` field, and the orchestrator's notes at the end of this brief),
+   and the code each piece of evidence cites (`graft ask "<question>" --source`).
 2. Write one Lavish page: {page}. Never reopen the wayfinder's earlier page. Read `npx -y lavish-axi playbook input` and
    `npx -y lavish-axi design` first, and set data-lavish-annotate="off" on <html>.
    One card per decision line the evidence calls into question, each with data-lavish-question: the line as recorded, the evidence
@@ -1386,8 +1387,11 @@ def cmd_report(a):
         log_tool_bug(proj, a.as_, message)
     if a.state == "contradiction":
         quoted = re.search(r"Linear says:\s*(.+?)\s*(?:\(|;|$)", message)
-        path, _ = reflect(proj, f"contradiction:{a.as_}", message, against=[quoted.group(1)] if quoted else [])
-        print(f"reflect {path}")
+        try:
+            path, _ = reflect(proj, f"contradiction:{a.as_}", message, against=[quoted.group(1)] if quoted else [])
+            print(f"reflect {path}")
+        except Exception as e:  # noqa: BLE001  the report still goes up; the orchestrator judges without the screen
+            say(f"{a.as_} reflect failed ({str(e)[:200]})")
     crew_attention(proj, a.as_, a.state, message)
     print(f"reported {a.as_} {a.state}")
     if a.state == "done":
@@ -2658,7 +2662,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
 
 REFLECT_THRESHOLD = 0.6  # BROKEN or UNCLEAR at or above this flags a line for the orchestrator to confirm
 REFLECT_EVIDENCE_CAP = 20000  # characters of evidence Jev sees, newest first
-REFLECT_LOCK = threading.Lock()  # one screen at a time, so each sees the evidence of the one before; parallel failures wait seconds
+REFLECT_LOCK = threading.Lock()  # around the evidence log only, never the Jev call: an outage must not queue every failed task behind it
 REFLECT_CHOICES = {"HOLDS": "The evidence does not contradict this line, including when the evidence is unrelated to it.",
                    "BROKEN": "The evidence shows this line cannot work, or contradicts what was found.",
                    "UNCLEAR": "The evidence bears on this line but does not settle it."}
@@ -2679,8 +2683,8 @@ def jev_ask(env, cfg, state, questions, label):
     return out
 
 def map_section(description, name):
-    """The body under the map's `## <name>` heading, up to the next heading; "" when the map has none."""
-    m = re.search(rf"^#+[ \t]*{re.escape(name)}[ \t]*$(.*?)(?=^#|\Z)", description or "", re.M | re.S)
+    """The body under the map's `## <name>` heading (`## <name>:` or `## <name> (C1)` too), up to the next heading; "" when the map has none."""
+    m = re.search(rf"^#+[ \t]*{re.escape(name)}[^\n]*$(.*?)(?=^#|\Z)", description or "", re.M | re.S)
     return m.group(1).strip() if m else ""
 
 LIST_ITEM = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+(.*\S)")
@@ -2727,39 +2731,43 @@ def reflect(proj, trigger, evidence, against=()):
     """Screen the settled lines against new evidence with Jev: one HOLDS / BROKEN / UNCLEAR question per live line of the map's
     Decisions so far, plus each quoted Linear line in `against`. Writes results/reflect-<stamp>-NN.json; returns (path, record).
     The screen itself never raises: one that cannot run records its error, and the orchestrator judges without it."""
+    at = time.strftime("%Y-%m-%d %H:%M:%S")
+    (proj / "results").mkdir(exist_ok=True)
     with REFLECT_LOCK:
-        at = time.strftime("%Y-%m-%d %H:%M:%S")
-        (proj / "results").mkdir(exist_ok=True)
         with open(proj / "results" / "evidence.jsonl", "a") as f:
             f.write(json.dumps({"at": at, "trigger": trigger, "text": evidence}) + "\n")
+    quoted = [l.strip() for l in against if l and l.strip()]
+    rec = {"at": at, "trigger": trigger, "evidence": evidence, "against": quoted, "verdicts": [], "flagged": []}
+    try:
         desc = linear_cache(proj)["feature"].get("description") or ""
-        quoted = [l.strip() for l in against if l and l.strip()]
         lines = decision_lines(desc) + quoted
-        rec = {"at": at, "trigger": trigger, "evidence": evidence, "against": quoted, "verdicts": [], "flagged": []}
         if lines:
-            try:
-                env = {**load_env(ENV_FILE), **os.environ}
-                if not env.get("TYPESAFE_API_KEY"):
-                    raise RuntimeError(f"no TYPESAFE_API_KEY in {ENV_FILE} or the environment")
-                cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
-                questions = {f"d{i}": {"type": "choice", "criteria": REFLECT_CHOICES, "instructions": {"line": l, "rules": REFLECT_RULES}}
-                             for i, l in enumerate(lines)}
-                out = jev_ask(env, cfg, {"destination": map_section(desc, "Destination"), "evidence": evidence_since(proj)},
-                              questions, "Jev reflect")
-                for i, l in enumerate(lines):
-                    a = out.get("answers", {}).get(f"d{i}") or {}
-                    p = a.get("probabilities", {})
-                    rec["verdicts"].append({"line": l, "choice": a.get("choice"), "p_broken": round(p.get("BROKEN", 0), 3),
-                                            "p_unclear": round(p.get("UNCLEAR", 0), 3)})
-                rec["flagged"] = [v for v in rec["verdicts"] if max(v["p_broken"], v["p_unclear"]) >= REFLECT_THRESHOLD]
-            except Exception as e:  # noqa: BLE001  a payment stop or an outage too: the screen is advisory and never halts a run
-                rec["error"] = str(e)[:300]
-        stamp, n = time.strftime("%Y%m%d-%H%M%S"), 1
-        while (proj / "results" / f"reflect-{stamp}-{n:02d}.json").exists():
-            n += 1
+            env = {**load_env(ENV_FILE), **os.environ}
+            if not env.get("TYPESAFE_API_KEY"):
+                raise RuntimeError(f"no TYPESAFE_API_KEY in {ENV_FILE} or the environment")
+            cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
+            questions = {f"d{i}": {"type": "choice", "criteria": REFLECT_CHOICES, "instructions": {"line": l, "rules": REFLECT_RULES}}
+                         for i, l in enumerate(lines)}
+            with REFLECT_LOCK:
+                seen = evidence_since(proj)
+            out = jev_ask(env, cfg, {"destination": map_section(desc, "Destination"), "evidence": seen}, questions, "Jev reflect")
+            for i, l in enumerate(lines):
+                a = out.get("answers", {}).get(f"d{i}") or {}
+                p = a.get("probabilities", {})
+                rec["verdicts"].append({"line": l, "choice": a.get("choice"), "p_broken": round(p.get("BROKEN", 0), 3),
+                                        "p_unclear": round(p.get("UNCLEAR", 0), 3)})
+            rec["flagged"] = [v for v in rec["verdicts"] if max(v["p_broken"], v["p_unclear"]) >= REFLECT_THRESHOLD]
+    except Exception as e:  # noqa: BLE001  a payment stop, an outage, or a torn sync too: the screen is advisory and never halts a run
+        rec["error"] = str(e)[:300] or type(e).__name__
+    stamp, n = time.strftime("%Y%m%d-%H%M%S"), 1
+    while True:  # claim the name: another process screening in the same second never overwrites this one
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
-        path.write_text(json.dumps(rec, indent=2))
-        return path, rec
+        try:
+            with open(path, "x") as f:
+                f.write(json.dumps(rec, indent=2))
+            return path, rec
+        except FileExistsError:
+            n += 1
 
 _hold_warned = []
 
@@ -3054,8 +3062,11 @@ def verify_failed(proj, rounds, findings):
     """verify ended FAIL after its fix rounds: screen the settled lines against the confirmed findings. Tool errors are not
     findings, so a FAIL with none is not screened."""
     if findings.strip():
-        path, _ = reflect(proj, "verify", f"verify failed after {len(rounds)} round(s); confirmed findings:\n{findings[:15000]}")
-        say(f"reflect {path.name}")
+        try:
+            path, _ = reflect(proj, "verify", f"verify failed after {len(rounds)} round(s); confirmed findings:\n{findings[:15000]}")
+            say(f"reflect {path.name}")
+        except Exception as e:  # noqa: BLE001  the verdict stands without the screen
+            say(f"verify reflect failed ({str(e)[:200]})")
 
 def tool_error(output):
     """A failure the harness caused (a jev or browser crash, a missing tool, a port taken), not the app: retried once and
@@ -3763,6 +3774,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
         return []  # finished, or waiting on the captain: silence is expected
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
+    on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
     mem = watch_mem(proj, key)
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
@@ -3771,13 +3783,13 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         seen[orch] = [status, now_s]
     ev = []
     hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
-    tail = f"orchestrator {status}, pending tasks {len(pending)}, crews working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
+    tail = f"orchestrator {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, crews working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
     def fire(key, what):
         if key not in fired:
             fired.add(key)
             ev.append(f"event stall={what}; {tail}")
     lt, what = snap.get("last") or (0, "")
-    if (pending or working or snap["run"]) and lt and now_s - lt >= limit:
+    if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
         fire(f"quiet:{lt}", f"quiet agent={orch} nothing moved for {fmt(now_s - lt)}, last: {what} at {hm(lt)}")
     tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
     if tests and all(st == "done" for st, _ in tests.values()) and not snap["run"] and pending \
@@ -3789,8 +3801,8 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     if ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
         fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the orchestrator has not reported since")
     since = seen[orch][1]
-    if status in ("idle", "done") and pending and now_s - since >= limit:
-        fire(f"idle:{since}", f"idle agent={orch} the orchestrator has been {status} since {hm(since)} with {len(pending)} task(s) pending")
+    if status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
+        fire(f"idle:{since}", f"idle agent={orch} the orchestrator has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
     try:
         watch_save(proj, key, fired=sorted(fired), seen=seen)
     except OSError:
