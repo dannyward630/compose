@@ -2491,7 +2491,8 @@ def e2e_stage(repo, cfg, panes, report, findings):
     daemons = harness_daemons()
     try:
         if profile:
-            p = sh(["bp", "launch", "about:blank", "--profile", profile], repo, timeout=30, check=False,
+            # Headless unless the project asks to watch (`e2e_headed: true` in verify.json): no window pops up on the captain's screen.
+            p = sh(["bp", "launch", "about:blank", "--profile", profile, *([] if cfg.get("e2e_headed") else ["--headless"])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
             if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
                 say(f"e2e    browser launch failed: {(p.stderr or p.stdout).strip()[-300:]}")

@@ -49,8 +49,10 @@ class E2eLifecycle(unittest.TestCase):
 
     def test_the_stage_launches_and_ends_its_own_browser(self):
         out = Path(self.dir) / "cdp"
-        ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version >/dev/null && echo $BU_CDP_URL $BU_NAME > {out}"}]})
+        ua = Path(self.dir) / "ua"
+        ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version > {ua} && echo $BU_CDP_URL $BU_NAME > {out}"}]})
         self.assertTrue(ok, report)
+        self.assertIn("Headless", ua.read_text())  # no window on the captain's screen
         url, name = out.read_text().split()
         port = int(url.rsplit(":", 1)[1])
         self.assertNotIn(port, (9222, 9333))  # never the captain's Chrome or a fixed shared port
