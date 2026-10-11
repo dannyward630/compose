@@ -103,7 +103,7 @@ class Crew(unittest.TestCase):
 
 
 class Attention(unittest.TestCase):
-    """The CLI, not a session's memory, gets the captain's attention and spreads decisions between question agents."""
+    """The CLI, not a session's memory, gets the captain's attention."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         self.proj.mkdir(parents=True)
@@ -129,15 +129,9 @@ class Attention(unittest.TestCase):
         self.assertIn("blocked=needs you", self.calls[1])
         self.assertNotIn(("tab", "focus"), verbs)
 
-    def test_done_decision_reaches_open_question_agents_only(self):
+    def test_done_prompts_no_other_crew(self):
+        """Decisions live on the map in Linear, recorded by the one wayfinder crew; nothing is broadcast between crews."""
         self.report("shop-q-neb-1", "done", "Provider: Stripe (NEB-1)")
-        prompted = [c[2] for c in self.calls if c[:2] == ("agent", "prompt")]
-        self.assertEqual(prompted, ["shop-q-neb-2"])  # not itself, not the finished q-neb-3, not the tests crew
-        self.assertIn("Provider: Stripe (NEB-1)", next(c[3] for c in self.calls if c[:2] == ("agent", "prompt")))
-        self.assertNotIn(("notification", "show"), [c[:2] for c in self.calls])
-
-    def test_non_question_done_is_not_broadcast(self):
-        self.report("shop-tests", "done", "tests committed")
         self.assertEqual([c for c in self.calls if c[:2] == ("agent", "prompt")], [])
 
     def test_focus_jumps_on_request(self):

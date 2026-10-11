@@ -47,7 +47,7 @@ LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config;
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> (model, effort) to use when the entry's own model fails its availability probe
-PLANNING_ROLES = ("orchestrator",)  # plus every wayfinder question agent, `q-<ticket>`: they plan, so they get `planner`
+PLANNING_ROLES = ("orchestrator", "wayfinder")  # they plan, so they get `planner`
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
 def is_claude(model):
@@ -810,14 +810,14 @@ def model_available(model):
 
 def crew_pick(role, explicit=None):
     """(model, effort, note) for a crew session. `--model` (a `claude:<id>`, or a name under models.crew such as `small`)
-    wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator and `q-<ticket>` wayfinder
-    agents), then `default`, then bare `claude`. An entry with a `fallback` probes its model first and uses the fallback
+    wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator and the wayfinder
+    crew), then `default`, then bare `claude`. An entry with a `fallback` probes its model first and uses the fallback
     when Claude Code cannot run it. Crew are always Claude Code."""
     if explicit and explicit not in CREW_MODELS:
         key, model, effort = "--model", explicit, None
     else:
         key = explicit or (role if role in CREW_MODELS else
-                           "planner" if (role in PLANNING_ROLES or str(role).startswith("q-")) and "planner" in CREW_MODELS else
+                           "planner" if role in PLANNING_ROLES and "planner" in CREW_MODELS else
                            "default" if "default" in CREW_MODELS else None)
         if key is None:
             return "claude", None, ""
@@ -967,6 +967,39 @@ def cmd_groundwork(a):
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=current_branch(wt), stacks=detect_stacks(wt),
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
+          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+
+WAYFINDER_BRIEF = """You are the wayfinder crew for project {slug}. Worktree: {wt}. The map is the feature issue {feature} on Linear:
+its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
+1. Read the map, the spec or README named below, and the repo (`graft ask "<question>" --source`). Before asking anything, look
+   for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
+   search in the project for the question's key terms. A decision found there is settled: do not ask it again.
+2. Chart the map body on the feature issue (`save_issue`), then write every open question onto one Lavish page: {page}
+   Read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first (the project's own design system if it has one,
+   else the Lavish-recommended Tailwind and DaisyUI CDN). Set data-lavish-annotate="off" on <html>.
+   Every question is a card with data-lavish-question: the question, why it matters, the options with one line each, your
+   recommended option preselected and marked, and a free-text box. Each card has one answer button, and the top of the page has
+   one "accept every recommendation" button; each sends exactly one window.lavish.queuePrompt with data {{question, answer}}.
+   Never choose for the captain: every card carries a recommendation, the captain answers.
+3. Open it: `npx -y lavish-axi {page}`, then report
+   `fast-coding report --project {slug} --as {name} needs-user "questions are open in Lavish: {page}"`.
+4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
+   captain ended. If the poll is interrupted, run it again: queued answers wait for you.
+5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
+   whole-description write.
+6. New questions the answers open, and the groundwork crew's toolchain findings when the orchestrator forwards them, become new
+   cards on the same page; then `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
+7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}`, then report `done` with the
+   decisions in one line each.
+"""
+
+def cmd_wayfinder(a):
+    """Print the wayfinder crew's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`)."""
+    proj = project_dir(a); wt = project_worktree(proj)
+    extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
+    feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
+    print(WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html",
+                                 name=agent_name(proj.name, "wayfinder"))
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
@@ -1167,25 +1200,6 @@ def crew_attention(proj, name, state, message):
     label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
     herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
 
-def broadcast_decision(proj, name, message):
-    """A question agent's `done` carries a decision: hand it to every other open question agent, so none asks what was just
-    settled. Each still re-reads Linear before every question; this is the push that does not depend on that."""
-    me = crew_record(proj, name)
-    if not me or not str(me.get("role", "")).lower().startswith("q-"):
-        return []
-    told = []
-    for f in sorted(crew_dir(proj).glob("*.json")):
-        c = json.loads(f.read_text())
-        if c["name"] == name or not str(c.get("role", "")).lower().startswith("q-"):
-            continue
-        if (crew_reports(proj, c["name"]) or [{}])[-1].get("state") == "done":
-            continue
-        herdr("agent", "prompt", c["name"], f"Decision just recorded by {name} ({me['title']}): {message}\n"
-              "Re-read Linear (the map's Decisions so far) before your next question. Drop or reword any question it already answers, "
-              "and tell the captain in one line when it changes what you were about to ask.")
-        told.append(c["name"])
-    return told
-
 def cmd_report(a):
     """A crew session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
     proj = project_dir(a)
@@ -1196,8 +1210,7 @@ def cmd_report(a):
     if a.state == "tool-bug":
         log_tool_bug(proj, a.as_, message)
     crew_attention(proj, a.as_, a.state, message)
-    told = broadcast_decision(proj, a.as_, message) if a.state == "done" else []
-    print(f"reported {a.as_} {a.state}" + (f"; told {', '.join(told)}" if told else ""))
+    print(f"reported {a.as_} {a.state}")
     if a.state == "done":
         if a.as_ == agent_name(proj.name, "orchestrator"):
             teardown(proj)  # the project is finished: nothing it started should stay open
@@ -3340,9 +3353,10 @@ def main():
                             ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
                             ("groundwork", cmd_groundwork, "print the groundwork crew's brief; --extra adds the project's notes"),
+                            ("wayfinder", cmd_wayfinder, "print the wayfinder crew's brief (questions on one Lavish page); --extra adds the project's notes"),
                             ("testcrews", cmd_testcrews, "start one test-writing crew per task in parallel from the groundwork contract"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
-                            ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, wayfinder questions, helpers)"),
+                            ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished crew tabs (the orchestrator's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
@@ -3384,7 +3398,7 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
-        if name == "groundwork":
+        if name in ("groundwork", "wayfinder"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
@@ -3396,7 +3410,7 @@ def main():
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
-            s.add_argument("--role", help="orchestrator, q-<ticket>, or a helper's job; the agent is named <slug>-<role>")
+            s.add_argument("--role", help="orchestrator, wayfinder, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")

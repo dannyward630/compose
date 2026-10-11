@@ -80,7 +80,7 @@ PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model":
 
 
 class PlannerChain(unittest.TestCase):
-    """Planning (the orchestrator, wayfinder `q-*` agents) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    """Planning (the orchestrator, the wayfinder crew) runs on `planner`: its model when Claude Code can run it, else its fallback."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
@@ -99,7 +99,8 @@ class PlannerChain(unittest.TestCase):
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
             self.assertEqual(fc.crew_pick("orchestrator")[:2], ("claude:claude-fable-5-1", None))
-            self.assertEqual(fc.crew_pick("q-neb-12")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.crew_pick("wayfinder")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
             self.assertEqual(fc.crew_pick("groundwork")[:2], ("claude:claude-opus-5-5", None))
             self.assertEqual(fc.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
 
@@ -111,7 +112,7 @@ class PlannerChain(unittest.TestCase):
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
-            fc.crew_pick("orchestrator"); fc.crew_pick("q-a"); fc.crew_pick("q-b")
+            fc.crew_pick("orchestrator"); fc.crew_pick("wayfinder"); fc.crew_pick("orchestrator")
             self.assertEqual(run.call_count, 1)
         fc._PROBED.clear()  # a new CLI process the same day reads the cache file
         with self.probe(False) as run:

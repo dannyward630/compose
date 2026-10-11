@@ -48,6 +48,18 @@ class Groundwork(unittest.TestCase):
         self.assertIn("$E2E_CLIENT_PORT", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
+    def test_wayfinder_brief_puts_the_questions_on_one_lavish_page(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
+            fc.cmd_wayfinder(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
+        brief = out.getvalue()
+        page = str(self.proj / "lavish" / "wayfinder.html")
+        self.assertIn("NEB-9", brief)
+        self.assertIn(f"npx -y lavish-axi poll {page}", brief)
+        self.assertIn("Decisions so far", brief)
+        self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+
     def test_each_test_crew_gets_its_task_and_the_contract(self):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
         out = io.StringIO()
