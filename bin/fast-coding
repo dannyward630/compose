@@ -769,12 +769,12 @@ def herdr_space(proj):
     return space
 
 # ---------- crew: Claude sessions in the project's space, reporting upward ----------
-# The captain talks to the first mate (the session they started), which stays where it was launched. Each project gets an
+# The captain talks to the team lead (the session they started), which stays where it was launched. Each project gets an
 # orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts crew of its own (a wayfinder
 # question, a researcher). Every crew session reports with `fast-coding report`; `watch` turns new reports into wake events.
 CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
-TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the first mate
+TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the team lead
 
 def crew_dir(proj):
     d = proj / "results" / "crew"
@@ -807,7 +807,7 @@ def stop_listeners_under(root):
     return pids
 
 def crew_preamble(proj, name, title):
-    up = "the first mate, who relays to the captain" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
+    up = "the team lead, who relays to the captain" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
     report = f"fast-coding report --repo {project_worktree(proj)} --project {proj.name} --as {name}"
     return (f"You are {name}, crew of fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
@@ -1401,7 +1401,7 @@ def cmd_report(a):
             close_after_turn(proj, a.as_)
 
 def log_tool_bug(proj, reporter, message):
-    """Append to the cross-project log the first mate reads when it briefs a toolsmith: which CLI build failed, where it lives."""
+    """Append to the cross-project log the team lead reads when it briefs a toolsmith: which CLI build failed, where it lives."""
     commit = sh(["git", "rev-parse", "--short", "HEAD"], CLI_REPO, check=False).stdout.strip()
     TOOL_BUGS.parent.mkdir(parents=True, exist_ok=True)
     with open(TOOL_BUGS, "a") as f:
@@ -3844,9 +3844,9 @@ def watch_events(before, after):
     return ev
 
 def watch_filter(events, slug, sources):
-    """`--from` names the crew whose reports wake you (the first mate watches only its orchestrator); without it you get
-    everything except the orchestrator's own reports, which go up to the first mate."""
-    if sources:  # a tool-bug from any crew wakes the first mate too: it owns fixing the tool; a stall is its to supervise
+    """`--from` names the crew whose reports wake you (the team lead watches only its orchestrator); without it you get
+    everything except the orchestrator's own reports, which go up to the team lead."""
+    if sources:  # a tool-bug from any crew wakes the team lead too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
@@ -4381,7 +4381,7 @@ def main():
             s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
             s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
             s.add_argument("--interval", type=float, default=WATCH_INTERVAL)
-            s.add_argument("--from", dest="from_", help="only these crew wake you (roles or agent names, comma-separated); the first mate passes orchestrator")
+            s.add_argument("--from", dest="from_", help="only these crew wake you (roles or agent names, comma-separated); the team lead passes orchestrator")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":

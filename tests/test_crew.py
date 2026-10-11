@@ -33,8 +33,8 @@ class Crew(unittest.TestCase):
         self.assertEqual(len(ev), 2)
         orchestrator_view = fc.watch_filter(ev, "shop", [])  # everything but its own report, which goes up
         self.assertEqual(orchestrator_view, ["event crew=shop-q-neb-12 state=needs-user message='Which payment provider? I recommend Stripe'"])
-        first_mate_view = fc.watch_filter(ev, "shop", ["shop-orchestrator"])
-        self.assertEqual(first_mate_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
+        team_lead_view = fc.watch_filter(ev, "shop", ["shop-orchestrator"])
+        self.assertEqual(team_lead_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
         self.assertEqual(fc.watch_events(snap(self.proj), snap(self.proj)), [])  # nothing new, no event
 
     def test_bad_state_refused(self):
@@ -71,8 +71,8 @@ class Crew(unittest.TestCase):
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the captain."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
-    def test_orchestrator_reports_to_first_mate(self):
-        self.assertIn("the first mate", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
+    def test_orchestrator_reports_to_team_lead(self):
+        self.assertIn("the team lead", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
         pre = fc.crew_preamble(self.proj, "shop-tests", "tests")
@@ -190,10 +190,10 @@ class Guard(unittest.TestCase):
 
 
 class ToolBug(unittest.TestCase):
-    """A failure of fast-coding itself goes to the first mate, who owns fixing the tool, and to a log across projects."""
+    """A failure of fast-coding itself goes to the team lead, who owns fixing the tool, and to a log across projects."""
     setUp, report = Crew.setUp, Crew.report
 
-    def test_tool_bug_is_recorded_logged_and_wakes_the_first_mate(self):
+    def test_tool_bug_is_recorded_logged_and_wakes_the_team_lead(self):
         log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
         fc.write_report(self.proj, "shop-tests", "working", "started")
         before = snap(self.proj)
@@ -204,7 +204,7 @@ class ToolBug(unittest.TestCase):
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
         self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
         ev = fc.watch_events(before, snap(self.proj))
-        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the first mate wakes on a crew's tool-bug too
+        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the team lead wakes on a crew's tool-bug too
         self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the orchestrator sees it
 
     def test_every_brief_says_how_to_report_a_tool_bug(self):

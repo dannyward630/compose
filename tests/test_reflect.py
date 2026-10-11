@@ -175,7 +175,7 @@ class WatchReflect(unittest.TestCase):
         self.assertTrue(ev[1].startswith("event reflect=/p/r3.json error='no TYPESAFE_API_KEY'"))
         self.assertEqual(fc.watch_events(after, after), [])
 
-    def test_the_first_mate_does_not_get_screens(self):
+    def test_the_team_lead_does_not_get_screens(self):
         ev = ["event reflect=/p/r1.json broken=1 unclear=0 trigger=task:003"]
         self.assertEqual(fc.watch_filter(ev, "hw", ["hw-orchestrator"]), [])
         self.assertEqual(fc.watch_filter(ev, "hw", []), ev)

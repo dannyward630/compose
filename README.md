@@ -4,18 +4,18 @@ You talk to one agent, and it runs a whole engineering team for you.
 
 ```
 you
- └── first mate            the one agent you talk to
+ └── team lead             the one agent you talk to
       ├── orchestrator     feature A: plans, decides with you, steers, reviews
       │    └── fleet       explore, decide, test, build, verify
       └── orchestrator     feature B, running at the same time
            └── fleet       explore, decide, test, build, verify
 ```
 
-The first mate takes your request and hands each feature to its own orchestrator, so the features of one epic move forward at the same time.
+The team lead takes your request and hands each feature to its own orchestrator, so the features of one epic move forward at the same time.
 Each orchestrator runs its own fleet of agents through the whole engineering workflow, from exploring the code to pull requests you can review in minutes.
 The strongest models do the planning and bring every decision to you.
 Fast, cheap agents write the code and verify it.
-The orchestrators steer their agents while they work, and the first mate nudges any orchestrator that stalls.
+The orchestrators steer their agents while they work, and the team lead nudges any orchestrator that stalls.
 When the fleet learns something that breaks the plan, it changes the plan in real time and asks you whenever the decision is yours.
 
 ## What every fleet does
@@ -134,3 +134,8 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 Run the CLI tests with `python3 -m unittest discover -s tests`.
 Run the jev tests with `cd jev && uv run pytest`.
 `bin/fast-coding` uses only the Python standard library, and `jev/` is its own uv project.
+
+## Credits
+
+The way fast-coding organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
+Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the team lead, orchestrator, and crew roles here are adapted from.

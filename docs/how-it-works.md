@@ -92,7 +92,7 @@ When the plan turns out to be wrong, the fleet notices and changes it in the ope
 2. Jev screens every line of the feature's Decisions so far against that evidence and marks each one HOLDS, BROKEN, or UNCLEAR.
 3. The orchestrator holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
    Everything else keeps running.
-4. Complex or subjective calls, plus anything you settled yourself, reach you through the first mate on a change page in Lavish.
+4. Complex or subjective calls, plus anything you settled yourself, reach you through the team lead on a change page in Lavish.
 5. The re-plan is one recorded change, started with `fast-coding change start` and finished with `done`.
    The old decision is struck through and tagged, the new one sits beside it, and a comment on the feature says what changed and why.
 

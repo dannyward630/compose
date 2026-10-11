@@ -62,7 +62,7 @@ class Stalls(unittest.TestCase):
         ev = self.stalls(s, now=NOW + 300)
         self.assertTrue(any("stall=idle" in e and "1 task(s) pending" in e for e in ev), ev)
 
-    def test_the_first_mate_receives_stalls_and_the_orchestrator_too(self):
+    def test_the_team_lead_receives_stalls_and_the_orchestrator_too(self):
         ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'",
               "event stall=idle agent=hw-orchestrator the orchestrator has been idle"]
         self.assertEqual(fc.watch_filter(ev, "hw", [ORCH]), [ev[0], ev[2]])
@@ -123,7 +123,7 @@ class WatchMemory(unittest.TestCase):
         later = wsnap("passed")
         later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
         self.watch(later)  # the orchestrator's own watch reports the task first
-        out = self.watch(later, from_="orchestrator")  # the first mate's watch still gets the orchestrator's question
+        out = self.watch(later, from_="orchestrator")  # the team lead's watch still gets the orchestrator's question
         self.assertTrue(any(f"event crew={ORCH} state=needs-user" in line for line in out), out)
 
     def test_a_payment_halt_is_an_event(self):
