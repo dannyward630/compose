@@ -155,5 +155,98 @@ class WatchReflect(unittest.TestCase):
         self.assertEqual(fc.last_change_done(proj), "2026-10-11 10:03:00")
 
 
+def task(tid, after=""):
+    return {"id": tid, "title": f"task {tid}", "files": [f"{tid}.txt"], "protected": [], "test": "true", "model": "pi:x/y",
+            "after": after, "linear": f"ENG-{int(tid)}", "linear_state": "Todo", "body": "## Goal\nx"}
+
+
+def with_tasks(proj, tasks):
+    cache = json.loads((proj / "results" / "tasks.json").read_text())
+    cache["tasks"] = tasks
+    (proj / "results" / "tasks.json").write_text(json.dumps(cache))
+
+
+def run_all(proj, status=None, during=None, reflect=None):
+    """run_tasks over every synced task with run_task faked: each passes unless `status` says otherwise, and `during(id)` runs
+    inside it. Returns (ids run in order, the printed table, the reflect mock)."""
+    calls, reflect = [], reflect or mock.MagicMock(return_value=(Path("/p/reflect.json"), {}))
+    def fake(repo, proj_, meta, attempts):
+        calls.append(meta["id"])
+        if during:
+            during(meta["id"])
+        st = (status or {}).get(meta["id"], "passed")
+        log = [{"contradiction": "the brief says x / the code shows y, a.txt:1"}] if st == "contradiction" else \
+              [{"test_output": "AssertionError: expected 2, got 3"}]
+        return {"id": meta["id"], "title": meta["title"], "status": st, "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": log}
+    out = io.StringIO()
+    with mock.patch.object(fc, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
+            mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc, "herdr_space", lambda p: None), \
+            mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
+        try:
+            fc.run_tasks(Path("."), proj, fc.load_tasks(proj), SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
+        except SystemExit:
+            pass
+    return calls, out.getvalue(), reflect
+
+
+class Holds(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002"), task("004")])
+        self.said, self.notes = [], []
+        for name, value in (("say", self.said.append), ("project_dir", lambda a: self.proj),
+                            ("linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
+            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+
+    def hold(self, **kw):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fc.cmd_hold(SimpleNamespace(**{"only": None, "reason": None, "release": None, **kw}))
+        return out.getvalue()
+
+    def test_hold_and_release_write_the_file_and_comment_on_linear(self):
+        self.hold(only="002,003", reason="D2 broken")
+        self.assertEqual(set(fc.held(self.proj)), {"002", "003"})
+        self.assertEqual(self.notes, [("002", "Held: D2 broken"), ("003", "Held: D2 broken")])
+        self.hold(release="002")
+        self.assertEqual(set(fc.held(self.proj)), {"003"})
+        self.hold(release="all")
+        self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(self.notes[-2:], [("002", "Released"), ("003", "Released")])
+
+    def test_hold_needs_ids_and_a_reason(self):
+        with self.assertRaises(SystemExit):
+            self.hold(only="002")
+
+    def test_a_run_skips_held_tasks_and_leaves_them_pending(self):
+        self.hold(only="002", reason="D2 broken")
+        calls, table, _ = run_all(self.proj)
+        self.assertEqual(calls, ["001", "004"])
+        self.assertIn("002 held    D2 broken", self.said)
+        self.assertIn("003 held    after held 002", self.said)
+        self.assertNotIn("blocked_by", table)
+
+    def test_a_failure_still_blocks_what_waits_on_it(self):
+        self.hold(only="004", reason="x")
+        _, table, _ = run_all(self.proj, status={"001": "failed"})
+        self.assertIn("blocked_by_001", table)
+        self.assertIn("004 held    x", self.said)
+
+    def test_a_release_during_the_run_lets_the_task_start(self):
+        self.hold(only="004", reason="x")
+        calls, _, _ = run_all(self.proj, during=lambda tid: tid == "001" and self.hold(release="004"))
+        self.assertIn("004", calls)
+
+    def test_an_unreadable_hold_file_holds_nothing(self):
+        (self.proj / "results" / "hold.json").write_text("{not json")
+        self.assertEqual(fc.held(self.proj), {})
+
+    def test_status_shows_held_with_the_reason(self):
+        self.hold(only="002", reason="D2 broken")
+        with mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+            row = fc.task_state(Path("."), self.proj, task("002", "001"), "HEAD")
+        self.assertEqual((row["state"], row["note"]), ("held", "D2 broken"))
+
+
 if __name__ == "__main__":
     unittest.main()

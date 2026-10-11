@@ -513,6 +513,24 @@ def linear_comment(issue, body):
     linear_gql("mutation($id: String!, $b: String!) { commentCreate(input: {issueId: $id, body: $b}) { success } }",
                {"id": issue["id"], "b": body})
 
+def linear_ready():
+    """True when the workspace has a Linear key; otherwise say once how to set it, and the caller skips Linear."""
+    if LINEAR_KEY:
+        return True
+    if not _linear_warned:
+        _linear_warned.append(1)
+        say(f"linear skipped: workspace {WORKSPACE!r} has no Linear key; set it: pbpaste | fast-coding workspace key {WORKSPACE} --linear")
+    return False
+
+def linear_note(meta, body):
+    """A routine comment on a task's issue (held, released). A failure is said and never stops the command."""
+    if not meta or not meta.get("linear") or not linear_ready():
+        return
+    try:
+        linear_comment(linear_issue(meta["linear"]), body)
+    except Exception as e:  # noqa: BLE001
+        say(f"linear {meta['linear']}: comment failed ({str(e)[:200]})")
+
 def rollup_state(children):
     """The state table for a story or epic: Done when every child is Done, In Review when every child is In Review or
     Done, In Progress once any child started, else None (leave it)."""
@@ -547,10 +565,7 @@ def linear_event(proj, meta, event, result=None):
     `failed` keeps it In Progress with the failure as a comment; then its story and the feature roll up."""
     if not meta.get("linear"):
         return
-    if not LINEAR_KEY:
-        if not _linear_warned:
-            _linear_warned.append(1)
-            say(f"linear skipped: workspace {WORKSPACE!r} has no Linear key; set it: pbpaste | fast-coding workspace key {WORKSPACE} --linear")
+    if not linear_ready():
         return
     try:
         issue = linear_issue(meta["linear"])
@@ -2330,16 +2345,21 @@ def run_tasks(repo, proj, tasks, a):
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
         while pending or running:
-            ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values()]
+            hold = held(proj)  # re-read every pass: a hold or a release lands while the run goes on
+            ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
             for p in ready:
                 del pending[p]
                 running[ex.submit(run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
                 break  # a payment halt: leave the rest pending, do not mark them blocked
             if not running:
-                for p in pending:  # every remaining task waits on something that failed
+                stuck = held_behind(pending, hold, failed_ids)
+                for p in pending:
+                    if p in stuck:  # left pending for the run after the re-plan, not blocked
+                        say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after held " + ",".join(sorted(set(pending[p]) & stuck))))
+                        continue
                     results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
-                                    "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})
+                                    "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
                 break
             finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
             for f in finished:
@@ -2640,6 +2660,46 @@ def reflect(proj, trigger, evidence, against=()):
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
         path.write_text(json.dumps(rec, indent=2))
         return path, rec
+
+def held(proj):
+    """{task id: {"reason", "at"}} for every held task. A missing or unreadable file holds nothing."""
+    try:
+        return json.loads((proj / "results" / "hold.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+def held_behind(pending, hold, failed):
+    """The pending tasks a hold keeps back: each held one, and each that waits on those with no failed dependency of its own."""
+    stuck = {p for p in pending if p in hold}
+    while True:
+        more = {p for p, d in pending.items() if p not in stuck and set(d) & stuck and not set(d) & failed}
+        if not more:
+            return stuck
+        stuck |= more
+
+def cmd_hold(a):
+    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task finishes."""
+    proj = project_dir(a)
+    tasks = {m["id"]: m for m in load_tasks(proj, required=True)}
+    hold = held(proj)
+    if a.release:
+        for tid in (list(hold) if a.release == "all" else [x.strip() for x in a.release.split(",") if x.strip()]):
+            if hold.pop(tid, None) is None:
+                print(f"{tid} was not held")
+                continue
+            print(f"{tid} released")
+            linear_note(tasks.get(tid), "Released")
+    else:
+        if not a.only or not a.reason:
+            sys.exit('hold needs --only <ids> and --reason "<one line>", or --release <ids|all>')
+        for tid in [x.strip() for x in a.only.split(",") if x.strip()]:
+            if tid not in tasks:
+                print(f"{tid}: no such task (run `fast-coding sync` if it is new on Linear)")
+                continue
+            hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            print(f"{tid} held  {a.reason}")
+            linear_note(tasks[tid], f"Held: {a.reason}")
+    (proj / "results" / "hold.json").write_text(json.dumps(hold, indent=2))
 
 def cmd_reflect(a):
     """Screen the settled decisions against evidence you hand it: the captain's words, a report, why you rejected a layer."""
@@ -3155,6 +3215,9 @@ def task_state(repo, proj, meta, trunk_head):
     deps = [d.strip() for d in str(meta.get("after") or "").split(",") if d.strip()]
     if state == "pending" and deps:
         note = "after " + ", ".join(deps)
+    hold = held(proj).get(tid)
+    if state == "pending" and hold:
+        state, note = "held", hold["reason"]
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
             "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or meta.get("model", "")).split("/")[-1]}
 
@@ -3929,6 +3992,7 @@ def main():
                             ("testcrews", cmd_testcrews, "start one test-writing crew per task in parallel from the groundwork contract"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
+                            ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
                             ("crew", cmd_crew, "start | list | focus | stop Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
                             ("report", cmd_report, "a crew session reports up: working | needs-user | blocked | done, with one line"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
@@ -3986,6 +4050,10 @@ def main():
         if name == "reflect":
             s.add_argument("--evidence", required=True, help="what was found: the captain's words, a report, a rejection reason; `-` reads stdin")
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
+        if name == "hold":
+            s.add_argument("--only", help="comma-separated task ids to hold")
+            s.add_argument("--reason", help="one line: why they wait")
+            s.add_argument("--release", help="comma-separated task ids, or all")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator, wayfinder, or a helper's job; the agent is named <slug>-<role>")
