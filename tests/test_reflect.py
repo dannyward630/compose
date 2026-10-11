@@ -165,7 +165,7 @@ class WatchReflect(unittest.TestCase):
     def snap(self, reflects):
         return {"tasks": {}, "agents": {}, "run": False, "verify": None, "crew": {}, "reflects": reflects}
 
-    def test_flagged_screens_and_errors_wake_the_orchestrator_once(self):
+    def test_flagged_screens_and_errors_wake_the_team_lead_once(self):
         after = self.snap({"/p/r1.json": {"trigger": "task:003", "error": None, "counts": (1, 0)},
                            "/p/r2.json": {"trigger": "verify", "error": None, "counts": (0, 0)},
                            "/p/r3.json": {"trigger": "task:004", "error": "no TYPESAFE_API_KEY", "counts": (0, 0)}})
@@ -175,7 +175,7 @@ class WatchReflect(unittest.TestCase):
         self.assertTrue(ev[1].startswith("event reflect=/p/r3.json error='no TYPESAFE_API_KEY'"))
         self.assertEqual(fc.watch_events(after, after), [])
 
-    def test_the_team_lead_does_not_get_screens(self):
+    def test_the_engineering_manager_does_not_get_screens(self):
         ev = ["event reflect=/p/r1.json broken=1 unclear=0 trigger=task:003"]
         self.assertEqual(fc.watch_filter(ev, "hw", ["hw-orchestrator"]), [])
         self.assertEqual(fc.watch_filter(ev, "hw", []), ev)
@@ -467,7 +467,7 @@ MAP_AFTER = MAP.replace("- Store drafts in localStorage\n",
 
 
 def synced(proj, description, issues, ahead=0):
-    """Sync the feature and `issues` (id -> issue) the way the orchestrator does, stamped `ahead` seconds from now."""
+    """Sync the feature and `issues` (id -> issue) the way the team lead does, stamped `ahead` seconds from now."""
     fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "Drafts", "description": description},
                          "issues": [{"id": i, **v} for i, v in issues.items()]})
     cache = json.loads((proj / "results" / "tasks.json").read_text())
@@ -680,7 +680,7 @@ class Undo(unittest.TestCase):
         self.assertIn("004", str(e.exception))
 
     def sync_linear(self, ahead):
-        """Sync Linear as it now is, the way the orchestrator does after an undo."""
+        """Sync Linear as it now is, the way the team lead does after an undo."""
         synced(self.proj, self.lin.issues["ENG-1"]["description"],
                {i: {"title": AFTER[i]["title"], **v} for i, v in self.lin.issues.items() if i != "ENG-1"}, ahead=ahead)
 

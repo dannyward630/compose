@@ -4,7 +4,7 @@
 Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
   .fast-coding/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
   .fast-coding/<project>/verify.json    local verification config
-  .fast-coding/<project>/results/       tasks.json (the orchestrator's Linear sync), one JSON per task run, verify results
+  .fast-coding/<project>/results/       tasks.json (the team lead's Linear sync), one JSON per task run, verify results
   .fast-coding/<project>/worktrees/     one git clone per task
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
@@ -248,7 +248,7 @@ def project_dir(a):
 
 # ---------- tasks ----------
 
-# Linear is the record humans and agents share. The CLI never calls it: the orchestrator reads the feature and its tasks
+# Linear is the record humans and agents share. The CLI never calls it: the team lead reads the feature and its tasks
 # through its Linear MCP tools and pipes them to `fast-coding sync`, which keeps them in the git-ignored results/tasks.json.
 # A task is any issue under the feature (directly or under a story) whose description ends with this block:
 #   ```fast-coding
@@ -280,7 +280,7 @@ def task_from_issue(issue):
     return meta
 
 def sync_tasks(proj, data):
-    """Store the feature and its tasks, as the orchestrator read them from Linear, in results/tasks.json. Returns the tasks."""
+    """Store the feature and its tasks, as the team lead read them from Linear, in results/tasks.json. Returns the tasks."""
     link = proj / "linear.json"
     feature = json.loads(link.read_text()).get("feature") if link.exists() else None
     if not feature:
@@ -316,7 +316,7 @@ def linear_cache(proj):
     return json.loads(path.read_text()) if path.exists() else {"feature": {}, "tasks": []}
 
 def load_tasks(proj, required=False):
-    """The tasks as the orchestrator last synced them from Linear. Commands that act on tasks require a sync."""
+    """The tasks as the team lead last synced them from Linear. Commands that act on tasks require a sync."""
     if required and not (proj / "results" / "tasks.json").exists():
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
                  f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
@@ -479,7 +479,7 @@ def http_json(req, provider, timeout=90):
         payment_check(provider, json.dumps(err), (err.get("code") if isinstance(err, dict) else None))
     return out
 
-# ---------- Linear: the CLI keeps the state table true, so the orchestrator spends no model turn on it ----------
+# ---------- Linear: the CLI keeps the state table true, so the team lead spends no model turn on it ----------
 # The key is the active workspace's `linear_api_key`; it goes in a header,
 # never argv or a results file. Every call is best effort: a Linear outage prints one line and the run goes on.
 LINEAR_URL = "https://api.linear.app/graphql"
@@ -652,7 +652,7 @@ def claude_once(cwd, prompt, timeout=900, model=None):
 
 # ---------- herdr ----------
 # Inside herdr (HERDR_ENV=1) the fleet is visible: one space per project, a `status` tab, one tab per task holding a named
-# interactive pi agent the orchestrator can steer with `herdr agent prompt`, and a verify tab of stage panes. Every call
+# interactive pi agent the team lead can steer with `herdr agent prompt`, and a verify tab of stage panes. Every call
 # here is best-effort: outside herdr, or when herdr refuses, the run continues exactly as the headless path would.
 
 HERDR_SPACES = {}  # project name -> workspace id, filled by herdr_space
@@ -769,12 +769,12 @@ def herdr_space(proj):
     return space
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
-# The product owner talks to the team lead (the session they started), which stays where it was launched. Each project gets an
-# orchestrator in its own space (`crew start --role orchestrator`), and the orchestrator starts teammates of its own (a wayfinder
+# The product owner talks to the engineering manager (the session they started), which stays where it was launched. Each project gets a
+# team lead in its own space (`crew start --role orchestrator`), and the team lead starts teammates of its own (a wayfinder
 # question, a researcher). Every teammate session reports with `fast-coding report`; `watch` turns new reports into wake events.
 CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
-TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the team lead
+TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the engineering manager
 
 def crew_dir(proj):
     d = proj / "results" / "crew"
@@ -807,7 +807,7 @@ def stop_listeners_under(root):
     return pids
 
 def crew_preamble(proj, name, title):
-    up = "the team lead, who relays to the product owner" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your orchestrator"
+    up = "the engineering manager, who relays to the product owner" if name == agent_name(proj.name, "orchestrator") else f"{agent_name(proj.name, 'orchestrator')}, your team lead"
     report = f"fast-coding report --repo {project_worktree(proj)} --project {proj.name} --as {name}"
     return (f"You are {name}, a teammate on fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
@@ -827,7 +827,7 @@ def crew_preamble(proj, name, title):
             f"output with file:line, a command and its output, a test run). Keep facts apart from hypotheses, write 'not verified' "
             f"or 'unknown' instead of a guess, and report failures and partial results plainly with the evidence.\n"
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
-            f"and a test failing on the stubs plus the orchestrator's read of it is the proof.\n"
+            f"and a test failing on the stubs plus the team lead's read of it is the proof.\n"
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
@@ -896,7 +896,7 @@ def model_available(model):
 
 def crew_pick(role, explicit=None):
     """(model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
-    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning roles (the orchestrator
+    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning roles (the team lead
     and the wayfinder teammate), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
     unprobed. Teammate sessions run in pi or Claude Code."""
@@ -975,7 +975,7 @@ TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; harde
 
 def triage(repo, proj, ids):
     """One fast-model look per passed task, all at once: `clean`, or `flag: <reason quoting the code>`. It only points the
-    orchestrator at layers to read in full; it never rejects. Stored as `triage` in the task's result file."""
+    team lead at layers to read in full; it never rejects. Stored as `triage` in the task's result file."""
     env = fast_env()
     if not env.get("TEXT_MODEL_API_KEY"):
         return {}
@@ -1038,7 +1038,7 @@ Phase A, toolchain (report before changing dependencies):
 {stacks}
 1. Install from the lockfiles, then build, test, and start every part the way a user would (start the server and probe one URL; start the client with BROWSER=none and probe it). Unit tests passing is not proof the app runs.
 2. For each breakage find the smallest fix that works (a documented setting, or an upgrade); try it on a scratch copy if needed.
-3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for the orchestrator's go in this pane.
+3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for the team lead's go in this pane.
 
 Phase B, after the go:
 1. Apply the dependency and toolchain fixes with the package managers (never by hand-editing lockfiles). Commit.
@@ -1052,16 +1052,16 @@ Write {contract} (outside the repo; never commit it) with exactly what a test wr
 - every stub's exact signature, and which task implements it
 - the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
 - per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
-Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the orchestrator says so.
+Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the team lead says so.
 """
 
 def cmd_groundwork(a):
-    """Print the groundwork brief for this project, plus the orchestrator's project notes from --extra (or stdin with `-`)."""
+    """Print the groundwork brief for this project, plus the team lead's project notes from --extra (or stdin with `-`)."""
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=current_branch(wt), stacks=detect_stacks(wt),
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
-          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+          + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. The map is the feature issue {feature} on Linear:
 its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
@@ -1081,7 +1081,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    product owner ended. If the poll is interrupted, run it again: queued answers wait for you.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
    whole-description write.
-6. New questions the answers open, and the groundwork teammate's toolchain findings when the orchestrator forwards them, become new
+6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them, become new
    cards on the same page; then `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}`, then report `done` with the
    decisions in one line each.
@@ -1090,7 +1090,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
-1. Read the map, the evidence (the screen file above, its `evidence` field, and the orchestrator's notes at the end of this brief),
+1. Read the map, the evidence (the screen file above, its `evidence` field, and the team lead's notes at the end of this brief),
    and the code each piece of evidence cites (`graft ask "<question>" --source`).
 2. Write one Lavish page: {page}. Never reopen the wayfinder's earlier page. Read `npx -y lavish-axi playbook input` and
    `npx -y lavish-axi design` first, and set data-lavish-annotate="off" on <html>.
@@ -1107,10 +1107,10 @@ The screen that raised it: {reflect}
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
    "keep it as is" changes nothing in the map.
-6. Evidence the orchestrator forwards while {cid} is open becomes new cards on the same page; then
+6. Evidence the team lead forwards while {cid} is open becomes new cards on the same page; then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered: `npx -y lavish-axi end {page}`, then report `done` with each answer in one line.
-   Do not touch tasks, stories, or the plan: the orchestrator re-plans from your answers.
+   Do not touch tasks, stories, or the plan: the team lead re-plans from your answers.
 """
 
 EXPLORE_BRIEF = """You are the explore teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
@@ -1133,10 +1133,10 @@ def cmd_explore(a):
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
     print(EXPLORE_BRIEF.format(slug=proj.name, wt=wt, feature=feature)
-          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+          + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_wayfinder(a):
-    """Print the wayfinder teammate's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`). With
+    """Print the wayfinder teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
     --change, the brief for an open change of course: its own page, only what the evidence questions."""
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
@@ -1151,7 +1151,7 @@ def cmd_wayfinder(a):
                                     page=proj / "lavish" / f"change-{cid}.html")
     else:
         brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
-    print(brief + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+    print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
@@ -1175,7 +1175,7 @@ def test_brief(meta, contract, budget=None):
             f"`git add {paths} && git commit {paths} -m \"<plain message>\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
-            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the orchestrator says so.\n\n"
+            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
 
 def cmd_testcrews(a):
@@ -1309,7 +1309,7 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = herdr_space(proj)
-    role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the orchestrator off the code
+    role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the team lead off the code
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
@@ -1330,10 +1330,10 @@ def cmd_crew(a):
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
-CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the orchestrator's own: the CLI's config
+CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the team lead's own: the CLI's config
 
 def guard_decision(tool, path, role):
-    """None to allow, else why not. The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
+    """None to allow, else why not. The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
     if role != "orchestrator" or tool not in GUARDED_TOOLS or not path:
         return None
     p = Path(path).expanduser().resolve()
@@ -1342,11 +1342,11 @@ def guard_decision(tool, path, role):
     d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
     if sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
-    return (f"The orchestrator never edits code, tests, config, or docs ({p.name}). Hand it to a teammate: "
+    return (f"The team lead never edits code, tests, config, or docs ({p.name}). Hand it to a teammate: "
             f"`fast-coding crew start --role <job> --brief -`, or put it in a task issue for `run`.")
 
 def cmd_guard(a):
-    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the orchestrator's file edits inside a repository."""
+    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository."""
     try:
         ev = json.load(sys.stdin)
     except json.JSONDecodeError:
@@ -1390,7 +1390,7 @@ def cmd_report(a):
         try:
             path, _ = reflect(proj, f"contradiction:{a.as_}", message, against=[quoted.group(1)] if quoted else [])
             print(f"reflect {path}")
-        except Exception as e:  # noqa: BLE001  the report still goes up; the orchestrator judges without the screen
+        except Exception as e:  # noqa: BLE001  the report still goes up; the team lead judges without the screen
             say(f"{a.as_} reflect failed ({str(e)[:200]})")
     crew_attention(proj, a.as_, a.state, message)
     print(f"reported {a.as_} {a.state}")
@@ -1401,7 +1401,7 @@ def cmd_report(a):
             close_after_turn(proj, a.as_)
 
 def log_tool_bug(proj, reporter, message):
-    """Append to the cross-project log the team lead reads when it briefs a toolsmith: which CLI build failed, where it lives."""
+    """Append to the cross-project log the engineering manager reads when it briefs a toolsmith: which CLI build failed, where it lives."""
     commit = sh(["git", "rev-parse", "--short", "HEAD"], CLI_REPO, check=False).stdout.strip()
     TOOL_BUGS.parent.mkdir(parents=True, exist_ok=True)
     with open(TOOL_BUGS, "a") as f:
@@ -1549,7 +1549,7 @@ def cmd_frame0(a):
 
 def teardown(proj):
     """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
-    and every teammate tab whose last report is `done`. `shell`, `status`, and the orchestrator stay. Idempotent. Returns the closed labels."""
+    and every teammate tab whose last report is `done`. `shell`, `status`, and the team lead stay. Idempotent. Returns the closed labels."""
     if frame0_down(proj):
         print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
     stopped = stop_listeners_under(project_worktree(proj))
@@ -1628,7 +1628,7 @@ def herdr_implementer_pane(space, cwd, env):
 def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
     Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
-    and the pi session file the turn's text and usage are read from. The orchestrator steers the same agent with
+    and the pi session file the turn's text and usage are read from. The team lead steers the same agent with
     `herdr agent prompt <name> ...` between the CLI's own prompts."""
     timeout = timeout or TURN_TIMEOUT
     meta, proj = task["meta"], task["proj"]
@@ -2023,7 +2023,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             switch("missed", original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt)
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
-    # Only this task's own files are reverted: the orchestrator may be editing other files in the main checkout meanwhile.
+    # Only this task's own files are reverted: the team lead may be editing other files in the main checkout meanwhile.
     dirty = [l.split()[-1] for l in sh(["git", "status", "--porcelain"], repo, check=False).stdout.splitlines()]
     mine = [f for f in dirty if f in meta["files"] or f in meta["protected"]]
     others = [f for f in dirty if f not in mine]
@@ -2055,7 +2055,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
     if isinstance(session, dict):
         herdr_label(session, status, cost, state="idle")
-        if status == "passed":  # its branch is the record; a missed task's pane stays for the orchestrator to read and steer
+        if status == "passed":  # its branch is the record; a missed task's pane stays for the team lead to read and steer
             herdr("pane", "close", session["pane"])
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
@@ -2660,7 +2660,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
 
 # ---------- changing course: reflect, hold, change ----------
 
-REFLECT_THRESHOLD = 0.6  # BROKEN or UNCLEAR at or above this flags a line for the orchestrator to confirm
+REFLECT_THRESHOLD = 0.6  # BROKEN or UNCLEAR at or above this flags a line for the team lead to confirm
 REFLECT_EVIDENCE_CAP = 20000  # characters of evidence Jev sees, newest first
 REFLECT_LOCK = threading.Lock()  # around the evidence log only, never the Jev call: an outage must not queue every failed task behind it
 REFLECT_CHOICES = {"HOLDS": "The evidence does not contradict this line, including when the evidence is unrelated to it.",
@@ -2730,7 +2730,7 @@ def evidence_since(proj):
 def reflect(proj, trigger, evidence, against=()):
     """Screen the settled lines against new evidence with Jev: one HOLDS / BROKEN / UNCLEAR question per live line of the map's
     Decisions so far, plus each quoted Linear line in `against`. Writes results/reflect-<stamp>-NN.json; returns (path, record).
-    The screen itself never raises: one that cannot run records its error, and the orchestrator judges without it."""
+    The screen itself never raises: one that cannot run records its error, and the team lead judges without it."""
     at = time.strftime("%Y-%m-%d %H:%M:%S")
     (proj / "results").mkdir(exist_ok=True)
     with REFLECT_LOCK:
@@ -3522,7 +3522,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         linear_verified(proj)
     say(LEDGER.line())
     if not ok:
-        print("\nUnresolved after the fix budget. Escalate to the orchestrator with the confirmed findings above.")
+        print("\nUnresolved after the fix budget. Escalate to the team lead with the confirmed findings above.")
         verify_failed(proj, rounds, findings)
     sys.exit(0 if ok else 1)
 
@@ -3693,7 +3693,7 @@ def contradiction(reply):
 FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
 
 def watch_snapshot(repo, proj):
-    """Everything an orchestrator decides on: each task's state, each herdr agent's status, run and verify markers."""
+    """Everything a team lead decides on: each task's state, each herdr agent's status, run and verify markers."""
     tasks = load_tasks(proj)
     trunk_head = sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
@@ -3783,7 +3783,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         seen[orch] = [status, now_s]
     ev = []
     hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
-    tail = f"orchestrator {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
+    tail = f"team lead {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
     def fire(key, what):
         if key not in fired:
             fired.add(key)
@@ -3799,10 +3799,10 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
             fire(f"undispatched:{done_at}", f"undispatched agent={orch} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
     ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
     if ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
-        fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the orchestrator has not reported since")
+        fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the team lead has not reported since")
     since = seen[orch][1]
     if status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
-        fire(f"idle:{since}", f"idle agent={orch} the orchestrator has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
+        fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
     try:
         watch_save(proj, key, fired=sorted(fired), seen=seen)
     except OSError:
@@ -3844,9 +3844,9 @@ def watch_events(before, after):
     return ev
 
 def watch_filter(events, slug, sources):
-    """`--from` names the teammates whose reports wake you (the team lead watches only its orchestrator); without it you get
-    everything except the orchestrator's own reports, which go up to the team lead."""
-    if sources:  # a tool-bug from any teammate wakes the team lead too: it owns fixing the tool; a stall is its to supervise
+    """`--from` names the teammates whose reports wake you (the engineering manager watches only its team lead); without it you get
+    everything except the team lead's own reports, which go up to the engineering manager."""
+    if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
@@ -3855,7 +3855,7 @@ def watch_filter(events, slug, sources):
 WATCH_INTERVAL = 2.0
 
 def cmd_watch(a, rewake=False):
-    """Sleep on the project until something an orchestrator must act on happens, print it, exit. Zero tokens while waiting:
+    """Sleep on the project until something a team lead must act on happens, print it, exit. Zero tokens while waiting:
     run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
     Each watcher (`all`, or its --from) remembers what it last reported, so a watch started later still reports what
     happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
@@ -3914,7 +3914,7 @@ def cmd_watch(a, rewake=False):
                 sys.exit(2)
 
 def cmd_rewake(a):
-    """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when an orchestrator's turn ends, park a watch whose event
+    """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
     wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once."""
     project = os.environ.get("FAST_CODING_PROJECT")
     if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project:
@@ -3959,7 +3959,7 @@ def cmd_status(a):
             return
 
 def cmd_done(a):
-    """Record that the orchestrator finished tasks by hand (status hand_done) so `status` tells the truth. Requires a reason."""
+    """Record that the team lead finished tasks by hand (status hand_done) so `status` tells the truth. Requires a reason."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",") if x.strip()]
     (proj / "results").mkdir(exist_ok=True)
@@ -4247,7 +4247,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     print(line)
 
 def cmd_sync(a):
-    """Store the feature and its tasks, read from Linear by the orchestrator and piped in as JSON, and list them."""
+    """Store the feature and its tasks, read from Linear by the team lead and piped in as JSON, and list them."""
     proj = project_dir(a)
     try:
         data = json.load(sys.stdin)
@@ -4332,8 +4332,8 @@ def main():
                             ("verify", cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
-                            ("done", cmd_done, "record tasks the orchestrator finished by hand: --only ids --note why"),
-                            ("sync", cmd_sync, "store the feature and its tasks, read from Linear by the orchestrator, from JSON on stdin"),
+                            ("done", cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
+                            ("sync", cmd_sync, "store the feature and its tasks, read from Linear by the team lead, from JSON on stdin"),
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
@@ -4350,12 +4350,12 @@ def main():
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
                             ("change", cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
-                            ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the orchestrator, the wayfinder, helpers)"),
+                            ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
-                            ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the orchestrator's done does this)"),
-                            ("guard", cmd_guard, "Claude Code PreToolUse hook: the orchestrator writes no code (reads the hook event on stdin)"),
-                            ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each orchestrator turn; its event wakes the session"),
+                            ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
+                            ("guard", cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
+                            ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -4381,7 +4381,7 @@ def main():
             s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
             s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
             s.add_argument("--interval", type=float, default=WATCH_INTERVAL)
-            s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the team lead passes orchestrator")
+            s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":
@@ -4420,7 +4420,7 @@ def main():
             s.add_argument("--why", help="start: one line, the reason for the change")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
-            s.add_argument("--role", help="orchestrator, wayfinder, or a helper's job; the agent is named <slug>-<role>")
+            s.add_argument("--role", help="orchestrator (the team lead), wayfinder, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")

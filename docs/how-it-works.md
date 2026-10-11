@@ -6,7 +6,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
 ## The loop
 
 ```
-  ORCHESTRATOR (Claude, frontier)
+  TEAM LEAD (Claude, frontier)
   explore the code ─▶ wayfinder page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
                                                                                         │
                                                                          fast-coding run│
@@ -22,7 +22,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   │                         format, commit on fast/<project>/NNN                            │
   └──────────────────────────────────┬──────────────────────────────────────────────────────┘
                                      ▼
-  ORCHESTRATOR REVIEW of each layer's diff ─▶ accept, or re-split and re-run
+  TEAM LEAD REVIEW of each layer's diff ─▶ accept, or re-split and re-run
   passed branches ─▶ one gh stack, built in a CLI worktree (nothing pushed)
                                      │ fast-coding verify
   ┌──────────────────────────────────▼──────────────────────────────────────────────────────┐
@@ -90,9 +90,9 @@ When the plan turns out to be wrong, the fleet notices and changes it in the ope
 
 1. Evidence arrives when a task ends without passing, an implementer or teammate reports a contradiction with Linear, verify fails, or you say the plan changed.
 2. Jev screens every line of the feature's Decisions so far against that evidence and marks each one HOLDS, BROKEN, or UNCLEAR.
-3. The orchestrator holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
+3. The team lead holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
    Everything else keeps running.
-4. Complex or subjective calls, plus anything you settled yourself, reach you through the team lead on a change page in Lavish.
+4. Complex or subjective calls, plus anything you settled yourself, reach you through the engineering manager on a change page in Lavish.
 5. The re-plan is one recorded change, started with `fast-coding change start` and finished with `done`.
    The old decision is struck through and tagged, the new one sits beside it, and a comment on the feature says what changed and why.
 

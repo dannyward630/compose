@@ -7,18 +7,18 @@ Whenever the team learns something new, the plan changes with it.
 
 ```
 you, the product owner
- └── team lead             the one agent you talk to
-      ├── orchestrator     feature A: specs, steers, reviews
+ └── engineering manager   the one agent you talk to
+      ├── team lead        feature A: specs, steers, reviews
       │    └── teammates   explore, decide, test, build, verify
-      └── orchestrator     feature B, running at the same time
+      └── team lead        feature B, running at the same time
            └── teammates   explore, decide, test, build, verify
 ```
 
-The team lead takes your request and hands each feature to its own orchestrator, so the features of one epic move forward at the same time.
-Each orchestrator leads its own teammates through the full software development life cycle, from discovery to pull requests you can review in minutes.
+The engineering manager takes your request and hands each feature to its own team lead, so the features of one epic move forward at the same time.
+Each team lead takes its own teammates through the full software development life cycle, from discovery to pull requests you can review in minutes.
 The strongest models do the planning and bring every product decision to you.
 Fast, cheap agents write the code and verify it.
-The orchestrators steer their teammates while they work, and the team lead nudges any orchestrator that stalls.
+The team leads steer their teammates while they work, and the engineering manager nudges any team lead that stalls.
 
 ## It ships software the way a real team does
 
@@ -35,20 +35,20 @@ Run `/fast-coding <what you want>` and each feature moves through the same life 
 4. **Tickets.**
    Your decisions land in Linear the way a PM would file them, with an epic when the work spans several features, a feature issue, and stories with acceptance criteria.
 5. **Technical specs and estimates.**
-   The orchestrator specs one technical ticket per task, with its goal, its files, its test plan, and its acceptance criteria.
+   The team lead specs one technical ticket per task, with its goal, its files, its test plan, and its acceptance criteria.
    Every ticket is sized to finish in one short turn, and the CLI flags any ticket that is too big before work starts.
 6. **Implementation, tests first.**
    Test-writing teammates write each ticket's failing test from the spec, with holdout cases the implementer never sees.
    Then fast implementers make those tests pass in parallel, each in its own clone, in seconds per ticket.
 7. **Code review.**
-   The orchestrator reviews each change the moment it passes, and a fast triage flags the changes that need a closer read.
+   The team lead reviews each change the moment it passes, and a fast triage flags the changes that need a closer read.
 8. **QA.**
    Verify runs lint and tests, a confirmed model review, a Jev check of every acceptance criterion, and a real browser run against an assert you wrote, with a fix loop for anything that fails.
 9. **The board keeps itself current.**
    Every ticket moves from Todo to In Progress, In Review, and Done in Linear as the work does.
 10. **The plan changes when the team learns something.**
     When a failure or a discovery shows a decision was wrong, Jev screens every settled decision against the new evidence, and only the tickets that rest on the broken one pause.
-    The orchestrator fixes what is objective, brings what is yours to you, records each change in Linear with its reason, and hands out the new work while everything else keeps moving.
+    The team lead fixes what is objective, brings what is yours to you, records each change in Linear with its reason, and hands out the new work while everything else keeps moving.
     Any change can be undone.
 11. **Pull requests.**
     Passed tickets become one gh stack, and when you say so, each layer becomes a draft pull request for your reviewers to read and merge.
@@ -108,7 +108,7 @@ Skip it when every task would edit the same hot file, because tasks never share 
 
 ## Main commands
 
-The orchestrator runs these commands for you.
+The team lead runs these commands for you.
 You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
@@ -146,4 +146,4 @@ Run the jev tests with `cd jev && uv run pytest`.
 ## Credits
 
 The way fast-coding organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
-Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the team lead, orchestrator, and teammate roles here are adapted from.
+Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the engineering manager, team lead, and teammate roles here are adapted from.

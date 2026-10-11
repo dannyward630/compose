@@ -53,7 +53,7 @@ If you cannot write the test, it is not a task yet.
 
 ## Sync
 
-The orchestrator reads the feature and every issue under it with its Linear MCP tools and pipes them to `fast-coding sync`.
+The team lead reads the feature and every issue under it with its Linear MCP tools and pipes them to `fast-coding sync`.
 The JSON has this shape:
 
 ```json
@@ -62,10 +62,10 @@ The JSON has this shape:
 ```
 
 `sync` refuses a feature other than the one `linear.json` names, a block without `id` or `test`, and an id used twice.
-`run`, `verify`, `resume`, `bench`, and `tasks` read what was last synced, so the orchestrator syncs right before each.
+`run`, `verify`, `resume`, `bench`, and `tasks` read what was last synced, so the team lead syncs right before each.
 
 The CLI writes to Linear only to keep states true, and only when the active workspace has a Linear key.
-The orchestrator writes everything else on Linear through the Linear MCP.
+The team lead writes everything else on Linear through the Linear MCP.
 
 `.fast-coding/<project>/` holds only the CLI's files.
 Those are `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.

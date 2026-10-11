@@ -31,10 +31,10 @@ class Crew(unittest.TestCase):
         self.report("shop-orchestrator", "needs-user", "Tasks are ready for your go")
         ev = fc.watch_events(before, snap(self.proj))
         self.assertEqual(len(ev), 2)
-        orchestrator_view = fc.watch_filter(ev, "shop", [])  # everything but its own report, which goes up
-        self.assertEqual(orchestrator_view, ["event crew=shop-q-neb-12 state=needs-user message='Which payment provider? I recommend Stripe'"])
-        team_lead_view = fc.watch_filter(ev, "shop", ["shop-orchestrator"])
-        self.assertEqual(team_lead_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
+        team_lead_view = fc.watch_filter(ev, "shop", [])  # everything but its own report, which goes up
+        self.assertEqual(team_lead_view, ["event crew=shop-q-neb-12 state=needs-user message='Which payment provider? I recommend Stripe'"])
+        engineering_manager_view = fc.watch_filter(ev, "shop", ["shop-orchestrator"])
+        self.assertEqual(engineering_manager_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
         self.assertEqual(fc.watch_events(snap(self.proj), snap(self.proj)), [])  # nothing new, no event
 
     def test_bad_state_refused(self):
@@ -59,7 +59,7 @@ class Crew(unittest.TestCase):
         frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "get"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
-        self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the orchestrator's tab is marked for the guard
+        self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
         self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
         start = calls[2]
@@ -67,12 +67,12 @@ class Crew(unittest.TestCase):
         self.assertIn("claude", start)
         prompt = calls[4][3]
         self.assertIn("fast-coding report", prompt)
-        self.assertIn("shop-orchestrator, your orchestrator", prompt)
+        self.assertIn("shop-orchestrator, your team lead", prompt)
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
-    def test_orchestrator_reports_to_team_lead(self):
-        self.assertIn("the team lead", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
+    def test_team_lead_reports_to_engineering_manager(self):
+        self.assertIn("the engineering manager", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
         pre = fc.crew_preamble(self.proj, "shop-tests", "tests")
@@ -160,17 +160,17 @@ class Attention(unittest.TestCase):
 
 
 class Guard(unittest.TestCase):
-    """The orchestrator writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
+    """The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         fc.sh(["git", "init", "-q"], self.repo)
         (self.repo / ".fast-coding" / "shop").mkdir(parents=True)
 
-    def test_orchestrator_cannot_edit_repo_files(self):
+    def test_team_lead_cannot_edit_repo_files(self):
         for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".fast-coding/shop/notes.md"):
             self.assertIsNotNone(fc.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
 
-    def test_orchestrator_keeps_its_own_files(self):
+    def test_team_lead_keeps_its_own_files(self):
         for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
             self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
         self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
@@ -190,10 +190,10 @@ class Guard(unittest.TestCase):
 
 
 class ToolBug(unittest.TestCase):
-    """A failure of fast-coding itself goes to the team lead, who owns fixing the tool, and to a log across projects."""
+    """A failure of fast-coding itself goes to the engineering manager, who owns fixing the tool, and to a log across projects."""
     setUp, report = Crew.setUp, Crew.report
 
-    def test_tool_bug_is_recorded_logged_and_wakes_the_team_lead(self):
+    def test_tool_bug_is_recorded_logged_and_wakes_the_engineering_manager(self):
         log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
         fc.write_report(self.proj, "shop-tests", "working", "started")
         before = snap(self.proj)
@@ -204,8 +204,8 @@ class ToolBug(unittest.TestCase):
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
         self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
         ev = fc.watch_events(before, snap(self.proj))
-        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the team lead wakes on a teammate's tool-bug too
-        self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the orchestrator sees it
+        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the engineering manager wakes on a teammate's tool-bug too
+        self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the team lead sees it
 
     def test_every_brief_says_how_to_report_a_tool_bug(self):
         self.assertIn("tool-bug", fc.crew_preamble(self.proj, "shop-tests", "tests"))

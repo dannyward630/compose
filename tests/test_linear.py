@@ -16,7 +16,7 @@ def block(**kv):
 
 
 class Sync(unittest.TestCase):
-    """The orchestrator reads Linear through MCP and pipes the feature and its issues to `fast-coding sync`."""
+    """The team lead reads Linear through MCP and pipes the feature and its issues to `fast-coding sync`."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "feat"
         self.proj.mkdir()

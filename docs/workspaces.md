@@ -74,13 +74,14 @@ A Linear error never stops a run.
 - `crew start` probes the primary and then each fallback, once a day each.
   It takes the first one that answers and prints which one and why.
   It never probes the last entry.
-- The orchestrator and wayfinder use `planner` when they have no entry.
+- The team lead's model is the `orchestrator` entry.
+  The team lead and wayfinder use `planner` when they have no entry.
   Groundwork and test-writing teammates use `groundwork`.
 - `crew start --model small` overrides the role.
   The value can be any name under `models.crew`, or a `claude:<model-id>`.
 
 Teammate sessions run in pi or Claude Code, so an OpenCode id under `models.crew` stops `crew start`.
-A pi teammate session loads this repo as its skill but not Claude Code's plugin hooks, so the orchestrator's edit guard does not apply to it.
+A pi teammate session loads this repo as its skill but not Claude Code's plugin hooks, so the team lead's edit guard does not apply to it.
 
 ## Billing halts
 

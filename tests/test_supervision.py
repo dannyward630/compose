@@ -50,7 +50,7 @@ class Stalls(unittest.TestCase):
         ev = self.stalls(self.snap(tasks=("passed",), crew={ORCH: ("working", 900)}, last_ago=100, run_end=NOW - 300))
         self.assertTrue(any("stall=no-next-step" in e for e in ev), ev)
 
-    def test_orchestrator_idle_with_pending_tasks(self):
+    def test_team_lead_idle_with_pending_tasks(self):
         s = self.snap(status="idle", crew={ORCH: ("working", 100)}, last_ago=100)
         self.assertEqual(self.stalls(s, now=NOW), [])  # it just went idle
         ev = self.stalls(s, now=NOW + 300)
@@ -62,11 +62,11 @@ class Stalls(unittest.TestCase):
         ev = self.stalls(s, now=NOW + 300)
         self.assertTrue(any("stall=idle" in e and "1 task(s) pending" in e for e in ev), ev)
 
-    def test_the_team_lead_receives_stalls_and_the_orchestrator_too(self):
+    def test_the_engineering_manager_receives_stalls_and_the_team_lead_too(self):
         ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'",
-              "event stall=idle agent=hw-orchestrator the orchestrator has been idle"]
+              "event stall=idle agent=hw-orchestrator the team lead has been idle"]
         self.assertEqual(fc.watch_filter(ev, "hw", [ORCH]), [ev[0], ev[2]])
-        self.assertEqual(fc.watch_filter(ev, "hw", []), ev[:2])  # the orchestrator is idle because it waits on this watch
+        self.assertEqual(fc.watch_filter(ev, "hw", []), ev[:2])  # the team lead is idle because it waits on this watch
 
 
 class WatchTimeout(unittest.TestCase):
@@ -122,8 +122,8 @@ class WatchMemory(unittest.TestCase):
         self.watch(wsnap("running"), now=True, from_="orchestrator")
         later = wsnap("passed")
         later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
-        self.watch(later)  # the orchestrator's own watch reports the task first
-        out = self.watch(later, from_="orchestrator")  # the team lead's watch still gets the orchestrator's question
+        self.watch(later)  # the team lead's own watch reports the task first
+        out = self.watch(later, from_="orchestrator")  # the engineering manager's watch still gets the team lead's question
         self.assertTrue(any(f"event crew={ORCH} state=needs-user" in line for line in out), out)
 
     def test_a_payment_halt_is_an_event(self):
@@ -136,7 +136,7 @@ class WatchMemory(unittest.TestCase):
 
 
 class Rewake(unittest.TestCase):
-    """The orchestrator's Stop hook: park one watch per turn end, wake the idle session with the event on stderr, exit 2."""
+    """The team lead's Stop hook: park one watch per turn end, wake the idle session with the event on stderr, exit 2."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
@@ -159,7 +159,7 @@ class Rewake(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("event task=001 state=passed", err)
 
-    def test_sessions_that_are_not_the_orchestrator_return_at_once(self):
+    def test_sessions_that_are_not_the_team_lead_return_at_once(self):
         code, err, pd = self.rewake([], env={"FAST_CODING_ROLE": "crew", "FAST_CODING_PROJECT": "hw"})
         self.assertEqual((code, err), (0, ""))
         pd.assert_not_called()

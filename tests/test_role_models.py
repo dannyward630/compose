@@ -82,7 +82,7 @@ PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model":
 
 
 class PlannerChain(unittest.TestCase):
-    """Planning (the orchestrator, the wayfinder teammate) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    """Planning (the team lead, the wayfinder teammate) runs on `planner`: its model when Claude Code can run it, else its fallback."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))

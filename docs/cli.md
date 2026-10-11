@@ -1,7 +1,7 @@
 # CLI
 
 This page lists every fast-coding command and its flags.
-The orchestrator runs them for you, and you run them yourself only in manual mode.
+The team lead runs them for you, and you run them yourself only in manual mode.
 
 Every command takes `--repo <path>` (default `.`) and `--project <name>`.
 `--project` works from any checkout of the repository.
@@ -15,7 +15,7 @@ Open Claude Code in the repo and run:
 /fast-coding plan and build <feature> from ENG-123 and DESIGN.md
 ```
 
-The orchestrator runs every command below for you.
+The team lead runs every command below for you.
 You review the plan, the task list, and the stack.
 
 ## Manual mode
@@ -79,7 +79,7 @@ These commands check the finished work and turn it into a stack.
 
 ### Teammates and supervision
 
-These commands start the teammates, collect their reports, and supervise the orchestrator.
+These commands start the teammates, collect their reports, and supervise the team lead.
 
 | Command | Does |
 |---|---|
@@ -90,8 +90,8 @@ These commands start the teammates, collect their reports, and supervise the orc
 | `watch` | Blocks until something happens, prints one event line, and exits. `--now` prints the current state and marks it seen |
 | `teardown` | Closes finished tabs, stops leftover servers, and saves and quits Frame0 |
 | `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |
-| `guard` | Runs as the PreToolUse hook that keeps the orchestrator from editing code |
-| `rewake` | Runs as the Stop hook that parks the orchestrator's next `watch` after each turn and wakes it on the event |
+| `guard` | Runs as the PreToolUse hook that keeps the team lead from editing code |
+| `rewake` | Runs as the Stop hook that parks the team lead's next `watch` after each turn and wakes it on the event |
 
 ### Workspaces
 
