@@ -160,7 +160,8 @@ def cmd_workspace(a):
     show = lambda e: (f"{e.get('model')}" + (f" ({e['effort']} effort)" if e.get("effort") else "")) if isinstance(e, dict) else str(e)
     for role, entry in (m.get("crew") or {}).items():
         fb = entry.get("fallback") if isinstance(entry, dict) else None
-        print(f"crew {role:14} {show(entry)}" + (f", else {show(fb)}" if fb else ""))
+        fbs = fb if isinstance(fb, list) else [fb] if fb else []  # one fallback or an ordered list of them
+        print(f"crew {role:14} {show(entry)}" + "".join(f", else {show(f)}" for f in fbs))
 
 # ---------- output and cost ledger ----------
 
