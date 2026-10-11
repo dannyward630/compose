@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fast-coding: a frontier model plans, parallel OpenCode implementers build, a local pipeline verifies. Stdlib only.
+"""fast-coding: a frontier model plans, parallel fast implementers build, a local pipeline verifies. Stdlib only.
 
 Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
   .fast-coding/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
@@ -3672,7 +3672,7 @@ def main():
     ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
-                            ("run", cmd_run, "dispatch tasks to parallel OpenCode implementers"),
+                            ("run", cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
