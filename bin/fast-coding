@@ -1086,6 +1086,31 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    decisions in one line each.
 """
 
+CHANGE_BRIEF = """You are the wayfinder crew for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
+{feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
+The screen that raised it: {reflect}
+1. Read the map, the screen and the evidence below, and the code each piece of evidence cites (`graft ask "<question>" --source`).
+2. Write one Lavish page: {page}. Never reopen the wayfinder's earlier page. Read `npx -y lavish-axi playbook input` and
+   `npx -y lavish-axi design` first, and set data-lavish-annotate="off" on <html>.
+   One card per decision line the evidence calls into question, each with data-lavish-question: the line as recorded, the evidence
+   quoted verbatim with its source, the options with one line each with "keep it as is" always among them, your recommended option
+   preselected and marked, and a free-text box. One answer button per card and one "accept every recommendation" button at the top;
+   each sends exactly one window.lavish.queuePrompt with data {{question, answer}}. Never choose for the captain.
+3. Open it: `npx -y lavish-axi {page}`, then report
+   `fast-coding report --project {slug} --as {name} needs-user "change {cid}: questions are open in Lavish: {page}"`.
+4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
+   captain ended. If the poll is interrupted, run it again: queued answers wait for you.
+5. Record each answer as it arrives, a `save_issue` patch, never a whole-description write. A line that changes is struck through
+   and tagged, with the new line right after it:
+   - ~~<old line>~~ ({cid})
+   - <new line> ({cid}: <why, naming the evidence's source>)
+   "keep it as is" changes nothing in the map.
+6. Evidence the orchestrator forwards while {cid} is open becomes new cards on the same page; then
+   `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
+7. When every card is answered: `npx -y lavish-axi end {page}`, then report `done` with each answer in one line.
+   Do not touch tasks, stories, or the plan: the orchestrator re-plans from your answers.
+"""
+
 EXPLORE_BRIEF = """You are the explore crew for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
 Map the existing code for this feature fast, through graft only: `graft map`, `graft ask "<question>" --source`, `graft callers <symbol>`,
 `graft skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
@@ -1109,13 +1134,22 @@ def cmd_explore(a):
           + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_wayfinder(a):
-    """Print the wayfinder crew's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`)."""
+    """Print the wayfinder crew's brief for this project, plus the orchestrator's notes from --extra (or stdin with `-`). With
+    --change, the brief for an open change of course: its own page, only what the evidence questions."""
     proj = project_dir(a); wt = project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    print(WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html",
-                                 name=agent_name(proj.name, "wayfinder"))
-          + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
+    cid, name = getattr(a, "change", None), agent_name(proj.name, "wayfinder")
+    if cid:
+        rec = load_change(proj, cid)
+        if not rec or rec.get("done_at"):
+            sys.exit(f"{cid} is not an open change of course; `fast-coding change start --why ...` opens one")
+        brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
+                                    reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
+                                    page=proj / "lavish" / f"change-{cid}.html")
+    else:
+        brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
+    print(brief + (f"\nProject notes from the orchestrator:\n{extra.strip()}\n" if extra.strip() else ""))
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
@@ -4319,6 +4353,8 @@ def main():
             s.add_argument("--parallel", type=int, default=4)
         if name in ("groundwork", "wayfinder", "explore"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
+        if name == "wayfinder":
+            s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")

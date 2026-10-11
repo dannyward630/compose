@@ -577,5 +577,35 @@ class Undo(unittest.TestCase):
         self.assertEqual(self.lin.issues["ENG-4"]["blockedBy"], ["ENG-3"])
 
 
+class ChangeBrief(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        self.repo, _ = git_repo(())
+        p = mock.patch.object(fc, "say", lambda m: None); p.start(); self.addCleanup(p.stop)
+        synced(self.proj, MAP, BEFORE)
+
+    def brief(self, cid, extra=None):
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", lambda a: self.proj), mock.patch.object(fc, "project_worktree", lambda p: self.repo), \
+                redirect_stdout(out):
+            fc.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
+        return out.getvalue()
+
+    def test_the_change_wayfinder_asks_on_its_own_page(self):
+        change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
+        brief = self.brief("C1", extra="held: 003, 004")
+        page = str(self.proj / "lavish" / "change-C1.html")
+        self.assertIn(f"npx -y lavish-axi poll {page}", brief)
+        self.assertIn("localStorage is wiped by the sandbox", brief)
+        self.assertIn("- ~~<old line>~~ (C1)", brief)
+        self.assertIn('"keep it as is"', brief)
+        self.assertIn("Do not touch tasks, stories, or the plan", brief)
+        self.assertTrue(brief.rstrip().endswith("held: 003, 004"))
+
+    def test_only_an_open_change_gets_a_brief(self):
+        with self.assertRaises(SystemExit):
+            self.brief("C9")
+
+
 if __name__ == "__main__":
     unittest.main()
