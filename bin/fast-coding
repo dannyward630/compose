@@ -945,16 +945,16 @@ def untrusted(path):
     return (f"Claude Code has never trusted {path}, so a session there would wait at its trust prompt. Run `claude` in "
             f"{path} once and accept the prompt (the product owner decides that), then start this teammate again.")
 
-def crew_workdir(cwd, wt, name):
-    """(directory, branch) a teammate session works in. A --cwd in another git repo (a toolsmith in the fast-coding repo) gets its
-    own worktree on a new branch under that repo's .claude/worktrees, so the repo's checkout, which may be what every
-    session runs, never switches branches. Anything else runs where it was pointed (default: the project worktree)."""
+def crew_workdir(cwd, wt, name, role=None):
+    """(directory, branch) a teammate session works in. A toolsmith's --cwd in a git repo, the project's own repo included, gets
+    its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
+    worktree) ever switches branches. Any other teammate runs where it was pointed in its own repo (default: the project worktree)."""
     if not cwd:
         return wt, None
     cwd = Path(cwd)
     common = lambda d: sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], d, check=False).stdout.strip()
     theirs = common(cwd) if cwd.is_dir() else ""
-    if not theirs or theirs == common(wt):
+    if not theirs or (theirs == common(wt) and role != "toolsmith"):
         return cwd, None
     top = Path(sh(["git", "rev-parse", "--show-toplevel"], cwd).stdout.strip())
     if claude_trusted(top) is False:
@@ -1327,7 +1327,7 @@ def cmd_crew(a):
     if not (brief or "").strip():
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
-    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name)
+    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name, a.role)
     if not model.startswith("pi:") and claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(untrusted(Path(cwd).resolve()))
     try:

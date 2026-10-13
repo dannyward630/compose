@@ -256,3 +256,21 @@ class ToolBug(unittest.TestCase):
             fc.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
+
+
+class ToolsmithWorktree(unittest.TestCase):
+    def test_toolsmith_in_the_project_repo_gets_its_own_worktree_and_leaves_checkouts_alone(self):
+        def git(*args, cwd):
+            return fc.sh(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd).stdout.strip()
+        repo = Path(tempfile.mkdtemp()).resolve()
+        git("init", "-q", "-b", "main", cwd=repo)
+        git("commit", "-q", "--allow-empty", "-m", "init", cwd=repo)
+        slot = repo.parent / (repo.name + "-slot")
+        git("worktree", "add", "-q", "-b", "fast-coding/shop", str(slot), cwd=repo)
+        with mock.patch.object(fc, "claude_trusted", return_value=True):
+            path, branch = fc.crew_workdir(str(repo), slot, "shop-toolsmith", "toolsmith")
+            same, none = fc.crew_workdir(str(repo), slot, "shop-tests", "tests")
+        self.assertTrue(str(path).startswith(str(repo / ".claude" / "worktrees")) and branch)
+        self.assertEqual(git("branch", "--show-current", cwd=path), branch)
+        self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "fast-coding/shop"))
+        self.assertEqual((same, none), (Path(repo), None))  # other roles still run where they were pointed
