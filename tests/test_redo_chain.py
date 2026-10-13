@@ -46,3 +46,28 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")  # one commit per layer, the old 011 is gone
         self.assertEqual(self.git("for-each-ref", "refs/fast-coding/replaced/"), "")  # nothing carries the old tip any more
+
+
+class KeepFinishedLayers(unittest.TestCase):
+    """A plain `run` re-enters every task: a layer that passed, or that a teammate finished by hand on top of its pass, keeps its
+    branch. Rebuilding a hand-done layer threw away the teammate's commit, so the team lead could not record it."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        os.environ.pop("FAST_CODING_REDO", None)
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main"); (self.repo / "a.txt").write_text("base\n"); git("add", "-A"); git("commit", "-qm", "init")
+        git("checkout", "-q", "-b", "fast/p/001"); (self.repo / "b.txt").write_text("teammate\n"); git("add", "-A"); git("commit", "-qm", "teammate's commit")
+        git("checkout", "-q", "main")
+        self.tip = git("rev-parse", "fast/p/001")
+        self.git = git
+        self.proj = self.repo / ".fast-coding" / "p"
+        (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
+
+    def test_a_passed_or_hand_done_layer_keeps_its_branch(self):
+        for status in ("passed", "hand_done"):
+            (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": status, "branch": "fast/p/001"}))
+            with mock.patch.object(fc, "replace_branch", side_effect=AssertionError(f"a {status} layer was rebuilt")), mock.patch.object(fc, "say"):
+                r = fc.run_task(self.repo, self.proj, {"id": "001", "title": "A", "files": [], "body": ""}, 1)
+            self.assertEqual(r["status"], status)
+            self.assertEqual(self.git("rev-parse", "fast/p/001"), self.tip)

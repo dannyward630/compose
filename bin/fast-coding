@@ -1884,10 +1884,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     sh(["git", "worktree", "prune"], repo, check=False)
     if not tag and sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0 \
             and sh(["git", "merge-base", "--is-ancestor", branch, "HEAD"], repo, check=False).returncode != 0 \
-            and (proj / "results" / f"{tid}.json").exists() and json.loads((proj / "results" / f"{tid}.json").read_text()).get("status") == "passed" \
+            and (proj / "results" / f"{tid}.json").exists() and json.loads((proj / "results" / f"{tid}.json").read_text()).get("status") in FINISHED \
             and not os.environ.get("FAST_CODING_REDO"):
-        # A passed layer may already have a PR. Never replace it silently; `--redo` says the user wants it rebuilt.
-        say(f"{tid} keep    passed branch {branch} exists and is unmerged; pass --redo to rebuild it")
+        # A passed layer may already have a PR, and a hand-done one carries a teammate's commit. Never replace either silently;
+        # `--redo` says the user wants it rebuilt.
+        say(f"{tid} keep    {json.loads((proj / 'results' / f'{tid}.json').read_text())['status']} branch {branch} exists and is unmerged; pass --redo to rebuild it")
         return json.loads((proj / "results" / f"{tid}.json").read_text())
     replace_branch(repo, proj, branch)  # a re-run (or --redo) replaces the previous attempt
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
@@ -2307,6 +2308,7 @@ def chain_order(repo, proj, trunk):
         return int(sh(["git", "rev-list", "--count", f"{trunk}..{b}"], repo, check=False).stdout.strip() or 0)
     return sorted(order, key=lambda b: (depth(b), rank[b]))
 
+FINISHED = ("passed", "hand_done")  # a layer whose branch is the record: a run keeps it unless told to --redo
 STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
 
 def linearize(repo, proj, trunk, wt):
@@ -2520,13 +2522,13 @@ def run_tasks(repo, proj, tasks, a):
     if passed and not a.no_stack:
         register_stack(repo, proj, a.trunk)
     if halt:
-        done_ids = {r["id"] for r in results if r["status"] in ("passed", "already_green")}
+        done_ids = {r["id"] for r in results if r["status"] in (*FINISHED, "already_green")}
         remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
         payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     (proj / "results" / "run.json").unlink(missing_ok=True)
     (proj / "results" / "run-cost.json").write_text(json.dumps(LEDGER.snapshot(), indent=2))
-    sys.exit(0 if passed == len(results) else 1)
+    sys.exit(0 if all(r["status"] in FINISHED for r in results) else 1)
 
 # ---------- verify ----------
 
@@ -4055,7 +4057,7 @@ def cmd_resume(a):
         m = run_marker(proj)
         if not m or pid_alive(m.get("pid")):
             sys.exit("nothing to resume: no payment halt and no interrupted run recorded for this project" + (" (a run is live)" if m else ""))
-        done = {t for t in m["tasks"] if (json.loads((proj / "results" / f"{t}.json").read_text()).get("status") if (proj / "results" / f"{t}.json").exists() else "") in ("passed", "already_green")}
+        done = {t for t in m["tasks"] if (json.loads((proj / "results" / f"{t}.json").read_text()).get("status") if (proj / "results" / f"{t}.json").exists() else "") in (*FINISHED, "already_green")}
         state = {"command": "run", "remaining": [t for t in m["tasks"] if t not in done], "args": m["args"], "halted_at": m["started_at"], "provider": "interrupted run"}
         (proj / "results" / "run.json").unlink(missing_ok=True)
     else:
