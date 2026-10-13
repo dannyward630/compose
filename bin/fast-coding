@@ -744,6 +744,9 @@ def project_worktree(proj):
     """The project's own checkout: proj is `<worktree>/.fast-coding/<name>`."""
     return Path(proj).resolve().parents[1]
 
+def live_agents():
+    return (herdr("agent", "list") or {}).get("agents", [])
+
 def herdr_space(proj):
     """Open the project's worktree as its own herdr space labelled `<name>`, grouped under the repo's space. Idempotent.
     Keyed on the project's worktree, never on where a command happens to run (verify runs in the CLI's stack worktree)."""
@@ -1280,7 +1283,7 @@ def cmd_crew(a):
         for f in sorted(crew_dir(proj).glob("*.json")):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
-            live = (herdr("agent", "get", c["name"]) or {}).get("agent") or {}
+            live = next((ag for ag in live_agents() if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
             print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
@@ -1309,8 +1312,17 @@ def cmd_crew(a):
     model, effort, why_model = crew_pick(a.role, getattr(a, "model", None))
     if not herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
-    if herdr("agent", "get", name):
+    agent = name  # the herdr agent name: `name`, or a numbered one when a stranger outside this space already holds it
+    live, space = live_agents(), herdr_find_space(wt)
+    if any(ag.get("name") == name and ag.get("workspace_id") == space for ag in live):
         sys.exit(f"{name} is already running; steer it with: herdr agent prompt {name} \"...\"")
+    taken = {ag.get("name") for ag in live}
+    for n in range(2, 100):
+        if agent not in taken:
+            break
+        agent = f"{name[:32 - len(str(n)) - 1]}-{n}"
+    if agent != name:
+        print(f"an unrelated agent named {name} is running outside this project's space; starting this one as {agent}")
     brief = sys.stdin.read() if a.brief == "-" else a.brief
     if not (brief or "").strip():
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
@@ -1331,19 +1343,19 @@ def cmd_crew(a):
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-        herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
+        herdr("agent", "start", agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
               *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
               *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), check=True, timeout=90)
     else:
-        herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
+        herdr("agent", "start", agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
               "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",  # auto mode's classifier denied a first `npx` call as external code
               check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    rec.write_text(json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
-    herdr("agent", "prompt", name, crew_preamble(proj, name, title) + brief, check=True)
+    herdr("agent", "prompt", agent, crew_preamble(proj, name, title) + brief, check=True)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 

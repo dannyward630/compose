@@ -45,20 +45,20 @@ class Crew(unittest.TestCase):
         calls = []
         def herdr(*args, **kw):
             calls.append(args)
-            if args[:2] == ("agent", "get"):
-                return None
+            if args[:2] == ("agent", "list"):
+                return {"agents": []}
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             return {}
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)
         frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [("agent", "get"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
+        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "prompt")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
         self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
@@ -70,6 +70,36 @@ class Crew(unittest.TestCase):
         self.assertIn("shop-orchestrator, your team lead", prompt)
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
+
+    def test_same_named_agent_in_another_space_neither_blocks_start_nor_shows_in_list(self):
+        stranger = {"name": "shop-explore", "workspace_id": "wC", "agent_status": "idle"}
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                return {"agents": [stranger]}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            return {}
+        start = type("A", (), {"action": "start", "role": "explore", "title": "Explore", "brief": "Look around."})
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc, "herdr_find_space", return_value="w9"), mock.patch.object(fc, "frame0_register"), \
+                mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch("sys.stdout", out):
+            fc.cmd_crew(start)
+        self.assertIn("starting this one as shop-explore-2", out.getvalue())
+        self.assertEqual(next(c for c in calls if c[:2] == ("agent", "start"))[2], "shop-explore-2")
+        self.assertEqual(fc.crew_record(self.proj, "shop-explore")["agent"], "shop-explore-2")
+        # the stranger is not the crew: it is not shown as live, the project's own numbered agent is
+        mine = {"name": "shop-explore-2", "workspace_id": "w9", "agent_status": "working"}
+        for agents, shown in (([stranger], "closed"), ([stranger, mine], "working")):
+            out = io.StringIO()
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", lambda *a, **k: {"agents": agents}), \
+                    mock.patch("sys.stdout", out):
+                fc.cmd_crew(type("A", (), {"action": "list"}))
+            self.assertIn(shown, out.getvalue())
+            self.assertNotIn("idle", out.getvalue())
 
     def test_team_lead_reports_to_engineering_manager(self):
         self.assertIn("the engineering manager", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
