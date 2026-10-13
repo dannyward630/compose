@@ -50,7 +50,7 @@ WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("orchestrator", "wayfinder")  # they plan, so they get `planner`
-CREW_DEFAULTS = {}  # role -> (model, effort) used when models.crew has no entry for it
+CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
 def is_claude(model):
@@ -912,13 +912,17 @@ def crew_pick(role, explicit=None):
     if explicit and explicit not in CREW_MODELS:
         key, chain = "--model", [(explicit, None)]
     else:
+        first = role.split("-", 1)[0]
         key = explicit or (role if role in CREW_MODELS else
+                           first if first != role and first in CREW_MODELS else
+                           role if role in CREW_DEFAULTS else
                            "planner" if role in PLANNING_ROLES and "planner" in CREW_MODELS else
                            "default" if "default" in CREW_MODELS else None)
         if key is None:
             return "claude", None, ""
-        chain = [(CREW_MODELS[key], CREW_EFFORT.get(key)), *CREW_FALLBACK.get(key, [])]
-    label = "--model" if key == "--model" else f"models.crew.{key}"
+        chain = [(CREW_MODELS[key], CREW_EFFORT.get(key)), *CREW_FALLBACK.get(key, [])] \
+            if key in CREW_MODELS else [CREW_DEFAULTS[key]]
+    label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in CREW_DEFAULTS and key not in CREW_MODELS else "")
     for m, _ in chain:
         if not (is_claude(m) or str(m).startswith("pi:")):
             where = "" if key == "--model" else f" in {CONFIG_PATH}"
@@ -1264,11 +1268,39 @@ def cmd_testcrews(a):
 
 def design_brief(meta, figma, results):
     """The brief for one design task's builder."""
-    return ""  # not implemented
+    nodes = ", ".join(meta.get("nodes") or [])
+    tree = Path(results) / f"{meta['id']}.tree.txt"
+    return (f"task {meta['id']} ({meta.get('title', '')}); Figma file {figma}\n"
+            f"nodes you may create or touch: {nodes} (one page per task)\n"
+            "Load the `figma:figma-use` skill before every `use_figma` call.\n"
+            "Work in one retry-safe script that returns every created and mutated node id; at most one component set of 30 variants.\n"
+            f"When it is built, run the assert read script and save its returned text to {tree}, then run `{meta.get('test')}`.\n"
+            "Report `working \"design ready: <node ids>\"`, and `done` only when the designer says so.\n\n"
+            f"TASK BRIEF:\n{meta.get('body', '')}")
 
 def cmd_designcrews(a):
     """Start one design-NNN builder per open design task. `--print` shows the briefs instead."""
-    sys.exit("not implemented")
+    proj = project_dir(a)
+    only = {x.strip() for x in a.only.split(",")} if a.only else None
+    metas = [m for m in load_tasks(proj, required=True)
+             if m.get("kind") == "design" and m.get("linear_state") not in ("Done", "Canceled", "In Review")
+             and (not only or m["id"] in only)]
+    figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
+    if not figma:
+        sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+    if a.print_:
+        for m in metas:
+            print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
+        return
+    herdr_space(proj)  # once, before the parallel starts
+    def start(m):
+        try:
+            cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
+                                        brief=design_brief(m, figma, proj / "results"), force=False, cwd=None, model=None))
+        except SystemExit as e:
+            print(f"design-{m['id']} not started: {e}")
+    with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
+        list(ex.map(start, metas))
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
