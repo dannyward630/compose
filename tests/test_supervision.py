@@ -244,13 +244,13 @@ class Timed(unittest.TestCase):
     def test_timed_kills_the_whole_group_and_says_it_hangs(self):
         import subprocess as sp, time
         t0 = time.time()
-        r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "timed", "1", "--", "sh -c 'sleep 40' & sleep 40"],
+        r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "timed", "1", "--", "sh -c 'sleep 4017' & sleep 4017"],
                    capture_output=True, text=True)
         self.assertEqual(r.returncode, 124)
         self.assertIn("hangs", r.stderr)
         self.assertLess(time.time() - t0, 10)
         time.sleep(0.5)
-        self.assertEqual(sp.run(["pgrep", "-f", "sleep 40"], capture_output=True).stdout.strip(), b"")
+        self.assertEqual(sp.run(["pgrep", "-f", "sleep 4017"], capture_output=True).stdout.strip(), b"")
 
 
 class JevLeash(unittest.TestCase):
