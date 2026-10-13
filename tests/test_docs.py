@@ -103,7 +103,62 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
 
 
 class SkillDoc(unittest.TestCase):
-    pass
+    def section(self, start, end="\n### "):
+        text = read("SKILL.md")
+        self.assertTrue(start in text, f"SKILL.md has no {start!r}")
+        body = text[text.index(start) :]
+        return body[: body.find(end, len(start))]
+
+    def test_0d_carries_the_designer_spec(self):
+        d = self.section("### 0d. ")
+        for phrase in (
+            "/fast-coding:designer <ticket>",
+            "--figma",
+            "designcrews",
+            "figma judge --project <slug> --only",
+            "kind: design",
+            "nodes:",
+            "figma:figma-use",
+            "design system",
+            "Foundations",
+            "Components",
+            "Hand-off",
+            "blocked by",
+            "results/NNN.tree.txt",
+            "get_design_context",
+            "Code Connect",
+            "30 variants",
+            "models.crew.designer",
+            "models.crew.design`",
+            "one `get_screenshot` per story",
+        ):
+            self.assertIn(phrase, d)
+        self.assertLess(d.index("Foundations"), d.index("Components"))
+        self.assertLess(d.index("Components"), d.index("Hand-off"))
+
+    def test_0d_follows_0g_one_sentence_per_line_no_em_dash(self):
+        text = read("SKILL.md")
+        self.assertLess(text.index("### 0g. "), text.index("### 0d. "))
+        d = self.section("### 0d. ")
+        self.assertNotIn("\u2014", d)
+        for line in d.splitlines():
+            if not line.startswith(("|", "#")):
+                self.assertNotRegex(line, r"[a-z)`]\. [A-Z]", line)
+
+    def test_who_table_and_0h_name_the_design_crew(self):
+        row = next(l for l in read("SKILL.md").splitlines() if l.startswith("| Designer"))
+        teammates = next(l for l in self.section("### 0h. ").splitlines() if l.startswith("- **Teammates**"))
+        for text in (row, teammates):
+            for name in ("design-NNN", "design-review"):
+                self.assertIn(name, text)
+        self.assertIn("designer", teammates)
+        self.assertIn("Linear only", row)
+        self.assertIn("product question", row.split(" | ")[-1])
+
+    def test_task_issue_format_names_design_fields(self):
+        fmt = self.section("## Task issue format", "\n## Rules")
+        self.assertIn("kind: design", fmt)
+        self.assertIn("nodes:", fmt)
 
 
 class DesignerCommand(unittest.TestCase):
