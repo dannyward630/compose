@@ -254,7 +254,7 @@ class DesignCrews(unittest.TestCase):
 
     def test_print_shows_one_brief_per_open_design_task(self):
         started, out, space = self.run_crews(print_=True)
-        for text in ("===== design-001", "===== design-005", "Figma file AbCdEf123456", "Checkout/Cart", "Checkout/Pay", str(self.proj / "results" / "001.tree.txt"), "judge 001", "figma:figma-use", "TASK BRIEF:\nDraw 001."):
+        for text in ("===== design-001", "===== design-005", "Figma file AbCdEf123456", "Checkout/Cart", "Checkout/Pay", str(self.proj / "results" / "001.tree.txt"), "judge 001", "figma:figma-use", "TASK BRIEF:", "## Goal\nDraw 001."):
             self.assertIn(text, out)
         self.assertEqual((out.count("====="), started, space.call_count), (2, [], 0))
 
