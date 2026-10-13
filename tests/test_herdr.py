@@ -128,6 +128,23 @@ class Tabs(unittest.TestCase):
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
 
 
+class AgentStartRace(unittest.TestCase):
+    def test_a_busy_pane_is_retried_until_it_is_ready(self):
+        answers = iter([(None, "agent_pane_busy"), (None, "agent_pane_busy"), ({"agent": {"name": "a"}}, None)])
+        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(fc.time, "sleep"):
+            self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
+
+    def test_other_errors_and_a_pane_that_never_frees_still_fail(self):
+        with mock.patch.object(fc, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(fc.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "pane_not_found"):
+                fc.herdr_agent_start("a")
+            self.assertEqual(e.call_count, 1)
+        with mock.patch.object(fc, "herdr_error", return_value=(None, "agent_pane_busy")) as e, mock.patch.object(fc.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
+                fc.herdr_agent_start("a", tries=3)
+            self.assertEqual(e.call_count, 3)
+
+
 class StackLock(unittest.TestCase):
     def test_parallel_linearize_calls_never_overlap(self):
         """Parallel tasks with `after:` all linearize in the one stack worktree; overlapping git there crashed a run."""
