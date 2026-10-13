@@ -1585,14 +1585,33 @@ def frame0_down(proj):
 
 def figma_key(text):
     """The Figma file key in a figma.com URL or a bare key, else None."""
-    return None  # not implemented
+    m = re.search(r"figma\.com/(?:design|board|slides)/([A-Za-z0-9]+)(/branch/([A-Za-z0-9]+))?", text)
+    if m:
+        return m.group(3) or m.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9]{10,40}", text) else None
 
 def store_figma(proj, key):
     """Store the target Figma file key as `figma` in linear.json, keeping every other key."""
-    pass  # not implemented
+    path = proj / "linear.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    data["figma"] = key
+    path.write_text(json.dumps(data))
 
 def cmd_figma(a):
     """`figma check` stores the target Figma file key; `figma judge` gates a design task with Jev on its node tree."""
+    proj = project_dir(a)
+    if a.action == "check":
+        if a.figma:
+            key = figma_key(a.figma)
+            if not key:
+                sys.exit(f"not a Figma file url or key: {a.figma}")
+            store_figma(proj, key)
+        else:
+            key = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
+            if not key:
+                sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+        print(f"figma file {key} stored in {proj / 'linear.json'}; confirm access with whoami and get_metadata through the Figma MCP")
+        return
     sys.exit("not implemented")
 
 def cmd_frame0(a):
