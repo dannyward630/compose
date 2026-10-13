@@ -57,7 +57,49 @@ class CliAndTasksDocs(unittest.TestCase):
 
 
 class HerdrAndWorkspacesDocs(unittest.TestCase):
-    pass
+    def section(self, rel, title):
+        return read(rel).split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
+
+    def test_roles_table_names_the_design_roles(self):
+        rows = {l.split("|")[1].strip(): l for l in self.section("docs/herdr.md", "Roles").splitlines() if l.startswith("|")}
+        self.assertIn("tab `designer`, agent `<slug>-designer`", rows.get("designer", ""))
+        self.assertIn("Figma", rows.get("designer", ""))
+        self.assertIn("Claude only", rows.get("design-NNN", ""))
+        self.assertIn("tab `design NNN`", rows.get("design-NNN", ""))
+        self.assertIn("screenshot per story", rows.get("design-review", ""))
+        self.assertIn("tab `orchestrator`, agent `<slug>-orchestrator`", rows.get("team lead", ""))
+
+    def test_teammate_commands_block_holds_the_design_commands(self):
+        code = self.section("docs/herdr.md", "Teammate commands").split("```bash\n", 1)[1].split("```", 1)[0]
+        block = [" ".join(l.split()) for l in code.splitlines()]
+        for line in (
+            "fast-coding figma check --project <slug> --figma <url or key>",
+            "fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -",
+            "fast-coding designcrews --project <slug>   # one design-NNN builder per open design task",
+            "fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt",
+            "fast-coding crew list --project <slug>",
+        ):
+            self.assertIn(" ".join(line.split()), block)
+
+    def test_crew_models_name_the_design_keys(self):
+        text = self.section("docs/workspaces.md", "Crew models")
+        self.assertIn("`designer`", text)
+        self.assertIn("Opus 5.5", text)
+        self.assertIn("high", text.split("Opus 5.5", 1)[1].splitlines()[0])
+        self.assertIn("`design`", text)
+        self.assertIn("design-review", text)
+        self.assertIn("first word", text)
+        self.assertRegex(text, r"`design-003`[^\n]*`design`")
+        self.assertIn("Groundwork and test-writing teammates use `groundwork`.", text)
+        self.assertIn("`models.crew` picks each teammate's model by role, then `default`.", text)
+
+    def test_pages_stay_plain_and_one_sentence_per_line(self):
+        for rel, title in (("docs/herdr.md", "Roles"), ("docs/workspaces.md", "Crew models")):
+            text = read(rel)
+            self.assertNotIn("\u2014", text)
+            for line in self.section(rel, title).splitlines():
+                if not line.startswith("|"):
+                    self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
 class SkillDoc(unittest.TestCase):
