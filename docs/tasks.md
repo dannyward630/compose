@@ -40,6 +40,26 @@ Three more rules apply to the block and the issue around it:
 - Only an issue with the block counts as a task.
   Stories, for example, have none.
 
+## Design tasks
+
+A design task is the same issue with `kind: design` and a `nodes:` line in place of the `files:` line.
+The `nodes:` line lists the page and frames the builder draws, like `Checkout/Cart, Checkout/Pay`.
+The `test:` command is `fast-coding figma judge --project <slug> --only NNN`.
+
+````markdown
+```fast-coding
+id: 006
+kind: design
+nodes: Checkout/Cart, Checkout/Pay
+test: fast-coding figma judge --project my-feature --only 006
+```
+````
+
+Three rules apply to design tasks.
+Two design tasks never share a page.
+A design task never runs, stacks, or is judged from files.
+The builder saves the node tree as text under `results/`, and the judge reads it.
+
 ## Right-sized
 
 A task is ready when it meets all four of these:
