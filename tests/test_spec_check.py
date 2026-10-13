@@ -83,6 +83,10 @@ class SpecCheck(unittest.TestCase):
             ok, level, gaps = check([task("ENG-3", "001")], desc)["ENG-1"]
             self.assertEqual((ok, level, len(gaps), has(gaps, kw)), (False, "feature", 1, True), desc)
 
+    def test_tasks_chained_by_blocked_by_may_share_a_file(self):
+        issues = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", ["ENG-3"], files="a.go"), task("ENG-5", "003", ["ENG-4"], files="a.go")]
+        self.assertFalse(has(check(issues)["ENG-1"][2], "a.go"))
+
     def test_story_and_task_gaps(self):
         root = Path(tempfile.mkdtemp())
         (root / "001_test.go").write_text("")
