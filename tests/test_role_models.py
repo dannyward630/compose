@@ -82,7 +82,7 @@ PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model":
 
 
 class PlannerChain(unittest.TestCase):
-    """Planning (the team lead, the wayfinder teammate) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    """Planning (the wayfinder teammate, never the team lead) runs on `planner`: its model when Claude Code can run it, else its fallback."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
@@ -100,15 +100,15 @@ class PlannerChain(unittest.TestCase):
 
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
-            self.assertEqual(fc.crew_pick("orchestrator")[:2], ("claude:claude-fable-5-1", None))
             self.assertEqual(fc.crew_pick("wayfinder")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.crew_pick("orchestrator")[:2], ("claude:claude-sonnet-5-5", None))  # the team lead delegates, it does not plan
             self.assertEqual(fc.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
             self.assertEqual(fc.crew_pick("groundwork")[:2], ("claude:claude-opus-5-5", None))
             self.assertEqual(fc.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
 
     def test_fallback_when_the_planner_model_is_unavailable(self):
         with self.probe(False):
-            model, effort, note = fc.crew_pick("orchestrator")
+            model, effort, note = fc.crew_pick("wayfinder")
         self.assertEqual((model, effort), ("claude:claude-opus-5-5", "high"))
         self.assertIn("unavailable", note); self.assertIn("model not found", note)
 
@@ -121,7 +121,7 @@ class PlannerChain(unittest.TestCase):
         for up, want in (({astra}, astra), ({fable, astra}, astra), ({fable}, fable), (set(), opus)):  # the last is never probed
             fc._PROBED.clear()
             with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
-                model, effort, note = fc.crew_pick("orchestrator")
+                model, effort, note = fc.crew_pick("wayfinder")
             self.assertEqual(model, want)
         self.assertEqual(effort, "high")
         self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
@@ -137,11 +137,11 @@ class PlannerChain(unittest.TestCase):
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
-            fc.crew_pick("orchestrator"); fc.crew_pick("wayfinder"); fc.crew_pick("orchestrator")
+            fc.crew_pick("wayfinder"); fc.crew_pick("wayfinder")
             self.assertEqual(run.call_count, 1)
         fc._PROBED.clear()  # a new CLI process the same day reads the cache file
         with self.probe(False) as run:
-            self.assertEqual(fc.crew_pick("orchestrator")[0], "claude:claude-fable-5-1")
+            self.assertEqual(fc.crew_pick("wayfinder")[0], "claude:claude-fable-5-1")
             run.assert_not_called()
         self.assertIn("claude-fable-5-1", json.loads(self.probe_cache.read_text()))
 
@@ -153,7 +153,7 @@ class PlannerChain(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}}
             return {}
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
-        a = SimpleNamespace(action="start", role="orchestrator", repo=str(proj), project="p", model=None, title=None,
+        a = SimpleNamespace(action="start", role="wayfinder", repo=str(proj), project="p", model=None, title=None,
                             brief="plan it", cwd=None, force=False)
         with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \

@@ -74,8 +74,9 @@ A Linear error never stops a run.
 - `crew start` probes the primary and then each fallback, once a day each.
   It takes the first one that answers and prints which one and why.
   It never probes the last entry.
-- The team lead's model is the `orchestrator` entry.
-  The team lead and wayfinder use `planner` when they have no entry.
+- The team lead's model is the `orchestrator` entry, else `default`.
+  It delegates, so it never uses `planner`.
+  The wayfinder uses `planner` when it has no entry.
   Groundwork and test-writing teammates use `groundwork`.
 - `crew start --model small` overrides the role.
   The value can be any name under `models.crew`, or a `claude:<model-id>`.

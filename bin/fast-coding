@@ -49,7 +49,7 @@ LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config;
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
-PLANNING_ROLES = ("orchestrator", "wayfinder")  # they plan, so they get `planner`
+PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
 def is_claude(model):
@@ -899,8 +899,8 @@ def model_available(model):
 
 def crew_pick(role, explicit=None):
     """(model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
-    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning roles (the team lead
-    and the wayfinder teammate), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
+    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning role (the wayfinder
+    teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
     unprobed. Teammate sessions run in pi or Claude Code."""
     if explicit and explicit not in CREW_MODELS:
