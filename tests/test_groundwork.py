@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, threading, time, unittest
+import importlib.machinery, importlib.util, io, json, os, re, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -69,6 +69,39 @@ class Groundwork(unittest.TestCase):
         self.assertIn(f"npx -y lavish-axi poll {page}", brief)
         self.assertIn("Decisions so far", brief)
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+
+    def planner(self, issue=None, extra="Spec: README.md", stdin=""):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out), mock.patch("sys.stdin", io.StringIO(stdin)):
+            fc.cmd_planner(SimpleNamespace(repo=str(self.repo), project="p", issue=issue, extra=extra))
+        return out.getvalue()
+
+    def test_planner_brief_names_the_feature_and_routes_every_gap(self):
+        brief = self.planner()
+        for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
+                  "fast-coding sync", "spec-check --project p", "fast-coding tasks", "change start --why", "change done",
+                  "crew start --role", "explore", "groundwork", "wayfinder", "Design", "designer"):
+            self.assertIn(s, brief)
+        runs = [m.start() for m in re.finditer(r"fast-coding run\b", brief)]
+        self.assertTrue(runs, "the brief must say the planner never runs `fast-coding run`")
+        for i in runs:  # every mention forbids it; none tells the planner to dispatch
+            self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
+        self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+
+    def test_planner_issue_overrides_the_feature_and_dash_reads_notes_from_stdin(self):
+        brief = self.planner(issue="NEB-12", extra="-", stdin="Story NEB-12 only.\n")
+        self.assertIn("NEB-12", brief)
+        self.assertTrue(brief.rstrip().endswith("Story NEB-12 only."))
+        self.assertNotIn("Project notes", self.planner(extra=None))
+
+    def test_planner_is_a_command_with_issue_and_extra(self):
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
+        top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
+        self.assertRegex(top, r"[{,]planner[,}]")
+        sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)
+        self.assertEqual(sub.returncode, 0, sub.stderr)
+        self.assertIn("--issue", sub.stdout); self.assertIn("--extra", sub.stdout)
 
     def test_each_test_crew_gets_its_task_and_the_contract(self):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
