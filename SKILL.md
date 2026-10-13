@@ -12,6 +12,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 |---|---|---|
 | You (team lead; the engineering manager likewise) | Find the way with the user (wayfinder), write the spec, the plan, and every task as Linear issues and move them through its states, brief teammates for the acceptance tests and any other code, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Write or edit any code, test, config, or repo doc, not one line (teammates do, Rules); merge anything: a human reviewer merges the PRs on GitHub |
 | Teammates (Claude sessions in the project's space, 0h) | Acceptance tests and the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, wayfinder questions, research; a toolsmith (briefed by the engineering manager) fixes fast-coding itself on a branch | Plan, re-scope their brief, address the product owner except through `report` and their own pane |
+| Designer (a Claude teammate in its own pane, 0d) | Continue design work in Figma from the ticket's level: read the inputs, write the design-system epic, design stories, and design tasks on Linear, start `design-NNN` builders and a `design-review` reviewer in their own panes, run the gate, hand off to code | Build in Figma itself (builders do), write any file in the repo (Linear only), decide a product question |
 | Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own pane of the `implementers` tab) | One task issue's brief, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the product owner |
 | `fast-coding verify` | Checks, jev browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
 
@@ -81,7 +82,7 @@ The CLI builds the topology by itself, named so the product owner reads it at a 
 - **Engineering manager**: the session the product owner started. It stays in the pane it was started in and is the product owner's one point of contact. It takes the intake (0, 0j) and creates the project (0a), then hands the project to a team lead and only relays from then on. It never moves, and one engineering manager can run several projects.
 - **An epic as a unit** (0j, settled path): the engineering manager creates every feature's project and team lead, runs one `watch` per project, and relays as above. It reports at epic level: features verified X of N, total cost and wall time, and which feature waits on what. It keeps the epic's Linear state in step with its features (0s). It still writes no code and does no team lead's work.
 - **Team lead** (role, tab, and `models.crew` entry `orchestrator`; agent `<slug>-orchestrator`): a Claude session in the project's space, started by the engineering manager right after `init`: `fast-coding crew start --repo <wt> --project <slug> --role orchestrator --title orchestrator --brief -` with a brief on stdin naming the project, the worktree, the feature issue, what the product owner asked, and "invoke the fast-coding skill and continue from 0b". It runs everything from there on. It reports up with `fast-coding report`, and the product owner can also type into its pane directly.
-- **Teammates**: sessions the team lead starts in the same space: the wayfinder teammate (0b), helpers (researchers, writers, reviewers), and the implementers `run` starts.
+- **Teammates**: sessions the team lead starts in the same space: the wayfinder teammate (0b), helpers (researchers, writers, reviewers), the implementers `run` starts, and for design work the designer with its `design-NNN` builders and its `design-review` reviewer (0d).
 The CLI directs the product owner's attention, not you: every `needs-user` or `blocked` report pops a herdr notification naming the tab and badges that pane `needs you`, and never steals focus. When the product owner says "take me there", run `fast-coding crew focus --project <slug> --role <role>`.
 The engineering manager's loop: `fast-coding watch --repo <wt> --project <slug> --from orchestrator` in the background; on each `event crew=<slug>-orchestrator` line, tell the product owner the outcome in one or two sentences (needs-user: the question and its recommendation, and that the product owner may answer here or in the team lead's tab); forward the product owner's answer with `herdr agent prompt <slug>-orchestrator "<answer>"`; start `watch` again. Read the team lead with `herdr agent read <slug>-orchestrator --source recent-unwrapped --lines 80` before relaying anything unclear. Do not do the team lead's work yourself.
 The engineering manager supervises, it does not only relay. `watch --from orchestrator` also wakes it on `event stall=...`: work is pending and nothing has moved for the stall window (`quiet`), every test-writing teammate is done and nothing is dispatched (`undispatched`), a run or verify ended with no team lead report since (`no-next-step`), or the team lead has sat idle with tasks pending (`idle`).
@@ -182,6 +183,95 @@ It writes the e2e cases with the smoke checks; the acceptance tests are step 3's
 Helpers in this phase read research, draft question cards, or draw a prototype whose decision is settled; none writes a document that carries an open decision.
 Research the user points at (notes, a folder of findings) feeds the map's Notes; it is not the spec.
 If a spec exists, read it and do not reopen its decisions. Put a question on the page only for what it leaves open that the plan needs.
+
+### 0d. Design work: the designer
+The designer continues design work in Figma from wherever it stopped.
+It is an entry into this workflow at the design step, not a new workflow.
+Start it with `/fast-coding:designer <ticket> [--figma <file url or key>]`, or by hand:
+`fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -`.
+The owner of the ticket's level starts it: the engineering manager for an epic, the team lead for a feature or story.
+The starter only relays from then on, as the engineering manager does for a team lead: `fast-coding watch --project <slug> --from designer`, and answers forwarded with `herdr agent prompt <slug>-designer "<answer>"`.
+It is never inline: the designer works in its own pane and starts its own crew in theirs.
+`fast-coding figma check --project <slug> --figma <file url or key>` stores the target file's key in `.fast-coding/<slug>/linear.json`; with no key stored, the designer asks the product owner for the file.
+Figma serves `use_figma` only to its allowlisted clients, so the designer and its whole crew are Claude sessions.
+Before any build, the groundwork teammate runs one `whoami` from a crew pane to prove the account's Figma connector reaches teammates.
+
+**Read before any write.**
+All of it is read-only, in this order:
+1. Linear: the ticket, its parents and children with their Decisions so far and acceptance criteria, and a `list_issues` search in the project for "design system", "tokens", and "Figma".
+2. The Frame0 wireframes: `fast-coding frame0 up --project <slug>`, then `export_page_as_image` for each page of `design.f0`.
+3. The repo's tokens, CSS, and components through graft: `graft ask "design tokens theme css variables" --source`, `graft grep "--color-"`.
+4. `DESIGN.md`, when the repo has one.
+5. Figma: `whoami`, then `get_libraries` and `search_design_system` on the stored file, to see what the canvas already has.
+
+**The ticket decides where it starts**, as 0j does for code:
+
+| Given | Designer does |
+|---|---|
+| **epic** | Check for a design system (below). None: write the design-system epic with its features and stories, send its open decisions up as cards, build Foundations once they are answered. One exists: continue at the first story not Done under it or under the epic's features. |
+| **feature** | Its design system exists, or at least its Foundations are Done; else start there and link the feature `blocked by` it. Then one design story per screen or flow the feature's stories name, each with its design tasks. |
+| **story** | The screens its acceptance criteria imply, as design tasks under one design story linked to it. |
+| **design story, partly done** | Read its tasks' states (0s): run the assert of each In Progress task to see what the canvas already has, cancel and re-split what failed, start builders for every Todo, review what is In Review. Nothing that passes its assert is rebuilt. |
+| **loose idea** | Not the designer's: it goes to wayfinder (0b) through the chain, and the designer starts once the ticket exists. |
+
+**The design system is its own epic.**
+It is labelled `Epic`, titled `<repo> design system`, with three features, built in this order:
+1. Foundations: color primitives, semantic color with Light and Dark modes, spacing, radius, typography.
+2. Components: one story per component family.
+3. Hand-off: the foundations page and the exported tokens.
+No component is built before the foundations it uses.
+A product feature links `blocked by` the design-system feature it needs, so its state rolls up true (0s).
+The first version holds the tokens (color, spacing, radius, and type, in Light and Dark modes) plus only the components the next feature's screens need.
+Whether a design system exists is checked in Linear (an `Epic` titled with "design system"), then in the Figma file (`get_libraries`, and `search_design_system` for names like `color/bg/primary`), then in the repo (`graft grep` for token files, `tailwind.config`, `tokens.json`).
+Linear wins when they disagree, and the disagreement is a `contradiction` report.
+Every plan, story, and task the designer writes is a Linear issue; it writes no file in the repo.
+Every open design decision goes up as a card in `needs-user`, text by default, on a Lavish page only when a picture decides it (a wireframe, a layout comparison, a diagram).
+The designer never decides a product question.
+
+**Design tasks.**
+A design task is a task issue (Task issue format) under a design story; its block adds `kind: design` and names `nodes:` in place of `files:`:
+
+```fast-coding
+id: 012
+kind: design
+nodes: Buttons/Button
+test: fast-coding figma judge --project <slug> --only 012
+```
+
+`nodes:` names the page and the top-level frames or component sets the task may create or touch, as `<page>/<name>`.
+One page per task, and two tasks never share a page, so builders work in parallel on one file; `fast-coding tasks` warns `two design tasks own the same page`.
+A design task is one component family, one token collection, or one screen state, built by one `use_figma` script that is safe to retry.
+It holds at most one component set of 30 variants, and every call stays under Figma's 20 KB return limit.
+`run` skips design tasks: they never clone, branch, or stack, and a passed one shows `passed`, never `merged`.
+
+**The gate.**
+Jev judges text, so the red gate is the node tree as text.
+The assert is a read-only `use_figma` script that returns the task's subtree as text: names, types, auto-layout, variant properties, variable bindings, and text content.
+The builder saves the assert script's text to `.fast-coding/<slug>/results/NNN.tree.txt`.
+`fast-coding figma judge --project <slug> --only NNN` asks Jev one MET, NOT_MET, or UNCLEAR question per acceptance criterion against that text, confirms each NOT_MET, writes `results/NNN.json`, and moves the task to In Review when it passes.
+Before the builder runs there is no tree, so the test is red.
+The look check is separate: a `design-review` teammate takes one `get_screenshot` per story, and a finding counts only once it is confirmed by quoting the node it saw.
+The read budget is small (200 read calls a day and 10 a minute on the Pro Full seat), so asserts go through `use_figma` and screenshots stop at one per story.
+The groundwork teammate measures on the first project whether a read script counts against that limit.
+
+**The crew.**
+
+| Teammate | Does | Model |
+|---|---|---|
+| `designer` | Reads the inputs, writes the Linear issues, starts the builders and the reviewer, runs the gate, hands off, reports up | `models.crew.designer`, else Opus 5.5 at high effort |
+| `design-NNN` | One design task: builds it with `use_figma`, runs the assert, saves the tree, runs the task's `test:`, reports `working "design ready: <node ids>"` | `models.crew.design`, else `default` |
+| `design-review` | One `get_screenshot` per story; findings confirmed by quoting nodes | `models.crew.design`, else `default` |
+
+Every session loads the `figma:figma-use` skill before every `use_figma` call.
+The designer syncs (step 2), then starts every builder at once with `fast-coding designcrews --project <slug>`: one `design-NNN` per design task not Done, Canceled, or In Review, in the project worktree with no branch.
+`--only` picks tasks and `--print` shows the briefs, as with `testcrews`.
+It starts the reviewer like any teammate: `fast-coding crew start --project <slug> --role design-review --title design-review --brief -`.
+A builder reports `done` only when the designer says so.
+
+**Hand-off to code.**
+1. Every variable carries code syntax, and a groundwork task exports the variables to the repo's token file (`tokens.css` or `tokens.json`) from `get_variable_defs`, as code, before `run`.
+2. Each screen node's `get_design_context` is pasted into the description of the code task that builds it, one node per task, since implementers have no Figma tools.
+3. Code Connect stays out until the Figma plan changes; it needs the Organization plan.
 
 ### 0r. Pick up where the last session stopped
 Everything is on disk, so a restart is a non-event. At the start of a session on an existing project, before anything else: `fast-coding status --repo <wt> --project <slug>` and `fast-coding watch ... --now`, which prints the current state as event lines and marks it seen (each watcher remembers what it last reported, so the next `watch` reports only what changes after this, and nothing that happened while no watch ran is lost), then reconcile the Linear tree against them (0s). Then:
@@ -431,6 +521,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - `id` is the stack order a reviewer reads in; ids are unique within the feature.
 - `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
+- A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `fast-coding figma judge --project <slug> --only NNN`.
 
 ## Rules
 - Fact-check before you say it. Every claim about an existing codebase, tool, system, or result comes from evidence gathered in this session: graft output with file:line, a command and its output, a test run, a doc you read. Cite it where it matters. Keep observed facts apart from hypotheses, and when you have not verified something, say "not verified" or "unknown" instead of stating a guess. Never present a likely-enough answer as fact, and never fill a gap with what the code probably does.
