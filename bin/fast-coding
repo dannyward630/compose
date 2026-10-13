@@ -3823,12 +3823,13 @@ def spec_check(data, root=None):
         gaps.append("no `### Codebase brief` section")
     if "## Plan" not in desc:
         gaps.append("no `## Plan` section")
+    by_issue = {t["linear"]: t["id"] for t in tasks}
+    tasks = [dict(t, after=",".join(by_issue[b] for b in t["blocked_by"] if b in by_issue)) for t in tasks]
     clashes = file_clashes(tasks)
     if clashes:
         detail = "; ".join(f"{f}: {', '.join(ids)}" for f, ids in clashes.items())
         gaps.append(f"two tasks own the same file (they must be one task, or one must be `after:` the other): {detail}")
-    by_issue = {t["linear"]: t["id"] for t in tasks}
-    waves = run_waves([dict(t, after=",".join(by_issue[b] for b in t["blocked_by"] if b in by_issue)) for t in tasks])
+    waves = run_waves(tasks)
     if len(tasks) >= 3 and len(waves) > len(tasks) / 2:
         gaps.append(f"serial chain: {len(tasks)} tasks run in {len(waves)} waves, mostly one after another")
     out.append((not gaps, data["feature"]["id"], "feature", gaps))
