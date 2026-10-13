@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, threading, time, unittest
+import importlib.machinery, importlib.util, io, json, os, re, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -74,6 +74,39 @@ class Groundwork(unittest.TestCase):
         brief = fc.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
         self.assertIn("Test file: tests/test_a.py, tests/test_b.py.", brief)  # prose keeps the comma list
         self.assertIn("`git add tests/test_a.py tests/test_b.py && git commit tests/test_a.py tests/test_b.py -m", brief)
+
+    def planner(self, issue=None, extra="Spec: README.md", stdin=""):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out), mock.patch("sys.stdin", io.StringIO(stdin)):
+            fc.cmd_planner(SimpleNamespace(repo=str(self.repo), project="p", issue=issue, extra=extra))
+        return out.getvalue()
+
+    def test_planner_brief_names_the_feature_and_routes_every_gap(self):
+        brief = self.planner()
+        for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
+                  "fast-coding sync", "spec-check --project p", "fast-coding tasks", "change start --why", "change done",
+                  "crew start --role", "explore", "groundwork", "wayfinder", "Design", "designer"):
+            self.assertIn(s, brief)
+        runs = [m.start() for m in re.finditer(r"fast-coding run\b", brief)]
+        self.assertTrue(runs, "the brief must say the planner never runs `fast-coding run`")
+        for i in runs:  # every mention forbids it; none tells the planner to dispatch
+            self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
+        self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+
+    def test_planner_issue_overrides_the_feature_and_dash_reads_notes_from_stdin(self):
+        brief = self.planner(issue="NEB-12", extra="-", stdin="Story NEB-12 only.\n")
+        self.assertIn("NEB-12", brief)
+        self.assertTrue(brief.rstrip().endswith("Story NEB-12 only."))
+        self.assertNotIn("Project notes", self.planner(extra=None))
+
+    def test_planner_is_a_command_with_issue_and_extra(self):
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
+        top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
+        self.assertRegex(top, r"[{,]planner[,}]")
+        sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)
+        self.assertEqual(sub.returncode, 0, sub.stderr)
+        self.assertIn("--issue", sub.stdout); self.assertIn("--extra", sub.stdout)
 
     def test_each_test_crew_gets_its_task_and_the_contract(self):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
@@ -181,6 +214,46 @@ class CrewWorkdir(unittest.TestCase):
             fc.crew_workdir(str(self.tool), self.project, "shop-toolsmith")
         self.assertIn("trust", str(e.exception))
         self.assertEqual(self.tool_git("worktree", "list").stdout.count("\n"), 1)  # nothing created
+
+
+class PlannerRules(unittest.TestCase):
+    """The planner brief carries the seven-item spec check, its routing, the cutting rules, and the task issue format."""
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        repo, _ = repo_with({"README.md": "x"})
+        proj = repo / ".fast-coding" / "p"; proj.mkdir(parents=True)
+        (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
+            fc.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
+        self.brief = out.getvalue()
+
+    def test_the_seven_spec_checks_come_in_numbered_order(self):
+        at = -1
+        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "graft ask", "protected:", "open how", "contract"), 1):
+            i = self.brief.find(kw, at + 1)
+            self.assertGreater(i, at, f"spec check {n} ({kw}) missing or out of order")
+            at = i
+        self.assertIn("graft callers", self.brief)
+        self.assertIn("as new", self.brief)
+        self.assertIn("verify.json", self.brief)
+
+    def test_gaps_are_routed_to_the_chain_or_to_teammates(self):
+        for s in ("decision gap", "fact gap", "1, 3, 6", "2, 4, 5"):
+            self.assertIn(s, self.brief)
+
+    def test_every_cutting_rule_is_stated(self):
+        for s in ("one or two files", "2500", "five", "350", "no documents", "files:", "after:", "blocked-by", "review order", "split"):
+            self.assertIn(s, self.brief)
+
+    def test_task_issue_format_lists_sections_and_block_keys(self):
+        at = -1
+        for sec in ("## Goal", "## Acceptance criteria", "## Test plan", "## Constraints", "```fast-coding"):
+            i = self.brief.find(sec, at + 1)
+            self.assertGreater(i, at, f"{sec} missing or out of order")
+            at = i
+        self.assertIn("id, files, protected, test", self.brief)
+        self.assertRegex(self.brief, r"(?s)`after`.{0,80}`title`.{0,80}not .{0,20}key|`title`.{0,80}`after`.{0,80}not .{0,20}key")
 
 
 if __name__ == "__main__":

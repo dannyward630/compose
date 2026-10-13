@@ -65,6 +65,7 @@ These commands load the tasks, dispatch them, and steer the run.
 | `reflect` | Screens the settled decisions against evidence with Jev, using `--evidence -` and `--against "<line>"`. `--dismiss "<why>"` marks the evidence so far as answered, so later screens skip it |
 | `hold` | Holds tasks back from dispatch with `--only <ids> --reason "<why>"`. `--release <ids>` or `all` releases them |
 | `change start\|done\|undo` | Records a change of course. `undo C<n>` puts back what it touched |
+| `spec-check` | Prints one `PASS|FAIL <id> <level>: <gaps>` line per issue of a feature's tree. `--stdin` reads sync JSON with no project. Exits 1 on any FAIL |
 | `bench` | Runs a frozen task set across models and reports pass rate, attempts, p50/p95 time, and cost |
 
 ### Verify and stack
@@ -85,6 +86,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 |---|---|
 | `crew start\|list\|focus\|stop` | Manages teammates, the Claude sessions in the project's herdr space ([herdr.md](herdr.md)) |
 | `explore`, `wayfinder`, `groundwork` | Prints that teammate's brief. `--extra -` appends notes from stdin |
+| `planner` | Prints the planner teammate's brief. `--issue NEB-xxx` picks the ticket, default the project's feature. `--extra -` appends notes from stdin |
 | `testcrews` | Runs one test-writing teammate per task, in parallel |
 | `report` | Lets a teammate report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |
 | `watch` | Blocks until something happens, prints one event line, and exits. `--now` prints the current state and marks it seen |

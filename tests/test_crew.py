@@ -71,6 +71,23 @@ class Crew(unittest.TestCase):
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
+    def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
+        for role, env in (("planner", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
+            calls = []
+            def herdr(*args, **kw):
+                calls.append(args)
+                if args[:2] == ("agent", "list"):
+                    return {"agents": []}
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
+            a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Plan the feature."})
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                    mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                    mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+                fc.cmd_crew(a)
+            self.assertEqual(calls[1][:2], ("tab", "create"))
+            self.assertIn(f"FAST_CODING_ROLE={env}", calls[1], role)
+            self.assertEqual(calls[2][2], f"shop-{role}")
+
     def test_same_named_agent_in_another_space_neither_blocks_start_nor_shows_in_list(self):
         stranger = {"name": "shop-explore", "workspace_id": "wC", "agent_status": "idle"}
         calls = []
@@ -210,13 +227,33 @@ class Guard(unittest.TestCase):
             self.assertIsNone(fc.guard_decision("Edit", str(self.repo / "src/app.go"), role))
         self.assertIsNone(fc.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
 
+    def test_planner_is_guarded_like_the_team_lead(self):
+        self.assertEqual(fc.GUARDED_ROLES, ("orchestrator", "planner"))
+        self.assertEqual(fc.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
+        for tool in fc.GUARDED_TOOLS:
+            for role in fc.GUARDED_ROLES:
+                why = fc.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
+                self.assertIn("team lead", why, (tool, role))
+                self.assertIn("planner", why.lower(), (tool, role))
+        for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
+            self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "planner"), f)
+        self.assertIsNone(fc.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
+        self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
+        for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
+            self.assertIsNone(fc.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
+
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
-        out = io.StringIO()
-        with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), mock.patch.object(fc.sys, "stdin", io.StringIO(ev)), \
-                mock.patch.object(fc.sys, "stdout", out):
-            fc.cmd_guard(None)
-        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
+        for role, denied in (("orchestrator", True), ("planner", True), ("wayfinder", False)):
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": role}), mock.patch.object(fc.sys, "stdin", io.StringIO(ev)), \
+                    mock.patch.object(fc.sys, "stdout", out):
+                fc.cmd_guard(None)
+            if denied:
+                self.assertTrue(out.getvalue(), role)
+                self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny", role)
+            else:
+                self.assertEqual(out.getvalue(), "", role)
 
 
 class ToolBug(unittest.TestCase):
