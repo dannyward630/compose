@@ -45,11 +45,11 @@ def has(gaps, *kws):
 
 
 class SpecCheck(unittest.TestCase):
-    def run_cli(self, stdin):
-        """The printed lines and the SystemExit (SystemExit(0) when it returns normally)."""
-        with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("sys.stdout", io.StringIO()) as out:
+    def run_cli(self, stdin=None, **kw):
+        """The printed lines and the SystemExit (SystemExit(0) when it returns normally); no stdin reads the synced cache."""
+        with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin or "")), mock.patch("sys.stdout", io.StringIO()) as out:
             try:
-                fc.cmd_spec_check(SimpleNamespace(repo=".", project=None, stdin=True))
+                fc.cmd_spec_check(SimpleNamespace(**{"repo": ".", "project": None, **kw}, stdin=stdin is not None))
             except SystemExit as e:
                 return out.getvalue().splitlines(), e
         return out.getvalue().splitlines(), SystemExit(0)
@@ -92,6 +92,11 @@ class SpecCheck(unittest.TestCase):
         self.assertEqual(fc.file_clashes([]), {})
         tasks = [{"id": "001", "files": ["a.go"]}, {"id": "002", "files": ["a.go", "b.go"]}, {"id": "003", "files": ["c.go"]}]
         self.assertEqual(fc.file_clashes(tasks), {"a.go": ["001", "002"]})
+        two = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"),
+               task("ENG-5", "003", files="b.go"), task("ENG-6", "004", files="b.go")]
+        g, = [g for g in check(two)["ENG-1"][2] if "a.go" in g]
+        self.assertTrue("a.go: 001, 002" in g and "b.go: 003, 004" in g, g)
+        self.assertEqual(g.count(g[:min(g.index("a.go"), g.index("b.go"))]), 1, g)  # the explanation leads, once
 
     def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
         clash = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"), task("ENG-5", "003", ["ENG-3"], files="b.go")]
@@ -108,3 +113,17 @@ class SpecCheck(unittest.TestCase):
         self.assertEqual(out.getvalue(), TASKS_OUT)
         self.assertEqual(fc.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
+
+    def test_synced_cache_prints_what_stdin_prints(self):
+        d = data([task("ENG-3", "001"), {**STORY, "id": "ENG-11", "description": "TBD"}])
+        repo = Path(tempfile.mkdtemp())
+        (repo / "001_test.go").write_text("")
+        proj = repo / ".fast-coding" / "p"
+        proj.mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.sync_tasks(proj, d)
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+            lines, e = self.run_cli(repo=str(repo), project="p")
+        want, we = self.run_cli(json.dumps(d))
+        self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)
+        self.assertEqual((lines, e.code), (want, we.code))
