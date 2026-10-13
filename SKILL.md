@@ -189,8 +189,8 @@ The designer continues design work in Figma from wherever it stopped.
 It is an entry into this workflow at the design step, not a new workflow.
 Start it with `/fast-coding:designer <ticket> [--figma <file url or key>]`, or by hand:
 `fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -`.
-The owner of the ticket's level starts it: the engineering manager for an epic, the team lead for a feature or story.
-The starter only relays from then on, as the engineering manager does for a team lead: `fast-coding watch --project <slug> --from designer`, and answers forwarded with `herdr agent prompt <slug>-designer "<answer>"`.
+The owner of the ticket's level starts it: for a feature or story whose project has a live team lead (`fast-coding crew list --project <slug>` shows `<slug>-orchestrator`), the engineering manager hands the start to it with `herdr agent prompt <slug>-orchestrator "start the designer for <ticket>: <that pipeline>"`; for an epic, or when no team lead is live, the engineering manager runs the pipeline itself.
+The starter only relays from then on, as the engineering manager does for a team lead: `fast-coding watch --project <slug> --from designer` (the engineering manager watches `--from orchestrator` when the team lead started it), and answers forwarded with `herdr agent prompt <slug>-designer "<answer>"`.
 It is never inline: the designer works in its own pane and starts its own crew in theirs.
 `fast-coding figma check --project <slug> --figma <file url or key>` stores the target file's key in `.fast-coding/<slug>/linear.json`; with no key stored, the designer asks the product owner for the file.
 Figma serves `use_figma` only to its allowlisted clients, so the designer and its whole crew are Claude sessions.
