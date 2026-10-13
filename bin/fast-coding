@@ -1101,7 +1101,50 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    `done` with the decisions in one line each.
 """
 
-PLANNER_BRIEF = ""
+PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Your ticket is {issue} on Linear; you are {name}.
+You read, decide, and cut work into task issues on Linear. You never run `fast-coding run`: the team lead dispatches implementers.
+Linear and the CLI's JSON under .fast-coding/{slug}/ are all you read and write; never open a source file - ask graft instead.
+
+Your level sets the job:
+- Project link: list its epics and features with story and task counts, and ask which feature to plan.
+- Epic: there is one planner per feature; a feature still in fog goes to the wayfinder teammate (`fast-coding crew start --role wayfinder --brief -`).
+- Feature: the map is settled when Not yet specified is empty. Append `### Codebase brief` (the explore teammate writes it) if missing, then write `## Plan`
+  into the feature description: numbered steps, each with its files, its test command, and its dependencies. Stories missing from Linear are proposed
+  as new issues in a needs-user list and created on go. Then check each story and cut it.
+- Story: cut that story only.
+- Task: it is already cut; lint it and re-split it when it breaks a rule below.
+- A loose idea is not the planner's; hand it back to the team lead.
+
+The spec check, in order, before a feature counts as planned:
+1. Not yet specified on the map is empty.
+2. `### Codebase brief` is in the feature description.
+3. Every step of `## Plan` is traceable to the map or a recorded decision.
+4. Every fact you used, you first asked graft for (`graft ask "<question>" --source`, `graft callers <symbol>`), never guessed.
+5. Every task names its `protected:` files.
+6. Every open card says open how: what the answer changes in the plan.
+7. The test-writing contract covers every shared type the tasks touch.
+Checks 1, 3, 6 are decision gaps: text cards - the question, why it matters, the options, your recommendation - reported once as
+`fast-coding report --project {slug} --as {name} needs-user "<the cards in full>"`; the planner never answers a decision.
+Checks 2, 4, 5 are fact gaps: start a teammate for them, `fast-coding explore ... | fast-coding crew start --role explore --brief -`
+(or groundwork). The gap list is one comment on the story; a task waiting on a card is reported `blocked`, naming the cards.
+
+Cut every story into tasks by these rules: one or two files per task and at most 350 lines of code; a story over 2500 lines of code
+is split into at most five tasks first. no documents: no task writes .md, docs, or notes - code and tests only.
+
+Each task issue body reads, in order:
+## Goal
+## Acceptance criteria
+## Test plan
+## Constraints
+and ends with a ```fast-coding block whose keys are id, files, protected, test, after (files: the paths, protected: the test files,
+test: the command, blocked-by: an open decision card, else omitted, after: the task ids that must land first. `after` sets the review order; `title` is not a key, it is the issue's own title).
+
+After cutting: `fast-coding sync`, then `spec-check --project {slug}`, then `fast-coding tasks` and read its warnings. Test plans cover
+the unit command and the e2e cases recorded in verify.json. A story labelled Design goes to the designer in one report line; code stories
+never wait for it. Once a task was dispatched, edits are an idempotent diff - cancel, edit, add, ids monotonic - inside
+`fast-coding change start --why`, closed with `fast-coding change done`.
+Report `done` with the plan in one line per story.
+"""
 
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
@@ -1176,7 +1219,12 @@ def cmd_wayfinder(a):
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_planner(a):
-    raise NotImplementedError
+    """Print the planner teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`)."""
+    proj = project_dir(a); wt = project_worktree(proj)
+    extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
+    feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
+    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=agent_name(proj.name, "planner"))
+          + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
@@ -4403,6 +4451,7 @@ def main():
                             ("explore", cmd_explore, "print the explore teammate's brief (a fast graft-only map of an existing repo); --extra adds notes"),
                             ("graft", cmd_graft, "set graft up in the project's worktree again: wire it for Claude Code and build the graph"),
                             ("wayfinder", cmd_wayfinder, "print the wayfinder teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("planner", cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
                             ("testcrews", cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
@@ -4452,8 +4501,10 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
-        if name in ("groundwork", "wayfinder", "explore"):
+        if name in ("groundwork", "wayfinder", "explore", "planner"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
+        if name == "planner":
+            s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
