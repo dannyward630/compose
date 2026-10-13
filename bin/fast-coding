@@ -1101,6 +1101,8 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    `done` with the decisions in one line each.
 """
 
+PLANNER_BRIEF = ""
+
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
@@ -1172,6 +1174,9 @@ def cmd_wayfinder(a):
     else:
         brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
+
+def cmd_planner(a):
+    raise NotImplementedError
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
@@ -3651,6 +3656,9 @@ def project_summary(repo, proj):
     return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted,
             "after": project_after(proj)}
 
+def file_clashes(tasks):
+    raise NotImplementedError
+
 def cmd_tasks(a):
     """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
@@ -3714,6 +3722,12 @@ def run_waves(tasks):
         waves.append(wave)
         done |= set(wave)
     return waves
+
+def spec_check(data, root=None):
+    raise NotImplementedError
+
+def cmd_spec_check(a):
+    raise NotImplementedError
 
 MAX_TASK_FILES, MAX_TASK_BRIEF = 2, 2500  # the size the fast implementers pass first try; bigger ones are where they miss
 
