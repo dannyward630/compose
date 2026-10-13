@@ -1655,6 +1655,18 @@ def herdr_implementer_pane(space, cwd, env):
     r = herdr("pane", "split", panes[-1]["pane_id"], "--direction", direction, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
     return r["pane"]["pane_id"]
 
+def herdr_agent_start(*args, tries=8):
+    """`herdr agent start`, retried while the pane is still coming up: a pane split a moment ago answers agent_pane_busy
+    until its shell prompt is there, which is the harness racing itself and never a reason to fail a task."""
+    for i in range(tries):
+        started, err = herdr_error("agent", "start", *args, timeout=90)
+        if err != "agent_pane_busy" or i == tries - 1:
+            break
+        time.sleep(0.5 * (i + 1))
+    if err:
+        raise RuntimeError(f"herdr agent start: {err}")
+    return started
+
 def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
     Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
@@ -1680,7 +1692,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model,
                 *(["--api-key", OPENROUTER_KEY] if OPENROUTER_KEY else [])]
-        started = herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args, check=True, timeout=90)
+        started = herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
