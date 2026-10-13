@@ -12,7 +12,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 |---|---|---|
 | You (team lead; the engineering manager likewise) | Find the way with the user (wayfinder), write the spec, the plan, and every task as Linear issues and move them through its states, brief teammates for the acceptance tests and any other code, dispatch, review diffs, run verify, re-split escalated tasks into smaller ones, submit the stack when told | Write or edit any code, test, config, or repo doc, not one line (teammates do, Rules); merge anything: a human reviewer merges the PRs on GitHub |
 | Teammates (Claude sessions in the project's space, 0h) | Acceptance tests and the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, wayfinder questions, research; a toolsmith (briefed by the engineering manager) fixes fast-coding itself on a branch | Plan, re-scope their brief, address the product owner except through `report` and their own pane |
-| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own pane of the `implementers` tab) | One task issue's brief, the named files, until its test passes, under 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the product owner |
+| Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in its own pane of the `implementers` tab) | One task issue's brief, the named files, until its test passes, at most 350 changed lines, adding no documents | Edit protected files, plan, touch other tasks, address the product owner |
 | `fast-coding verify` | Checks, jev browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
 
 ## Workflow

@@ -72,7 +72,7 @@ Each task's test is written from the spec before any code exists.
 It hides holdout cases the implementer never sees, so the only way to pass is to build the real behavior.
 
 **Every task gets a fresh agent in a fence.**
-One task runs in one fresh session, in its own clone, on the files it names, under 350 changed lines.
+One task runs in one fresh session, in its own clone, on the files it names, at most 350 changed lines.
 There is no long context to rot and no room to drift.
 
 **Each job runs on the model that fits it.**
