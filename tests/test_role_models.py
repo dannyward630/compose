@@ -167,7 +167,26 @@ class PlannerChain(unittest.TestCase):
 
 
 class DesignerModels(unittest.TestCase):
-    pass
+    """design-NNN builders fall to models.crew.design; the designer defaults to Opus 5.5 at high effort."""
+    def config(self, crew):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
+        with mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json"):
+            fc.apply_config()
+        for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"): self.addCleanup(setattr, fc, k, {})
+
+    def test_design_roles_use_the_design_entry_else_default(self):
+        self.config({**CREW, "design": {"model": "claude:claude-opus-5-5", "effort": "high"}})
+        for role in ("design-003", "design-review"):
+            self.assertEqual(fc.crew_pick(role)[:2], ("claude:claude-opus-5-5", "high"))
+        self.assertEqual(fc.crew_pick("designs-003")[:2], ("claude:claude-sonnet-5-5", None))  # first word is designs
+        self.config(CREW); self.assertEqual(fc.crew_pick("design-003")[:2], ("claude:claude-sonnet-5-5", None))
+
+    def test_the_designer_defaults_to_opus_high_unless_configured(self):
+        for crew in ({}, {**CREW, "design": "claude:claude-haiku-5-5"}):
+            self.config(crew)
+            self.assertEqual(fc.crew_pick("designer"), ("claude:claude-opus-5-5", "high", "models.crew.designer default"))
+        self.config({**CREW, "designer": "claude:claude-sonnet-5-5"}); self.assertEqual(fc.crew_pick("designer"), ("claude:claude-sonnet-5-5", None, "models.crew.designer"))
 
 
 if __name__ == "__main__":

@@ -230,7 +230,48 @@ class DesignerBrief(unittest.TestCase):
 
 
 class DesignCrews(unittest.TestCase):
-    pass
+    """designcrews briefs and starts one design-NNN builder per open design task, with the stored Figma key."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+        def issue(n, status="Todo", **kv):
+            block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": f"judge {n}", **kv}.items())
+            return {"id": f"ENG-{n}", "title": f"Task {n}", "description": f"## Goal\nDraw {n}.\n\n```fast-coding\n{block}\n```\n", "status": status, "blockedBy": []}
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
+            issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
+
+    def run_crews(self, only=None, print_=False, busy=()):
+        started, out = [], io.StringIO()
+        def crew(ns):
+            started.append(ns)
+            if ns.role in busy: raise SystemExit("busy")
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr_space") as space, \
+                mock.patch.object(fc, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
+            fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_))
+        return started, out.getvalue(), space
+
+    def test_print_shows_one_brief_per_open_design_task(self):
+        started, out, space = self.run_crews(print_=True)
+        for text in ("===== design-001", "===== design-005", "Figma file AbCdEf123456", "Checkout/Cart", "Checkout/Pay", str(self.proj / "results" / "001.tree.txt"), "judge 001", "figma:figma-use", "TASK BRIEF:\nDraw 001."):
+            self.assertIn(text, out)
+        self.assertEqual((out.count("====="), started, space.call_count), (2, [], 0))
+
+    def test_starts_one_crew_per_open_design_task_and_reports_one_that_fails(self):
+        started, out, space = self.run_crews(busy={"design-001"})
+        self.assertEqual(sorted(ns.role for ns in started), ["design-001", "design-005"])
+        self.assertEqual(space.call_count, 1); self.assertIn("design-001 not started: busy", out)
+        ns, meta = next(ns for ns in started if ns.role == "design-005"), fc.load_tasks(self.proj)[-1]
+        self.assertEqual((ns.project, ns.action, ns.title, ns.force, ns.cwd, ns.model), ("p", "start", "design 005", False, None, None))
+        self.assertEqual(ns.brief, fc.design_brief(meta, "AbCdEf123456", self.proj / "results"))
+        self.assertEqual([ns.role for ns in self.run_crews(only="005")[0]], ["design-005"])
+
+    def test_no_stored_figma_key_refuses(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
+        with self.assertRaises(SystemExit) as e:
+            self.run_crews()
+        self.assertEqual(str(e.exception), "no Figma file: fast-coding figma check --figma <url or key>")
 
 
 if __name__ == "__main__":
