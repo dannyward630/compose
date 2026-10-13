@@ -162,7 +162,39 @@ class SkillDoc(unittest.TestCase):
 
 
 class DesignerCommand(unittest.TestCase):
-    pass
+    def parts(self):
+        text = read("commands/designer.md")
+        _, head, body = text.split("---\n", 2)
+        return text, dict(line.split(": ", 1) for line in head.splitlines()), body
+
+    def test_frontmatter_matches_the_workspace_command_shape(self):
+        _, meta, _ = self.parts()
+        self.assertEqual(set(meta), {"description", "argument-hint", "allowed-tools"})
+        self.assertEqual(meta["description"].strip('"'), "Start the designer teammate for a ticket: continues design work in Figma from where it stopped")
+        self.assertEqual(meta["argument-hint"], '"<Linear url or id> [--figma <file url or key>]"')
+        self.assertEqual(meta["allowed-tools"], "Bash(fast-coding designer:*)")
+
+    def test_numbered_steps_name_the_commands_in_order(self):
+        _, _, body = self.parts()
+        steps = [line for line in body.splitlines() if line[:1].isdigit()]
+        self.assertEqual([s.split(".", 1)[0] for s in steps], ["1", "2", "3", "4", "5"])
+        self.assertIn("fast-coding skill", steps[0])
+        self.assertIn("0j", steps[0])
+        self.assertIn("fast-coding projects", steps[1])
+        self.assertIn("fast-coding init --project <slug>", steps[1])
+        self.assertIn("--figma", steps[2])
+        self.assertIn("fast-coding figma check --project <slug> --figma <file>", steps[2])
+        pipe = "fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -"
+        self.assertLess(body.index("fast-coding figma check"), body.index(pipe))
+        self.assertLess(body.index(pipe), body.index("fast-coding watch --project <slug> --from designer"))
+        self.assertIn('herdr agent prompt <slug>-designer "<answer>"', body)
+        self.assertIn("never design in this session", body.lower())
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        text, _, body = self.parts()
+        self.assertNotIn("\u2014", text)
+        for line in body.splitlines():
+            self.assertNotRegex(line[3:] if line[:1].isdigit() else line, r"\. [A-Z]", line)
 
 
 if __name__ == "__main__":
