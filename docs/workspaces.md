@@ -77,6 +77,9 @@ A Linear error never stops a run.
 - The team lead's model is the `orchestrator` entry.
   The team lead and wayfinder use `planner` when they have no entry.
   Groundwork and test-writing teammates use `groundwork`.
+  The designer uses `designer`, Opus 5.5 at high effort when the entry is missing.
+  Builders and `design-review` use `design`, else `default`.
+  A role with no entry falls to the entry named by its first word (`design-003` to `design`).
 - `crew start --model small` overrides the role.
   The value can be any name under `models.crew`, or a `claude:<model-id>`.
 

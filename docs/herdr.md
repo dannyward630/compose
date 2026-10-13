@@ -12,6 +12,9 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 |---|---|---|
 | engineering manager | the Claude session you started; creates the project, then only relays | the pane you started it in |
 | team lead | runs the project from wayfinder to a verified stack | tab `orchestrator`, agent `<slug>-orchestrator` |
+| designer | continues design work in Figma from where it stopped | tab `designer`, agent `<slug>-designer` |
+| design-NNN | one builder per design task, Claude only | tab `design NNN` |
+| design-review | one screenshot per story, findings confirmed by quoting nodes | tab `design-review` |
 | teammates | explore, wayfinder, groundwork, test writers, helpers, implementers | one tab each in the project's space |
 
 The engineering manager and the team lead write no code.
@@ -41,6 +44,9 @@ fast-coding wayfinder --project <slug> --extra - < notes.md | fast-coding crew s
 fast-coding crew list --project <slug>
 fast-coding crew stop --project <slug> --role wayfinder   # refused until it reported done; --force overrides
 fast-coding testcrews --project <slug>                    # one test-writing teammate per task
+fast-coding figma check --project <slug> --figma <url or key>
+fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -
+fast-coding designcrews --project <slug>   # one design-NNN builder per open design task
 fast-coding teardown --project <slug>                     # close finished tabs; the team lead's done runs it
 ```
 
