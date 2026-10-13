@@ -1,7 +1,7 @@
 import importlib.machinery, importlib.util, io, json, subprocess, sys, tempfile, unittest
 from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
+from unittest import mock
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
 fc = importlib.util.module_from_spec(_spec)
@@ -62,8 +62,66 @@ class FigmaCheck(unittest.TestCase):
         self.assertIn("{check,judge}", r.stdout)
 
 
+def judge_task(ident, tid, title, crits, kind="design"):
+    desc = "## Acceptance criteria\n" + "".join(f"- {c}\n" for c in crits) + f"\n```fast-coding\nid: {tid}\nkind: {kind}\ntest: t\n```\n"
+    return {"id": ident, "title": title, "description": desc, "status": "Todo", "blockedBy": []}
+
+
 class FigmaJudge(unittest.TestCase):
-    pass
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+        (self.proj / "verify.json").write_text(json.dumps({"acceptance_threshold": 0.7}))
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            judge_task("ENG-3", "001", "Cart page", ["Shows the total", "Has a pay button"]), judge_task("ENG-4", "002", "Store", ["x"], kind="code"),
+            judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"])]})
+        for tid in ("001", "002", "004", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
+            (self.proj / "results" / f"{tid}.tree.txt").write_text(f"FRAME {tid}\n  TEXT Total: $10\n")
+        for name, value in (("ENV_FILE", self.proj / "none.env"), ("say", lambda m: None)):
+            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+
+    def judge(self, only, replies, confirm=None, fail=None):
+        replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
+        self.out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: replies[state["task"]]) as self.ask, \
+                mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
+            fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
+        return json.loads((self.proj / "results" / f"{only[:3]}.json").read_text())
+
+    def test_all_met_writes_a_passed_result_and_tells_linear(self):
+        (self.proj / "results" / "001.json").write_text(json.dumps({"status": "failed", "attempts": 2}))
+        res = self.judge("001", {"Cart page": [("MET", 0.95), ("MET", 0.9)]})
+        env, cfg, state, questions, label = self.ask.call_args.args
+        self.assertEqual((state, label, cfg["acceptance_threshold"]), ({"task": "Cart page", "tree": "FRAME 001\n  TEXT Total: $10\n"}, "figma judge", 0.7))
+        self.assertEqual([(q["instructions"]["criterion"], q["instructions"]["task"], sorted(q["criteria"])) for q in questions.values()],
+                         [("Shows the total", "001", ["MET", "NOT_MET", "UNCLEAR"]), ("Has a pay button", "001", ["MET", "NOT_MET", "UNCLEAR"])])
+        self.assertEqual({k: res[k] for k in ("id", "title", "status", "kind", "failed", "attempts", "seconds", "cost", "model", "branch")},
+                         {"id": "001", "title": "Cart page", "status": "passed", "kind": "design", "failed": [], "attempts": 3, "seconds": 0.0, "cost": 0.0, "model": "jev-test", "branch": "figma:AbCdEf123456"})
+        self.assertEqual((len(res["criteria"]), bool(res["finished_at"]), self.confirm.called, "TREE" in questions["c0"]["instructions"]["rules"]), (2, True, False, True))
+        self.assertIn("001 MET p_not_met=0.00 Shows the total", self.out.getvalue())
+        self.assertEqual(self.ev.call_args_list, [mock.call(self.proj, mock.ANY, "passed", res)])
+
+    def test_only_a_confirmed_not_met_at_the_threshold_fails(self):
+        res = self.judge("001", {"Cart page": [("NOT_MET", 0.65), ("NOT_MET", 0.7)]}, fail=RuntimeError("down"))
+        self.assertEqual((res["status"], self.confirm.call_count), ("passed", 1))
+        self.assertIn("CRITERION: Has a pay button", self.confirm.call_args.args[2])
+        replies = {"Cart page": [("MET", 0.9), ("MET", 0.9)], "Pay": [("NOT_MET", 0.9)]}
+        with self.assertRaises(SystemExit) as e:
+            self.judge("001,004", replies, confirm={"confirmed": True, "evidence": "FRAME 004"})
+        self.assertNotIn(e.exception.code, (0, None))
+        res = json.loads((self.proj / "results" / "004.json").read_text())
+        self.assertEqual((res["status"], len(res["failed"])), ("failed", 1))
+        self.assertIn("004 NOT_MET p_not_met=0.90 Has a card field", self.out.getvalue())
+        self.assertEqual([c.args[1]["id"] for c in self.ev.call_args_list], ["001"])
+
+    def test_refuses_with_one_line(self):
+        for only, needle in ((None, "figma judge needs --only <ids>"), ("009", "009"), ("002", "002"), ("003", f"no node tree at {self.proj / 'results' / '003.tree.txt'}")):
+            with self.subTest(only=only), self.assertRaises(SystemExit) as e:
+                self.judge(only, {})
+            self.assertIn(needle, str(e.exception))
+            self.assertNotIn("\n", str(e.exception))
+            self.assertEqual("no node tree" in str(e.exception), only == "003")
 
 
 if __name__ == "__main__":
