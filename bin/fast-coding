@@ -1190,8 +1190,8 @@ target Figma file is {figma}.
    Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
    (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`.
 3. Load the `figma:figma-use` skill before every `use_figma` call.
-4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the Figma node
-   ids it covers), and `test: fast-coding figma judge --project {slug} --only NNN`.
+4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
+   one page per task), and `test: fast-coding figma judge --project {slug} --only NNN`.
 5. Start builders with `fast-coding designcrews --project {slug}`; gate each with
    `fast-coding figma judge --project {slug} --only NNN`; then run a `design-review` teammate with one screenshot per story.
 6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
