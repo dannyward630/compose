@@ -3044,7 +3044,6 @@ def cmd_reflect(a):
     """Screen the settled decisions against evidence you hand it: the product owner's words, a report, why you rejected a layer.
     `--dismiss` records that the evidence so far is answered (a false alarm, a task-sized fix), so no later screen flags it again."""
     proj = project_dir(a)
-    load_tasks(proj, required=True)
     if bool(a.evidence) == bool(a.dismiss):
         sys.exit('reflect needs one of --evidence "<what was found>" (`-` reads stdin) or --dismiss "<why it needs no change of course>"')
     if a.dismiss:

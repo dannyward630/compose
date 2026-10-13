@@ -43,20 +43,24 @@ class Waves(unittest.TestCase):
 
 class E2EBesideReview(unittest.TestCase):
     def test_e2e_runs_while_review_waits_on_models(self):
-        slow = lambda result: (lambda *a, **k: (time.sleep(1.5), result)[1])
+        spans = {}
+        def slow(name, result):
+            def run(*a, **k):
+                start = time.time(); time.sleep(0.5); spans[name] = (start, time.time()); return result
+            return run
         # a configured browser, so the stage does not launch its own: this times the overlap, not a Chromium start
         cfg = {"e2e": [{"name": "flow"}], "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, "review": True, "jev_acceptance": True}
         args = type("A", (), {"skip_e2e": False, "skip_review": False})()
         with mock.patch.object(fc, "herdr_verify_panes", return_value={}), mock.patch.object(fc, "herdr_space", return_value=None), \
                 mock.patch.object(fc, "review_inputs", return_value=("", "", "", [])), \
-                mock.patch.object(fc, "jev_e2e", slow({"exit": 0, "stdout": "", "stderr": ""})), \
-                mock.patch.object(fc, "llm_review", slow({"pass": True, "issues": [], "confirmed": []})), \
+                mock.patch.object(fc, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
+                mock.patch.object(fc, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \
                 mock.patch.object(fc, "jev_acceptance", lambda *a, **k: {"pass": True, "criteria": [], "failed": []}):
-            t0 = time.time()
             ok, report, _ = fc.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, args)
         self.assertTrue(ok)
         self.assertEqual(len(report["e2e"]), 1)
-        self.assertLess(time.time() - t0, 2.6)  # in sequence, 1.5s of e2e plus 1.5s of review is 3s; overlap plus stage setup stays under
+        (a0, a1), (b0, b1) = spans["e2e"], spans["review"]
+        self.assertLess(max(a0, b0), min(a1, b1))  # the two waits overlap; wall time would depend on machine load
 
 
 if __name__ == "__main__":

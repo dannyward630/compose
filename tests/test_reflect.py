@@ -136,6 +136,14 @@ class Reflect(unittest.TestCase):
         self.assertNotIn("the sandbox flake", ev)
         self.assertIn("second failure", ev)
 
+    def test_a_dismissal_needs_no_sync(self):
+        proj = project()
+        (proj / "results" / "tasks.json").unlink()  # a contradiction reported during groundwork, before any task exists
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+            fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="a false alarm", against=None))
+        self.assertIn("dismissed", out.getvalue())
+
     def test_the_command_takes_evidence_or_a_dismissal(self):
         proj = project()
         with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(io.StringIO()):
