@@ -228,6 +228,14 @@ class DesignerBrief(unittest.TestCase):
         self.assertIn("Project notes from the team lead:\nCheckout only.", brief)
         self.assertTrue(brief.rstrip().endswith("Checkout only."))
 
+    def test_design_task_nodes_are_page_and_name_pairs_one_page_per_task(self):
+        brief = " ".join(self.brief().split())
+        step4 = brief[brief.index(" 4. "):brief.index(" 5. ")]
+        self.assertIn("A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, "
+                      "as <page>/<name>, one page per task), and `test: fast-coding figma judge --project p --only NNN`.", step4)
+        self.assertNotIn("node id", brief)
+        self.assertEqual(brief.count("<page>/<name>"), 1)
+
 
 class DesignCrews(unittest.TestCase):
     """designcrews briefs and starts one design-NNN builder per open design task, with the stored Figma key."""
