@@ -13,10 +13,12 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 | engineering manager | the Claude session you started; creates the project, then only relays | the pane you started it in |
 | team lead | runs the project from wayfinder to a verified stack | tab `orchestrator`, agent `<slug>-orchestrator` |
 | teammates | explore, wayfinder, groundwork, test writers, helpers, implementers | one tab each in the project's space |
+| planner | continues specing a ticket at step 1, 2, or 8 and cuts the task issues | tab `planner`, agent `<slug>-planner` |
 
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
-Its tab is marked `FAST_CODING_ROLE=orchestrator`, and the plugin's PreToolUse hook (`fast-coding guard`) denies its edits except the CLI's JSON under `.fast-coding/`.
+The team lead's and the planner's tabs are both marked (`FAST_CODING_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`fast-coding guard`), except the CLI's JSON under `.fast-coding/`.
+The team lead starts the planner after wayfinder, or you start it with `/fast-coding:planner <ticket>` from the engineering manager.
 
 ## Talking to the fleet
 
