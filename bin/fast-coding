@@ -303,7 +303,7 @@ def sync_tasks(proj, data):
     f = data["feature"]
     issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status") or "",
                         "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or []),
-                        "parentId": i.get("parentId")}
+                        **({"parentId": i["parentId"]} if i.get("parentId") else {})}
               for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
     (proj / "results" / "tasks.json").write_text(json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks,
