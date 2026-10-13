@@ -274,3 +274,29 @@ class ToolsmithWorktree(unittest.TestCase):
         self.assertEqual(git("branch", "--show-current", cwd=path), branch)
         self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "fast-coding/shop"))
         self.assertEqual((same, none), (Path(repo), None))  # other roles still run where they were pointed
+
+
+class SubmitBrief(unittest.TestCase):
+    """A teammate started a moment ago can take the pasted brief while its input is still coming up and drop the Enter: 4 of 9
+    test writers started at once sat with the brief unsent. herdr reports that as agent_prompt_stalled; an Enter submits it."""
+    def run_submit(self, statuses):
+        calls, seen = [], iter(statuses)
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            if args[:2] == ("agent", "prompt"):
+                raise RuntimeError("herdr agent prompt: agent_prompt_stalled")
+            return {"agent": {"agent_status": next(seen)}} if args[:2] == ("agent", "get") else {}
+        try:
+            with mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc.time, "sleep"):
+                fc.herdr_submit("shop-tests-003", "the brief")
+        finally:
+            self.assertIn("--wait", next(c for c in calls if c[:2] == ("agent", "prompt")))
+        return [c for c in calls if c[:2] == ("agent", "send-keys")]
+
+    def test_a_stalled_brief_is_submitted_with_enter(self):
+        self.assertEqual(self.run_submit(["working"]), [("agent", "send-keys", "shop-tests-003", "enter")])
+
+    def test_a_brief_that_never_starts_fails_loudly(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.run_submit(["idle", "idle", "idle"])
+        self.assertIn("press Enter", str(e.exception))
