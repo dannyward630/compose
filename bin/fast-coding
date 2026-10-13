@@ -1425,7 +1425,7 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = herdr_space(proj)
-    role = "orchestrator" if name == agent_name(slug, "orchestrator") else "crew"  # `guard` keeps the team lead off the code
+    role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
@@ -1447,11 +1447,12 @@ def cmd_crew(a):
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+GUARDED_ROLES = ("orchestrator", "planner")
 CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the team lead's own: the CLI's config
 
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
-    if role != "orchestrator" or tool not in GUARDED_TOOLS or not path:
+    if role not in GUARDED_ROLES or tool not in GUARDED_TOOLS or not path:
         return None
     p = Path(path).expanduser().resolve()
     if CLI_FILE.search(str(p)):
@@ -1459,7 +1460,7 @@ def guard_decision(tool, path, role):
     d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
     if sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
-    return (f"The team lead never edits code, tests, config, or docs ({p.name}). Hand it to a teammate: "
+    return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "
             f"`fast-coding crew start --role <job> --brief -`, or put it in a task issue for `run`.")
 
 def cmd_guard(a):
