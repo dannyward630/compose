@@ -123,6 +123,23 @@ class FigmaJudge(unittest.TestCase):
             self.assertNotIn("\n", str(e.exception))
             self.assertEqual("no node tree" in str(e.exception), only == "003")
 
+    def test_choices_name_the_tree_not_the_code(self):
+        self.judge("001", {"Cart page": [("MET", 0.9), ("MET", 0.9)]})
+        tree = {"MET": "The tree satisfies this criterion.", "NOT_MET": "The tree violates or omits this criterion.", "UNCLEAR": "Cannot be decided from the tree shown."}
+        for q in self.ask.call_args.args[3].values():
+            self.assertEqual(q["criteria"], tree)
+            self.assertNotIn("code", " ".join(q["criteria"].values()).lower())
+
+    def test_a_billing_halt_from_the_confirm_call_stops_the_command(self):
+        with self.assertRaises(fc.PaymentRequired):
+            self.judge("001,004", {"Cart page": [("NOT_MET", 0.9), ("MET", 0.9)], "Pay": [("MET", 0.9)]}, fail=fc.PaymentRequired("openrouter", "402"))
+        self.assertEqual((self.confirm.call_count, self.ask.call_count, self.ev.called), (1, 1, False))
+        self.assertFalse((self.proj / "results" / "001.json").exists())
+
+    def test_any_other_confirm_error_still_counts_as_not_confirmed(self):
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=ValueError("bad json"))
+        self.assertEqual((res["status"], res["criteria"][0]["confirmed"], res["criteria"][0]["evidence"]), ("passed", False, "confirm call failed: bad json"))
+
 
 if __name__ == "__main__":
     unittest.main()
