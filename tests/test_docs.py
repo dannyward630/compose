@@ -42,7 +42,7 @@ class CliAndTasksDocs(unittest.TestCase):
         block = design.split("```fast-coding\n", 1)[1].split("```", 1)[0]
         self.assertRegex(block, r"(?m)^kind: design$")
         self.assertRegex(block, r"(?m)^nodes: .+/.+")
-        self.assertRegex(block, r"(?m)^test: fast-coding figma judge --project \S+ --only \d{3}$")
+        self.assertRegex(block, r"(?m)^test: fast-coding figma judge --project \S+ --only (\d{3}|NNN)$")
         self.assertNotRegex(block, r"(?m)^files:")
         prose = re.sub(r"(?s)````.*?````|```.*?```", "", design)
         for word in ("page", "results/", "files"):
