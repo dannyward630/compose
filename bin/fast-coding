@@ -1180,6 +1180,7 @@ TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_l
 
 def test_brief(meta, contract, budget=None):
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
+    args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
             f"Test file: {paths}. Test command: {meta.get('test')}\n"
@@ -1192,7 +1193,7 @@ def test_brief(meta, contract, budget=None):
             f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
             "You work in your own worktree on your own branch; the CLI collects every test-writing teammate's commits onto the project branch. "
             "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
-            f"`git add {paths} && git commit {paths} -m \"<plain message>\"`.\n"
+            f"`git add {args} && git commit {args} -m \"<plain message>\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"

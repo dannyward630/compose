@@ -70,6 +70,11 @@ class Groundwork(unittest.TestCase):
         self.assertIn("Decisions so far", brief)
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
 
+    def test_a_test_crew_commits_its_files_as_separate_paths(self):
+        brief = fc.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
+        self.assertIn("Test file: tests/test_a.py, tests/test_b.py.", brief)  # prose keeps the comma list
+        self.assertIn("`git add tests/test_a.py tests/test_b.py && git commit tests/test_a.py tests/test_b.py -m", brief)
+
     def test_each_test_crew_gets_its_task_and_the_contract(self):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
         out = io.StringIO()
