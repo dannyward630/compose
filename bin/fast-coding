@@ -50,6 +50,7 @@ WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("orchestrator", "wayfinder")  # they plan, so they get `planner`
+CREW_DEFAULTS = {}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
 def is_claude(model):
@@ -321,6 +322,10 @@ def load_tasks(proj, required=False):
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
                  f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
     return linear_cache(proj)["tasks"]
+
+def code_tasks(tasks):
+    """The tasks that change code: a design task never clones, stacks, or is judged from files."""
+    return tasks  # not implemented
 
 def digests(root, files):
     return {f: hashlib.sha256((root / f).read_bytes()).hexdigest() if (root / f).exists() else None for f in files}
@@ -1173,6 +1178,12 @@ def cmd_wayfinder(a):
         brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
+DESIGNER_BRIEF = ""  # not implemented
+
+def cmd_designer(a):
+    """Print the designer teammate's brief; --figma stores the file key first, --extra adds the team lead's notes."""
+    sys.exit("not implemented")
+
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
 TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
@@ -1225,6 +1236,14 @@ def cmd_testcrews(a):
             print(f"tests-{m['id']} not started: {e}")
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
+
+def design_brief(meta, figma, results):
+    """The brief for one design task's builder."""
+    return ""  # not implemented
+
+def cmd_designcrews(a):
+    """Start one design-NNN builder per open design task. `--print` shows the briefs instead."""
+    sys.exit("not implemented")
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
@@ -1562,6 +1581,18 @@ def frame0_down(proj):
             break
         time.sleep(0.5)
     return True
+
+def figma_key(text):
+    """The Figma file key in a figma.com URL or a bare key, else None."""
+    return None  # not implemented
+
+def store_figma(proj, key):
+    """Store the target Figma file key as `figma` in linear.json, keeping every other key."""
+    pass  # not implemented
+
+def cmd_figma(a):
+    """`figma check` stores the target Figma file key; `figma judge` gates a design task with Jev on its node tree."""
+    sys.exit("not implemented")
 
 def cmd_frame0(a):
     """`frame0 up` starts the project's own Frame0 on design.f0, `save` writes the drawing to it, `down` saves and quits."""
@@ -4390,6 +4421,8 @@ def main():
                             ("graft", cmd_graft, "set graft up in the project's worktree again: wire it for Claude Code and build the graph"),
                             ("wayfinder", cmd_wayfinder, "print the wayfinder teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
                             ("testcrews", cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
+                            ("designer", cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
+                            ("designcrews", cmd_designcrews, "start one design-NNN builder per open design task"),
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
@@ -4397,6 +4430,7 @@ def main():
                             ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
+                            ("figma", cmd_figma, "check | judge: store the target Figma file key; judge a design task's node tree with Jev"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
@@ -4438,8 +4472,13 @@ def main():
             s.add_argument("--runs", type=int, default=1, help="repeats per task per model")
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=4)
-        if name in ("groundwork", "wayfinder", "explore"):
+        if name in ("groundwork", "wayfinder", "explore", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
+        if name == "designer":
+            s.add_argument("--figma", help="the target Figma file's url or key: stored in linear.json before the brief prints")
+        if name == "designcrews":
+            s.add_argument("--only", help="comma-separated task ids")
+            s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
@@ -4472,6 +4511,10 @@ def main():
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "frame0":
             s.add_argument("action", choices=("up", "save", "down"))
+        if name == "figma":
+            s.add_argument("action", choices=("check", "judge"))
+            s.add_argument("--figma", help="check: the target Figma file's url or key, stored in linear.json")
+            s.add_argument("--only", help="judge: comma-separated design task ids")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug | contradiction")

@@ -166,5 +166,9 @@ class PlannerChain(unittest.TestCase):
         self.assertEqual((rec["model"], rec["effort"]), ("claude:claude-opus-5-5", "high"))
 
 
+class DesignerModels(unittest.TestCase):
+    pass
+
+
 if __name__ == "__main__":
     unittest.main()

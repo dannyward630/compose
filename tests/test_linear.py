@@ -94,3 +94,7 @@ class Sync(unittest.TestCase):
                 mock.patch("builtins.print"):
             fc.cmd_sync(type("A", (), {}))
         self.assertEqual(fc.load_tasks(self.proj)[0]["linear"], "ENG-3")
+
+
+class DesignTasks(unittest.TestCase):
+    pass

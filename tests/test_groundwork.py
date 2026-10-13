@@ -178,5 +178,13 @@ class CrewWorkdir(unittest.TestCase):
         self.assertEqual(self.tool_git("worktree", "list").stdout.count("\n"), 1)  # nothing created
 
 
+class DesignerBrief(unittest.TestCase):
+    pass
+
+
+class DesignCrews(unittest.TestCase):
+    pass
+
+
 if __name__ == "__main__":
     unittest.main()
