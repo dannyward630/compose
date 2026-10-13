@@ -211,5 +211,45 @@ class CrewWorkdir(unittest.TestCase):
         self.assertEqual(self.tool_git("worktree", "list").stdout.count("\n"), 1)  # nothing created
 
 
+class PlannerRules(unittest.TestCase):
+    """The planner brief carries the seven-item spec check, its routing, the cutting rules, and the task issue format."""
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        repo, _ = repo_with({"README.md": "x"})
+        proj = repo / ".fast-coding" / "p"; proj.mkdir(parents=True)
+        (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
+            fc.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
+        self.brief = out.getvalue()
+
+    def test_the_seven_spec_checks_come_in_numbered_order(self):
+        at = -1
+        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "graft ask", "protected:", "open how", "contract"), 1):
+            i = self.brief.find(kw, at + 1)
+            self.assertGreater(i, at, f"spec check {n} ({kw}) missing or out of order")
+            at = i
+        self.assertIn("graft callers", self.brief)
+        self.assertIn("as new", self.brief)
+        self.assertIn("verify.json", self.brief)
+
+    def test_gaps_are_routed_to_the_chain_or_to_teammates(self):
+        for s in ("decision gap", "fact gap", "1, 3, 6", "2, 4, 5"):
+            self.assertIn(s, self.brief)
+
+    def test_every_cutting_rule_is_stated(self):
+        for s in ("one or two files", "2500", "five", "350", "no documents", "files:", "after:", "blocked-by", "review order", "split"):
+            self.assertIn(s, self.brief)
+
+    def test_task_issue_format_lists_sections_and_block_keys(self):
+        at = -1
+        for sec in ("## Goal", "## Acceptance criteria", "## Test plan", "## Constraints", "```fast-coding"):
+            i = self.brief.find(sec, at + 1)
+            self.assertGreater(i, at, f"{sec} missing or out of order")
+            at = i
+        self.assertIn("id, files, protected, test", self.brief)
+        self.assertRegex(self.brief, r"(?s)`after`.{0,80}`title`.{0,80}not .{0,20}key|`title`.{0,80}`after`.{0,80}not .{0,20}key")
+
+
 if __name__ == "__main__":
     unittest.main()
