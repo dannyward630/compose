@@ -28,7 +28,9 @@ Run `/fast-coding <what you want>` and each feature moves through the same life 
    An explore teammate maps your codebase through graft, so no question, ticket, or plan rests on a guess about the code.
 2. **Product decisions.**
    You are the product owner.
-   A wayfinder teammate puts every open decision on one Lavish page, each with options and a recommendation, and you settle them in one pass or accept every recommendation with one click.
+   A wayfinder teammate writes every open decision as a card with options and a recommendation.
+   Text cards reach you in one message; visual ones (a wireframe, a layout comparison, a diagram) go on one Lavish page.
+   You settle them in one pass or accept every recommendation with one word.
 3. **Design.**
    Questions about how a screen should look come with low-fi Frame0 wireframes, so you decide on something you can see.
    High-fi designs are on the roadmap.
@@ -93,7 +95,7 @@ The figures in this README come from small benchmarks and one prototype, and the
 1. Install the tools listed in [docs/requirements.md](docs/requirements.md).
 2. From this repo, install fast-coding with `ln -s "$PWD" ~/.claude/skills/fast-coding` and `ln -s "$PWD/bin/fast-coding" ~/.local/bin/`.
 3. In the target repo, check out the branch the feature belongs on and open Claude Code.
-4. Run `/fast-coding <what you want>` and answer the questions on the Lavish page it opens.
+4. Run `/fast-coding <what you want>` and answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
 5. Review the task list, say go, and read the stack it builds.
 
 ## When to use it

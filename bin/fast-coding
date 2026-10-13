@@ -1068,23 +1068,34 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 1. Read the map, the spec or README named below, and the repo (`graft ask "<question>" --source`). Before asking anything, look
    for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
    search in the project for the question's key terms. A decision found there is settled: do not ask it again.
-2. Chart the map body on the feature issue (`save_issue`), then write every open question onto one Lavish page: {page}
-   Read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first (the project's own design system if it has one,
-   else the Lavish-recommended Tailwind and DaisyUI CDN). Set data-lavish-annotate="off" on <html>.
-   Every question is a card with data-lavish-question: the question, why it matters, the options with one line each, your
-   recommended option preselected and marked, and a free-text box. Each card has one answer button, and the top of the page has
-   one "accept every recommendation" button; each sends exactly one window.lavish.queuePrompt with data {{question, answer}}.
-   Never choose for the product owner: every card carries a recommendation, the product owner answers.
-3. Open it: `npx -y lavish-axi {page}`, then report
-   `fast-coding report --project {slug} --as {name} needs-user "questions are open in Lavish: {page}"`.
-4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
-   product owner ended. If the poll is interrupted, run it again: queued answers wait for you.
+2. Chart the map body on the feature issue (`save_issue`), then write every open question as a card: the question, why it
+   matters, the options with one line each, and your recommended option marked. Never choose for the product owner: every card
+   carries a recommendation, the product owner answers. Decide the channel per card with one test: would the product owner
+   understand it better by seeing it than reading it? Text (the default) for requirements, conceptual choices, tradeoffs, scope,
+   and toolchain; a UI topic alone is not visual. Lavish only for a card whose content IS visual: a Frame0 wireframe, a layout or
+   flow comparison, a diagram, side-by-side designs. Visual cards go on one page, text cards never: {page}
+   For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first (the project's own design system if
+   it has one, else the Lavish-recommended Tailwind and DaisyUI CDN). Set data-lavish-annotate="off" on <html>. Each card is a
+   form with data-lavish-question, the recommended option preselected, a free-text box, and one answer button; the top of the page
+   has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text "<question>: <answer>"
+   and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}} with every
+   card's recommendation.
+3. Ask once. Open the page if there is one (`npx -y lavish-axi {page}`), then report, before any poll and whatever the CLI's
+   next_step text says: `fast-coding report --project {slug} --as {name} needs-user "<the text cards in full: question, why,
+   options, recommendation; 'accept every recommendation' is a one-word answer; plus 'visual cards open in Lavish: {page}' when
+   the page is open>"`. The team lead relays it to the engineering manager, which asks the product owner every open card at once.
+4. Wait. Text answers come back as a prompt in this pane: the team lead forwards them with `herdr agent prompt {name} "<answers>"`.
+   A visual page: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a
+   session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside
+   `prompt`), not as a data field. If the poll is interrupted, or your Bash call ends first (Claude stops a call at 10 minutes),
+   run it again at once, as often as it takes: queued answers wait for you.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
    whole-description write.
-6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them, become new
-   cards on the same page; then `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
-7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}`, then report `done` with the
-   decisions in one line each.
+6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them, are asked
+   the same way: text cards in a new needs-user; visual cards added to the same page, then
+   `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
+7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}` if the page was opened, then report
+   `done` with the decisions in one line each.
 """
 
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
@@ -1092,24 +1103,30 @@ CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on p
 The screen that raised it: {reflect}
 1. Read the map, the evidence (the screen file above, its `evidence` field, and the team lead's notes at the end of this brief),
    and the code each piece of evidence cites (`graft ask "<question>" --source`).
-2. Write one Lavish page: {page}. Never reopen the wayfinder's earlier page. Read `npx -y lavish-axi playbook input` and
-   `npx -y lavish-axi design` first, and set data-lavish-annotate="off" on <html>.
-   One card per decision line the evidence calls into question, each with data-lavish-question: the line as recorded, the evidence
-   quoted verbatim with its source, the options with one line each with "keep it as is" always among them, your recommended option
-   preselected and marked, and a free-text box. One answer button per card and one "accept every recommendation" button at the top;
-   each sends exactly one window.lavish.queuePrompt with data {{question, answer}}. Never choose for the product owner.
-3. Open it: `npx -y lavish-axi {page}`, then report
-   `fast-coding report --project {slug} --as {name} needs-user "change {cid}: questions are open in Lavish: {page}"`.
-4. Wait: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a session the
-   product owner ended. If the poll is interrupted, run it again: queued answers wait for you.
+2. Write one card per decision line the evidence calls into question: the line as recorded, the evidence quoted verbatim with
+   its source, the options with one line each with "keep it as is" always among them, and your recommended option marked. Never
+   choose for the product owner. Text by default; a card is visual only when its evidence is (a screenshot, a layout or flow
+   comparison, a diagram). Visual cards go on one Lavish page, never the wayfinder's earlier page: {page}
+   Build it as the wayfinder does: read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first, set
+   data-lavish-annotate="off" on <html>, give each card data-lavish-question, the recommended option preselected, a free-text box,
+   and one answer button, and put one "accept every recommendation" button at the top; each sends exactly one
+   window.lavish.queuePrompt with text "<question>: <answer>" and data {{question, answer}}; accept-all sends
+   data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
+3. Ask once. Open the page if there is one (`npx -y lavish-axi {page}`), then report, before any poll and whatever the CLI's
+   next_step text says: `fast-coding report --project {slug} --as {name} needs-user "change {cid}: <the text cards in full; plus
+   'visual cards open in Lavish: {page}' when the page is open>"`.
+4. Wait. Text answers come back as a prompt in this pane. A visual page: `npx -y lavish-axi poll {page}` in the foreground of
+   this pane. Never background or kill it, never reopen a session the product owner ended. Answers arrive in the poll's `text`
+   column (and as JSON after "Context data:" inside `prompt`), not as a data field. If the poll is interrupted, or your Bash call
+   ends first (Claude stops a call at 10 minutes), run it again at once: queued answers wait for you.
 5. Record each answer as it arrives, a `save_issue` patch, never a whole-description write. A line that changes is struck through
    and tagged, with the new line right after it:
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
    "keep it as is" changes nothing in the map.
-6. Evidence the team lead forwards while {cid} is open becomes new cards on the same page; then
+6. Evidence the team lead forwards while {cid} is open becomes new cards, asked the same way; visual ones on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
-7. When every card is answered: `npx -y lavish-axi end {page}`, then report `done` with each answer in one line.
+7. When every card is answered: `npx -y lavish-axi end {page}` if the page was opened, then report `done` with each answer in one line.
    Do not touch tasks, stories, or the plan: the team lead re-plans from your answers.
 """
 
@@ -1320,7 +1337,8 @@ def cmd_crew(a):
     else:
         herdr("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-              "--permission-mode", "auto", check=True, timeout=90)
+              "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",  # auto mode's classifier denied a first `npx` call as external code
+              check=True, timeout=90)
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     rec.write_text(json.dumps({"name": name, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))

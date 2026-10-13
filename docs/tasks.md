@@ -44,9 +44,9 @@ Three more rules apply to the block and the issue around it:
 
 A task is ready when it meets all four of these:
 
-- It touches one to three files.
+- It touches one or two files.
 - It has one test command.
-- It has under ten criteria.
+- It has at most five criteria.
 - Its test fails on HEAD.
 
 If you cannot write the test, it is not a task yet.

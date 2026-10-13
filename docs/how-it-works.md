@@ -53,8 +53,10 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 In a repo that already has code, an explore teammate maps it through graft first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, one wayfinder teammate puts every open decision on a single Lavish page, each with its options and a recommendation.
-You answer them all at once, or accept every recommendation with one button.
+Next, one wayfinder teammate writes every open decision as a card, each with its options and a recommendation.
+Text cards reach you through the engineering manager in one message.
+A card you would understand better by seeing it (a wireframe, a layout comparison, a diagram) goes on one Lavish page instead.
+You answer them all at once, or accept every recommendation with one word.
 Your answers go to the feature issue's "Decisions so far".
 
 A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown on its card.
@@ -92,7 +94,7 @@ When the plan turns out to be wrong, the fleet notices and changes it in the ope
 2. Jev screens every line of the feature's Decisions so far against that evidence and marks each one HOLDS, BROKEN, or UNCLEAR.
 3. The team lead holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
    Everything else keeps running.
-4. Complex or subjective calls, plus anything you settled yourself, reach you through the engineering manager on a change page in Lavish.
+4. Complex or subjective calls, plus anything you settled yourself, reach you through the engineering manager, as text, or on a change page in Lavish when the evidence is visual.
 5. The re-plan is one recorded change, started with `fast-coding change start` and finished with `done`.
    The old decision is struck through and tagged, the new one sits beside it, and a comment on the feature says what changed and why.
 

@@ -756,6 +756,7 @@ class ChangeBrief(unittest.TestCase):
         change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
         brief = self.brief("C1", extra="held: 003, 004")
         page = str(self.proj / "lavish" / "change-C1.html")
+        self.assertIn("Text by default", brief)
         self.assertIn(f"npx -y lavish-axi poll {page}", brief)
         self.assertIn("localStorage is wiped by the sandbox", brief)
         self.assertIn("its `evidence` field", brief)

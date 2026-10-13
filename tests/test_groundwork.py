@@ -49,7 +49,7 @@ class Groundwork(unittest.TestCase):
         self.assertIn("$E2E_CLIENT_PORT", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
-    def test_wayfinder_brief_puts_the_questions_on_one_lavish_page(self):
+    def test_wayfinder_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
@@ -57,6 +57,15 @@ class Groundwork(unittest.TestCase):
         brief = out.getvalue()
         page = str(self.proj / "lavish" / "wayfinder.html")
         self.assertIn("NEB-9", brief)
+        self.assertIn("Text (the default)", brief)
+        self.assertIn("Lavish only for a card whose content IS visual", brief)
+        self.assertIn("needs-user", brief)
+        self.assertIn("before any poll", brief)
+        self.assertIn('data-lavish-annotate="off"', brief)
+        self.assertIn("data-lavish-question", brief)
+        self.assertIn("Answers arrive in the poll's `text`", brief)
+        self.assertIn('answer: [{question, answer}, ...]', brief)
+        self.assertIn("run it again at once", brief)
         self.assertIn(f"npx -y lavish-axi poll {page}", brief)
         self.assertIn("Decisions so far", brief)
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
