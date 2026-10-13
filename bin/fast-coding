@@ -3670,7 +3670,21 @@ def cmd_tasks(a):
     for m in open_tasks:
         for f in m["files"]:
             shared.setdefault(f, []).append(m["id"])
-    clashes = {f: ids for f, ids in shared.items() if len(ids) > 1}
+    deps = {m["id"]: {d.strip() for d in str(m.get("after") or "").split(",") if d.strip()} for m in tasks}
+    def ordered(a, b):  # b is reached from a through `after:` links, so one runs before the other
+        seen, todo = set(), [a]
+        while todo:
+            for d in deps.get(todo.pop(), ()):
+                if d == b:
+                    return True
+                if d not in seen:
+                    seen.add(d); todo.append(d)
+        return False
+    clashes = {}
+    for f, ids in shared.items():
+        loose = [i for i in ids if any(j != i and not ordered(i, j) and not ordered(j, i) for j in ids)]
+        if loose:
+            clashes[f] = loose
     if clashes:
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
         for f, ids in clashes.items():

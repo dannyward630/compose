@@ -53,6 +53,21 @@ class Sync(unittest.TestCase):
         self.assertIn("owns 3 files", fc.too_big(wide))
         self.assertIn("brief is", fc.too_big(long))
 
+    def clash_warning(self, *specs):
+        """What `tasks` prints about a shared file for (id, after) tasks that all own x.go."""
+        tasks = [{"id": i, "title": i, "files": ["x.go"], "protected": [], "test": "t", "after": a, "linear": "", "body": ""} for i, a in specs]
+        out = io.StringIO()
+        with mock.patch.object(fc, "load_tasks", return_value=tasks), mock.patch.object(fc, "project_dir", return_value=self.proj), \
+                mock.patch.object(fc, "task_state", return_value={"state": "pending"}), mock.patch.object(fc, "sh"), \
+                mock.patch("sys.stdout", out):
+            fc.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
+        return "own the same file" in out.getvalue()
+
+    def test_shared_file_clashes_only_between_unordered_tasks(self):
+        self.assertFalse(self.clash_warning(("001", ""), ("002", "001"), ("003", "002")))  # a chain, transitively ordered
+        self.assertTrue(self.clash_warning(("001", ""), ("002", "")))
+        self.assertTrue(self.clash_warning(("001", "002"), ("002", ""), ("003", "002")))  # 001 and 003 are siblings
+
     def test_criteria_in_linear_bullets(self):
         desc = "## Goal\n\nDo it.\n\n## Acceptance criteria\n\n* one\n* two\n\n## Test plan\n\n* run\n\n```fast-coding\nid: 001\ntest: t\n```"
         self.sync([issue("ENG-3", "A", desc)])
