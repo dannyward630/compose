@@ -1,5 +1,6 @@
 import importlib.machinery, importlib.util, io, json, tempfile, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
@@ -97,4 +98,53 @@ class Sync(unittest.TestCase):
 
 
 class DesignTasks(unittest.TestCase):
-    pass
+    """A `kind: design` task is built in Figma: it never clones, stacks, or is judged from files."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj.mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        design = lambda i, nodes: issue(f"ENG-{i}", f"Page {i}", block(id=f"00{i}", kind="design", nodes=nodes, test="t"))
+        self.tasks = fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            design(1, " Checkout/Cart ,Checkout/Pay"), issue("ENG-2", "Store", block(id="002", files="a.go, b.go", protected="a_test.go", test="go test")),
+            design(3, "Home/Hero"), design(4, "Checkout/Summary"), design(5, "Home/Footer")]})
+        self.by = {m["id"]: m for m in fc.load_tasks(self.proj)}
+
+    def test_sync_keeps_kind_and_nodes_and_code_tasks_drops_design(self):
+        self.assertEqual((self.by["001"]["kind"], self.by["001"]["nodes"]), ("design", ["Checkout/Cart", "Checkout/Pay"]))
+        self.assertEqual({k: self.by["002"][k] for k in ("kind", "nodes", "files", "protected")},
+                         {"kind": "code", "nodes": [], "files": ["a.go", "b.go"], "protected": ["a_test.go"]})
+        self.assertEqual([m["id"] for m in fc.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
+
+    def test_run_stack_and_acceptance_never_see_a_design_task(self):
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "run_tasks") as run, \
+                mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+            fc.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False))
+            with self.assertRaises(SystemExit) as e:
+                fc.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False))
+        self.assertEqual([m["id"] for m in run.call_args.args[2]], ["002"])
+        self.assertIn("no tasks on Linear under this feature carry a fast-coding block", str(e.exception))
+        with mock.patch.object(fc, "task_branches", return_value={"fast/p/001": None, "fast/p/002": None}):
+            self.assertEqual(fc.stack_order(Path("."), self.proj), ["fast/p/002"])
+        reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
+        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
+            fc.jev_acceptance({}, self.proj, "diff")
+        self.assertEqual([c.args[3]["c0"]["instructions"]["task"] for c in ask.call_args_list], ["002"])
+
+    def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
+        out = io.StringIO()
+        state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "task_state", side_effect=state), \
+                mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
+            fc.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
+        text = out.getvalue()
+        self.assertIn("Checkout/Cart, Checkout/Pay", text)
+        self.assertIn("WARNING two design tasks own the same page (one page per task):", text)
+        self.assertIn("Checkout: 001, 004\n", text)  # one id per task, though 001 owns two nodes there
+        self.assertNotIn("Home:", text)  # 003 is merged, so only 005 is open on Home
+
+    def test_a_passed_design_task_stays_passed(self):
+        for tid in ("001", "002"):
+            (self.proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
+        with mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+            rows = [fc.task_state(Path("."), self.proj, self.by[t], "HEAD")["state"] for t in ("001", "002")]
+        self.assertEqual(rows, ["passed", "merged"])
