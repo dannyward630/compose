@@ -56,6 +56,21 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.status()[slot.resolve()], "available")  # back in the pool, installs and all
         self.assertEqual(fc.slots(proj), {})
 
+    def test_a_collected_test_slot_can_be_leased_again(self):
+        # `return` resets a slot to its lease's base, and treehouse reuses a slot only when its commit is an ancestor of the next
+        # base; a slot leased on its test branch came back on a test commit, "in use or dirty" for every lease after it
+        (self.repo / "treehouse.toml").write_text("max_trees = 2\n")
+        self.git("add", "treehouse.toml"); self.git("commit", "-qm", "cap the pool")
+        wt, proj = self.init()
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
+        slot = fc.test_worktree(proj, "001")
+        (slot / "t_test.txt").write_text("t\n")
+        self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
+        fc.collect_tests(proj)
+        self.git("checkout", "-qb", "next"); self.git("commit", "-q", "--allow-empty", "-m", "main moved on"); self.git("checkout", "-q", "main")
+        again = fc.slot_on(self.repo, "next", "fast-coding:p:tests-002")
+        self.assertEqual(again.resolve(), slot.resolve())
+
     def test_stack_slot_is_reused_and_clean_hands_every_slot_back(self):
         wt, proj = self.init()
         first = fc.stack_worktree(wt, proj, "fast-coding/p")

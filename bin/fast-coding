@@ -2162,9 +2162,12 @@ def treehouse(repo, *args, check=True):
 
 def slot_on(repo, branch, holder, detach=False):
     """Lease a treehouse slot and check `branch` out in it (detached for a read-and-rebase worktree). The branch must exist:
-    the work lives on branches, a slot is only a place to stand, and returning it keeps the branch."""
+    the work lives on branches, a slot is only a place to stand, and returning it keeps the branch.
+    The lease is cut from the default branch, never from `branch`: `return` resets a slot to its lease's base, and treehouse
+    reuses a slot only when its commit is an ancestor of the next base, so a slot returned onto a task or test branch was
+    "in use or dirty" for every lease after it and the pool ran dry while `status` showed it free."""
     exclude_paths(repo, ["/.treehouse/"])
-    out = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", branch, "--lease-holder", holder).stdout
+    out = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder).stdout
     path = Path(json.loads(out)["path"])
     sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
     return path
@@ -2178,6 +2181,14 @@ def is_slot(repo, path):
         return any(Path(e["path"]).resolve() == Path(path).resolve() for e in json.loads(p.stdout or "[]"))
     except (json.JSONDecodeError, KeyError, TypeError):
         return False
+
+def default_branch(repo):
+    """The repository's default branch, as treehouse infers it: the remote's HEAD, else main, else master."""
+    p = sh(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], repo, check=False)
+    for b in ([p.stdout.strip().split("/", 1)[-1]] if p.returncode == 0 else []) + ["main", "master"]:
+        if sh(["git", "rev-parse", "--verify", "-q", f"refs/heads/{b}"], repo, check=False).returncode == 0:
+            return b
+    return None
 
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. fast-coding's own leftovers go first: `return` keeps ignored
