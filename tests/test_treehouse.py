@@ -75,6 +75,9 @@ class Treehouse(unittest.TestCase):
         wt, proj = self.init()
         first = fc.stack_worktree(wt, proj, "fast-coding/p")
         self.assertEqual(fc.stack_worktree(wt, proj, "fast-coding/p"), first)
+        head = self.git("rev-parse", "HEAD")
+        for ref in ("refs/fast-coding/p/C1/001", f"refs/fast-coding/replaced/p/001/{head}", "refs/fast-coding/pq/C1/001"):
+            self.git("update-ref", ref, head)
         p = subprocess.run([CLI, "clean", "--project", "p", "--delete-unmerged", "--repo", str(self.repo)], capture_output=True, text=True, env=self.env)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         st = self.status()
@@ -82,6 +85,8 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(st[wt.resolve()], "available")
         self.assertFalse((wt / ".fast-coding").exists())  # no stale project results for the next lease
         self.assertEqual(self.git("branch", "--list", "fast-coding/p"), "")
+        refs = self.git("for-each-ref", "--format=%(refname)", "refs/fast-coding/").split()
+        self.assertEqual(refs, ["refs/fast-coding/pq/C1/001"])  # the project's change and replaced-tip refs go with it; another project's stay
 
     def test_a_crew_in_another_repo_gets_a_slot_on_its_own_branch(self):
         wt, proj = self.init()

@@ -4684,6 +4684,10 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
                 shutil.rmtree(wt, ignore_errors=True)
             sh(["git", "worktree", "prune"], main_repo, check=False)
             sh(["git", "branch", "-D", project_branch], main_repo, check=False)
+            refs = sh(["git", "for-each-ref", "--format=delete %(refname)", f"refs/fast-coding/{name}/", f"refs/fast-coding/replaced/{name}/"],
+                      main_repo, check=False).stdout  # its change-of-course and replaced-tip records: nothing left to undo or replay
+            if refs.strip():
+                subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)
             line += f"; project branch {why}: removed worktree {wt} and branch {project_branch}"
         else:
             line += f"; project branch {project_branch} not merged yet: worktree kept"
