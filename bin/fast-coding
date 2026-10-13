@@ -1179,11 +1179,35 @@ def cmd_wayfinder(a):
         brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-DESIGNER_BRIEF = ""  # not implemented
+DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear; the
+target Figma file is {figma}.
+1. Invoke the fast-coding skill and follow section 0d.
+2. Read, before any Figma write: the feature's Linear tree; a `list_issues` search for "design system", "tokens", "Figma"; the
+   Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
+   (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`.
+3. Load the `figma:figma-use` skill before every `use_figma` call.
+4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the Figma node
+   ids it covers), and `test: fast-coding figma judge --project {slug} --only NNN`.
+5. Start builders with `fast-coding designcrews --project {slug}`; gate each with
+   `fast-coding figma judge --project {slug} --only NNN`; then run a `design-review` teammate with one screenshot per story.
+6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
+   visual.
+"""
 
 def cmd_designer(a):
     """Print the designer teammate's brief; --figma stores the file key first, --extra adds the team lead's notes."""
-    sys.exit("not implemented")
+    proj = project_dir(a); wt = project_worktree(proj)
+    if a.figma:
+        key = figma_key(a.figma)
+        if not key:
+            sys.exit(f"not a Figma file url or key: {a.figma}")
+        store_figma(proj, key)
+    figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma") \
+        or "not set: ask the product owner for the Figma file"
+    extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
+    feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
+    print(DESIGNER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, figma=figma)
+          + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
