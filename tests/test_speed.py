@@ -31,6 +31,24 @@ class FormatOnPass(unittest.TestCase):
         self.assertEqual(r["status"], "passed")
         self.assertEqual(git("show", "fast/proj/001:a.go").stdout, "package a\n\nfunc F() int {\n\treturn 1\n}\n")
 
+    def test_final_newline_added_without_a_formatter_but_base_and_binary_kept(self):
+        wt = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", *a], cwd=wt, check=True, capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        (wt / "bare.txt").write_bytes(b"no newline")
+        (wt / "bin.dat").write_bytes(b"\0\1")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        (wt / "new.mjs").write_bytes(b"export {}")
+        (wt / "bare.txt").write_bytes(b"still none")
+        (wt / "bin.dat").write_bytes(b"\0\2")
+        (wt / "old.mjs").write_bytes(b"a\n\n\n")
+        git("add", "-A")
+        fc.format_files(wt, ["new.mjs", "bare.txt", "bin.dat", "old.mjs"], "HEAD")
+        self.assertEqual((wt / "new.mjs").read_bytes(), b"export {}\n")
+        self.assertEqual((wt / "old.mjs").read_bytes(), b"a\n")
+        self.assertEqual((wt / "bare.txt").read_bytes(), b"still none")
+        self.assertEqual((wt / "bin.dat").read_bytes(), b"\0\2")
+
 
 class Waves(unittest.TestCase):
     def test_independent_tasks_share_a_wave(self):

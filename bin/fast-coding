@@ -2232,9 +2232,10 @@ def task_base(repo, proj, meta):
 
 PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
 
-def format_files(wt, files):
+def format_files(wt, files, base="HEAD"):
     """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
-    fix rounds never spend one on formatting: gofmt for Go, the repo's installed prettier for web files. Returns what changed."""
+    fix rounds never spend one on formatting: gofmt for Go, the repo's installed prettier for web files. Whatever the formatter,
+    a text file ends with exactly one final newline, unless it had none on base. Returns what changed."""
     import shutil
     out = []
     for f in files:
@@ -2248,10 +2249,16 @@ def format_files(wt, files):
                 bin_ = d / "node_modules" / ".bin" / "prettier"
                 cmd = [str(bin_), "--write", str(p)] if bin_.exists() else None
                 d = d.parent
-        if not cmd:
-            continue
         before = p.read_bytes()
-        if sh(cmd, wt, timeout=120, check=False).returncode == 0 and p.read_bytes() != before:
+        if cmd:
+            sh(cmd, wt, timeout=120, check=False)
+        data = p.read_bytes()
+        text = b"\0" not in data and data.strip()
+        old = sh(["git", "show", f"{base}:{f}"], wt, check=False) if text else None  # only text is decoded
+        if text and (old.returncode != 0 or old.stdout.endswith("\n")):
+            data = data.rstrip(b"\n") + b"\n"
+            p.write_bytes(data)
+        if data != before:
             out.append(f)
     return out
 
@@ -2513,7 +2520,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         sh(["git", "add", "-A"], wt)
         changed = [f for f in sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]
         kept = {f: (wt / f).read_bytes() for f in changed if (wt / f).is_file()}
-        formatted = format_files(wt, list(kept))
+        formatted = format_files(wt, list(kept), base)
         if formatted and run_test(meta, wt).returncode != 0:
             for f, b in kept.items():
                 (wt / f).write_bytes(b)
