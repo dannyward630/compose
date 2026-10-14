@@ -858,7 +858,7 @@ def herdr_space(proj):
 # The product owner talks to the engineering manager (the session they started), which stays where it was launched. Each project gets a
 # team lead in its own space (`crew start --role orchestrator`), and the team lead starts teammates of its own (a wayfinder
 # question, a researcher). Every teammate session reports with `fast-coding report`; `watch` turns new reports into wake events.
-CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction")
+CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction", "fallback")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
 TOOL_BUGS = CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the engineering manager
 
@@ -969,19 +969,47 @@ def model_available(model):
     if hit and hit.get("date") == today:
         _PROBED[mid] = (hit["ok"], hit["why"])
         return _PROBED[mid]
-    try:
-        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        ok, why = probe_result(model, p)
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-        ok, why = False, f"{type(e).__name__}: {e}"[:160]
+    ok, why, transient = probe_once(model, 60)
+    if transient:  # a slow start-up or a busy API says nothing about the account: retry once, longer, and never cache it
+        ok, why, transient = probe_once(model, 180)
     _PROBED[mid] = (ok, why)
-    cache[mid] = {"date": today, "ok": ok, "why": why}
-    PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(PROBE_CACHE, json.dumps(cache, indent=2))
+    if not transient:
+        cache[mid] = {"date": today, "ok": ok, "why": why}
+        PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(PROBE_CACHE, json.dumps(cache, indent=2))
     return ok, why
 
+TRANSIENT = re.compile(r"overloaded|rate.?limit|too many requests|\b(5\d\d|429)\b|timed? ?out|temporar|try again|unavailable|connection|ECONN", re.I)
+
+def probe_once(model, timeout):
+    """(ok, why, transient) from one probe turn. Only a clear answer (ok, or a refusal such as an unknown model) is definite."""
+    try:
+        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        ok, why = probe_result(model, p)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        return False, f"{type(e).__name__}: {e}"[:160], True
+    return ok, why, not ok and bool(TRANSIENT.search(why))
+
+def probe_clear():
+    """Forget the day's cached probe results so the next pick asks again."""
+    PROBE_CACHE.unlink(missing_ok=True)
+    _PROBED.clear()
+
+def cmd_models(a):
+    """`models --probe`: clear the cached probe results and re-probe every model the crew chains name."""
+    if not a.probe:
+        sys.exit("models --probe clears the day's cached model probes and probes the crew models again")
+    probe_clear()
+    for model in dict.fromkeys(m for chain in [[(m, None)] for m in CREW_MODELS.values()] + list(CREW_FALLBACK.values()) for m, _ in chain):
+        if is_claude(model) or str(model).startswith("pi:"):
+            ok, why = model_available(model)
+            print(f"{model}: {'ok' if ok else 'unavailable'} ({why})")
+
 def crew_pick(role, explicit=None):
-    """(model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
+    return crew_pick_full(role, explicit)[:3]
+
+def crew_pick_full(role, explicit=None):
+    """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
     models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning role (the wayfinder
     teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
@@ -996,7 +1024,7 @@ def crew_pick(role, explicit=None):
                            "planner" if role in PLANNING_ROLES and "planner" in CREW_MODELS else
                            "default" if "default" in CREW_MODELS else None)
         if key is None:
-            return "claude", None, ""
+            return "claude", None, "", []
         chain = [(CREW_MODELS[key], CREW_EFFORT.get(key)), *CREW_FALLBACK.get(key, [])] \
             if key in CREW_MODELS else [CREW_DEFAULTS[key]]
     label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in CREW_DEFAULTS and key not in CREW_MODELS else "")
@@ -1013,7 +1041,13 @@ def crew_pick(role, explicit=None):
         if i == len(chain) - 1 or (ok := model_available(model))[0]:
             break
         skipped.append(f"{model} unavailable ({ok[1]})")
-    return model, effort, label + (": " + ", ".join(skipped) + ", using its fallback" if skipped else "")
+    return model, effort, label + (": " + ", ".join(skipped) + ", using its fallback" if skipped else ""), skipped
+
+def crew_fallback(proj, name, role, skipped, used):
+    """A role that did not get its first-choice model: say so on screen and as a report `watch` wakes on, so the product owner hears of it."""
+    msg = f"{role} wanted its first-choice model but {skipped[0]}; using {used}"
+    print(f"WARNING: {msg}")
+    write_report(proj, name, "fallback", msg)
 
 def crew_model(role, explicit=None):
     return crew_pick(role, explicit)[0]
@@ -1587,7 +1621,7 @@ def cmd_crew(a):
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"teammate {name} stopped")
         return
-    model, effort, why_model = crew_pick(a.role, getattr(a, "model", None))
+    model, effort, why_model, skipped = crew_pick_full(a.role, getattr(a, "model", None))
     if not herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     agent = name  # the herdr agent name: `name`, or a numbered one when a stranger outside this space already holds it
@@ -1635,6 +1669,8 @@ def cmd_crew(a):
     atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
+    if skipped:
+        crew_fallback(proj, name, a.role, skipped, model)
     herdr_await_start(agent)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
@@ -4659,7 +4695,7 @@ def watch_filter(events, slug, sources):
     """`--from` names the teammates whose reports wake you (the engineering manager watches only its team lead); without it you get
     everything except the team lead's own reports, which go up to the engineering manager."""
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
-        return [e for e in events if " state=tool-bug " in e or e.startswith("event stall=")
+        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in sources)]
     me = agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
@@ -5219,6 +5255,7 @@ def main():
                             ("change", cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
+                            ("models", cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
                             ("figma", cmd_figma, "check | judge: store the target Figma file key; judge a design task's node tree with Jev"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
@@ -5305,6 +5342,8 @@ def main():
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
             s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
+        if name == "models":
+            s.add_argument("--probe", action="store_true")
         if name == "frame0":
             s.add_argument("action", choices=("up", "save", "down"))
         if name == "figma":
