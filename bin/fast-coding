@@ -4237,30 +4237,34 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
     mem = watch_mem(proj, key)
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
+    lead = orch in snap.get("crew", {}) or orch in snap["agents"]  # a project started without a team lead (a designer started directly) never has one
+    who = f" agent={orch}" if lead else ""
     status = snap["agents"].get(orch, "gone")
     if (seen.get(orch) or [None])[0] != status:
         seen[orch] = [status, now_s]
     ev = []
     hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
-    tail = f"team lead {status}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
+    tail = f"{f'team lead {status}' if lead else 'no team lead'}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}"
+    if lead:
+        tail += f"  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
     def fire(key, what):
         if key not in fired:
             fired.add(key)
             ev.append(f"event stall={what}; {tail}")
     lt, what = snap.get("last") or (0, "")
     if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
-        fire(f"quiet:{lt}", f"quiet agent={orch} nothing moved for {fmt(now_s - lt)}, last: {what} at {hm(lt)}")
+        fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fmt(now_s - lt)}, last: {what} at {hm(lt)}")
     tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
     if tests and all(st == "done" for st, _ in tests.values()) and not snap["run"] and pending \
             and all(snap["tasks"][t]["state"] == "pending" for t in pending):
         done_at = max(t for _, t in tests.values())
         if now_s - done_at >= limit:
-            fire(f"undispatched:{done_at}", f"undispatched agent={orch} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
+            fire(f"undispatched:{done_at}", f"undispatched{who} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
     ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
-    if ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
+    if lead and ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
         fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the team lead has not reported since")
     since = seen[orch][1]
-    if status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
+    if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
         fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
     try:
         watch_save(proj, key, fired=sorted(fired), seen=seen)

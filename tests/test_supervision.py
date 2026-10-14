@@ -34,6 +34,19 @@ class Stalls(unittest.TestCase):
         self.assertIn("herdr agent read hw-orchestrator --lines 60", ev[0])
         self.assertEqual(self.stalls(s), [])  # the same silence does not wake the supervisor again
 
+    def test_a_project_without_a_team_lead_names_none(self):
+        s = self.snap(crew={"hw-designer": ("working", 600)}, last_ago=600)
+        s["agents"] = {}
+        ev = self.stalls(s)
+        self.assertEqual(len(ev), 1)
+        self.assertIn("stall=quiet nothing moved", ev[0])
+        self.assertNotIn("orchestrator", ev[0])
+        self.assertIn("no team lead", ev[0])
+
+    def test_the_team_lead_name_is_the_one_crew_start_gives_it(self):
+        self.assertEqual(fc.agent_name("autofill-hifi-design", "orchestrator"), "autofill-hifi-desig-orchestrator")
+        self.assertLessEqual(len(fc.agent_name("autofill-hifi-design", "orchestrator")), 32)
+
     def test_recent_activity_is_not_a_stall(self):
         self.assertEqual(self.stalls(self.snap(crew={ORCH: ("working", 60)}, last_ago=60)), [])
 
