@@ -237,6 +237,7 @@ A design task is a task issue (Task issue format) under a design story; its bloc
 id: 012
 kind: design
 nodes: Buttons/Button
+figma: <file key or url>   # optional: this task's own file; else the stored key
 test: fast-coding figma judge --project <slug> --only 012
 ```
 
@@ -540,7 +541,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - `id` is the stack order a reviewer reads in; ids are unique within the feature.
 - `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
-- A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `fast-coding figma judge --project <slug> --only NNN`.
+- A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `fast-coding figma judge --project <slug> --only NNN`. An optional `figma:` line (file key or url) names the task's own Figma file when it is not the stored one.
 
 ## Rules
 - Fact-check before you say it. Every claim about an existing codebase, tool, system, or result comes from evidence gathered in this session: graft output with file:line, a command and its output, a test run, a doc you read. Cite it where it matters. Keep observed facts apart from hypotheses, and when you have not verified something, say "not verified" or "unknown" instead of stating a guess. Never present a likely-enough answer as fact, and never fill a gap with what the code probably does.

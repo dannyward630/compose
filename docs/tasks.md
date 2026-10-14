@@ -44,6 +44,7 @@ Three more rules apply to the block and the issue around it:
 
 A design task is the same issue with `kind: design` and a `nodes:` line in place of the `files:` line.
 The `nodes:` line lists the page and frames the builder draws, like `Checkout/Cart, Checkout/Pay`.
+The optional `figma:` line is a file key or url for a task whose file is not the project's stored one.
 The `test:` command is `fast-coding figma judge --project <slug> --only NNN`.
 
 ````markdown
@@ -51,6 +52,7 @@ The `test:` command is `fast-coding figma judge --project <slug> --only NNN`.
 id: 006
 kind: design
 nodes: Checkout/Cart, Checkout/Pay
+figma: AbCdEf123456
 test: fast-coding figma judge --project my-feature --only 006
 ```
 ````

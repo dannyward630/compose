@@ -137,6 +137,12 @@ class FigmaJudge(unittest.TestCase):
             res = self.judge("004", {"Pay": [(first, 0.9)]}, confirm=refuted, reask=again, blocks=True)
             self.assertEqual((res["status"], len(res["unclear"]), self.ask.call_count), ("failed", 1, 2), (first, again))
 
+    def test_a_task_figma_line_is_the_file_the_result_names(self):
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            {**judge_task("ENG-3", "001", "Cart page", ["x"]), "description": judge_task("ENG-3", "001", "Cart page", ["x"])["description"].replace("test: t", "test: t\nfigma: LibKey123456789")}]})
+        res = self.judge("001", {"Cart page": [("MET", 0.95)]})
+        self.assertEqual(res["branch"], "figma:LibKey123456789")
+
     def test_a_confirm_error_blocks_with_no_re_ask(self):
         res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=RuntimeError("down"), reask="MET", blocks=True)
         self.assertEqual((res["status"], res["criteria"][0]["choice"], self.ask.call_count), ("blocked", "NOT_MET", 1))

@@ -385,6 +385,22 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual((out.count("skipped"), out.count("=====")), (4, 1))
         self.assertNotIn("skipped", self.run_crews(only="005", print_=True)[1])
 
+    def test_a_task_figma_line_names_its_own_file_else_the_stored_key(self):
+        def issue(n, **kv):
+            block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": "t", "nodes": "P/A", **kv}.items())
+            return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\n{block}\n```\n", "status": "Todo", "blockedBy": []}
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            issue("123", figma="https://www.figma.com/design/LibKey123456789/Lib?node-id=1-2"), issue("124")]})
+        out = self.run_crews(print_=True)[1]
+        self.assertEqual((out.count("Figma file LibKey123456789"), out.count("Figma file AbCdEf123456")), (1, 1))
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
+        self.assertIn("design-123", self.run_crews(only="123", print_=True)[1])  # every task names its file: no stored key needed
+        with self.assertRaises(SystemExit):
+            self.run_crews(only="124")
+        with self.assertRaises(SystemExit) as e:
+            fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("125", figma="junk")]})
+        self.assertIn("figma is not a Figma file url or key: junk", str(e.exception))
+
     def test_no_stored_figma_key_refuses(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         with self.assertRaises(SystemExit) as e:

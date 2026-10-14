@@ -294,6 +294,8 @@ def task_from_issue(issue):
         sys.exit(f"{issue['id']}: its fast-coding block needs id and test")
     for key in ("files", "protected", "nodes"):
         meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
+    if "figma" in meta:  # a design task's own file, a key or a url; else the project's stored key
+        meta["figma"] = figma_key(meta["figma"]) or sys.exit(f"{issue['id']}: figma is not a Figma file url or key: {meta['figma']}")
     meta.setdefault("kind", "code")
     meta.setdefault("model", DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
@@ -1497,7 +1499,8 @@ def cmd_testcrews(a):
         print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding testcrews --project {proj.name} --only {','.join(sorted(failed))}")
 
 def design_brief(meta, figma, results):
-    """The brief for one design task's builder."""
+    """The brief for one design task's builder; the task's own `figma:` file wins over the project's."""
+    figma = meta.get("figma") or figma
     nodes = ", ".join(meta.get("nodes") or [])
     tree = Path(results) / f"{meta['id']}.tree.txt"
     return (f"task {meta['id']} ({meta.get('title', '')}); Figma file {figma}\n"
@@ -1522,7 +1525,7 @@ def cmd_designcrews(a):
             print(f"{tid} skipped: " + ("no such task" if not m else f"not a design task (kind {m.get('kind')})" if m.get("kind") != "design"
                                        else f"its state is {m.get('linear_state')}"))
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
-    if not figma:
+    if not figma and not all(m.get("figma") for m in metas):
         sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
     if a.print_:
         for m in metas:
@@ -1946,7 +1949,7 @@ def cmd_figma(a):
         sys.exit("figma judge needs --only <ids>")
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
     env = {**load_env(cfg.get("env_file", ENV_FILE)), **os.environ}
-    key = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
+    stored = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     tasks = {m["id"]: m for m in load_tasks(proj, required=True)}
     crits = {}
     for tid, text in criteria_from_tasks(proj):
@@ -2008,7 +2011,7 @@ def cmd_figma(a):
         result = {"id": tid, "title": meta["title"], "status": "blocked" if any(r.get("judge_error") for r in rows) else "passed" if all(r["choice"] == "MET" for r in rows) else "failed", "kind": "design",
                   "judge_errors": [r for r in rows if r.get("judge_error")],
                   "criteria": rows, "failed": failed, "unclear": [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")], "attempts": (prev.get("attempts") or 0) + 1, "seconds": 0.0,
-                  "cost": 0.0, "model": out.get("model"), "branch": f"figma:{key}",
+                  "cost": 0.0, "model": out.get("model"), "branch": f"figma:{meta.get('figma') or stored}",
                   "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         atomic_write(rf, json.dumps(result))
         if result["status"] == "passed":
