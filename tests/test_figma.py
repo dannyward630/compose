@@ -81,12 +81,17 @@ class FigmaJudge(unittest.TestCase):
         for name, value in (("ENV_FILE", self.proj / "none.env"), ("say", lambda m: None)):
             p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
 
-    def judge(self, only, replies, confirm=None, fail=None):
+    def judge(self, only, replies, confirm=None, fail=None, blocks=False):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: replies[state["task"]]) as self.ask, \
                 mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
-            fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
+            try:
+                fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
+            except SystemExit as e:
+                if not blocks:
+                    raise
+                self.assertEqual(e.code, 1)  # a blocked task exits non-zero
         return json.loads((self.proj / "results" / f"{only[:3]}.json").read_text())
 
     def test_all_met_writes_a_passed_result_and_tells_linear(self):
@@ -103,8 +108,8 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual(self.ev.call_args_list, [mock.call(self.proj, mock.ANY, "passed", res)])
 
     def test_only_a_confirmed_not_met_at_the_threshold_fails(self):
-        res = self.judge("001", {"Cart page": [("NOT_MET", 0.65), ("NOT_MET", 0.7)]}, fail=RuntimeError("down"))
-        self.assertEqual((res["status"], self.confirm.call_count), ("passed", 1))
+        res = self.judge("001", {"Cart page": [("NOT_MET", 0.65), ("NOT_MET", 0.7)]}, fail=RuntimeError("down"), blocks=True)
+        self.assertEqual((res["status"], self.confirm.call_count), ("failed", 1))
         self.assertIn("CRITERION: Has a pay button", self.confirm.call_args.args[2])
         replies = {"Cart page": [("MET", 0.9), ("MET", 0.9)], "Pay": [("NOT_MET", 0.9)]}
         with self.assertRaises(SystemExit) as e:
@@ -114,6 +119,11 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], len(res["failed"])), ("failed", 1))
         self.assertIn("004 NOT_MET p_not_met=0.90 Has a card field", self.out.getvalue())
         self.assertEqual([c.args[1]["id"] for c in self.ev.call_args_list], ["001"])
+
+    def test_only_all_met_passes_so_unclear_and_unconfirmed_not_met_block(self):
+        res = self.judge("001", {"Cart page": [("NOT_MET", 0.0), ("UNCLEAR", 0.14)]}, confirm={"confirmed": False, "evidence": ""}, blocks=True)
+        self.assertEqual((res["status"], res["failed"], len(res["unclear"])), ("failed", [], 2))
+        self.assertFalse(self.ev.called)
 
     def test_refuses_with_one_line(self):
         for only, needle in ((None, "figma judge needs --only <ids>"), ("009", "009"), ("002", "002"), ("003", f"no node tree at {self.proj / 'results' / '003.tree.txt'}")):
@@ -137,8 +147,8 @@ class FigmaJudge(unittest.TestCase):
         self.assertFalse((self.proj / "results" / "001.json").exists())
 
     def test_any_other_confirm_error_still_counts_as_not_confirmed(self):
-        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=ValueError("bad json"))
-        self.assertEqual((res["status"], res["criteria"][0]["confirmed"], res["criteria"][0]["evidence"]), ("passed", False, "confirm call failed: bad json"))
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=ValueError("bad json"), blocks=True)
+        self.assertEqual((res["status"], res["criteria"][0]["confirmed"], res["criteria"][0]["evidence"]), ("failed", False, "confirm call failed: bad json"))
 
 
 class FigmaConnectorBriefs(unittest.TestCase):

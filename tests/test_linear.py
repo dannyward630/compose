@@ -130,6 +130,13 @@ class DesignTasks(unittest.TestCase):
             fc.jev_acceptance({}, self.proj, "diff")
         self.assertEqual([c.args[3]["c0"]["instructions"]["task"] for c in ask.call_args_list], ["002"])
 
+    def test_acceptance_passes_only_when_every_criterion_is_met(self):
+        for choice, ok in (("MET", True), ("UNCLEAR", False), ("NOT_MET", False)):
+            reply = {"model": "m", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.1}}}}
+            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+                    mock.patch.object(fc, "fast_json", return_value={"confirmed": False, "evidence": ""}):
+                self.assertEqual(fc.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
+
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
