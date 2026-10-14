@@ -355,3 +355,24 @@ class AwaitStart(unittest.TestCase):
         with self.assertRaises(RuntimeError) as e:
             self.run_await(["idle"] * 100)
         self.assertIn("shop-tests-003 did not start", str(e.exception))
+
+
+class StartPaneBusy(unittest.TestCase):
+    """Teammates started in parallel race each other: a new pane answers agent_pane_busy until its shell is up, which is retried, not a failed start."""
+    def run_start(self, busy):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "start") and len([c for c in calls if c[:2] == args[:2]]) <= busy:
+                raise RuntimeError("herdr agent start: agent_pane_busy")
+            return {}
+        with mock.patch.object(fc, "herdr", herdr):
+            fc.herdr_start_crew("shop-design-086", "--kind", "claude")
+        return len(calls)
+
+    def test_a_busy_pane_is_retried_until_it_starts(self):
+        self.assertEqual(self.run_start(busy=3), 4)
+
+    def test_a_pane_busy_for_good_fails_loudly(self):
+        with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
+            self.run_start(busy=99)

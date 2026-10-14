@@ -741,6 +741,17 @@ def herdr_await_start(agent, tries=3):
             time.sleep(2)
     raise RuntimeError(f"{agent} did not start on its brief; the brief may sit unsent in its tab: press Enter there")
 
+def herdr_start_crew(*args, tries=8):
+    """`herdr agent start` for a teammate, retried while its pane is still coming up: starts running in parallel (designcrews,
+    testcrews) race each other and the new pane answers agent_pane_busy until its shell is there."""
+    for i in range(tries):
+        try:
+            return herdr("agent", "start", *args, check=True, timeout=90)
+        except RuntimeError as e:
+            if "agent_pane_busy" not in str(e) or i == tries - 1:
+                raise
+            time.sleep(0.5 * (i + 1))
+
 def agent_name(slug, tid):
     """herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents. `<slug>-<id>`, slug trimmed to fit."""
     s = re.sub(r"[^a-z0-9_-]+", "-", slug.lower()).strip("-")
@@ -1402,10 +1413,14 @@ def cmd_testcrews(a):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
                                         brief=test_brief(m, contract, budget), force=False, cwd=str(wts[m["id"]]), model=model))
-        except (SystemExit, RuntimeError) as e:  # one teammate's failure must not stop the rest
+        except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
+            failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")
+    failed = []
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
+    if failed:
+        print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding testcrews --project {proj.name} --only {','.join(sorted(failed))}")
 
 def design_brief(meta, figma, results):
     """The brief for one design task's builder."""
@@ -1448,10 +1463,14 @@ def cmd_designcrews(a):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
                                         brief=design_brief(m, figma, proj / "results"), force=False, cwd=None, model=None))
-        except (SystemExit, RuntimeError) as e:
+        except (SystemExit, Exception) as e:  # noqa: BLE001  one builder's failure must not stop the rest, and is never silent
+            failed.append(m["id"])
             print(f"design-{m['id']} not started: {e}")
+    failed = []
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
+    if failed:
+        print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding designcrews --project {proj.name} --only {','.join(sorted(failed))}")
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} design builder(s) queued past the cap of {cap}: {ids}\nstart them as earlier ones report done or design ready: "
@@ -1577,14 +1596,13 @@ def cmd_crew(a):
     brief_file.write_text(crew_preamble(proj, name, title) + brief)
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-        herdr("agent", "start", agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", first, "--tui-mode", "regular", "--no-extensions",
+        herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", first, "--tui-mode", "regular", "--no-extensions",
               *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
-              *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), check=True, timeout=90)
+              *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model))
     else:
-        herdr("agent", "start", agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
+        herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-              "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",  # auto mode's classifier denied a first `npx` call as external code
-              check=True, timeout=90)
+              "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     rec.write_text(json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
