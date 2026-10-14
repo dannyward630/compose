@@ -755,6 +755,10 @@ def herdr_start_crew(*args, tries=8):
         try:
             return herdr("agent", "start", *args, check=True, timeout=90)
         except RuntimeError as e:
+            if "timeout" in str(e) and "--pane" in args:  # the session can come up after the call gave up: name it rather than lose it
+                pane = args[args.index("--pane") + 1]
+                if any(ag.get("pane_id") == pane for ag in live_agents()):
+                    return herdr("agent", "rename", pane, args[0], check=True)
             if "agent_pane_busy" not in str(e) or i == tries - 1:
                 raise
             time.sleep(0.5 * (i + 1))

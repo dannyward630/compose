@@ -377,6 +377,25 @@ class StartPaneBusy(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
             self.run_start(busy=99)
 
+    def run_timeout(self, live):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "start"):
+                raise RuntimeError("herdr agent start: timeout")
+            return {"agents": live} if args[:2] == ("agent", "list") else {}
+        with mock.patch.object(fc, "herdr", herdr):
+            fc.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
+        return calls
+
+    def test_a_start_that_timed_out_but_came_up_is_named_and_kept(self):
+        calls = self.run_timeout([{"name": "claude", "pane_id": "wJ:p3"}])
+        self.assertIn(("agent", "rename", "wJ:p3", "shop-design-086"), calls)
+
+    def test_a_start_that_timed_out_and_never_came_up_fails_loudly(self):
+        with self.assertRaisesRegex(RuntimeError, "timeout"):
+            self.run_timeout([])
+
 
 class AtomicState(unittest.TestCase):
     """A reader of the sync cache sees the old file or the new one, never an empty or partial one; watch retries a transient bad read."""
