@@ -1510,7 +1510,7 @@ def test_worktree(proj, tid):
         if path.exists():
             return path
         sh(["git", "worktree", "add", "-q", "-B", branch, str(path), "HEAD"], wt)
-    ready_checkout(wt, path)
+    ready_checkout(wt, path, install=project_config(proj).get("install"))
     return path
 
 def collect_tests(proj, only=None):
@@ -2286,7 +2286,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
-    ready_checkout(repo, wt, borrow=not names_lockfile(meta))
+    ready_checkout(repo, wt, borrow=not names_lockfile(meta), install=project_config(proj).get("install"))
     for name in ("opencode.jsonc", "opencode.json"):  # untracked local config the implementer needs
         if (repo / name).exists() and not (wt / name).exists():
             shutil.copy(repo / name, wt / name)
@@ -2625,7 +2625,7 @@ def stack_worktree(repo, proj, trunk):
                 sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
             else:
                 sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-        ready_checkout(repo, wt)  # verify runs its checks here
+        ready_checkout(repo, wt, install=project_config(proj).get("install"))  # verify runs its checks here
         tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
         if tools.is_dir() and not link.exists() and not link.is_symlink():
             link.symlink_to(tools)
@@ -2664,13 +2664,22 @@ def dep_dirs(wt):
     ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
     return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
 
-def ready_checkout(repo, wt, borrow=True):
+def ready_checkout(repo, wt, borrow=True, install=None):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
     (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
     the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
-    `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's."""
+    `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's.
+    `install` (verify.json `install`) runs in the checkout instead of linking: bundlers write a dependency's real path into
+    unminified output, so a borrowed install builds different bytes than the project worktree's own. Links from an earlier
+    borrow are removed first, so the command never writes through one."""
     deps = dep_dirs(repo)
     exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
+    if install and borrow:
+        for d in deps:
+            if (wt / d).is_symlink():
+                (wt / d).unlink()
+        sh(install, wt)
+        return
     for d in deps if borrow else ():
         link = wt / d
         if link.parent.is_dir() and not link.exists() and not link.is_symlink():

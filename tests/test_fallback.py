@@ -118,6 +118,25 @@ class ReadyCheckout(unittest.TestCase):
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
 
+    def test_install_command_replaces_borrowing(self):
+        root = Path(tempfile.mkdtemp())
+        repo, wt = root / "repo", root / "wt"
+        (repo / "node_modules" / "old").mkdir(parents=True)
+        (repo / ".gitignore").write_text("node_modules/\n")
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
+        git(repo, "init", "-q")
+        git(repo, "add", "-A")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        git(root, "clone", "-q", "--shared", str(repo), str(wt))
+        (wt / "node_modules").symlink_to(repo / "node_modules")  # a link left by an earlier borrow
+        fc.ready_checkout(repo, wt, install="mkdir -p node_modules/fresh")
+        self.assertFalse((wt / "node_modules").is_symlink())  # the install lives in the checkout, so build output cannot depend on the project worktree's path
+        self.assertTrue((wt / "node_modules" / "fresh").is_dir())
+        self.assertFalse((repo / "node_modules" / "fresh").exists())
+        self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
+        with self.assertRaises(RuntimeError):
+            fc.ready_checkout(repo, wt, install="exit 3")
+
     def test_lockfile_task_installs_on_its_own_and_hands_it_over(self):
         root = Path(tempfile.mkdtemp())
         repo, wt = root / "repo", root / "wt"
