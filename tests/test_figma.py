@@ -141,5 +141,15 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], res["criteria"][0]["confirmed"], res["criteria"][0]["evidence"]), ("passed", False, "confirm call failed: bad json"))
 
 
+class FigmaConnectorBriefs(unittest.TestCase):
+    def test_designer_and_builder_briefs_name_the_connector_and_ban_the_plugin(self):
+        builder = fc.design_brief({"id": "001", "nodes": ["Page/A"]}, "AbCd", Path("r"))
+        designer = fc.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd")
+        for brief in (builder, designer):
+            self.assertIn("mcp__claude_ai_Figma__*", brief)
+            self.assertIn("one ToolSearch select call", brief)
+            self.assertIn("Never use `plugin:*figma*` tools", brief)
+
+
 if __name__ == "__main__":
     unittest.main()

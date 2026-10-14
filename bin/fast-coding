@@ -1301,6 +1301,9 @@ def cmd_planner(a):
     print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=agent_name(proj.name, "planner"))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
+FIGMA_CONNECTOR = ("Figma tools: use only the authenticated connector, `mcp__claude_ai_Figma__*`. Load what you need in one ToolSearch select call\n"
+                   "(`use_figma`, `get_metadata`, `get_screenshot`, `get_variable_defs`, `whoami`). Never use `plugin:*figma*` tools or their authenticate calls.")
+
 DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear; the
 target Figma file is {figma}.
 1. Invoke the fast-coding skill and follow section 0d.
@@ -1308,6 +1311,7 @@ target Figma file is {figma}.
    Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
    (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`.
 3. Load the `figma:figma-use` skill before every `use_figma` call.
+   """ + FIGMA_CONNECTOR.replace("\n", "\n   ") + """ Tell every builder and the `design-review` teammate the same.
 4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
    one page per task), and `test: fast-coding figma judge --project {slug} --only NNN`.
 5. Start builders with `fast-coding designcrews --project {slug}`; gate each with
@@ -1392,6 +1396,7 @@ def design_brief(meta, figma, results):
     return (f"task {meta['id']} ({meta.get('title', '')}); Figma file {figma}\n"
             f"nodes you may create or touch: {nodes} (one page per task)\n"
             "Load the `figma:figma-use` skill before every `use_figma` call.\n"
+            f"{FIGMA_CONNECTOR}\n"
             "Work in one retry-safe script that returns every created and mutated node id; at most one component set of 30 variants.\n"
             f"When it is built, run the assert read script and save its returned text to {tree}, then run `{meta.get('test')}`.\n"
             "Report `working \"design ready: <node ids>\"`, and `done` only when the designer says so.\n\n"
