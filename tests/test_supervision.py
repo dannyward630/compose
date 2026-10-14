@@ -207,13 +207,19 @@ class Detach(unittest.TestCase):
 
     def test_killing_the_follower_leaves_the_work_running(self):
         done = self.dir / "done"
-        work = f"import time; time.sleep(1.5); open({str(done)!r}, 'w').write('ok')"
+        started = self.dir / "started"
+        work = f"import time; open({str(started)!r}, 'w').write('1'); time.sleep(1.5); open({str(done)!r}, 'w').write('ok')"
         cli = Path(__file__).resolve().parents[1] / "bin" / "fast-coding"
         follower = subprocess.Popen([sys.executable, "-c",
             "import importlib.machinery as m, importlib.util as u, sys; "
             f"s = u.spec_from_loader('fc', m.SourceFileLoader('fc', {str(cli)!r})); fc = u.module_from_spec(s); s.loader.exec_module(fc); "
             f"fc.follow([sys.executable, '-c', {work!r}], fc.Path({str(self.log)!r}))"], stdout=subprocess.DEVNULL)
-        time.sleep(0.5)
+        def wait_for(path):  # generous deadline, polled: a loaded machine can take seconds to start python
+            for _ in range(300):
+                if path.exists():
+                    return
+                time.sleep(0.1)
+        wait_for(started)  # kill only once the work is running, or the follower may die before it ever spawned it
         def tree(pid):  # what Claude Code does to a background task when its tab closes: the whole process tree
             kids = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
             return [pid] + [p for k in kids for p in tree(int(k))]
@@ -223,10 +229,7 @@ class Detach(unittest.TestCase):
             except ProcessLookupError:
                 pass
         follower.wait()
-        for _ in range(40):
-            if done.exists():
-                break
-            time.sleep(0.1)
+        wait_for(done)
         self.assertEqual(done.read_text(), "ok")
 
     def test_now_says_a_run_is_live(self):
