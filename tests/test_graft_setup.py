@@ -14,6 +14,7 @@ ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_
 FAKE_GRAFT = """#!/bin/sh
 echo "$*" >> "$GRAFT_LOG"
 case "$1 $2" in
+  "--version "*) echo 9.9.9;;
   "init --no-agents")
     case "$*" in *--dry-run*)
       printf 'would write \\342\\200\\224 this repo:\\n  .claude/settings.json   graft statusline\\n  .claude/helpers/graft-hooks.cjs   hooks shim\\n  .mcp.json   mcpServers.graft\\n\\nnothing was written (--dry-run)\\n' >&2
@@ -63,6 +64,17 @@ class GraftSetup(unittest.TestCase):
         self.assertFalse(any(c.startswith("init") and "--dry-run" not in c for c in self.calls()))
         self.assertEqual(json.loads((repo / ".mcp.json").read_text()), {"mine": True})
         self.assertTrue((repo / "graft" / "INDEX.md").exists())
+
+    def test_tracked_wiring_gets_a_stamp_so_graft_never_refreshes_it(self):
+        # graft's session-start hook rewrites wired files when graft/.cache/wiring-stamp.json is missing or older than graft
+        repo, _ = repo_with({"server/main.go": "package main\n", ".claude/helpers/graft-hooks.cjs": "x"})
+        stamp = repo / "graft" / ".cache" / "wiring-stamp.json"
+        fc.setup_graft(repo)
+        self.assertEqual(json.loads(stamp.read_text())["version"], "9.9.9")
+        clone = Path(tempfile.mkdtemp()) / "clone"
+        subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+        fc.ready_checkout(repo, clone)  # a task clone or verify worktree starts without graft/ at all
+        self.assertEqual(json.loads((clone / "graft" / ".cache" / "wiring-stamp.json").read_text())["version"], "9.9.9")
 
     def test_a_new_repo_skips_graft(self):
         repo, _ = repo_with({"README.md": "x", "LICENSE": "x"})

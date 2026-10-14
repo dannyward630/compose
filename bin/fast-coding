@@ -2677,6 +2677,18 @@ def dep_dirs(wt):
     ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
     return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
 
+def stamp_graft_wiring(wt):
+    """graft's session-start hook rewrites the wired files whenever graft/.cache/wiring-stamp.json is missing or names another
+    version, and graft/ is git-ignored, so every fresh worktree or clone would get a tracked .claude/settings.json edited.
+    A stamp at the installed version makes the hook leave tracked wiring alone."""
+    if not shutil.which("graft") or sh(["git", "ls-files", "--error-unmatch", ".claude/helpers/graft-hooks.cjs"], wt, check=False).returncode:
+        return
+    version = sh(["graft", "--version"], wt, check=False).stdout.strip()
+    stamp = wt / "graft" / ".cache" / "wiring-stamp.json"
+    if version and not (stamp.exists() and json.loads(stamp.read_text() or "{}").get("version") == version):
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(json.dumps({"version": version, "hosts": ["claude"], "opts": {"global": False, "mcp": True, "hooks": True, "statusline": True}}))
+
 def ready_checkout(repo, wt, borrow=True, install=None):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
     (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
@@ -2687,6 +2699,7 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     borrow are removed first, so the command never writes through one."""
     deps = dep_dirs(repo)
     exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
+    stamp_graft_wiring(wt)
     if install and borrow:
         for d in deps:
             if (wt / d).is_symlink():
@@ -4905,6 +4918,7 @@ def setup_graft(wt):
             exclude_paths(wt, ["/" + f for f in paths])
             say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
     exclude_paths(wt, ["/graft/"])  # the graph itself, also when `fast-coding graft` runs without init
+    stamp_graft_wiring(wt)
     sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     say("graft    graph built")
 
