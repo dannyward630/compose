@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
@@ -154,7 +154,13 @@ class ReadyCheckout(unittest.TestCase):
         fc.ready_checkout(repo, wt, borrow=False)
         self.assertFalse((wt / "node_modules").exists())
         (wt / "node_modules" / "new").mkdir(parents=True)  # the task's own install
-        fc.adopt_installs(repo, wt)
+        real, seen = shutil.rmtree, []
+        def rmtree(path, *a, **k):
+            real(path, *a, **k)
+            seen.append((repo / "node_modules").exists())
+        with mock.patch.object(shutil, "rmtree", rmtree):
+            fc.adopt_installs(repo, wt)
+        self.assertTrue(seen and all(seen), "the install dir was missing during the swap")
         self.assertTrue((repo / "node_modules" / "new").is_dir())
         self.assertFalse((repo / "node_modules" / "old").exists())
         self.assertFalse((repo / "node_modules").is_symlink())

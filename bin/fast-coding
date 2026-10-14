@@ -2710,11 +2710,18 @@ def adopt_installs(repo, wt):
         tmp = old.with_name(old.name + ".adopt")
         shutil.rmtree(tmp, ignore_errors=True)
         shutil.copytree(new, tmp, symlinks=True)
-        if old.is_symlink():
-            old.unlink()
+        aside = old.with_name(old.name + ".old")  # the path is never missing: old moves aside, the copy moves in, then the slow delete
+        if aside.is_symlink():
+            aside.unlink()
         else:
-            shutil.rmtree(old, ignore_errors=True)
+            shutil.rmtree(aside, ignore_errors=True)
+        if os.path.lexists(old):
+            old.rename(aside)
         tmp.rename(old)
+        if aside.is_symlink():
+            aside.unlink()
+        else:
+            shutil.rmtree(aside, ignore_errors=True)
 
 def mirror_stack_state(repo, wt):
     """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
