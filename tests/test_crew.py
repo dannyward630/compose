@@ -376,3 +376,35 @@ class StartPaneBusy(unittest.TestCase):
     def test_a_pane_busy_for_good_fails_loudly(self):
         with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
             self.run_start(busy=99)
+
+
+class AtomicState(unittest.TestCase):
+    """A reader of the sync cache sees the old file or the new one, never an empty or partial one; watch retries a transient bad read."""
+    def test_a_reader_never_sees_a_partial_write(self):
+        import threading
+        path = Path(tempfile.mkdtemp()) / "tasks.json"
+        fc.atomic_write(path, json.dumps({"n": 0}))
+        stop, bad = threading.Event(), []
+        def read():
+            while not stop.is_set():
+                try:
+                    json.loads(path.read_text())
+                except ValueError as e:
+                    bad.append(e)
+        t = threading.Thread(target=read); t.start()
+        for i in range(300):
+            fc.atomic_write(path, json.dumps({"n": i, "pad": "x" * 100000}))
+        stop.set(); t.join()
+        self.assertEqual(bad, [])
+        self.assertEqual([f.name for f in path.parent.iterdir()], ["tasks.json"])  # no temp file left behind
+
+    def test_watch_retries_one_bad_read_of_the_cache(self):
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        reads = iter([json.JSONDecodeError("Expecting value", "", 0), []])
+        def load(p, required=False):
+            r = next(reads)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        with mock.patch.object(fc, "load_tasks", load), mock.patch.object(fc, "herdr", return_value={}):
+            self.assertEqual(fc.watch_snapshot(Path("."), proj)["tasks"], {})

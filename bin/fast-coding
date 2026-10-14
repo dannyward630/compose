@@ -66,7 +66,7 @@ def read_config():
 
 def write_config(cfg):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n")
     CONFIG_PATH.chmod(0o600)  # it holds API keys
 
 def settings(cfg):
@@ -316,12 +316,19 @@ def sync_tasks(proj, data):
                         "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or []),
                         **({"parentId": i["parentId"]} if i.get("parentId") else {})}
               for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
-    (proj / "results" / "tasks.json").write_text(json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    atomic_write((proj / "results" / "tasks.json"), json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks,
         "issues": issues}, indent=2))
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
+
+def atomic_write(path, text):
+    """Write a state file so a reader sees the old file or the new one, never a half-written or empty one."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 def linear_cache(proj):
     path = proj / "results" / "tasks.json"
@@ -953,7 +960,7 @@ def model_available(model):
     _PROBED[mid] = (ok, why)
     cache[mid] = {"date": today, "ok": ok, "why": why}
     PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    PROBE_CACHE.write_text(json.dumps(cache, indent=2))
+    atomic_write(PROBE_CACHE, json.dumps(cache, indent=2))
     return ok, why
 
 def crew_pick(role, explicit=None):
@@ -1065,7 +1072,7 @@ def triage(repo, proj, ids):
         f = proj / "results" / f"{tid}.json"
         if f.exists():
             r = json.loads(f.read_text()); r["triage"] = {"verdict": verdict, "reason": reason}
-            f.write_text(json.dumps(r, indent=2))
+            atomic_write(f, json.dumps(r, indent=2))
         return tid, verdict, reason
     with ThreadPoolExecutor(max_workers=8) as ex:
         out = list(ex.map(one, ids))
@@ -1604,7 +1611,7 @@ def cmd_crew(a):
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
               "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    rec.write_text(json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+    atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
     herdr_await_start(agent)
@@ -1711,7 +1718,7 @@ def crew_closed(proj, name, why):
     f = crew_dir(proj) / f"{name}.json"
     c = json.loads(f.read_text())
     c["closed"] = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "why": why}
-    f.write_text(json.dumps(c, indent=2))
+    atomic_write(f, json.dumps(c, indent=2))
 
 TASK_TAB = re.compile(r"(\d{3}) ")  # the per-task tabs runs made before implementers shared one tab: `NNN <title>`
 VERIFY_TAB = re.compile(r"verify( \d\d:\d\d)?")
@@ -1782,9 +1789,9 @@ def frame0_up(proj):
         sys.exit(f"Frame0 is not installed at {FRAME0_APP}; install it from https://frame0.app")
     port, data, design = frame0_port(proj), proj / "frame0", proj / "design.f0"
     data.mkdir(parents=True, exist_ok=True)
-    (data / "config.json").write_text(json.dumps({"api-server": True, "api-server-port": port}))
+    atomic_write((data / "config.json"), json.dumps({"api-server": True, "api-server-port": port}))
     if not design.exists():
-        design.write_text(json.dumps(frame0_empty_doc()))
+        atomic_write(design, json.dumps(frame0_empty_doc()))
     try:
         frame0_register(project_worktree(proj), port)
     except RuntimeError as e:  # the app still starts; only the MCP tools are missing
@@ -1832,7 +1839,7 @@ def store_figma(proj, key):
     path = proj / "linear.json"
     data = json.loads(path.read_text()) if path.exists() else {}
     data["figma"] = key
-    path.write_text(json.dumps(data))
+    atomic_write(path, json.dumps(data))
 
 def cmd_figma(a):
     """`figma check` stores the target Figma file key; `figma judge` gates a design task with Jev on its node tree."""
@@ -1917,7 +1924,7 @@ def cmd_figma(a):
                   "criteria": rows, "failed": failed, "unclear": [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")], "attempts": (prev.get("attempts") or 0) + 1, "seconds": 0.0,
                   "cost": 0.0, "model": out.get("model"), "branch": f"figma:{key}",
                   "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
-        rf.write_text(json.dumps(result))
+        atomic_write(rf, json.dumps(result))
         if result["status"] == "passed":
             linear_event(proj, meta, "passed", result)
         else:
@@ -2288,7 +2295,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
                   "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}
         (proj / "results").mkdir(exist_ok=True)
-        (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
+        atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
         return result
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     pack = graft_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo)
@@ -2320,7 +2327,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     original_prompt = prompt
     def progress(state):  # `fast-coding status --watch` reads this while the task runs
         (proj / "results").mkdir(exist_ok=True)
-        (proj / "results" / f"{tid}.json").write_text(json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
+        atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": len(log), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
     progress("running")
@@ -2469,7 +2476,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
-    (proj / "results" / f"{tid}.json").write_text(json.dumps(result, indent=2))
+    atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
     if not reset_files and not tag:
         linear_event(proj, meta, "passed" if status == "passed" else "failed", result)
     return result
@@ -2586,7 +2593,7 @@ def slots(proj, update=None):
     if update is not None:
         have = {k: v for k, v in {**have, **update}.items() if v}
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(have, indent=2))
+        atomic_write(f, json.dumps(have, indent=2))
     return have
 
 def stack_worktree(repo, proj, trunk):
@@ -2674,7 +2681,7 @@ def mirror_stack_state(repo, wt):
         theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
         kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
         theirs["stacks"] = kept + mine.get("stacks", [])
-        dst.write_text(json.dumps(theirs, indent=2))
+        atomic_write(dst, json.dumps(theirs, indent=2))
 
 def chain_order(repo, proj, trunk):
     """Branches bottom to top. Ancestry wins: a branch whose history already contains another sits above it (a rebase can never
@@ -2889,7 +2896,7 @@ def payment_halt(repo, proj, command, remaining, args, err):
     state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
              "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     (proj / "results").mkdir(exist_ok=True)
-    (proj / "results" / "resume.json").write_text(json.dumps(state, indent=2))
+    atomic_write((proj / "results" / "resume.json"), json.dumps(state, indent=2))
     (proj / "results" / "run.json").unlink(missing_ok=True)
     key = next((k for k in TOP_UP if k in err.provider.lower()), None)
     print()
@@ -2960,7 +2967,7 @@ def run_tasks(repo, proj, tasks, a):
     herdr_space(proj)
     t0 = time.time()
     (proj / "results").mkdir(exist_ok=True)
-    (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}}, indent=2))
     say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
@@ -3026,7 +3033,7 @@ def run_tasks(repo, proj, tasks, a):
         payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     (proj / "results" / "run.json").unlink(missing_ok=True)
-    (proj / "results" / "run-cost.json").write_text(json.dumps(LEDGER.snapshot(), indent=2))
+    atomic_write((proj / "results" / "run-cost.json"), json.dumps(LEDGER.snapshot(), indent=2))
     sys.exit(0 if all(r["status"] in FINISHED for r in results) else 1)
 
 # ---------- verify ----------
@@ -3426,7 +3433,7 @@ def cmd_hold(a):
             print(f"{tid} held  {a.reason}")
             linear_note(tasks[tid], f"Held: {a.reason}")
     tmp = proj / "results" / "hold.json.tmp"
-    tmp.write_text(json.dumps(hold, indent=2))
+    atomic_write(tmp, json.dumps(hold, indent=2))
     os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
@@ -3441,7 +3448,7 @@ def write_change(proj, rec):
     changes_dir(proj).mkdir(parents=True, exist_ok=True)
     f = changes_dir(proj) / f"{rec['id']}.json"
     tmp = f.with_name(f.name + ".tmp")
-    tmp.write_text(json.dumps(rec, indent=2))
+    atomic_write(tmp, json.dumps(rec, indent=2))
     os.replace(tmp, f)  # atomic: a kill mid-write never leaves a torn record for `status` to trip on
 
 def change_ids(proj):
@@ -3583,7 +3590,7 @@ def change_undo(a, proj, repo):
                 stuck.append((branch, tip))
                 continue
             if tid in rec.get("results", {}):
-                (proj / "results" / f"{tid}.json").write_text(json.dumps(rec["results"][tid], indent=2))
+                atomic_write((proj / "results" / f"{tid}.json"), json.dumps(rec["results"][tid], indent=2))
             reset.append(tid)
     if reset:
         say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
@@ -4128,7 +4135,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
             break
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": LEDGER.snapshot()}
     (proj / "results").mkdir(exist_ok=True)
-    (proj / "results" / "verify.json").write_text(json.dumps(final, indent=2))
+    atomic_write((proj / "results" / "verify.json"), json.dumps(final, indent=2))
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     say(f"verify {'PASS' if ok else 'FAIL'}  wall {fmt(final['seconds'])}  rounds={len(rounds)}")
     if ok:
@@ -4410,7 +4417,11 @@ FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_
 
 def watch_snapshot(repo, proj):
     """Everything a team lead decides on: each task's state, each herdr agent's status, run and verify markers."""
-    tasks = load_tasks(proj)
+    try:
+        tasks = load_tasks(proj)
+    except json.JSONDecodeError:  # a writer that is not ours caught mid-write: one more look, then the real error
+        time.sleep(0.5)
+        tasks = load_tasks(proj)
     trunk_head = sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
     snap = {"tasks": {}, "agents": {}, "run": run_alive(proj), "crashed": bool(run_marker(proj)) and not run_alive(proj), "verify": None, "halt": None,
@@ -4467,7 +4478,7 @@ def watch_save(proj, key, **kv):
     mem = watch_mem(proj, key) | kv
     f = proj / "results" / f"watch-{key}.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.with_suffix(".tmp").write_text(json.dumps(mem))
+    atomic_write(f.with_suffix(".tmp"), json.dumps(mem))
     f.with_suffix(".tmp").replace(f)  # atomic: a reader never sees half a file
 
 def watch_lock(proj, key, wait=True):
@@ -4693,7 +4704,7 @@ def cmd_done(a):
         prev.update({"id": tid, "title": meta.get("title"), "status": "hand_done", "note": a.note, "model": "orchestrator",
                      "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "attempts": prev.get("attempts", 0), "seconds": prev.get("seconds", 0.0),
                      "cost": prev.get("cost", 0.0), "branch": prev.get("branch", f"fast/{proj.name}/{tid}")})
-        res.write_text(json.dumps(prev, indent=2))
+        atomic_write(res, json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
 
 def cmd_top(a):
@@ -4786,7 +4797,7 @@ def cmd_bench(a):
     say(f"bench done  wall {fmt(time.time() - t0)}")
     say(LEDGER.line())
     out = proj / "results" / f"bench-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    out.write_text(json.dumps({"summary": rows, "runs": raw, "cost": LEDGER.snapshot(), "seconds": round(time.time() - t0, 1)}, indent=2))
+    atomic_write(out, json.dumps({"summary": rows, "runs": raw, "cost": LEDGER.snapshot(), "seconds": round(time.time() - t0, 1)}, indent=2))
     print(f"saved {out}")
 
 # ---------- init / clean ----------
@@ -4862,7 +4873,7 @@ def cmd_init(a):
             for _, (_, p) in all_projects(here).items():
                 cfg = project_config(p)
                 if p == proj or cfg.get("review_base") == old:
-                    (p / "verify.json").write_text(json.dumps({**cfg, **({"branch": a.branch} if p == proj else {"review_base": a.branch, "after": project_after(p)})}, indent=2))
+                    atomic_write((p / "verify.json"), json.dumps({**cfg, **({"branch": a.branch} if p == proj else {"review_base": a.branch, "after": project_after(p)})}, indent=2))
             print(f"branch {old} renamed to {a.branch}")
     elif a.here:
         wt, proj = here, here / ".fast-coding" / name
@@ -4890,7 +4901,7 @@ def cmd_init(a):
     if repo_link.exists() and not (wt / ".fast-coding" / "linear.json").exists():
         (wt / ".fast-coding" / "linear.json").write_text(repo_link.read_text())
     if not (proj / "verify.json").exists():
-        (proj / "verify.json").write_text(json.dumps({
+        atomic_write((proj / "verify.json"), json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main",
