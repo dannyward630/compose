@@ -128,6 +128,19 @@ class Groundwork(unittest.TestCase):
         self.assertIn("git add client/src/Form.test.js && git commit client/src/Form.test.js -m", text)
         self.assertIn("Never run `git commit --amend`, `git reset`, `git rebase`", text)
 
+    def test_one_test_crew_failing_to_start_does_not_stop_the_rest(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        started, out = [], io.StringIO()
+        def crew(ns):
+            if ns.role.endswith("001"):
+                raise RuntimeError("agent_prompt_stalled")
+            started.append(ns.role)
+        with self.patched()[0], mock.patch.object(fc, "cmd_crew", crew), mock.patch.object(fc, "herdr_space"), \
+             mock.patch.object(fc, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
+            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
+        self.assertEqual(started, ["tests-002"])
+        self.assertIn("tests-001 not started: agent_prompt_stalled", out.getvalue())
+
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
             fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))

@@ -331,9 +331,13 @@ class SubmitBrief(unittest.TestCase):
         return [c for c in calls if c[:2] == ("agent", "send-keys")]
 
     def test_a_stalled_brief_is_submitted_with_enter(self):
-        self.assertEqual(self.run_submit(["working"]), [("agent", "send-keys", "shop-tests-003", "enter")])
+        self.assertEqual(self.run_submit(["idle", "working"]), [("agent", "send-keys", "shop-tests-003", "enter")])
+
+    def test_a_stall_on_an_agent_already_working_sends_no_enter(self):
+        self.assertEqual(self.run_submit(["working"]), [])
+        self.assertEqual(self.run_submit(["done"]), [])
 
     def test_a_brief_that_never_starts_fails_loudly(self):
         with self.assertRaises(RuntimeError) as e:
-            self.run_submit(["idle", "idle", "idle"])
+            self.run_submit(["idle"] * 20)
         self.assertIn("press Enter", str(e.exception))

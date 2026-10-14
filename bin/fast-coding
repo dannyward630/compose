@@ -719,11 +719,16 @@ def herdr_submit(agent, text, tries=3):
         if "agent_prompt_stalled" not in str(e):
             raise
         err = str(e)
+    def started():  # `done` counts too: a short first turn can finish before the check
+        return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
+    if started():  # the stall can be a slow start that the 5s window missed, not a dropped Enter: an Enter now would land on a running agent
+        return
     for _ in range(tries):
         herdr("agent", "send-keys", agent, "enter")
-        time.sleep(2)
-        if ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked"):
-            return
+        for _ in range(5):
+            time.sleep(2)
+            if started():
+                return
     raise RuntimeError(f"{err}; the brief to {agent} may sit unsent in its tab: press Enter there")
 
 def agent_name(slug, tid):
@@ -1384,7 +1389,7 @@ def cmd_testcrews(a):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
                                         brief=test_brief(m, contract, budget), force=False, cwd=str(wts[m["id"]]), model=model))
-        except SystemExit as e:
+        except (SystemExit, RuntimeError) as e:  # one teammate's failure must not stop the rest
             print(f"tests-{m['id']} not started: {e}")
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
@@ -1421,7 +1426,7 @@ def cmd_designcrews(a):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
                                         brief=design_brief(m, figma, proj / "results"), force=False, cwd=None, model=None))
-        except SystemExit as e:
+        except (SystemExit, RuntimeError) as e:
             print(f"design-{m['id']} not started: {e}")
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
