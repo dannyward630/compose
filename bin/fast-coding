@@ -4388,6 +4388,7 @@ def cmd_spec_check(a):
     else:
         proj = project_dir(a)
         root = project_worktree(proj)
+        load_tasks(proj, required=True)
         cache = linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
              "issues": [dict(v, id=k) for k, v in (cache.get("issues") or {}).items()]}

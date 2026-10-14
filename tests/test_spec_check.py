@@ -144,6 +144,15 @@ class SpecCheck(unittest.TestCase):
         self.assertEqual(fc.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
 
+    def test_unsynced_project_stops_with_the_sync_message(self):
+        repo = Path(tempfile.mkdtemp())
+        proj = repo / ".fast-coding" / "p"
+        proj.mkdir(parents=True)
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+            lines, e = self.run_cli(repo=str(repo), project="p")
+        self.assertIn("no tasks synced for p", str(e))
+        self.assertIn("fast-coding sync", str(e))
+
     def test_synced_cache_prints_what_stdin_prints(self):
         d = data([task("ENG-3", "001"), {**STORY, "id": "ENG-11", "description": "TBD"}])
         repo = Path(tempfile.mkdtemp())
