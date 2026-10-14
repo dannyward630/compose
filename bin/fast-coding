@@ -1680,7 +1680,8 @@ def frame0_register(cwd, port):
         projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
     except (OSError, json.JSONDecodeError):
         projects = {}
-    current = ((projects.get(str(cwd)) or {}).get("mcpServers") or {}).get("frame0")
+    # claude keys a linked worktree's local config under the main checkout, so that is where the entry sits
+    current = ((projects.get(str(worktrees(cwd)[0])) or {}).get("mcpServers") or {}).get("frame0")
     if current and current.get("args") == args:
         return
     if current:

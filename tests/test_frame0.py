@@ -18,7 +18,7 @@ class Frame0(unittest.TestCase):
         (self.home / ".claude.json").write_text(json.dumps({"projects": {str(self.wt): {"mcpServers": existing}}}))
         with mock.patch.object(fc.Path, "home", return_value=self.home), mock.patch.object(fc, "sh") as sh:
             fc.frame0_register(self.wt, 58411)
-        return [c.args[0] for c in sh.call_args_list]
+        return [c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"]
 
     def test_port_is_stable_per_project_and_in_range(self):
         other = self.wt / ".fast-coding" / "cart"
@@ -33,6 +33,15 @@ class Frame0(unittest.TestCase):
         self.assertEqual(self.register(stale), [["claude", "mcp", "remove", "frame0", "-s", "local"], add])
         same = {"frame0": {"command": "npx", "args": ["-y", "frame0-mcp-server", "--api-port=58411"]}}
         self.assertEqual(self.register(same), [])
+
+    def test_register_finds_the_entry_claude_keeps_under_the_main_checkout(self):
+        main = Path(tempfile.mkdtemp()).resolve()
+        stale = {"frame0": {"command": "npx", "args": ["-y", "frame0-mcp-server", "--api-port=58320"]}}
+        (self.home / ".claude.json").write_text(json.dumps({"projects": {str(main): {"mcpServers": stale}}}))
+        with mock.patch.object(fc.Path, "home", return_value=self.home), mock.patch.object(fc, "worktrees", return_value=[main, self.wt]), \
+                mock.patch.object(fc, "sh") as sh:
+            fc.frame0_register(self.wt, 58411)
+        self.assertEqual([c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"][0], ["claude", "mcp", "remove", "frame0", "-s", "local"])
 
     def test_pid_is_the_main_process_of_this_projects_instance(self):
         app = fc.FRAME0_APP / "Contents" / "MacOS" / "Frame0"
