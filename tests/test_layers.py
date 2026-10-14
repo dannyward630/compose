@@ -101,6 +101,22 @@ class Layers(unittest.TestCase):
         self.assertIn("groundwork x2: 40 lines; generated, not counted: bun.lock (4000 lines)", notes[0])
         self.assertIn("task 001, 002: 230 lines", notes[1])
 
+    def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
+        out = self.stack(branch="fast-coding/p")
+        self.assertEqual(self.git("branch", "--list", "fast-coding/p-layer-*", "--format=%(refname:short)").split(), ["fast-coding/p-layer-01", "fast-coding/p-layer-02", "fast-coding/p-layer-03"])
+        self.assertEqual(self.layers(), [])
+        self.assertTrue(any(l.startswith("layer  layer-01") for l in out))
+
+    def test_a_layers_pr_is_titled_from_its_tasks_and_the_jira_key(self):
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
+        metas = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}]
+        l = {"branch": "js-2888-react-beside-vue-layer-01", "tasks": ["001", "002"], "lines": 230, "generated": {}}
+        title, body = fc.layer_pr(self.proj, l, 4, 300, metas)
+        self.assertEqual(title, "JS-2888: Add the toggle, Add the panel (1/4)")
+        self.assertEqual(body, "- Add the toggle\n- Add the panel\n\ntask 001, 002: 230 lines")
+        (self.proj / "verify.json").write_text("{}")
+        self.assertEqual(fc.layer_pr(self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
+
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
         self.assertEqual(len(self.layers()), 4)

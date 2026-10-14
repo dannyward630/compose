@@ -223,6 +223,11 @@ def project_branch(proj):
     """The project's branch: `branch` in its verify.json (`init --branch`), else `fast-coding/<name>`."""
     return project_config(proj).get("branch") or f"fast-coding/{Path(proj).name}"
 
+def layer_prefix(proj):
+    """Review layer branches are `<prefix>layer-NN`: `<stored branch>-` when the project has one (`init --branch`), else `fast/<project>/`."""
+    b = project_config(proj).get("branch")
+    return f"{b}-" if b else f"fast/{Path(proj).name}/"
+
 def all_projects(repo):
     """{project name: (worktree path, project dir)} over every worktree. A project lives in its own worktree
     (`fast-coding-<name>` on the project's branch, `fast-coding/<name>` unless `init --branch` chose one), created by `init`; older projects may sit in the main checkout."""
@@ -2920,14 +2925,14 @@ def cherry_pick_same(wt, c):
     return p.returncode == 0
 
 def build_layers(repo, proj, base, trunk, chain, wt, budget):
-    """Cut the project into review layers on `base`: branches `fast/<project>/layer-NN`, each at most `budget` counted lines
+    """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
     generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
     groups = group_units([u for u in units if u["name"] == "groundwork"], budget) + group_units([u for u in units if u["name"] != "groundwork"], budget)
     layers, prev = [], base
     for i, g in enumerate(groups, 1):
-        branch = f"fast/{proj.name}/layer-{i:02d}"
+        branch = f"{layer_prefix(proj)}layer-{i:02d}"
         sh(["git", "checkout", "-q", "-B", branch, prev], wt)
         for c in (c for u in g for c in u["commits"]):
             if not cherry_pick_same(wt, c):
@@ -2945,7 +2950,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget):
             and sh(["git", "diff", "--quiet", layers[-1]["branch"], chain[-1]], repo, check=False).returncode != 0:
         say(f"stack  STOP  the layers differ from {chain[-1]}; stacking task branches as they are")
         return None
-    for old in sh(["git", "branch", "--list", f"fast/{proj.name}/layer-*", "--format=%(refname:short)"], repo).stdout.split():
+    for old in sh(["git", "branch", "--list", f"{layer_prefix(proj)}layer-*", "--format=%(refname:short)"], repo).stdout.split():
         if old not in {l["branch"] for l in layers}:
             sh(["git", "branch", "-D", old], repo, check=False)
     return layers
@@ -2957,6 +2962,17 @@ def layer_note(l, budget):
     gen = "".join(f"; generated, not counted: {f} ({n} lines)" for f, n in l["generated"].items())
     over = f"; over the {budget}-line budget, a task is never split" if l["lines"] > budget and len(l["tasks"]) == 1 else ""
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
+
+def layer_pr(proj, l, n, budget, metas):
+    """A layer's PR title and body. The title is the layer's tasks (`JS-2888: add a, add b (1/4)` when the project branch starts with a
+    Jira key); the body lists the tasks and the layer's size."""
+    names = {m["id"]: commit_message(m) for m in metas}
+    held = [names.get(t, t) if t != "groundwork" else "groundwork" for t in l["tasks"]]
+    held = list(dict.fromkeys(held))
+    key = re.match(r"([A-Za-z]+-\d+)-", project_config(proj).get("branch") or "")
+    idx = int(l["branch"].rsplit("layer-", 1)[1])
+    title = f"{key.group(1).upper() + ': ' if key else ''}{', '.join(held)} ({idx}/{n})"
+    return title, "\n".join([*(f"- {h}" for h in held), "", layer_note(l, budget)])
 
 def register_stack(repo, proj, trunk, submit=False):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
@@ -2992,7 +3008,7 @@ def register_stack(repo, proj, trunk, submit=False):
         return []
     say(f"stack  ok    ({stack_base}) <- {' <- '.join(stack)}")
     for l in layers or []:
-        say(f"layer  {l['branch'].rsplit('/', 1)[1]}  {layer_note(l, budget)}")
+        say(f"layer  {l['branch'].removeprefix(layer_prefix(proj))}  {layer_note(l, budget)}")
     if submit:
         sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
         q = gh("submit", "--auto")
@@ -3001,9 +3017,10 @@ def register_stack(repo, proj, trunk, submit=False):
             v = subprocess.run(["gh", "pr", "view", b, "--json", "number,baseRefName,url"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             pr = json.loads(v.stdout) if v.returncode == 0 else None
             say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
-            note = next((layer_note(l, budget) for l in layers or [] if l["branch"] == b), None)
-            if pr and note:
-                subprocess.run(["gh", "pr", "edit", b, "--body", note], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            lay = next((l for l in layers or [] if l["branch"] == b), None)
+            if pr and lay:
+                title, body = layer_pr(proj, lay, len(layers), budget, code_tasks(load_tasks(proj)))
+                subprocess.run(["gh", "pr", "edit", b, "--title", title, "--body", body], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     mirror_stack_state(repo, wt)
     return [stack]
@@ -5123,7 +5140,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     sh(["git", "worktree", "prune"], repo, check=False)
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
     kept = []
-    for b in sh(["git", "branch", "--list", f"fast/{name}/*"], repo, check=False).stdout.split():
+    for b in sh(["git", "branch", "--list", f"fast/{name}/*", f"{layer_prefix(proj)}layer-*"], repo, check=False).stdout.split():
         if "-bench-" in b:  # bench runs are measurements, never work to keep
             sh(["git", "branch", "-D", b], repo, check=False)
             continue
