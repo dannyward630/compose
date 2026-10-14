@@ -9,7 +9,7 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, fcntl, hashlib, shlex, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import argparse, ast, fcntl, hashlib, shlex, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -1723,16 +1723,33 @@ def crew_record(proj, name):
     return json.loads(f.read_text()) if f.exists() else None
 
 def crew_attention(proj, name, state, message):
-    """The product owner's attention, done by the CLI so no session can forget it: a needs-user or blocked report notifies
-    the product owner and badges the pane; it never steals focus (`crew focus` jumps there on request)."""
+    """Badge the reporting pane (`needs you`, `blocked`, `done`); it never steals focus (`crew focus` jumps there on request).
+    No notification here: a teammate's question goes up through the team lead, and the product owner is notified once,
+    when it reaches the engineering manager (see manager_attention)."""
     c = crew_record(proj, name)
     if not c:
         return
-    if state in ("needs-user", "blocked"):
-        herdr("notification", "show", f"{c['title']} needs you" if state == "needs-user" else f"{c['title']} is blocked",
-              "--body", f"{message[:160]}  (space {proj.name}, tab {c['title']!r})", "--sound", "request")
     label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
     herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
+
+def manager_attention(proj, events):
+    """The product owner's one notification, done by the CLI so no session can forget it: when a needs-user or blocked
+    report wakes the engineering manager (the session the product owner started, the only watcher without a crew role),
+    pop a herdr notification. Teammates and the team lead only badge their panes; their questions reach the product owner
+    through the engineering manager, which relays them."""
+    if os.environ.get("FAST_CODING_ROLE"):
+        return
+    for e in events:
+        m = re.match(r"event crew=(\S+) state=(needs-user|blocked) message=(.*)$", e)
+        if not m:
+            continue
+        who, state, message = m.groups()
+        try:
+            message = ast.literal_eval(message)
+        except (ValueError, SyntaxError):
+            pass
+        herdr("notification", "show", f"{proj.name}: the engineering manager {'needs you' if state == 'needs-user' else 'is blocked'}",
+              "--body", f"{message[:160]}  (from {who})", "--sound", "request")
 
 def cmd_report(a):
     """A teammate session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
@@ -4792,6 +4809,7 @@ def cmd_watch(a, rewake=False):
             after = watch_snapshot(repo, proj)
             ev = watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources)
             if ev:
+                manager_attention(proj, ev)
                 if rewake:
                     emit("fast-coding watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
                 for line in ev:

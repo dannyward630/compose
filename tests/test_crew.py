@@ -220,14 +220,34 @@ class Attention(unittest.TestCase):
                 mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
             fc.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
 
-    def test_needs_user_notifies_and_badges_without_focus(self):
+    def test_needs_user_badges_the_pane_without_notifying_or_focusing(self):
+        """A teammate's question only badges its pane: the product owner hears of it once, from the engineering manager."""
         self.report("shop-q-neb-1", "needs-user", "Stripe or Adyen?")
-        verbs = [c[:2] for c in self.calls]
-        self.assertEqual(verbs, [("notification", "show"), ("pane", "report-metadata")])
-        self.assertIn("Payment provider needs you", self.calls[0])
+        self.assertEqual([c[:2] for c in self.calls], [("pane", "report-metadata")])
+        self.assertIn("blocked=needs you", self.calls[0])
+
+    def test_orchestrator_report_does_not_notify_either(self):
+        (fc.crew_dir(self.proj) / "shop-orchestrator.json").write_text(json.dumps(
+            {"name": "shop-orchestrator", "role": "orchestrator", "title": "orchestrator", "space": "w9", "tab": "w9:o", "pane": "p-o"}))
+        self.report("shop-orchestrator", "needs-user", "Stripe or Adyen? I recommend Stripe")
+        self.assertEqual([c[:2] for c in self.calls], [("pane", "report-metadata")])
+
+    def test_only_the_engineering_manager_notifies_and_only_on_a_question(self):
+        """The notification fires when the report wakes the engineering manager's watch, the one watcher with no crew role."""
+        ev = ["event crew=shop-orchestrator state=needs-user message='Stripe or Adyen? I recommend Stripe'",
+              "event crew=shop-q-neb-1 state=done message='Provider: Stripe'",
+              "event stall=idle agent=shop-orchestrator the team lead has been idle"]
+        with mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
+                fc.manager_attention(self.proj, ev)  # the team lead watching its teammates
+            self.assertEqual(self.calls, [])
+            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": ""}):
+                os.environ.pop("FAST_CODING_ROLE")
+                fc.manager_attention(self.proj, ev)
+        self.assertEqual([c[:2] for c in self.calls], [("notification", "show")])
+        self.assertIn("shop: the engineering manager needs you", self.calls[0])
+        self.assertIn("Stripe or Adyen? I recommend Stripe  (from shop-orchestrator)", self.calls[0])
         self.assertIn("request", self.calls[0])
-        self.assertIn("blocked=needs you", self.calls[1])
-        self.assertNotIn(("tab", "focus"), verbs)
 
     def test_done_prompts_no_other_crew(self):
         """Decisions live on the map in Linear, recorded by the one wayfinder teammate; nothing is broadcast between teammates."""

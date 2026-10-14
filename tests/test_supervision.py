@@ -130,6 +130,18 @@ class WatchMemory(unittest.TestCase):
         self.assertTrue(any("task=001 state=passed" in line for line in self.watch(wsnap("passed"), now=True)))
         self.assertIn("event timeout", self.watch(wsnap("passed"))[-1])
 
+    def test_a_wake_passes_its_events_to_the_product_owners_attention(self):
+        snap = wsnap(); later = wsnap()
+        later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
+        seen = []
+        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), \
+                mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]):
+            a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
+                with contextlib.suppress(SystemExit):
+                    fc.cmd_watch(a)
+        self.assertEqual(seen, [[f"event crew={ORCH} state=needs-user message='which db?'"]])
+
     def test_each_watcher_keeps_its_own_memory(self):
         self.watch(wsnap("running"), now=True)
         self.watch(wsnap("running"), now=True, from_="orchestrator")

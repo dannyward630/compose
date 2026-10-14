@@ -31,7 +31,8 @@ Teammates report up with `fast-coding report` and pick a state from `working`, `
 A `contradiction` report always wakes the team lead as a teammate event.
 It also screens the feature's decisions with Jev, which adds a `reflect=` event when it flags a decision line.
 
-A `needs-user` or `blocked` report pops a herdr notification and badges the pane `needs you`.
+A `needs-user` or `blocked` report badges the pane `needs you`.
+The herdr notification pops only when such a report wakes the engineering manager's `watch`, so you are alerted once, for what the engineering manager brings you, and not by every teammate or the team lead.
 Nothing steals focus.
 When you want to jump to a tab, `fast-coding crew focus --role <role>` takes you there.
 
