@@ -300,6 +300,9 @@ def sync_tasks(proj, data):
         sys.exit(f"sync reads JSON on stdin shaped {SYNC_SHAPE}")
     if data["feature"].get("id") != feature:
         sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
+    stories = set(json.loads(link.read_text()).get("stories") or [])
+    if stories:  # a project scoped to stories sees those stories and their children, nothing else under the feature
+        data = {**data, "issues": [i for i in data["issues"] if i["id"] in stories or i.get("parentId") in stories]}
     # A canceled issue is no task even with its block still on: a re-plan or an undo canceled it, and it must not run or stack.
     tasks = [t for t in (task_from_issue(i) for i in data["issues"] if (i.get("status") or "").lower() not in CANCELED) if t]
     ids = [t["id"] for t in tasks]
@@ -340,6 +343,10 @@ def load_tasks(proj, required=False):
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
                  f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
     return linear_cache(proj)["tasks"]
+
+def linear_done(meta):
+    """Linear says the task is Done: its work is on trunk, whatever this project's own files say."""
+    return (meta.get("linear_state") or "").lower() == "done"
 
 def code_tasks(tasks):
     """The tasks that change code: a design task never clones, stacks, or is judged from files."""
@@ -2960,7 +2967,7 @@ def cmd_run(a):
     only = set(a.only.split(",")) if a.only else None
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
-    tasks = [m for m in code_tasks(load_tasks(proj, required=True)) if not only or m["id"] in only]
+    tasks = [m for m in code_tasks(load_tasks(proj, required=True)) if not linear_done(m) and (not only or m["id"] in only)]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
     if getattr(a, "redo", False):
@@ -4218,7 +4225,9 @@ def task_state(repo, proj, meta, trunk_head):
     has_branch = sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0
     merged = has_branch and sh(["git", "merge-base", "--is-ancestor", branch, trunk_head], repo, check=False).returncode == 0
     state = r.get("status") or "pending"
-    if state == "running" and not run_alive(proj):
+    if state == "pending" and linear_done(meta):
+        state = "merged"  # done on Linear (another story's task, or finished earlier): never run again, never a stall
+    elif state == "running" and not run_alive(proj):
         state = "interrupted"  # the run died without writing a final state; `fast-coding resume` re-runs it
     elif state in ("passed", "already_green") and (merged or not has_branch) and meta.get("kind") != "design":
         state = "merged"

@@ -45,6 +45,21 @@ class Sync(unittest.TestCase):
         self.assertEqual(fc.linear_cache(self.proj)["feature"]["description"], "## Plan\nThe plan.")
         self.assertEqual(fc.criteria_from_tasks(self.proj)[0], ("001", "works"))
 
+    def test_story_scope_and_done_tasks(self):
+        def story_task(ident, parent, tid, state="Todo"):
+            return {**issue(ident, tid, block(id=tid, files=f"{tid}.go", test="t")), "parentId": parent, "status": state}
+        issues = [issue("ENG-2", "Story A"), issue("ENG-9", "Story B"),
+                  story_task("ENG-3", "ENG-2", "001", "Done"), story_task("ENG-4", "ENG-2", "002"), story_task("ENG-5", "ENG-9", "003")]
+        self.assertEqual([t["id"] for t in self.sync(issues)], ["001", "002", "003"])  # no stories set: unchanged
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1", "stories": ["ENG-9"]}')
+        self.assertEqual([t["id"] for t in self.sync(issues)], ["003"])
+        self.assertEqual(set(fc.linear_cache(self.proj)["issues"]), {"ENG-9", "ENG-5"})
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        done, todo = self.sync(issues)[:2]
+        state = lambda m: fc.task_state(self.proj, self.proj, m, "HEAD")["state"]
+        self.assertEqual((state(done), state(todo)), ("merged", "pending"))
+        self.assertTrue(fc.linear_done(done) and not fc.linear_done(todo))
+
     def test_big_tasks_are_flagged(self):
         small, wide, long = self.sync([
             issue("ENG-3", "Small", block(id="001", files="a.go, a2.go", test="t")),
