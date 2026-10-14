@@ -143,6 +143,14 @@ class DesignTasks(unittest.TestCase):
             res = fc.jev_acceptance({}, self.proj, "diff")
         self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))
 
+    def test_acceptance_confirm_unwraps_a_list_and_reports_a_failed_confirm_as_an_error(self):
+        reply = {"model": "m", "answers": {"c0": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}}}}
+        for confirm, failed, error in (([{"confirmed": True, "evidence": "x"}], 1, None), ("nope", 0, True)):
+            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+                    mock.patch.object(fc, "fast_json", return_value=confirm):
+                res = fc.jev_acceptance({}, self.proj, "diff")
+            self.assertEqual((len(res["failed"]), "confirm call failed" in res.get("error", "") if error else "error" not in res, res["pass"]), (failed, True, False))
+
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}

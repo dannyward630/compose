@@ -109,7 +109,7 @@ class FigmaJudge(unittest.TestCase):
 
     def test_only_a_confirmed_not_met_at_the_threshold_fails(self):
         res = self.judge("001", {"Cart page": [("NOT_MET", 0.65), ("NOT_MET", 0.7)]}, fail=RuntimeError("down"), blocks=True)
-        self.assertEqual((res["status"], self.confirm.call_count), ("failed", 1))
+        self.assertEqual((res["status"], self.confirm.call_count), ("blocked", 1))
         self.assertIn("CRITERION: Has a pay button", self.confirm.call_args.args[2])
         replies = {"Cart page": [("MET", 0.9), ("MET", 0.9)], "Pay": [("NOT_MET", 0.9)]}
         with self.assertRaises(SystemExit) as e:
@@ -146,9 +146,20 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((self.confirm.call_count, self.ask.call_count, self.ev.called), (1, 1, False))
         self.assertFalse((self.proj / "results" / "001.json").exists())
 
-    def test_any_other_confirm_error_still_counts_as_not_confirmed(self):
-        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=ValueError("bad json"), blocks=True)
-        self.assertEqual((res["status"], res["criteria"][0]["confirmed"], res["criteria"][0]["evidence"]), ("failed", False, "confirm call failed: bad json"))
+    def test_a_confirm_reply_wrapped_in_a_list_is_unwrapped(self):
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=[{"confirmed": True, "evidence": "FRAME 004"}], blocks=True)
+        self.assertEqual((res["status"], res["criteria"][0]["evidence"], self.confirm.call_count, res["judge_errors"]), ("failed", "FRAME 004", 1, []))
+
+    def test_a_confirm_call_that_still_fails_is_a_judge_error_not_a_verdict(self):
+        for kw in ({"confirm": [1, 2]}, {"fail": ValueError("bad json")}):
+            res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, blocks=True, **kw)
+            row = res["criteria"][0]
+            self.assertEqual((res["status"], row["confirmed"], row["judge_error"], res["failed"], len(res["judge_errors"])), ("blocked", False, True, [], 1))
+            self.assertIn("confirm call failed", row["evidence"])
+            self.assertEqual(self.confirm.call_count, 2)  # retried once with a stricter instruction
+            self.assertIn("no list", self.confirm.call_args.args[1])
+            self.assertIn("BLOCKED by a judge tool error", self.out.getvalue())
+            self.assertFalse(self.ev.called)
 
 
 class FigmaConnectorBriefs(unittest.TestCase):

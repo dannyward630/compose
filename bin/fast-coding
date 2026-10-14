@@ -1873,15 +1873,15 @@ def cmd_figma(a):
                    "p_not_met": round(p, 3), "confidence": ans.get("confidence")}
             if p >= cfg.get("acceptance_threshold", 0.6):
                 try:
-                    v = fast_json(env, "You are verifying whether a node tree VIOLATES one acceptance criterion. Quote the node that "
-                                  "proves a violation. If you cannot show a concrete violation, answer confirmed=false. "
-                                  'Return JSON {"confirmed": bool, "evidence": str}.',
-                                  f"CRITERION: {c}\n\nTREE:\n{text[:60000]}", max_tokens=500)
-                    row["confirmed"], row["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+                    row["confirmed"], row["evidence"] = confirm_call(
+                        env, "You are verifying whether a node tree VIOLATES one acceptance criterion. Quote the node that "
+                        "proves a violation. If you cannot show a concrete violation, answer confirmed=false. "
+                        'Return JSON {"confirmed": bool, "evidence": str}.',
+                        f"CRITERION: {c}\n\nTREE:\n{text[:60000]}")
                 except PaymentRequired:
                     raise
                 except Exception as e:  # noqa: BLE001
-                    row["confirmed"], row["evidence"] = False, f"confirm call failed: {e}"
+                    row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
                 if row.get("confirmed"):
                     failed.append(row)
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
@@ -1893,7 +1893,8 @@ def cmd_figma(a):
                 prev = json.loads(rf.read_text())
             except json.JSONDecodeError:
                 pass
-        result = {"id": tid, "title": meta["title"], "status": "passed" if all(r["choice"] == "MET" for r in rows) else "failed", "kind": "design",
+        result = {"id": tid, "title": meta["title"], "status": "blocked" if any(r.get("judge_error") for r in rows) else "passed" if all(r["choice"] == "MET" for r in rows) else "failed", "kind": "design",
+                  "judge_errors": [r for r in rows if r.get("judge_error")],
                   "criteria": rows, "failed": failed, "unclear": [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")], "attempts": (prev.get("attempts") or 0) + 1, "seconds": 0.0,
                   "cost": 0.0, "model": out.get("model"), "branch": f"figma:{key}",
                   "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
@@ -1902,6 +1903,8 @@ def cmd_figma(a):
             linear_event(proj, meta, "passed", result)
         else:
             bad += 1
+            if result["status"] == "blocked":
+                print(f"{tid} BLOCKED by a judge tool error, not a NOT_MET finding: {result['judge_errors'][0]['evidence']}")
     if bad:
         sys.exit(1)
 
@@ -2929,6 +2932,27 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
 class EmptyReply(Exception):
     pass
 
+class ConfirmError(Exception):
+    pass
+
+def confirm_call(env, system, user, max_tokens=500):
+    """The confirm step shared by figma judge, review, and jev acceptance: returns (confirmed, evidence). The model sometimes
+    wraps the object in a list, so a one-element list is unwrapped; any other shape is retried once with a stricter instruction,
+    then raises ConfirmError, which the caller records as a judge error and never as a verdict."""
+    strict = system + ' Reply with exactly one JSON object {"confirmed": bool, "evidence": str} and nothing else: no list, no prose.'
+    for attempt, sysmsg in enumerate((system, strict)):
+        try:
+            v = fast_json(env, sysmsg, user, max_tokens=max_tokens)
+        except (ValueError, EmptyReply) as e:
+            if attempt:
+                raise ConfirmError(f"confirm call failed: {e}")
+            continue
+        if isinstance(v, list) and len(v) == 1:
+            v = v[0]
+        if isinstance(v, dict) and "confirmed" in v:
+            return bool(v["confirmed"]), str(v.get("evidence", ""))[:300]
+    raise ConfirmError("confirm call failed: reply was not a {confirmed, evidence} object")
+
 PERSPECTIVES = {
     "correctness": "Find bugs: wrong logic, unhandled inputs, off-by-one, broken edge cases, error paths that lose data. Ignore style.",
     "security": "Find security and data-loss risks: injection, secrets in code, unsafe eval, missing validation at trust boundaries, "
@@ -2974,22 +2998,24 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
             i.setdefault("confirmed", False)
             return i
         try:
-            v = fast_json(env, "You are verifying one code-review claim against the actual code. Quote the exact lines that "
-                          "prove it. If the claim is wrong, speculative, contradicted by passing tests, contradicted by the design context, "
-                          'or about style, reject it. Return JSON {"confirmed": bool, "evidence": str}.',
-                          (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
-                          f"CLAIM: [{i['severity']}] {i['file']}: {i['note']}\n\nCODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n"
-                          + ("The tests currently pass." if tests_pass else ""), max_tokens=500)
-            i["confirmed"], i["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+            i["confirmed"], i["evidence"] = confirm_call(
+                env, "You are verifying one code-review claim against the actual code. Quote the exact lines that "
+                "prove it. If the claim is wrong, speculative, contradicted by passing tests, contradicted by the design context, "
+                'or about style, reject it. Return JSON {"confirmed": bool, "evidence": str}.',
+                (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
+                f"CLAIM: [{i['severity']}] {i['file']}: {i['note']}\n\nCODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n"
+                + ("The tests currently pass." if tests_pass else ""))
         except PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
-            i["confirmed"], i["evidence"] = False, f"confirm call failed: {e}"
+            i["confirmed"], i["evidence"], i["judge_error"] = False, str(e), True
         return i
     with ThreadPoolExecutor(max_workers=3) as ex:
         issues = list(ex.map(confirm, raw))
     confirmed = [i for i in issues if i["confirmed"]]
-    return {"pass": not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed}
+    errors = [i for i in issues if i.get("judge_error")]
+    return {"pass": not errors and not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed,
+            **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
 
 def criteria_from_tasks(proj):
     """(task id, criterion text) for every bullet under '## Acceptance criteria' in every task file."""
@@ -3041,22 +3067,24 @@ def jev_acceptance(cfg, proj, diff, repo=None):
         code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in task_files["files"] + task_files["protected"]
                             if repo and (repo / f).exists())
         try:
-            v = fast_json(env, "You are verifying whether code VIOLATES one acceptance criterion. Quote the exact lines that prove "
-                          "a violation. If every part of the criterion is satisfied, or you cannot show a concrete violation, "
-                          'answer confirmed=false. Return JSON {"confirmed": bool, "evidence": str}.',
-                          f"CRITERION: {r['criterion']}\n\nCODE:\n{code[:60000]}", max_tokens=500)
-            r["confirmed"], r["evidence"] = bool(v.get("confirmed")), str(v.get("evidence", ""))[:300]
+            r["confirmed"], r["evidence"] = confirm_call(
+                env, "You are verifying whether code VIOLATES one acceptance criterion. Quote the exact lines that prove "
+                "a violation. If every part of the criterion is satisfied, or you cannot show a concrete violation, "
+                'answer confirmed=false. Return JSON {"confirmed": bool, "evidence": str}.',
+                f"CRITERION: {r['criterion']}\n\nCODE:\n{code[:60000]}")
         except PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
-            r["confirmed"], r["evidence"] = False, f"confirm call failed: {e}"
+            r["confirmed"], r["evidence"], r["judge_error"] = False, str(e), True
         return r
     with ThreadPoolExecutor(max_workers=6) as ex:
         list(ex.map(confirm, suspects))
     failed = [r for r in suspects if r.get("confirmed")]
     # Only MET passes: UNCLEAR and a NOT_MET the confirm call did not confirm both block, as unproven criteria.
     unclear = [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")]
-    return {"pass": all(r["choice"] == "MET" for r in rows), "unclear": unclear, "criteria": rows, "failed": failed, "suspects": suspects, "model": model}
+    errors = [r for r in suspects if r.get("judge_error")]
+    return {"pass": all(r["choice"] == "MET" for r in rows), "unclear": unclear, "criteria": rows, "failed": failed, "suspects": suspects, "model": model,
+            **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
 
 # ---------- changing course: reflect, hold, change ----------
 
@@ -3745,7 +3773,7 @@ def run_stages(repo, proj, cfg, a):
         herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
         say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
         for i in rv["issues"]:
-            mark = "confirmed" if i["confirmed"] else "dropped  "
+            mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {i.get('note')}")
         for i in rv["confirmed"] if gate_review else []:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
