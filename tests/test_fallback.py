@@ -192,7 +192,7 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes):
+    def verify(self, writes, reply="", cfg=None):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
@@ -205,15 +205,16 @@ class FixScope(unittest.TestCase):
         (repo / "a.go").write_text("b\n")
         git("commit", "-qam", "layer")
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            self.prompt = prompt
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
-            return "s", "", 1, {"cost": 0.0}
+            return "s", reply, 1, {"cost": 0.0}
         stages = iter([(False, {}, "finding"), (True, {}, "")])
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
                 mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
-                fc.verify_rounds(repo, proj, {"review_base": "main"}, type("A", (), {"fix": 2})(), [], fc.time.time())
+                fc.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], fc.time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
 
     def test_fix_inside_the_stack_commits_and_passes(self):
@@ -221,7 +222,42 @@ class FixScope(unittest.TestCase):
         self.assertEqual((code, res["passed"]), (0, True))
         self.assertEqual((repo / "a.go").read_text(), "fixed\n")
         log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout
-        self.assertEqual(log.strip(), "Fix verification findings")  # plain, never the tool's name
+        self.assertEqual(log.strip(), "Fix a.go")  # describes the change, never the process
+
+    def test_fix_commit_uses_the_fixers_one_line_description(self):
+        _, repo, _ = self.verify({"a.go": "fixed\n"}, reply='"Match the autofill panel file name"\nI also changed...')
+        self.assertEqual(subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout.strip(),
+                         "Match the autofill panel file name")
+        _, repo, _ = self.verify({"a.go": "fixed\n"}, reply="Fix verification findings")  # a process message is not used
+        self.assertEqual(subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout.strip(), "Fix a.go")
+
+    def test_fixer_is_told_the_design_context_and_the_simplicity_bar(self):
+        self.verify({"a.go": "fixed\n"}, cfg={"review_context": "Paths are POSIX only by design."})
+        self.assertIn("Paths are POSIX only by design.", self.prompt)
+        self.assertIn("no hardening", self.prompt)
+
+    def test_review_confirms_only_defects_against_the_requirements(self):
+        systems = []
+        def fj(env, system, user, max_tokens=4000):
+            systems.append((system, user))
+            return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
+                else {"confirmed": True, "evidence": "e"}
+        with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc, "load_env", return_value={}):
+            fc.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
+        review, confirm = systems
+        self.assertIn("hardening", review[0])
+        self.assertIn("hardening", confirm[0])
+        self.assertIn("THE PLAN", confirm[1])
+
+    def test_review_drops_a_confirmation_whose_quote_is_not_in_the_code(self):
+        def review(evidence, cfg=None):
+            fj = lambda env, system, user, max_tokens=4000: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
+                if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
+            with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc, "load_env", return_value={}):
+                return fc.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
+        self.assertEqual(len(review("fileName:   'x.js',")["confirmed"]), 1)
+        rv = review("lib output defaults to main.js")
+        self.assertEqual((rv["confirmed"], rv["pass"]), ([], True))
 
     def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
         code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})
