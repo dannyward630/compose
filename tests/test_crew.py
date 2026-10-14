@@ -77,6 +77,7 @@ class Crew(unittest.TestCase):
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
+        self.assertEqual(json.loads(start[start.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}})  # no co-author trailer on a crew commit
         sep = start.index("--")
         self.assertIn("brief.md", start[sep + 1])  # the brief is the session's first prompt, passed at launch: no race with a later `herdr agent prompt`
         self.assertNotIn(("agent", "prompt"), [c[:2] for c in calls])

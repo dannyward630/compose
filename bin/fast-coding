@@ -684,11 +684,13 @@ class RateLimited(Exception):
         super().__init__("provider rate limit hit; session compacted")
         self.usage = usage
 
+NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
+
 def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
-           "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
+           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     try:
         out = json.loads(p.stdout)
@@ -1628,7 +1630,7 @@ def cmd_crew(a):
     else:
         herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-              "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
+              "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
