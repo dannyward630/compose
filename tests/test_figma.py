@@ -42,11 +42,43 @@ class FigmaCheck(unittest.TestCase):
         self.assertEqual(self.stored(), {"figma": "NewKey123456"})
 
     def test_check_stores_a_url_then_shows_the_stored_key(self):
-        out = self.check("https://www.figma.com/design/AbCdEf123456/Shop?node-id=1-2")
+        with mock.patch.object(fc, "framelink_fetch", return_value="{}") as fetch:
+            out = self.check("https://www.figma.com/design/AbCdEf123456/Shop?node-id=1-2")
+            self.assertIn("figma file AbCdEf123456 stored in ", self.check())
         self.assertEqual(self.stored(), {"feature": "ENG-1", "figma": "AbCdEf123456"})
         self.assertIn("figma file AbCdEf123456 stored in ", out)
-        self.assertIn("linear.json; confirm access with whoami and get_metadata through the Figma MCP", out)
-        self.assertIn("figma file AbCdEf123456 stored in ", self.check())
+        self.assertIn("confirm the write connector with whoami", out)
+        self.assertIn("framelink reads figma file AbCdEf123456", out)
+        fetch.assert_called_with("AbCdEf123456", depth=1)
+
+    def test_check_says_how_to_set_up_framelink_when_it_cannot_read(self):
+        with mock.patch.object(fc, "framelink_fetch", side_effect=RuntimeError(fc.FRAMELINK_SETUP)):
+            with self.assertRaises(SystemExit) as e:
+                self.check("AbCdEf123456")
+        msg = str(e.exception)
+        for text in ("framelink cannot read figma file AbCdEf123456", ".config/figma-context-mcp/.env", "claude mcp add framelink-figma", "--env", "FIGMA_API_KEY=<token>"):
+            self.assertIn(text, msg)
+
+    def test_framelink_fetch_uses_env_file_depth_and_never_leaks_the_token(self):
+        env = self.proj / "fl.env"
+        with self.assertRaises(RuntimeError) as e:
+            fc.framelink_fetch("K", env_file=env)
+        self.assertIn("claude mcp add framelink-figma", str(e.exception))
+        env.write_text("FIGMA_API_KEY=figd_secret_token\n")
+        ok = SimpleNamespace(returncode=0, stdout='{"nodes": []}', stderr="")
+        with mock.patch.object(fc.subprocess, "run", return_value=ok) as run:
+            self.assertEqual(fc.framelink_fetch("K", node="1:2", depth=1, env_file=env), '{"nodes": []}')
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd[:4], ["npx", "-y", "figma-developer-mcp", "fetch"])
+        self.assertEqual(cmd[cmd.index("--env") + 1], str(env))
+        for flag, val in (("--file-key", "K"), ("--node-id", "1:2"), ("--depth", "1")):
+            self.assertEqual(cmd[cmd.index(flag) + 1], val)
+        self.assertNotIn("figd_secret_token", " ".join(cmd))
+        bad = SimpleNamespace(returncode=1, stdout="", stderr="403 token figd_secret_token rejected")
+        with mock.patch.object(fc.subprocess, "run", return_value=bad), self.assertRaises(RuntimeError) as e:
+            fc.framelink_fetch("K", env_file=env)
+        self.assertIn("403 token *** rejected", str(e.exception))
+        self.assertNotIn("figd_secret_token", str(e.exception))
 
     def test_check_refuses_junk_and_a_missing_key(self):
         with self.assertRaises(SystemExit) as e:
@@ -59,7 +91,43 @@ class FigmaCheck(unittest.TestCase):
 
     def test_help_lists_check_and_judge(self):
         r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "figma", "--help"], capture_output=True, text=True)
-        self.assertIn("{check,judge}", r.stdout)
+        self.assertIn("{check,tree,judge}", r.stdout)
+
+
+class FigmaTree(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            judge_task("ENG-1", "001", "Button", ["Has a label"]), judge_task("ENG-2", "002", "Code", ["x"], kind="code")]})
+
+    def tree(self, **kw):
+        ns = dict(repo=".", project="p", action="tree", figma=None, only="001", node="1:2,3-4", depth=None, bindings=None)
+        out = io.StringIO()
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
+            fc.cmd_figma(SimpleNamespace(**{**ns, **kw}))
+        return out.getvalue()
+
+    def test_saves_each_nodes_framelink_tree_then_the_write_results(self):
+        (self.proj / "bind.txt").write_text('{"bound": "color/bg"}\n')
+        with mock.patch.object(fc, "framelink_fetch", side_effect=lambda key, node=None, depth=None: f"TREE {node}") as fetch:
+            out = self.tree(bindings=str(self.proj / "bind.txt"), depth=3)
+        text = (self.proj / "results" / "001.tree.txt").read_text()
+        self.assertEqual(text, 'NODE 1:2\nTREE 1:2\n\nNODE 3-4\nTREE 3:4\n\nWRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n{"bound": "color/bg"}\n')
+        self.assertEqual([c.args[0] for c in fetch.call_args_list], ["AbCdEf123456"] * 2)
+        self.assertEqual(fetch.call_args.kwargs, {"node": "3:4", "depth": 3})
+        self.assertIn("001.tree.txt", out)
+
+    def test_refuses_a_missing_id_node_non_design_task_and_a_failed_fetch(self):
+        for kw, msg in ((dict(only=None), "needs --only"), (dict(node=None), "needs --only"), (dict(only="002"), "002 is not a design task")):
+            with self.assertRaises(SystemExit) as e:
+                self.tree(**kw)
+            self.assertIn(msg, str(e.exception))
+        with mock.patch.object(fc, "framelink_fetch", side_effect=RuntimeError("framelink fetch failed")), self.assertRaises(SystemExit) as e:
+            self.tree()
+        self.assertEqual(str(e.exception), "framelink fetch failed")
+        self.assertFalse((self.proj / "results" / "001.tree.txt").exists())
 
 
 def judge_task(ident, tid, title, crits, kind="design"):

@@ -27,8 +27,8 @@ class CliAndTasksDocs(unittest.TestCase):
             self.assertIn(word, self.row(sec, "designer"))
         for word in ("--only", "--print", "design-NNN"):
             self.assertIn(word, self.row(sec, "designcrews"))
-        figma = self.row(sec, "figma check\\|judge")
-        for word in ("check --figma", "judge --only", "linear.json", "results/NNN.tree.txt", "MET", "NOT_MET", "UNCLEAR"):
+        figma = self.row(sec, "figma check\\|tree\\|judge")
+        for word in ("check --figma", "tree --only", "Framelink", "judge --only", "linear.json", "results/NNN.tree.txt", "MET", "NOT_MET", "UNCLEAR"):
             self.assertIn(word, figma)
         for cmd in ("crew start\\|list\\|focus\\|stop", "explore", "testcrews", "report", "watch", "teardown", "frame0 up", "guard", "rewake"):
             self.assertIn(f"| `{cmd}", sec)
@@ -130,7 +130,9 @@ class SkillDoc(unittest.TestCase):
             "30 variants",
             "models.crew.designer",
             "models.crew.design`",
-            "one `get_screenshot` per story",
+            "one Framelink image (`download_figma_images`) per story",
+            "WRITES ONLY",
+            "design_concurrency",
         ):
             self.assertIn(phrase, d)
         self.assertLess(d.index("Foundations"), d.index("Components"))

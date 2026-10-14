@@ -196,7 +196,17 @@ The starter only relays from then on, as the engineering manager does for a team
 It is never inline: the designer works in its own pane and starts its own crew in theirs.
 `fast-coding figma check --project <slug> --figma <file url or key>` stores the target file's key in `.fast-coding/<slug>/linear.json`; with no key stored, the designer asks the product owner for the file.
 Figma serves `use_figma` only to its allowlisted clients, so the designer and its whole crew are Claude sessions.
-Before any build, the groundwork teammate runs one `whoami` from a crew pane to prove the account's Figma connector reaches teammates.
+Before any build, the groundwork teammate runs one `whoami` from a crew pane to prove the account's Figma connector reaches teammates, and `fast-coding figma check --project <slug>` to prove Framelink reads the file.
+Framelink is the read path: a Figma personal token in `~/.config/figma-context-mcp/.env` (`FIGMA_API_KEY=...`, mode 600) and the MCP server added with `claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env ~/.config/figma-context-mcp/.env --no-telemetry`; `figma check` prints these lines when it cannot read, and the token never goes on a command line.
+
+**Reads and writes are split.**
+The official Figma MCP caps calls per seat (Pro Full: 200 a day, 10 a minute) on tools that read; writes are exempt.
+So `use_figma` (official MCP) is for WRITES ONLY, never a read-only script, and every write script returns the facts it set (node ids, variable bindings, component keys), so no read is needed to prove a binding.
+Every READ goes through Framelink, which uses Figma's REST API and does not count against that cap: node trees for asserts and the judge, audits, and reviews through `get_figma_data` (or `fast-coding figma tree`), and images through `download_figma_images` in place of `get_screenshot` and `get_metadata`.
+`get_design_context` stays out of hand-off.
+REST data covers structure, names, layout, sizes, positions, resolved fills, text, fonts, component properties, and component keys; it lacks variable bindings and the remote/library flag, so a binding is proved by the write's returned facts and library origin by component key match.
+`whoami`, `get_libraries`, and `search_design_system` stay on the official connector, one call each.
+The connector rule stands: `mcp__claude_ai_Figma__*` only for writes, never `plugin:*figma*`.
 
 **Read before any write.**
 All of it is read-only, in this order:
@@ -204,7 +214,7 @@ All of it is read-only, in this order:
 2. The Frame0 wireframes: `fast-coding frame0 up --project <slug>`, then `export_page_as_image` for each page of `design.f0`.
 3. The repo's tokens, CSS, and components through graft: `graft ask "design tokens theme css variables" --source`, `graft grep "--color-"`.
 4. `DESIGN.md`, when the repo has one.
-5. Figma: `whoami`, then `get_libraries` and `search_design_system` on the stored file, to see what the canvas already has.
+5. Figma: `whoami`, then `get_libraries` and `search_design_system` on the stored file, and a Framelink fetch of the file at depth 1, to see what the canvas already has.
 
 **The ticket decides where it starts**, as 0j does for code:
 
@@ -213,7 +223,7 @@ All of it is read-only, in this order:
 | **epic** | Check for a design system (below). None: write the design-system epic with its features and stories, send its open decisions up as cards, build Foundations once they are answered. One exists: continue at the first story not Done under it or under the epic's features. |
 | **feature** | Its design system exists, or at least its Foundations are Done; else start there and link the feature `blocked by` it. Then one design story per screen or flow the feature's stories name, each with its design tasks. |
 | **story** | The screens its acceptance criteria imply, as design tasks under one design story linked to it. |
-| **design story, partly done** | Read its tasks' states (0s): run the assert of each In Progress task to see what the canvas already has, cancel and re-split what failed, start builders for every Todo, review what is In Review. Nothing that passes its assert is rebuilt. |
+| **design story, partly done** | Read its tasks' states (0s): fetch each In Progress task's tree through Framelink to see what the canvas already has, cancel and re-split what failed, start builders for every Todo, review what is In Review. Nothing that passes its assert is rebuilt. |
 | **loose idea** | Not the designer's: it goes to wayfinder (0b) through the chain, and the designer starts once the ticket exists. |
 
 **The design system is its own epic.**
@@ -249,32 +259,31 @@ It holds at most one component set of 30 variants, and every call stays under Fi
 
 **The gate.**
 Jev judges text, so the red gate is the node tree as text.
-The assert is a read-only `use_figma` script that returns the task's subtree as text: names, types, auto-layout, variant properties, variable bindings, and text content.
-The builder saves the assert script's text to `.fast-coding/<slug>/results/NNN.tree.txt`.
+The assert is the task's subtree as Framelink JSON: names, types, auto-layout, sizes, fills, variant properties, component keys, and text content, followed by what the write script returned (variable bindings, node ids).
+`fast-coding figma tree --project <slug> --only NNN --node <ids> [--bindings <file>]` fetches it through Framelink and saves it to `.fast-coding/<slug>/results/NNN.tree.txt`, so no one copies a tree by hand.
 `fast-coding figma judge --project <slug> --only NNN` asks Jev one MET, NOT_MET, or UNCLEAR question per acceptance criterion against that text, confirms each NOT_MET, writes `results/NNN.json`, and moves the task to In Review when it passes.
 Before the builder runs there is no tree, so the test is red.
-The look check is separate: a `design-review` teammate takes one `get_screenshot` per story, and a finding counts only once it is confirmed by quoting the node it saw.
-The read budget is small (200 read calls a day and 10 a minute on the Pro Full seat), so asserts go through `use_figma` and screenshots stop at one per story.
-The groundwork teammate measures on the first project whether a read script counts against that limit.
+The look check is separate: a `design-review` teammate takes one Framelink image (`download_figma_images`) per story, and a finding counts only once it is confirmed by quoting the node it saw.
+The official MCP's read budget is small (200 a day and 10 a minute on the Pro Full seat), so no read goes through it, and images stop at one per story.
 
 **The crew.**
 
 | Teammate | Does | Model |
 |---|---|---|
 | `designer` | Reads the inputs, writes the Linear issues, starts the builders and the reviewer, runs the gate, hands off, reports up | `models.crew.designer`, else Opus 5.5 at high effort |
-| `design-NNN` | One design task: builds it with `use_figma`, runs the assert, saves the tree, runs the task's `test:`, reports `working "design ready: <node ids>"` | `models.crew.design`, else `default` |
-| `design-review` | One `get_screenshot` per story; findings confirmed by quoting nodes | `models.crew.design`, else `default` |
+| `design-NNN` | One design task: builds it with a `use_figma` write script, saves the tree with `figma tree`, runs the task's `test:`, reports `working "design ready: <node ids>"` | `models.crew.design`, else `default` |
+| `design-review` | One Framelink image per story; findings confirmed by quoting nodes | `models.crew.design`, else `default` |
 
 Every session loads the `figma:figma-use` skill before every `use_figma` call.
 The designer syncs (step 2), then starts every builder at once with `fast-coding designcrews --project <slug>`: one `design-NNN` per design task not Done, Canceled, or In Review, in the project worktree with no branch.
 `--only` picks tasks and `--print` shows the briefs, as with `testcrews`.
-It starts at most 8 builders (`--max N`, or `design_concurrency` in verify.json) to stay under Figma's per-minute MCP rate limit, prints the queued ids, and the designer runs `designcrews --only <those ids>` as earlier builders report done or design ready.
+It starts at most 3 builders (`--max N`, or `design_concurrency` in verify.json) to stay under Figma's per-minute write rate limit, prints the queued ids, and the designer runs `designcrews --only <those ids>` as earlier builders report done or design ready.
 It starts the reviewer like any teammate: `fast-coding crew start --project <slug> --role design-review --title design-review --brief -`.
 A builder reports `done` only when the designer says so.
 
 **Hand-off to code.**
-1. Every variable carries code syntax, and a groundwork task exports the variables to the repo's token file (`tokens.css` or `tokens.json`) from `get_variable_defs`, as code, before `run`.
-2. Each screen node's `get_design_context` is pasted into the description of the code task that builds it, one node per task, since implementers have no Figma tools.
+1. Every variable carries code syntax, and a groundwork task exports the variables to the repo's token file (`tokens.css` or `tokens.json`) from the write scripts' returned bindings (or `get_variable_defs` once), as code, before `run`.
+2. Each screen node's Framelink JSON (`get_figma_data`) is pasted into the description of the code task that builds it, one node per task, since implementers have no Figma tools.
 3. Code Connect stays out until the Figma plan changes; it needs the Organization plan.
 
 ### 0r. Pick up where the last session stopped

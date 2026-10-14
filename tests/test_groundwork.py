@@ -319,6 +319,12 @@ class DesignerBrief(unittest.TestCase):
         self.assertIn("Project notes from the team lead:\nCheckout only.", brief)
         self.assertTrue(brief.rstrip().endswith("Checkout only."))
 
+    def test_brief_splits_figma_writes_from_framelink_reads(self):
+        brief = " ".join(self.brief().split())
+        for text in ("WRITES ONLY", "never a read-only script", "returns the facts it set", "mcp__framelink-figma__get_figma_data", "download_figma_images",
+                     "never `get_screenshot`, `get_metadata`, or `get_design_context`", "Never use `plugin:*figma*`", "fast-coding figma tree --project p --only NNN"):
+            self.assertIn(text, brief)
+
     def test_design_task_nodes_are_page_and_name_pairs_one_page_per_task(self):
         brief = " ".join(self.brief().split())
         step4 = brief[brief.index(" 4. "):brief.index(" 5. ")]
@@ -356,6 +362,16 @@ class DesignCrews(unittest.TestCase):
         for text in ("===== design-001", "===== design-005", "Figma file AbCdEf123456", "Checkout/Cart", "Checkout/Pay", str(self.proj / "results" / "001.tree.txt"), "judge 001", "figma:figma-use", "TASK BRIEF:", "## Goal\nDraw 001."):
             self.assertIn(text, out)
         self.assertEqual((out.count("====="), started, space.call_count), (2, [], 0))
+        flat = " ".join(out.split())
+        for text in ("WRITES ONLY", "mcp__framelink-figma__get_figma_data", "fast-coding figma tree --project p --only 001", "never a read-only `use_figma` script", "Never use `plugin:*figma*`"):
+            self.assertIn(text, flat)
+
+    def test_default_pace_is_three_builders_at_once(self):
+        def issue(n):
+            return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\nid: {n}\nkind: design\ntest: t\nnodes: P{n}/A\n```\n", "status": "Todo", "blockedBy": []}
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue(f"10{i}") for i in range(5)]})
+        started, out, _ = self.run_crews()
+        self.assertEqual((len(started), "queued past the cap of 3" in out), (3, True))
 
     def test_starts_one_crew_per_open_design_task_and_reports_one_that_fails(self):
         started, out, space = self.run_crews(busy={"design-001"})
@@ -375,7 +391,7 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual(len(self.run_crews()[0]), 1)
         self.assertEqual(len(self.run_crews(max=2)[0]), 2)
         (self.proj / "verify.json").unlink()
-        started, out, _ = self.run_crews()
+        started, out, _ = self.run_crews()  # no config: the default of 3 holds both open tasks
         self.assertEqual((len(started), "queued" in out), (2, False))
 
     def test_a_named_id_that_is_skipped_prints_one_line_with_the_reason(self):

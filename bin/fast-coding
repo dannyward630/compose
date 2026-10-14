@@ -1449,21 +1449,54 @@ def cmd_planner(a):
     print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=agent_name(proj.name, "planner"))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-FIGMA_CONNECTOR = ("Figma tools: use only the authenticated connector, `mcp__claude_ai_Figma__*`. Load what you need in one ToolSearch select call\n"
-                   "(`use_figma`, `get_metadata`, `get_screenshot`, `get_variable_defs`, `whoami`). Never use `plugin:*figma*` tools or their authenticate calls.")
+FIGMA_CONNECTOR = ("Figma tools: the authenticated connector `mcp__claude_ai_Figma__*` is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
+                   "Every write script returns the facts it set (ids of nodes, variable bindings, component keys), so no read is needed to prove a binding.\n"
+                   "Every READ goes through Framelink (`mcp__framelink-figma__get_figma_data` for node trees, `download_figma_images` for images): never `get_screenshot`, `get_metadata`, or `get_design_context`.\n"
+                   "Framelink (REST) shows structure, names, layout, sizes, fills, text, fonts, component properties, and component keys; it has no variable bindings and no library flag, so prove a binding from the write's returned facts and library origin by component key. "
+                   "Never use `plugin:*figma*` tools or their authenticate calls.")
+FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
+FRAMELINK_SETUP = (f"Framelink is not set up. Put a Figma personal access token in {FRAMELINK_ENV} as one line `FIGMA_API_KEY=<token>` (chmod 600), then run\n"
+                   f"  claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry\n"
+                   "The token never goes on a command line; only --env names the file.")
+
+def framelink_fetch(key, node=None, depth=None, env_file=None):
+    """Framelink's JSON for a Figma file or node via the REST API, which does not count against the MCP read cap. Never echoes the token."""
+    env_file = Path(env_file or FRAMELINK_ENV)
+    if not env_file.exists():
+        raise RuntimeError(FRAMELINK_SETUP)
+    cmd = ["npx", "-y", "figma-developer-mcp", "fetch", "--env", str(env_file), "--no-telemetry", "--file-key", key, "--format", "json"]
+    if node:
+        cmd += ["--node-id", node]
+    if depth is not None:
+        cmd += ["--depth", str(depth)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"framelink fetch failed: {e}")
+    secrets = [v.strip().strip("\"'") for line in env_file.read_text().splitlines() if "=" in line and not line.startswith("#")
+               for v in [line.split("=", 1)[1]] if len(v.strip()) > 3]
+    if r.returncode or not r.stdout.strip():
+        err = (r.stderr or r.stdout or "no output").strip()[-500:]
+        for sec in secrets:
+            err = err.replace(sec, "***")
+        raise RuntimeError(f"framelink fetch failed (exit {r.returncode}): {err}")
+    return r.stdout
 
 DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear; the
 target Figma file is {figma}.
 1. Invoke the fast-coding skill and follow section 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `list_issues` search for "design system", "tokens", "Figma"; the
    Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
-   (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`.
+   (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
+   (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
 3. Load the `figma:figma-use` skill before every `use_figma` call.
    """ + FIGMA_CONNECTOR.replace("\n", "\n   ") + """ Tell every builder and the `design-review` teammate the same.
 4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
    one page per task), and `test: fast-coding figma judge --project {slug} --only NNN`.
 5. Start builders with `fast-coding designcrews --project {slug}`; gate each with
-   `fast-coding figma judge --project {slug} --only NNN`; then run a `design-review` teammate with one screenshot per story.
+   `fast-coding figma tree --project {slug} --only NNN --node <ids>` then `fast-coding figma judge --project {slug} --only NNN`;
+   then run a `design-review` teammate that reads trees and images through Framelink, one image per story, never `get_screenshot`.
+   Hand-off to code pastes Framelink JSON (never `get_design_context`) into the code task.
 6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
    visual.
 """
@@ -1545,6 +1578,8 @@ def cmd_testcrews(a):
     if failed:
         print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding testcrews --project {proj.name} --only {','.join(sorted(failed))}")
 
+DESIGN_CONCURRENCY = 3  # builders started at once: the official MCP allows 10 calls a minute, and only writes use it now
+
 def design_brief(meta, figma, results):
     """The brief for one design task's builder; the task's own `figma:` file wins over the project's."""
     figma = meta.get("figma") or figma
@@ -1554,8 +1589,9 @@ def design_brief(meta, figma, results):
             f"nodes you may create or touch: {nodes} (one page per task)\n"
             "Load the `figma:figma-use` skill before every `use_figma` call.\n"
             f"{FIGMA_CONNECTOR}\n"
-            "Work in one retry-safe script that returns every created and mutated node id; at most one component set of 30 variants.\n"
-            f"When it is built, run the assert read script and save its returned text to {tree}, then run `{meta.get('test')}`.\n"
+            "Work in one retry-safe write script that returns every created and mutated node id and every variable binding and component key it set; at most one component set of 30 variants.\n"
+            f"When it is built, save the write script's returned facts to a file and run `fast-coding figma tree --project {Path(results).parent.name} --only {meta['id']} --node <ids> --bindings <that file>`, "
+            f"which fetches the tree through Framelink into {tree}; never a read-only `use_figma` script. Then run `{meta.get('test')}`.\n"
             "Report `working \"design ready: <node ids>\"`, and `done` only when the designer says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}")
 
@@ -1579,7 +1615,7 @@ def cmd_designcrews(a):
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
         return
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
-    cap = a.max or cfg.get("design_concurrency", 8)
+    cap = a.max or cfg.get("design_concurrency", DESIGN_CONCURRENCY)
     # designcrews exits once the builders start, so nothing can start the rest later: the queued ids are printed with the command.
     metas, queued = metas[:cap], metas[cap:]
     herdr_space(proj)  # once, before the parallel starts
@@ -1993,9 +2029,35 @@ def store_figma(proj, key):
     data["figma"] = key
     atomic_write(path, json.dumps(data))
 
+def figma_tree(a, proj):
+    """Save the Framelink tree of --node (comma-separated ids) for design task --only to results/NNN.tree.txt, then the write script's --bindings text."""
+    if not a.only or not a.node:
+        sys.exit("figma tree needs --only <id> and --node <node ids>")
+    meta = next((m for m in load_tasks(proj, required=True) if m["id"] == a.only), None)
+    if not meta or meta.get("kind") != "design":
+        sys.exit(f"{a.only} is not a design task")
+    key = meta.get("figma") or (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
+    if not key:
+        sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+    parts = []
+    for node in (n.strip() for n in a.node.split(",") if n.strip()):
+        try:
+            parts.append(f"NODE {node}\n" + framelink_fetch(key, node=node.replace("-", ":"), depth=a.depth))
+        except RuntimeError as e:
+            sys.exit(str(e))
+    if a.bindings:
+        extra = sys.stdin.read() if a.bindings == "-" else Path(a.bindings).read_text()
+        parts.append("WRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n" + extra.strip())
+    out = proj / "results" / f"{a.only}.tree.txt"
+    atomic_write(out, "\n\n".join(parts) + "\n")
+    print(f"saved {out}")
+
 def cmd_figma(a):
-    """`figma check` stores the target Figma file key; `figma judge` gates a design task with Jev on its node tree."""
+    """`figma check` stores the target Figma file key and proves Framelink reads it; `figma tree` saves a task's node tree from Framelink;
+    `figma judge` gates a design task with Jev on that tree."""
     proj = project_dir(a)
+    if a.action == "tree":
+        return figma_tree(a, proj)
     if a.action == "check":
         if a.figma:
             key = figma_key(a.figma)
@@ -2006,7 +2068,12 @@ def cmd_figma(a):
             key = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
             if not key:
                 sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
-        print(f"figma file {key} stored in {proj / 'linear.json'}; confirm access with whoami and get_metadata through the Figma MCP")
+        print(f"figma file {key} stored in {proj / 'linear.json'}; confirm the write connector with whoami through the Figma MCP")
+        try:
+            framelink_fetch(key, depth=1)
+        except RuntimeError as e:
+            sys.exit(f"framelink cannot read figma file {key}: {e}")
+        print(f"framelink reads figma file {key}")
         return
     if not a.only:
         sys.exit("figma judge needs --only <ids>")
@@ -2031,7 +2098,7 @@ def cmd_figma(a):
             sys.exit(f"{tid} is not a design task")
         tree_path = proj / "results" / f"{tid}.tree.txt"
         if not tree_path.exists():
-            sys.exit(f"no node tree at {tree_path}: the builder saves the assert script's text there")
+            sys.exit(f"no node tree at {tree_path}: `fast-coding figma tree --project {proj.name} --only {tid} --node <ids>` saves it")
         text = tree_path.read_text()
         crits_id = crits.get(tid, [])
         if not crits_id:
@@ -5455,7 +5522,7 @@ def main():
                             ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("models", cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
-                            ("figma", cmd_figma, "check | judge: store the target Figma file key; judge a design task's node tree with Jev"),
+                            ("figma", cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
@@ -5509,7 +5576,7 @@ def main():
         if name == "designcrews":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
-            s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else 8)")
+            s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else 3)")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
@@ -5545,9 +5612,12 @@ def main():
         if name == "frame0":
             s.add_argument("action", choices=("up", "save", "down"))
         if name == "figma":
-            s.add_argument("action", choices=("check", "judge"))
+            s.add_argument("action", choices=("check", "tree", "judge"))
             s.add_argument("--figma", help="check: the target Figma file's url or key, stored in linear.json")
-            s.add_argument("--only", help="judge: comma-separated design task ids")
+            s.add_argument("--only", help="judge: comma-separated design task ids; tree: one id")
+            s.add_argument("--node", help="tree: comma-separated node ids to fetch through Framelink")
+            s.add_argument("--depth", type=int, help="tree: how deep Framelink walks (default: all)")
+            s.add_argument("--bindings", help="tree: a file (or - for stdin) with what the write script returned, appended to the tree")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug | contradiction")
