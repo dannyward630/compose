@@ -341,14 +341,14 @@ class DesignCrews(unittest.TestCase):
             issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
             issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
 
-    def run_crews(self, only=None, print_=False, busy=()):
+    def run_crews(self, only=None, print_=False, busy=(), max=None):
         started, out = [], io.StringIO()
         def crew(ns):
             started.append(ns)
             if ns.role in busy: raise SystemExit("busy")
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr_space") as space, \
                 mock.patch.object(fc, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
-            fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_))
+            fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space
 
     def test_print_shows_one_brief_per_open_design_task(self):
@@ -365,6 +365,18 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual((ns.project, ns.action, ns.title, ns.force, ns.cwd, ns.model), ("p", "start", "design 005", False, None, None))
         self.assertEqual(ns.brief, fc.design_brief(meta, "AbCdEf123456", self.proj / "results"))
         self.assertEqual([ns.role for ns in self.run_crews(only="005")[0]], ["design-005"])
+
+    def test_starts_at_most_the_cap_and_prints_the_rest_with_the_command_to_start_them(self):
+        started, out, _ = self.run_crews(max=1)
+        self.assertEqual([ns.role for ns in started], ["design-001"])
+        self.assertIn("queued past the cap of 1: 005", out)
+        self.assertIn("fast-coding designcrews --project p --only 005", out)
+        (self.proj / "verify.json").write_text(json.dumps({"design_concurrency": 1}))
+        self.assertEqual(len(self.run_crews()[0]), 1)
+        self.assertEqual(len(self.run_crews(max=2)[0]), 2)
+        (self.proj / "verify.json").unlink()
+        started, out, _ = self.run_crews()
+        self.assertEqual((len(started), "queued" in out), (2, False))
 
     def test_no_stored_figma_key_refuses(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))

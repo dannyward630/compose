@@ -1442,6 +1442,10 @@ def cmd_designcrews(a):
         for m in metas:
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
         return
+    cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
+    cap = a.max or cfg.get("design_concurrency", 8)
+    # designcrews exits once the builders start, so nothing can start the rest later: the queued ids are printed with the command.
+    metas, queued = metas[:cap], metas[cap:]
     herdr_space(proj)  # once, before the parallel starts
     def start(m):
         try:
@@ -1451,6 +1455,10 @@ def cmd_designcrews(a):
             print(f"design-{m['id']} not started: {e}")
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
+    if queued:
+        ids = ",".join(m["id"] for m in queued)
+        print(f"{len(queued)} design builder(s) queued past the cap of {cap}: {ids}\nstart them as earlier ones report done or design ready: "
+              f"fast-coding designcrews --project {proj.name} --only {ids}")
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
@@ -4934,6 +4942,7 @@ def main():
         if name == "designcrews":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
+            s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else 8)")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":

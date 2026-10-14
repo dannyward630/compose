@@ -88,7 +88,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 | `explore`, `wayfinder`, `groundwork` | Prints that teammate's brief. `--extra -` appends notes from stdin |
 | `planner` | Prints the planner teammate's brief. `--issue NEB-xxx` picks the ticket, default the project's feature. `--extra -` appends notes from stdin |
 | `designer` | Prints the designer teammate's brief. `--figma <url or key>` stores the Figma file key, and `--extra -` appends notes from stdin |
-| `designcrews` | Starts one `design-NNN` builder per open design task. `--only <ids>` picks tasks, and `--print` prints the briefs |
+| `designcrews` | Starts one `design-NNN` builder per open design task. `--only <ids>` picks tasks, `--max N` caps builders started at once (default 8, or `design_concurrency` in verify.json; the rest are printed), and `--print` prints the briefs |
 | `figma check\|judge` | `check --figma <url or key>` stores the target file key in `linear.json`. `judge --only <ids>` asks Jev MET, NOT_MET, or UNCLEAR per acceptance criterion on the node tree the builder saved as `results/NNN.tree.txt`, confirms each NOT_MET, and exits 1 on a confirmed one |
 | `testcrews` | Runs one test-writing teammate per task, in parallel |
 | `report` | Lets a teammate report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |

@@ -265,6 +265,7 @@ The groundwork teammate measures on the first project whether a read script coun
 Every session loads the `figma:figma-use` skill before every `use_figma` call.
 The designer syncs (step 2), then starts every builder at once with `fast-coding designcrews --project <slug>`: one `design-NNN` per design task not Done, Canceled, or In Review, in the project worktree with no branch.
 `--only` picks tasks and `--print` shows the briefs, as with `testcrews`.
+It starts at most 8 builders (`--max N`, or `design_concurrency` in verify.json) to stay under Figma's per-minute MCP rate limit, prints the queued ids, and the designer runs `designcrews --only <those ids>` as earlier builders report done or design ready.
 It starts the reviewer like any teammate: `fast-coding crew start --project <slug> --role design-review --title design-review --brief -`.
 A builder reports `done` only when the designer says so.
 
