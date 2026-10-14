@@ -21,7 +21,7 @@ class FormatOnPass(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "f", "files": ["a.go"], "protected": [], "test": "grep -q F a.go",
                 "model": "pi:x/y", "after": "", "linear": "ENG-1", "body": "## Goal\nAdd F."}
-        def impl(cwd, model, prompt, session=None, task=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             (Path(cwd) / "a.go").write_text("package a\nfunc   F( ) int {\nreturn 1}\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \

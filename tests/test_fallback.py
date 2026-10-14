@@ -25,7 +25,7 @@ class Fallback(unittest.TestCase):
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         calls = []
-        def impl(cwd, model, prompt, session=None, task=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             calls.append(model)
             if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
@@ -35,6 +35,26 @@ class Fallback(unittest.TestCase):
                 mock.patch.object(fc, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.run_task(repo, proj, task, 3, reset_files=reset_files), calls
+
+    def test_turn_limit_leaves_room_for_the_tasks_test(self):
+        root = Path(tempfile.mkdtemp())
+        repo, proj = root / "repo", root / "proj"
+        repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt", "test_timeout": 300,
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        limits = []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            limits.append(timeout)
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            fc.run_task(repo, proj, task, 3)
+        self.assertGreaterEqual(limits[0], fc.TURN_TIMEOUT + 300)
 
     def test_error_falls_back(self):
         r, calls = self.run_once("error")
@@ -61,7 +81,7 @@ class Fallback(unittest.TestCase):
 
 class Preflight(unittest.TestCase):
     def test_bad_model_stops_before_anything_runs(self):
-        def impl(cwd, model, prompt, session=None, task=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             if model == BACKUP:
                 raise RuntimeError("400 z-ai/glm-5-3-flash is not a valid model ID")
             if model == "pi:r/limited":
@@ -112,7 +132,7 @@ class FixScope(unittest.TestCase):
         git("checkout", "-qb", "layer")
         (repo / "a.go").write_text("b\n")
         git("commit", "-qam", "layer")
-        def impl(cwd, model, prompt, session=None, task=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
             return "s", "", 1, {"cost": 0.0}

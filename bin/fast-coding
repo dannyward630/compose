@@ -469,7 +469,7 @@ def fallback_for(model):
     """The model to switch to after a miss, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
     return FALLBACK_MODEL if FALLBACK_MODEL and model != FALLBACK_MODEL and not is_claude(model) else None
 
-def implementer(cwd, model, prompt, session=None, task=None):
+def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
     is inside herdr and `task` names the project's space), anything else runs OpenCode."""
     fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
@@ -479,8 +479,8 @@ def implementer(cwd, model, prompt, session=None, task=None):
         return claude_once(cwd, prompt, model=claude_id(model))
     if model.startswith("pi:"):
         if herdr_env() and task and task.get("space"):
-            return herdr_pi(cwd, model[3:], prompt, session, task)
-        return pi_turn(cwd, model[3:], prompt, session)
+            return herdr_pi(cwd, model[3:], prompt, session, task, timeout)
+        return pi_turn(cwd, model[3:], prompt, session, timeout)
     return opencode(cwd, model, prompt, session)
 
 class PaymentRequired(Exception):
@@ -1359,7 +1359,11 @@ def cmd_designer(a):
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
-TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
+TURN_TIMEOUT = 180  # seconds one implementer turn may take on its own; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
+
+def turn_timeout(meta):
+    """A turn's wall-time limit: the turn itself plus one run of the task's test, which the implementer runs inside the turn."""
+    return TURN_TIMEOUT + int(meta.get("test_timeout") or TEST_TIMEOUT)
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 
 def test_brief(meta, contract, budget=None):
@@ -2304,7 +2308,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         attempt += 1
         t0 = time.time()
         try:
-            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)})
+            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)},
+                                                       timeout=turn_timeout(meta))
         except RateLimited as e:
             cost += e.usage["cost"]
             if fall():
@@ -2326,7 +2331,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             continue
         except subprocess.TimeoutExpired:
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
-            say(f"{tid} attempt {attempt} timeout  implementer produced nothing for {fmt(time.time() - t0)}; fresh session")
+            say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fmt(time.time() - t0)}; fresh session")
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
             session = None
             prompt = original_prompt

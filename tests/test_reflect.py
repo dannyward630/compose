@@ -369,7 +369,7 @@ class ImplementerContradiction(unittest.TestCase):
         meta = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nCall answer() from a.txt."}
         prompts = []
-        def impl(cwd, model, prompt, session=None, task=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt)
             return "s", reply, 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
