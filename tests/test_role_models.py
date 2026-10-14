@@ -62,7 +62,7 @@ class RoleModels(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
-                mock.patch.object(fc, "claude_trusted", return_value=True):
+                mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"):
             fc.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         self.assertEqual(start[start.index("--model") + 1], "claude-sonnet-5-5")
@@ -160,7 +160,7 @@ class PlannerChain(unittest.TestCase):
         with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
-                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True):
+                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"):
             fc.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         self.assertIn("claude-opus-5-5", start); self.assertIn("--effort", start); self.assertIn("high", start)

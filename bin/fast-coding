@@ -726,28 +726,20 @@ def herdr_error(*args, timeout=120):
         return None, ((out.get("error") or {}).get("code") or p.stderr.strip()[-200:] or "error")
     return out.get("result", out), None
 
-def herdr_submit(agent, text, tries=3):
-    """Send `text` as a prompt and make sure it was submitted. A teammate started a moment ago can take the paste while its
-    input is still coming up and drop the Enter (4 of 9 test writers started at once sat with the brief unsent); herdr reports
-    that as agent_prompt_stalled, and an Enter submits what already sits in the box."""
-    try:
-        herdr("agent", "prompt", agent, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", "30000", check=True, timeout=60)
-        return
-    except RuntimeError as e:
-        if "agent_prompt_stalled" not in str(e):
-            raise
-        err = str(e)
+def herdr_await_start(agent, tries=3):
+    """Return once `agent` has started on the prompt it was launched with. The brief is the session's initial prompt, so nothing
+    can reach it first; this only confirms the submission landed (status working, blocked, or done), presses Enter when the box
+    kept the text without submitting, and fails loudly with the agent name when it still did not start."""
     def started():  # `done` counts too: a short first turn can finish before the check
         return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
-    if started():  # the stall can be a slow start that the 5s window missed, not a dropped Enter: an Enter now would land on a running agent
-        return
-    for _ in range(tries):
-        herdr("agent", "send-keys", agent, "enter")
-        for _ in range(5):
-            time.sleep(2)
+    for attempt in range(tries + 1):
+        if attempt:
+            herdr("agent", "send-keys", agent, "enter")
+        for _ in range(10):
             if started():
                 return
-    raise RuntimeError(f"{err}; the brief to {agent} may sit unsent in its tab: press Enter there")
+            time.sleep(2)
+    raise RuntimeError(f"{agent} did not start on its brief; the brief may sit unsent in its tab: press Enter there")
 
 def agent_name(slug, tid):
     """herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents. `<slug>-<id>`, slug trimmed to fit."""
@@ -1581,12 +1573,15 @@ def cmd_crew(a):
     tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
+    brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
+    brief_file.write_text(crew_preamble(proj, name, title) + brief)
+    first = f"Your brief is the file {brief_file}. Read it now and follow it."
     if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-        herdr("agent", "start", agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
+        herdr("agent", "start", agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", first, "--tui-mode", "regular", "--no-extensions",
               *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
               *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), check=True, timeout=90)
     else:
-        herdr("agent", "start", agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
+        herdr("agent", "start", agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
               "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",  # auto mode's classifier denied a first `npx` call as external code
               check=True, timeout=90)
@@ -1594,7 +1589,7 @@ def cmd_crew(a):
     rec.write_text(json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     write_report(proj, name, "working", "started")
-    herdr_submit(agent, crew_preamble(proj, name, title) + brief)
+    herdr_await_start(agent)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
