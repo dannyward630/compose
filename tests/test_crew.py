@@ -87,6 +87,22 @@ class Crew(unittest.TestCase):
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
+    def test_started_is_written_before_the_agent_can_report(self):
+        def herdr(*args, **kw):
+            if args[:2] == ("agent", "start"):  # a fast teammate finishes before start returns
+                fc.write_report(self.proj, "shop-eol", "done", "one commit")
+            if args[:2] == ("agent", "list"):
+                return {"agents": []}
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
+        a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+            fc.cmd_crew(a)
+        self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
+
     def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
         for role, env in (("planner", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
             calls = []

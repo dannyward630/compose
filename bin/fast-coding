@@ -1657,6 +1657,9 @@ def cmd_crew(a):
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     brief_file.write_text(crew_preamble(proj, name, title) + brief)
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
+    atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+                               "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+    write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
         herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", first, "--tui-mode", "regular", "--no-extensions",
               *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
@@ -1666,9 +1669,6 @@ def cmd_crew(a):
               *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
               "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
-    atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
-                               "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
-    write_report(proj, name, "working", "started")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
     herdr_await_start(agent)
