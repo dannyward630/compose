@@ -36,6 +36,13 @@ class Grouping(unittest.TestCase):
         for f in ("src/lock.ts", "locksmith.py", "docs/bun.lock.md"):
             self.assertFalse(fc.GENERATED_RE.search(f), f)
 
+    def test_a_task_branch_does_not_count_its_lockfile_toward_the_limit(self):
+        r = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
+        (r / "package.json").write_text('{"vite": "8"}\n'); (r / "yarn.lock").write_text("x\n" * 5000)
+        self.assertEqual(fc.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
+
 
 class Layers(unittest.TestCase):
     """A project branch with groundwork and every task's test on it, and task branches above it: the layers regroup all of it."""

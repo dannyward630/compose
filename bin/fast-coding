@@ -1114,14 +1114,14 @@ GROUNDWORK_BRIEF = """You are the groundwork teammate for project {slug}. Worktr
 read them first with `fast-coding tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
 Commit on {trunk} in small commits with plain messages. Nothing is pushed.
 
-Phase A, toolchain (report before changing dependencies):
+Phase A, toolchain (probe and report; you never change dependencies):
 {stacks}
 1. Install from the lockfiles, then build, test, and start every part the way a user would (start the server and probe one URL; start the client with BROWSER=none and probe it). Unit tests passing is not proof the app runs.
-2. For each breakage find the smallest fix that works (a documented setting, or an upgrade); try it on a scratch copy if needed.
+2. For each breakage find the smallest fix that works (a documented setting, or an upgrade); try it on a scratch copy if needed, and leave the worktree's dependencies and lockfiles as they are.
 3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for the team lead's go in this pane.
 
-Phase B, after the go:
-1. Apply the dependency and toolchain fixes with the package managers (never by hand-editing lockfiles). Commit.
+Phase B, after the go (the settled choices reach the planner as tasks):
+1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: the planner splits them like any other work, and a choice the probe found is a wayfinder card the product owner settles first. Change no dependency.
 2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
 3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.fast-coding or /tmp.
 4. Commit.
@@ -1171,8 +1171,8 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    run it again at once, as often as it takes: queued answers wait for you.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
    whole-description write.
-6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them, are asked
-   the same way: text cards in a new needs-user; visual cards added to the same page, then
+6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
+   are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}` if the page was opened, then report
    `done` with the decisions in one line each.
@@ -1224,6 +1224,10 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    - `after:` only for code a task needs (it calls, imports, or edits what the other creates), set as the issue's blocked-by links
    - ids numbered in review order
    A story-sized criterion (one that spans several behaviors) is split, not copied.
+   A story is never done by groundwork alone: every code, dependency, lockfile, and toolchain change is a task. Name the lockfile in
+   `files:` (lockfiles do not count toward the 350 lines). A choice it needs (which version, which option) is a decision card
+   (checks 1, 3, 6), settled before the task is cut. Only work that is not code (a manual browser run that needs the product
+   owner's sign-in) stays teammate work, and it never exempts the story from tasks for its code.
 
 4. The task issue: a sub-issue of its story, label Task, state Todo, its title the task's title. Its description, in this order:
    ## Goal
@@ -1233,7 +1237,7 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    ## Test plan
    How to run (the `test:` command), what is covered in words, and that the test has holdout cases not listed.
    ## Constraints
-   No new dependencies. Do not edit protected files.
+   No new dependencies beyond what the goal names. Do not edit protected files.
    and last, the block the CLI reads:
    ```fast-coding
    id: 001
@@ -2143,8 +2147,9 @@ def branch_budget(wt, base, allowed=None):
     sh(["git", "add", "-A"], wt, check=False)
     lines = 0
     for row in sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
-        a, d = row.split("\t")[:2]
-        lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
+        a, d, f = row.split("\t", 2)
+        if not GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
+            lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
     changed = sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     new_docs = [f for f in sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
                 if DOC_RE.search(f)]
@@ -4048,11 +4053,11 @@ def cmd_verify(a):
 LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "Gemfile.lock", "composer.lock")
 
-def fix_strays(touched, allowed):
+def fix_strays(touched, allowed, named=()):
     """Files a verify fix round may not touch. A fixer gets the same scope as the tasks: only files the stack already
     changes. With no stack diff (verify on a plain checkout) it is free except for lockfiles, which a fixer only rewrites
-    when it is working around a broken environment, not fixing a finding."""
-    return [f for f in touched if f not in allowed] if allowed else [f for f in touched if Path(f).name in LOCKFILES]
+    when it is working around a broken environment, not fixing a finding. A lockfile a task names in `files:` is part of the work."""
+    return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in LOCKFILES and f not in named]
 
 def verify_rounds(repo, proj, cfg, a, rounds, t0):
     base = cfg.get("review_base")
@@ -4120,7 +4125,8 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         if new_docs:
             say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
         sh(["git", "add", "-A"], repo)
-        stray = fix_strays(sh(["git", "diff", "--cached", "--name-only", "HEAD"], repo).stdout.splitlines(), allowed)
+        stray = fix_strays(sh(["git", "diff", "--cached", "--name-only", "HEAD"], repo).stdout.splitlines(), allowed,
+                           {f for t in code_tasks(load_tasks(proj)) for f in t["files"]})
         if stray:
             # The whole round goes: an out-of-scope edit means the fixer worked around something (an install, the toolchain)
             # instead of fixing a finding, and its other edits rest on that. The last stage run failed, so verify ends FAIL.
@@ -4372,8 +4378,8 @@ def spec_check(data, root=None):
             gaps = []
             if not bullets:
                 gaps.append("no bullet under `## Acceptance criteria`")
-            if story_task and not re.search(r"^groundwork:\s*\S", desc, re.M | re.I) and not any(j.get("parentId") == i["id"] for j in issues if task_from_issue(j)):
-                gaps.append("no task carries this story as its parentId (a story done by groundwork says why on a `Groundwork: <why>` line)")
+            if story_task and not any(j.get("parentId") == i["id"] for j in issues if task_from_issue(j)):
+                gaps.append("no task carries this story as its parentId (cut its code, dependency and toolchain changes into tasks)")
             out.append((not gaps, i["id"], "story", gaps))
     return out
 

@@ -21,7 +21,7 @@ One paragraph. What to build, where, exact export names.
 - Holdout: the test has cases not listed here.
 
 ## Constraints
-- No new dependencies. Do not edit protected files.
+- No new dependencies beyond what the goal names. Do not edit protected files.
 
 ```fast-coding
 id: 002

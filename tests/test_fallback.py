@@ -161,6 +161,8 @@ class FixScope(unittest.TestCase):
 
     def test_no_stack_diff_still_refuses_lockfiles(self):
         self.assertEqual(fc.fix_strays(["src/x.go", "client/yarn.lock"], set()), ["client/yarn.lock"])
+        self.assertEqual(fc.fix_strays(["src/x.go", "client/yarn.lock"], set(), {"client/yarn.lock"}), [])  # a task names it in files:
+        self.assertEqual(fc.fix_strays(["a.go", "yarn.lock"], {"a.go"}, {"yarn.lock"}), [])
 
 
 def ws(name=None, target=None, stdin=""):
