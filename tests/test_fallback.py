@@ -118,6 +118,28 @@ class ReadyCheckout(unittest.TestCase):
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
 
+    def test_lockfile_task_installs_on_its_own_and_hands_it_over(self):
+        root = Path(tempfile.mkdtemp())
+        repo, wt = root / "repo", root / "wt"
+        (repo / "node_modules" / "old").mkdir(parents=True)
+        (repo / ".gitignore").write_text("node_modules/\n")
+        (repo / "a.js").write_text("x\n")
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
+        git(repo, "init", "-q")
+        git(repo, "add", "-A")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        git(root, "clone", "-q", "--shared", str(repo), str(wt))
+        for f in (["bun.lock"], ["a.js", "package-lock.json"]):
+            self.assertTrue(fc.names_lockfile({"files": f}))
+        self.assertFalse(fc.names_lockfile({"files": ["a.js"]}))
+        fc.ready_checkout(repo, wt, borrow=False)
+        self.assertFalse((wt / "node_modules").exists())
+        (wt / "node_modules" / "new").mkdir(parents=True)  # the task's own install
+        fc.adopt_installs(repo, wt)
+        self.assertTrue((repo / "node_modules" / "new").is_dir())
+        self.assertFalse((repo / "node_modules" / "old").exists())
+        self.assertFalse((repo / "node_modules").is_symlink())
+
 
 class FixScope(unittest.TestCase):
     def verify(self, writes):

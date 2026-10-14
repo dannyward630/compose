@@ -2286,7 +2286,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
-    ready_checkout(repo, wt)
+    ready_checkout(repo, wt, borrow=not names_lockfile(meta))
     for name in ("opencode.jsonc", "opencode.json"):  # untracked local config the implementer needs
         if (repo / name).exists() and not (wt / name).exists():
             shutil.copy(repo / name, wt / name)
@@ -2474,6 +2474,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         sh(["git", "add", "-A"], wt)
         sh(["git", "commit", "-qm", commit_message(meta)], wt, check=False)
         sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
+        if names_lockfile(meta):
+            adopt_installs(repo, wt)
     diff = sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     say(f"{tid} {status:10} total {fmt(total)}  attempts={len(log)}  ${cost:.4f}")
@@ -2658,17 +2660,41 @@ def ignore_tool_files(wt):
         gi.write_text("\n".join(lines + add) + "\n")
     return bool(add)
 
-def ready_checkout(repo, wt):
+def dep_dirs(wt):
+    ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
+    return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
+
+def ready_checkout(repo, wt, borrow=True):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
     (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
-    the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does."""
-    ignored = sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], repo, check=False).stdout.splitlines()
-    deps = [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in DEP_DIRS]
+    the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
+    `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's."""
+    deps = dep_dirs(repo)
     exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
-    for d in deps:
+    for d in deps if borrow else ():
         link = wt / d
         if link.parent.is_dir() and not link.exists() and not link.is_symlink():
             link.symlink_to(repo / d)
+
+def names_lockfile(meta):
+    return any(GENERATED_RE.search(f) for f in meta["files"])
+
+def adopt_installs(repo, wt):
+    """A passed task that rewrote a lockfile installed fresh in its own clone. Move that install into the project worktree so
+    later tasks and verify borrow the new dependencies; each directory is swapped in with one rename."""
+    import shutil
+    for d in dep_dirs(wt):
+        new, old = wt / d, repo / d
+        if new.is_symlink() or not new.is_dir() or not old.parent.is_dir():
+            continue
+        tmp = old.with_name(old.name + ".adopt")
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(new, tmp, symlinks=True)
+        if old.is_symlink():
+            old.unlink()
+        else:
+            shutil.rmtree(old, ignore_errors=True)
+        tmp.rename(old)
 
 def mirror_stack_state(repo, wt):
     """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
@@ -4050,7 +4076,7 @@ def cmd_verify(a):
             sh(["git", "checkout", "-q", "--detach", current_branch(repo)], wt, check=False)  # free the top branch again
             mirror_stack_state(repo, wt)
 
-LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
+LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "Gemfile.lock", "composer.lock")
 
 def fix_strays(touched, allowed, named=()):
