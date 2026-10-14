@@ -525,7 +525,7 @@ def http_json(req, provider, timeout=90):
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:500]
         payment_check(provider, body, e.code)
-        raise
+        raise RuntimeError(f"{provider}: HTTP {e.code} {e.reason}: {body.strip()}") from e
     err = out.get("error") if isinstance(out, dict) else None
     if err:
         payment_check(provider, json.dumps(err), (err.get("code") if isinstance(err, dict) else None))
@@ -3322,6 +3322,10 @@ def criteria_from_tasks(proj):
     """(task id, criterion text) for every criterion in every task file."""
     return [(meta["id"], c) for meta in load_tasks(proj) for c in parse_criteria(meta["body"])]
 
+# TypeSafe answers HTTP 400 max_tokens_exceeded for a state of about 35k characters of dense text (30k passes, 40k fails); the old 150k cap never fit.
+JEV_CODE_CAP = 30000
+LOCKFILE_RE = re.compile(r"(^|/)(bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$")
+
 def jev_acceptance(cfg, proj, diff, repo=None):
     """Ask Jev (TypeSafe) one choice question per acceptance criterion: MET, NOT_MET, or UNCLEAR, with probabilities.
     One request per task, whose state is that task's own files plus its test, so the judge sees exactly the code the
@@ -3339,13 +3343,14 @@ def jev_acceptance(cfg, proj, diff, repo=None):
         if not crits:
             continue
         files = meta["files"] + meta["protected"]
-        code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in files if repo and (repo / f).exists() and (repo / f).stat().st_size < 200000)
+        code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in files if repo and (repo / f).exists() and (repo / f).stat().st_size < 200000
+                             and not LOCKFILE_RE.search(f))
         if not code.strip():
             code = diff
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": text, "task": meta["id"], "rules": rules}}
                      for i, text in enumerate(crits)}
-        states[meta["id"]] = {"task": meta.get("title", ""), "code": code[:150000]}
+        states[meta["id"]] = {"task": meta.get("title", ""), "code": code[:JEV_CODE_CAP]}
         out = jev_ask(env, cfg, states[meta["id"]], questions, "Jev acceptance")
         model = out.get("model", model)
         for i, text in enumerate(crits):

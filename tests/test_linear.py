@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, io, json, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, tempfile, unittest, urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -166,6 +166,29 @@ class DesignTasks(unittest.TestCase):
                 res = fc.jev_acceptance({}, self.proj, "diff")
             self.assertEqual((res["pass"], ask.call_count), (ok, calls), (second, confirm))
         self.assertEqual((res["criteria"][0]["choice"]), "NOT_MET")
+
+    def test_acceptance_state_leaves_out_lockfiles_and_stays_under_the_judge_token_limit(self):
+        """TypeSafe answers HTTP 400 max_tokens_exceeded for a state of about 35k characters; a lockfile is noise, not code."""
+        repo = Path(tempfile.mkdtemp())
+        (repo / "bun.lock").write_text("lock\n" * 20000)
+        (repo / "a.go").write_text("package a\n" * 6000)
+        (repo / "b.go").write_text("package b\n")
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            issue("ENG-2", "Store", block(id="002", files="a.go, bun.lock", protected="b.go", test="go test"))]})
+        reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
+        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
+            fc.jev_acceptance({}, self.proj, "diff", repo=repo)
+        code = ask.call_args.args[2]["code"]
+        self.assertNotIn("bun.lock", code)
+        self.assertLessEqual(len(code), fc.JEV_CODE_CAP)
+
+    def test_a_rejected_request_reports_the_providers_error_body(self):
+        err = urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"detail":{"error_type":"max_tokens_exceeded"}}'))
+        with mock.patch.object(fc.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(RuntimeError) as e:
+                fc.http_json(mock.Mock(), "typesafe (Jev acceptance)")
+        self.assertIn("max_tokens_exceeded", str(e.exception))
+        self.assertIn("400", str(e.exception))
 
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
