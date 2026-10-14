@@ -146,6 +146,53 @@ class StartOver(unittest.TestCase):
         self.assertEqual(run("branch", "--list", "fast-coding/p").stdout.strip(), "")
 
 
+class CleanSafety(unittest.TestCase):
+    """A repo-wide clean only removes projects whose work is provably done, and never one with live crew."""
+    def setUp(self):
+        self.r, self.run = repo()
+        self.env = {**os.environ, **ENV}
+        for n in ("empty", "work"):
+            subprocess.run([CLI, "init", "--project", n, "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
+        self.wt = {n: self.r.parent / f"fast-coding-{n}" for n in ("empty", "work")}
+        (self.wt["work"] / "f.txt").write_text("f\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.wt["work"], check=True, env=self.env)
+        subprocess.run(["git", "commit", "-qm", "work"], cwd=self.wt["work"], check=True, env=self.env)
+        self.run("merge", "-q", "--ff-only", "fast-coding/work")
+
+    def clean(self, *args):
+        return subprocess.run([CLI, "clean", "--repo", str(self.r), *args], capture_output=True, text=True, env=self.env)
+
+    def crew(self, n, state):
+        d = self.wt[n] / ".fast-coding" / n / "results" / "crew"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{n}-b1.json").write_text(json.dumps({"name": f"{n}-b1", "title": "b1"}))
+        (d / f"{n}-b1.status").write_text(json.dumps({"state": state, "message": "m"}) + "\n")
+
+    def test_repo_wide_clean_removes_the_merged_project_and_keeps_the_empty_one(self):
+        out = self.clean().stdout
+        self.assertFalse(self.wt["work"].exists())
+        self.assertTrue(self.wt["empty"].exists())
+        self.assertIn("no commits of its own", out)
+
+    def test_naming_the_empty_project_removes_it(self):
+        self.clean("--project", "empty")
+        self.assertFalse(self.wt["empty"].exists())
+
+    def test_live_crew_keeps_a_merged_project_until_forced_by_name(self):
+        self.crew("work", "working")
+        self.assertIn("live crew", self.clean().stdout)
+        self.assertTrue(self.wt["work"].exists())
+        self.clean("--force")  # --force alone never overrides a repo-wide clean
+        self.assertTrue(self.wt["work"].exists())
+        self.clean("--project", "work", "--force")
+        self.assertFalse(self.wt["work"].exists())
+
+    def test_a_done_teammate_is_not_live_crew(self):
+        self.crew("work", "done")
+        self.clean()
+        self.assertFalse(self.wt["work"].exists())
+
+
 class ProjectBranch(unittest.TestCase):
     """A project's branch is stored in its verify.json: init --branch names it, --after and clean follow it, init --branch again renames it."""
     def setUp(self):

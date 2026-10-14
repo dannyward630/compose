@@ -4910,12 +4910,39 @@ def merge_evidence(repo, branch, targets, has_remote):
 def merged_into(repo, branch, targets, has_remote=False):
     return merge_evidence(repo, branch, targets, has_remote) is not None
 
-def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
+def herdr_space_is(space, name):
+    """Only the project's own space is ever closed by its clean: a checkout path can be a pool slot another project now uses."""
+    return any(w.get("workspace_id") == space and w.get("label") == name for w in (herdr("workspace", "list") or {}).get("workspaces", []))
+
+def own_commits(repo, branch):
+    """False when the branch never got a commit of its own: it still sits where it was created (an empty or design-only project),
+    so ancestry says nothing about it being merged. Unknown (no reflog) counts as having commits."""
+    log = sh(["git", "reflog", "show", "--format=%H", f"refs/heads/{branch}"], repo, check=False).stdout.split()
+    return not log or log[-1] != sh(["git", "rev-parse", f"refs/heads/{branch}"], repo, check=False).stdout.strip()
+
+def live_crew(proj, wt):
+    """Why the project still has people working: teammates whose last report is not done, or agents alive in its herdr space.
+    The team lead (orchestrator) is the one running the post-merge clean, so it does not count."""
+    lead, why = agent_name(proj.name, "orchestrator"), []
+    for f in sorted(crew_dir(proj).glob("*.json")):
+        c = json.loads(f.read_text())
+        last = (crew_reports(proj, c["name"]) or [{}])[-1]
+        if c["name"] != lead and not c.get("closed") and last.get("state") != "done":
+            why.append(f"{c['name']} last reported {last.get('state', 'nothing')}")
+    space = herdr_find_space(wt) if herdr_env() else None
+    why += [f"{ag.get('name')} is alive in its herdr space" for ag in live_agents() if space and ag.get("workspace_id") == space and ag.get("name") != lead]
+    return why
+
+def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=False, force=False):
     """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
     worktree always; task branches merged into the project branch (locally or on the remote); and, once every layer and the
     project branch itself are merged, the project worktree and branch. Unmerged work is kept and named."""
     import shutil
     repo = wt
+    crew = live_crew(proj, wt)
+    if crew and not (force and explicit):
+        print(f"clean  {name}: kept, it has live crew ({'; '.join(crew)}); --project {name} --force overrides")
+        return
     has_remote = bool(sh(["git", "remote"], repo, check=False).stdout.strip())
     if has_remote:
         sh(["git", "fetch", "-q", "--prune"], repo, check=False)
@@ -4945,13 +4972,16 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
     if wt != main_repo and not kept and trunk == pbranch:
         on = [project_config(proj)["review_base"]] if project_after(proj) else []  # merged into the project it was built on counts
         why = merge_evidence(main_repo, pbranch, [*on, "main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
-        if not why and delete_unmerged:
+        if why and not own_commits(main_repo, pbranch) and not (explicit or delete_unmerged):
+            line += f"; project branch {pbranch} has no commits of its own (empty or design-only), so nothing was merged: kept; name it with --project {name} to remove it"
+            why = None
+        elif not why and delete_unmerged:
             why = "UNMERGED, removed on --delete-unmerged"
         if why:
             stop_listeners_under(wt)
             if is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
                 space = herdr_find_space(wt)
-                if space:
+                if space and herdr_space_is(space, name):
                     herdr("workspace", "close", space)
                 sh(["git", "checkout", "-q", "--detach"], wt, check=False)
                 release_slot(main_repo, wt)
@@ -4959,7 +4989,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
                 sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists() and not is_slot(main_repo, wt):
                 space = herdr_find_space(wt)
-                if space:
+                if space and herdr_space_is(space, name):
                     herdr("workspace", "close", space)
                 shutil.rmtree(wt, ignore_errors=True)
             sh(["git", "worktree", "prune"], main_repo, check=False)
@@ -4969,7 +4999,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False):
             if refs.strip():
                 subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)
             line += f"; project branch {why}: removed worktree {wt} and branch {pbranch}"
-        else:
+        elif "no commits of its own" not in line:
             line += f"; project branch {pbranch} not merged yet: worktree kept"
     print(line)
 
@@ -4995,7 +5025,7 @@ def cmd_clean(a):
     if not projects:
         sys.exit("no projects to clean")
     for name, (wt, proj) in projects.items():
-        clean_project(main_repo, name, wt, proj, delete_unmerged=a.delete_unmerged)
+        clean_project(main_repo, name, wt, proj, delete_unmerged=a.delete_unmerged, explicit=bool(a.project), force=a.force)
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -5184,6 +5214,7 @@ def main():
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
             s.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
         if name == "clean":
+            s.add_argument("--force", action="store_true", help="with --project: clean it although teammates are still working")
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
