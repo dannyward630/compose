@@ -2706,10 +2706,116 @@ def _linearize(repo, proj, trunk, wt):
             sh(["git", "update-ref", "-d", f"refs/fast-coding/replaced/{proj.name}/{rb.rsplit('/', 1)[1]}/{t}"], repo, check=False)
     return linear
 
+REVIEW_LAYER_LINES = 300  # verify.json `review_layer_lines` changes it
+GENERATED_RE = re.compile(r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|bun\.lockb?|go\.sum|[^/]+\.lock)$")
+
+def commit_facts(repo, c):
+    """(files, changed lines, {generated file: lines}) of one commit. Lockfiles are not counted: nobody reads them."""
+    files, counted, generated = [], 0, {}
+    for l in sh(["git", "show", "--numstat", "--no-renames", "--format=", c], repo).stdout.splitlines():
+        a, d, f = l.split("\t", 2)
+        n = (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)  # a binary file shows "-"
+        files.append(f)
+        if GENERATED_RE.search(f):
+            generated[f] = generated.get(f, 0) + n
+        else:
+            counted += n
+    return files, counted, generated
+
+def group_units(units, budget):
+    """Consecutive units into layers of at most `budget` counted lines, in order. A unit (a task with its tests, or one groundwork
+    commit) is never split, so one bigger than the budget is a layer of its own."""
+    layers = []
+    for u in units:
+        if layers and sum(x["lines"] for x in layers[-1]) + u["lines"] <= budget:
+            layers[-1].append(u)
+        else:
+            layers.append([u])
+    return layers
+
+def review_units(repo, proj, base, trunk, chain):
+    """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
+    one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
+    is a task's when every file it touches is in that task's `protected:`; the tests of a task not in the chain yet ride with the
+    last one."""
+    protected = {m["id"]: set(m["protected"]) for m in code_tasks(load_tasks(proj))}
+    ids = [b.rsplit("/", 1)[1] for b in chain]
+    def unit(name, commits):
+        facts = [commit_facts(repo, c) for c in commits]
+        gen = {}
+        for _, _, g in facts:
+            for f, n in g.items():
+                gen[f] = gen.get(f, 0) + n
+        return {"name": name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
+    ground, owned = [], {t: [] for t in ids}
+    for c in sh(["git", "rev-list", "--reverse", "--no-merges", f"{base}..{trunk}"], repo).stdout.split():
+        files = set(commit_facts(repo, c)[0])
+        owner = next((t for t in ids + sorted(set(protected) - set(ids)) if files and files <= protected.get(t, set())), None)
+        if owner is None:
+            ground.append(unit("groundwork", [c]))
+        else:
+            owned[owner if owner in owned else ids[-1]].append(c)
+    units, prev = ground, trunk
+    for b, t in zip(chain, ids):
+        units.append(unit(t, owned[t] + sh(["git", "rev-list", "--reverse", "--no-merges", f"{prev}..{b}"], repo).stdout.split()))
+        prev = b
+    return units
+
+def cherry_pick_same(wt, c):
+    """Cherry-pick keeping the original committer and date, so a layer rebuilt from unchanged commits gets the same hashes and
+    a resubmit pushes nothing new."""
+    who = sh(["git", "show", "-s", "--format=%cn%n%ce%n%cI", c], wt).stdout.splitlines()
+    env = {**os.environ, "GIT_COMMITTER_NAME": who[0], "GIT_COMMITTER_EMAIL": who[1], "GIT_COMMITTER_DATE": who[2]}
+    p = sh(["git", "cherry-pick", "--allow-empty", c], wt, check=False, env=env)
+    if p.returncode:
+        sh(["git", "cherry-pick", "--abort"], wt, check=False)
+    return p.returncode == 0
+
+def build_layers(repo, proj, base, trunk, chain, wt, budget):
+    """Cut the project into review layers on `base`: branches `fast/<project>/layer-NN`, each at most `budget` counted lines
+    (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
+    generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
+    units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
+    groups = group_units([u for u in units if u["name"] == "groundwork"], budget) + group_units([u for u in units if u["name"] != "groundwork"], budget)
+    layers, prev = [], base
+    for i, g in enumerate(groups, 1):
+        branch = f"fast/{proj.name}/layer-{i:02d}"
+        sh(["git", "checkout", "-q", "-B", branch, prev], wt)
+        for c in (c for u in g for c in u["commits"]):
+            if not cherry_pick_same(wt, c):
+                sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+                say(f"stack  STOP  {c[:7]} does not apply on layer {i}; stacking task branches as they are")
+                return None
+        gen = {}
+        for u in g:
+            for f, n in u["generated"].items():
+                gen[f] = gen.get(f, 0) + n
+        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen})
+        prev = branch
+    sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    if layers and sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0 \
+            and sh(["git", "diff", "--quiet", layers[-1]["branch"], chain[-1]], repo, check=False).returncode != 0:
+        say(f"stack  STOP  the layers differ from {chain[-1]}; stacking task branches as they are")
+        return None
+    for old in sh(["git", "branch", "--list", f"fast/{proj.name}/layer-*", "--format=%(refname:short)"], repo).stdout.split():
+        if old not in {l["branch"] for l in layers}:
+            sh(["git", "branch", "-D", old], repo, check=False)
+    return layers
+
+def layer_note(l, budget):
+    """One layer as a line for the log and the PR body: what it holds, its size, and the generated files kept out of the count."""
+    names = [t for t in l["tasks"] if t != "groundwork"]
+    held = ([f"groundwork x{l['tasks'].count('groundwork')}"] if "groundwork" in l["tasks"] else []) + ([f"task {', '.join(names)}"] if names else [])
+    gen = "".join(f"; generated, not counted: {f} ({n} lines)" for f, n in l["generated"].items())
+    over = f"; over the {budget}-line budget, a task is never split" if l["lines"] > budget and len(l["tasks"]) == 1 else ""
+    return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
+
 def register_stack(repo, proj, trunk, submit=False):
-    """Make the project's passed task branches one linear gh stack on `trunk`, layer by layer, without touching the user's
-    checkout. Branches built in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is
-    normally clean; a conflict stops the chain there and is reported). Nothing is pushed unless submit=True."""
+    """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
+    in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
+    stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
+    branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
+    too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True."""
     if not stack_order(repo, proj):
         return []
     wt = stack_worktree(repo, proj, trunk)
@@ -2717,26 +2823,42 @@ def register_stack(repo, proj, trunk, submit=False):
     linear = linearize(repo, proj, trunk, wt)
     if not linear:
         return []
+    cfg = project_config(proj)
+    base = cfg.get("review_base") or default_branch(repo) or trunk
+    if trunk != project_branch(proj) or sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
+        base = trunk
+    budget = int(cfg.get("review_layer_lines") or REVIEW_LAYER_LINES)
+    layers = build_layers(repo, proj, base, trunk, linear, wt, budget)
+    stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)
     # A stack from an earlier wave is rebuilt with the grown chain: every existing stack that holds any of these branches is
     # unstacked locally (GitHub side untouched), then one init registers the whole chain.
-    for b in linear:
+    for b in linear + stack:
         sh(["git", "checkout", "-q", b], wt, check=False)
         if gh("view", "--json").returncode == 0:
             gh("unstack", "--local")
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-    p = gh("init", "--base", trunk, *linear)
+    p = gh("init", "--base", stack_base, *stack)
     if p.returncode:
-        say(f"stack  FAIL  {' <- '.join(linear)}: {(p.stderr or p.stdout).strip()[-300:]}")
+        say(f"stack  FAIL  {' <- '.join(stack)}: {(p.stderr or p.stdout).strip()[-300:]}")
         sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         return []
-    say(f"stack  ok    ({trunk}) <- {' <- '.join(linear)}")
+    say(f"stack  ok    ({stack_base}) <- {' <- '.join(stack)}")
+    for l in layers or []:
+        say(f"layer  {l['branch'].rsplit('/', 1)[1]}  {layer_note(l, budget)}")
     if submit:
-        sh(["git", "checkout", "-q", linear[-1]], wt, check=False)
+        sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
         q = gh("submit", "--auto")
         say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {(q.stdout + q.stderr).strip()[-400:]}")
+        for b in stack if q.returncode == 0 else []:  # a real GitHub stack is one PR per layer, each on the layer below
+            v = subprocess.run(["gh", "pr", "view", b, "--json", "number,baseRefName,url"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            pr = json.loads(v.stdout) if v.returncode == 0 else None
+            say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
+            note = next((layer_note(l, budget) for l in layers or [] if l["branch"] == b), None)
+            if pr and note:
+                subprocess.run(["gh", "pr", "edit", b, "--body", note], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     mirror_stack_state(repo, wt)
-    return [linear]
+    return [stack]
 
 def cmd_stack(a):
     proj = project_dir(a); repo = Path(a.repo).resolve()
@@ -4904,7 +5026,7 @@ def main():
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
                             ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
-                            ("stack", cmd_stack, "register unmerged task branches as gh stacks (chains from `after:`); --submit pushes and opens PRs"),
+                            ("stack", cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit pushes and opens one draft PR per layer"),
                             ("clean", cmd_clean, "remove worktrees and branches"),
                             ("groundwork", cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", cmd_explore, "print the explore teammate's brief (a fast graft-only map of an existing repo); --extra adds notes"),
@@ -4958,7 +5080,7 @@ def main():
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
         if name == "stack":
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
-            s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes branches and opens draft PRs")
+            s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes the layers and opens a draft PR per layer as a GitHub stack")
         if name == "bench":
             s.add_argument("--models", default="pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast,pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,claude",
                            help="comma-separated model ids: OpenCode ids, 'pi:<provider/model>' for the pi harness, 'claude' = Claude Code one-shot")
