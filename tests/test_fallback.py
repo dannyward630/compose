@@ -193,6 +193,18 @@ class Workspaces(unittest.TestCase):
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[cmd.index("--api-key") + 1], "sk-work")
 
+    def test_pi_turn_reports_the_providers_error_not_stderr(self):
+        err = json.dumps({"message": 'Preset "glm-5-3-flash-fast" not found for this user.', "code": 404,
+                          "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
+        end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
+        run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
+        with mock.patch.object(fc.subprocess, "run", run), mock.patch.object(fc, "WORKSPACE", "work"):
+            with self.assertRaises(RuntimeError) as cm:
+                fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+        self.assertIn("404", str(cm.exception))
+        self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
+        self.assertNotIn("No project session", str(cm.exception))
+
     def test_add_key_switch_remove(self):
         ws("add", "client-x", stdin="sk-client\n")
         ws("client-x")
