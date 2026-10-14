@@ -99,6 +99,19 @@ class SpecCheck(unittest.TestCase):
             self.assertTrue(not r[i][0] and has(r[i][2], *kws), (i, r[i]))
         self.assertTrue(check([{**STORY, "id": "ENG-10"}])["ENG-10"][0])  # no issue has parentId: a story needs no task
 
+    def test_criteria_fold_nested_bullets_and_continuations(self):
+        parse = lambda body: fc.parse_criteria("## Acceptance criteria\n" + body)
+        self.assertEqual(parse("- a\n* b\n"), ["a", "b"])
+        for pad in ("  ", "    "):
+            self.assertEqual(parse(f"* Sheet shows one example per role:\n{pad}* primary\n{pad}* ghost\n* other"),
+                             ["Sheet shows one example per role: primary; ghost", "other"])
+        self.assertEqual(parse("* wraps onto\n  a second line\n* next"), ["wraps onto a second line", "next"])
+        self.assertEqual(parse("  - indented base\n  - same level\n    - child"), ["indented base", "same level; child"])
+
+    def test_size_lint_counts_top_level_bullets_only(self):
+        sub = "".join(f"  * s{n}\n" for n in range(6))
+        self.assertFalse(has(check([task("ENG-3", "001", crit=f"* parent:\n{sub}* two")])["ENG-3"][2], "Acceptance criteria"))
+
     def test_serial_chain_and_file_clashes(self):
         chain = [task("ENG-3", "001"), task("ENG-4", "002", ["ENG-3"]), task("ENG-5", "003", [{"id": "ENG-4", "title": "T"}])]
         self.assertTrue(has(check(chain)["ENG-1"][2], "wave"))

@@ -3145,15 +3145,35 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     return {"pass": not errors and not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed,
             **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
 
+def parse_criteria(text):
+    """Criteria under '## Acceptance criteria' in a task or issue body: one per top-level bullet.
+    Top level is the first bullet's indent (Linear stores "-" as "*" and nests with 2 or 4 spaces); deeper bullets and
+    wrapped lines fold into their parent, sub-items joined with "; "."""
+    m = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", text or "", re.S)
+    out, base = [], None
+    for line in (m.group(1) if m else "").splitlines():
+        body = line.strip()
+        if not body:
+            continue
+        flat = line.expandtabs(4)
+        indent = len(flat) - len(flat.lstrip())
+        if body[0] in "-*" and (base is None or indent <= base):
+            base = indent if base is None else base
+            out.append([body[1:].strip()])
+        elif out and body[0] in "-*":
+            out[-1].append(body[1:].strip())
+        elif out:
+            out[-1][-1] += " " + body
+    def join(parts):
+        s = parts[0]
+        for p in parts[1:]:
+            s += (" " if s.endswith(":") else "; ") + p
+        return s
+    return [join(parts) for parts in out]
+
 def criteria_from_tasks(proj):
-    """(task id, criterion text) for every bullet under '## Acceptance criteria' in every task file."""
-    out = []
-    for meta in load_tasks(proj):
-        m = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", meta["body"], re.S)
-        for line in (m.group(1) if m else "").splitlines():
-            if line.strip()[:1] in ("-", "*"):  # Linear stores "-" bullets as "*"
-                out.append((meta["id"], line.strip()[1:].strip()))
-    return out
+    """(task id, criterion text) for every criterion in every task file."""
+    return [(meta["id"], c) for meta in load_tasks(proj) for c in parse_criteria(meta["body"])]
 
 def jev_acceptance(cfg, proj, diff, repo=None):
     """Ask Jev (TypeSafe) one choice question per acceptance criterion: MET, NOT_MET, or UNCLEAR, with probabilities.
@@ -3168,8 +3188,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     threshold = cfg.get("acceptance_threshold", 0.6)
     rows, model, states = [], None, {}
     for meta in code_tasks(load_tasks(proj)):
-        m = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", meta["body"], re.S)
-        crits = [l.strip()[1:].strip() for l in (m.group(1) if m else "").splitlines() if l.strip()[:1] in ("-", "*")]
+        crits = parse_criteria(meta["body"])
         if not crits:
             continue
         files = meta["files"] + meta["protected"]
@@ -4309,8 +4328,7 @@ def spec_check(data, root=None):
     for i in issues:
         meta = task_from_issue(i)
         desc = i.get("description") or ""
-        c = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", desc, re.S)
-        bullets = [l for l in (c.group(1) if c else "").splitlines() if l.strip()[:1] in ("-", "*")]
+        bullets = parse_criteria(desc)
         if meta:
             gaps = []
             if too_big(meta):
