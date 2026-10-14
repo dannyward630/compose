@@ -115,7 +115,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
 |---|---|
-| `fast-coding init --project <name>` | Creates the project's branch and worktree |
+| `fast-coding init --project <name> [--branch <branch>]` | Creates the project's branch (`fast-coding/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
 | `fast-coding tasks --project <name>` | Shows the task list for you to review before dispatch |
 | `fast-coding run --project <name>` | Dispatches the tasks to parallel implementers |
 | `fast-coding verify --project <name>` | Runs the local verify pipeline |

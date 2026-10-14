@@ -146,5 +146,42 @@ class StartOver(unittest.TestCase):
         self.assertEqual(run("branch", "--list", "fast-coding/p").stdout.strip(), "")
 
 
+class ProjectBranch(unittest.TestCase):
+    """A project's branch is stored in its verify.json: init --branch names it, --after and clean follow it, init --branch again renames it."""
+    def setUp(self):
+        self.r, self.run = repo()
+        self.env = {**os.environ, **ENV}
+
+    def cli(self, *a):
+        return subprocess.run([CLI, *a, "--repo", str(self.r)], check=True, capture_output=True, text=True, env=self.env)
+
+    def branches(self):
+        return self.run("branch", "--format=%(refname:short)").stdout.split()
+
+    def test_custom_branch_is_created_stored_renamed_built_on_and_cleaned(self):
+        self.cli("init", "--project", "p", "--branch", "js-1-p")
+        wt = self.r.parent / "fast-coding-p"
+        self.assertIn("js-1-p", self.branches())
+        self.assertNotIn("fast-coding/p", self.branches())
+        self.assertEqual(json.loads((wt / ".fast-coding" / "p" / "verify.json").read_text())["branch"], "js-1-p")
+        self.cli("init", "--project", "q", "--after", "p")  # resolves p's stored branch, not fast-coding/p
+        qcfg = json.loads((self.r.parent / "fast-coding-q" / ".fast-coding" / "q" / "verify.json").read_text())
+        self.assertEqual((qcfg["review_base"], qcfg["after"]), ("js-1-p", "p"))
+        self.cli("init", "--project", "p", "--branch", "js-2-p")  # an existing project moves to the new name
+        self.assertEqual(self.run("branch", "--show-current", cwd=wt).stdout.strip(), "js-2-p")
+        self.assertNotIn("js-1-p", self.branches())
+        self.assertEqual(json.loads((self.r.parent / "fast-coding-q" / ".fast-coding" / "q" / "verify.json").read_text())["review_base"], "js-2-p")
+        self.cli("clean", "--project", "q", "--delete-unmerged")
+        self.cli("clean", "--project", "p", "--delete-unmerged")
+        self.assertEqual(self.branches(), ["main"])
+
+    def test_a_project_without_a_stored_branch_keeps_fast_coding_slash_slug(self):
+        self.cli("init", "--project", "old")
+        f = self.r.parent / "fast-coding-old" / ".fast-coding" / "old" / "verify.json"
+        f.write_text(json.dumps({k: v for k, v in json.loads(f.read_text()).items() if k != "branch"}))
+        self.assertEqual(fc.project_branch(f.parent), "fast-coding/old")
+        self.assertIn("fast-coding/old", self.branches())
+
+
 if __name__ == "__main__":
     unittest.main()
