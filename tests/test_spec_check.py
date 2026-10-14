@@ -98,6 +98,10 @@ class SpecCheck(unittest.TestCase):
                         ("ENG-8", "gone_test.go", "protected"), ("ENG-10", "task"), ("ENG-11", "Acceptance criteria")):
             self.assertTrue(not r[i][0] and has(r[i][2], *kws), (i, r[i]))
         self.assertTrue(check([{**STORY, "id": "ENG-10"}])["ENG-10"][0])  # no issue has parentId: a story needs no task
+        bare, marked = {**STORY, "id": "ENG-12"}, {**STORY, "id": "ENG-13", "description": STORY["description"] + "\n\nGroundwork: dependency bump"}
+        r = check([task("ENG-3", "001"), bare, marked])
+        self.assertTrue(not r["ENG-12"][0] and has(r["ENG-12"][2], "Groundwork"), r["ENG-12"])
+        self.assertTrue(r["ENG-13"][0], r["ENG-13"])
 
     def test_criteria_fold_nested_bullets_and_continuations(self):
         parse = lambda body: fc.parse_criteria("## Acceptance criteria\n" + body)

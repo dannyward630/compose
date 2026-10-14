@@ -354,6 +354,7 @@ When the stack is built, each task's test commits move into that task's review l
 
 ### 3b. The task list goes to the product owner; it waits only when it departs from what they settled
 `fast-coding spec-check --project <slug>` runs before `fast-coding tasks`.
+A story whose whole scope is groundwork or teammate work has no task issues: put a `Groundwork: <why>` line in its description so spec-check passes it.
 Run `fast-coding tasks --repo <path> --project <name>`: every task's id, title, the files it owns, what it builds on, and its test, in stack order, then the run waves, with a warning for any file two tasks claim, any task too big, and a serial chain. Fix every WARNING first.
 Then compare the list with the spec the product owner settled (the map's Decisions so far and the stories):
 - **It matches** (it builds exactly the settled scope, with no new or dropped scope, no dependency bump, no toolchain change, no decision the product owner has not made): report `working` with the `tasks` output and one line per task on what its holdout cases cover, and dispatch right away. The product owner can still stop it from the report.

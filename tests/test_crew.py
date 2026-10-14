@@ -239,6 +239,9 @@ class Guard(unittest.TestCase):
     def test_team_lead_keeps_its_own_files(self):
         for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
             self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
+        for role in ("orchestrator", "planner"):
+            self.assertIsNone(fc.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch/sync.json"), role), role)
+        self.assertIsNotNone(fc.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch.md"), "planner"))
         self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
 
     def test_crew_and_unmarked_sessions_are_untouched(self):

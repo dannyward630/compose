@@ -1624,7 +1624,7 @@ def cmd_crew(a):
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 GUARDED_ROLES = ("orchestrator", "planner")
-CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json)$")  # the team lead's own: the CLI's config
+CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+)$")  # the team lead's own: the CLI's config
 
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
@@ -4372,8 +4372,8 @@ def spec_check(data, root=None):
             gaps = []
             if not bullets:
                 gaps.append("no bullet under `## Acceptance criteria`")
-            if story_task and not any(j.get("parentId") == i["id"] for j in issues if task_from_issue(j)):
-                gaps.append("no task carries this story as its parentId")
+            if story_task and not re.search(r"^groundwork:\s*\S", desc, re.M | re.I) and not any(j.get("parentId") == i["id"] for j in issues if task_from_issue(j)):
+                gaps.append("no task carries this story as its parentId (a story done by groundwork says why on a `Groundwork: <why>` line)")
             out.append((not gaps, i["id"], "story", gaps))
     return out
 
