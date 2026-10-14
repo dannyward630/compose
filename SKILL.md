@@ -322,8 +322,8 @@ A task is a **task issue** on Linear: a sub-issue of its story, labelled `Task`,
 The CLI never calls Linear; you hand it what Linear says. **Sync** right before every `tasks`, `run`, `resume`, and `verify`, so an edit anyone made in Linear is what runs:
 1. `get_issue` on the feature (from `.fast-coding/<project>/linear.json`) for its id, title, and description.
 2. `list_issues` with the feature as `parentId`, then with each story as `parentId`, for the ids only: `list_issues` truncates descriptions, and the block is at the end.
-3. `get_issue` on every one of those issues with fields `id`, `title`, `description`, `status`, `relations`.
-4. Pipe it in: `fast-coding sync --repo <wt> --project <slug> <<'EOF'` then `{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "blockedBy": <relations.blockedBy as returned>}]}` then `EOF`. Pass every description whole, exactly as `get_issue` returned it; the CLI hands it to the implementer as the brief.
+3. `get_issue` on every one of those issues with fields `id`, `title`, `description`, `status`, `parentId`, `relations`.
+4. Pipe it in: `fast-coding sync --repo <wt> --project <slug> <<'EOF'` then `{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "blockedBy": <relations.blockedBy as returned>}]}` then `EOF`. Pass every description whole, exactly as `get_issue` returned it; the CLI hands it to the implementer as the brief.
 The commands refuse to start without a sync, and `sync` refuses a feature other than `linear.json`'s.
 One feature, one stack. The project's tasks become the layers of a single `gh stack` on the branch the user invoked you from, in `after:` order and then id order: foundational code at the bottom, code that depends on it above, one concern per layer. Number tasks in the order a reviewer should read them. Independent tasks still run in parallel from trunk; the CLI rebases them into the one chain only when it registers the stack after the run.
 

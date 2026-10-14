@@ -269,7 +269,7 @@ def project_dir(a):
 #   ```
 # Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks.
 TASK_BLOCK = re.compile(r"\n*```fast-coding[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
-SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "blockedBy": ["<issue id>"]}]}'
+SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "blockedBy": ["<issue id>"]}]}'
               ": every issue under the feature, its stories' children included")
 
 def task_from_issue(issue):
@@ -302,6 +302,10 @@ def sync_tasks(proj, data):
         sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
     stories = set(json.loads(link.read_text()).get("stories") or [])
     if stories:  # a project scoped to stories sees those stories and their children, nothing else under the feature
+        missing = [i["id"] for i in data["issues"] if i["id"] not in stories and "parentId" not in i]
+        if missing:
+            sys.exit(f"{link} scopes this project to stories, so sync needs each issue's parentId (get_issue field `parentId`): "
+                     f"missing on {', '.join(missing)}")
         data = {**data, "issues": [i for i in data["issues"] if i["id"] in stories or i.get("parentId") in stories]}
     # A canceled issue is no task even with its block still on: a re-plan or an undo canceled it, and it must not run or stack.
     tasks = [t for t in (task_from_issue(i) for i in data["issues"] if (i.get("status") or "").lower() not in CANCELED) if t]

@@ -48,11 +48,15 @@ class Sync(unittest.TestCase):
     def test_story_scope_and_done_tasks(self):
         def story_task(ident, parent, tid, state="Todo"):
             return {**issue(ident, tid, block(id=tid, files=f"{tid}.go", test="t")), "parentId": parent, "status": state}
-        issues = [issue("ENG-2", "Story A"), issue("ENG-9", "Story B"),
+        issues = [{**issue("ENG-2", "Story A"), "parentId": "ENG-1"}, {**issue("ENG-9", "Story B"), "parentId": "ENG-1"},
                   story_task("ENG-3", "ENG-2", "001", "Done"), story_task("ENG-4", "ENG-2", "002"), story_task("ENG-5", "ENG-9", "003")]
         self.assertEqual([t["id"] for t in self.sync(issues)], ["001", "002", "003"])  # no stories set: unchanged
         (self.proj / "linear.json").write_text('{"feature": "ENG-1", "stories": ["ENG-9"]}')
         self.assertEqual([t["id"] for t in self.sync(issues)], ["003"])
+        with self.assertRaises(SystemExit) as no_parent:  # a scoped project fails loudly on issues synced without parentId
+            self.sync([issue("ENG-9", "Story B"), issue("ENG-5", "Task", block(id="003", files="a.go", test="t"))])
+        self.assertIn("parentId", str(no_parent.exception))
+        self.assertIn("ENG-5", str(no_parent.exception))
         self.assertEqual(set(fc.linear_cache(self.proj)["issues"]), {"ENG-9", "ENG-5"})
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         done, todo = self.sync(issues)[:2]
