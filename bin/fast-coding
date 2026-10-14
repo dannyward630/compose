@@ -1849,6 +1849,8 @@ def cmd_figma(a):
             sys.exit(f"no node tree at {tree_path}: the builder saves the assert script's text there")
         text = tree_path.read_text()
         crits_id = crits.get(tid, [])
+        if not crits_id:
+            sys.exit(f"{tid}: no acceptance criteria to judge")
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": c, "task": tid, "rules": rules}}
                      for i, c in enumerate(crits_id)}
@@ -3023,7 +3025,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
             rows.append({"task": meta["id"], "criterion": text, "choice": a.get("choice"), "p_met": round(probs.get("MET", 0), 3),
                          "p_not_met": round(probs.get("NOT_MET", 0), 3), "confidence": a.get("confidence")})
     if not rows:
-        return {"pass": True, "criteria": [], "failed": [], "note": "no acceptance criteria found"}
+        return {"pass": False, "criteria": [], "failed": [], "unclear": [], "note": "no acceptance criteria to judge"}
     suspects = [r for r in rows if r["p_not_met"] >= threshold]
     # Jev is a fast classifier; long compound criteria produce false NOT_MET. A second model must quote the violation.
     def confirm(r):

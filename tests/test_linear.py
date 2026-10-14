@@ -137,6 +137,12 @@ class DesignTasks(unittest.TestCase):
                     mock.patch.object(fc, "fast_json", return_value={"confirmed": False, "evidence": ""}):
                 self.assertEqual(fc.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
 
+    def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
+        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask") as ask:
+            res = fc.jev_acceptance({}, self.proj, "diff")
+        self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))
+
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}

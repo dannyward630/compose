@@ -75,8 +75,8 @@ class FigmaJudge(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"acceptance_threshold": 0.7}))
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             judge_task("ENG-3", "001", "Cart page", ["Shows the total", "Has a pay button"]), judge_task("ENG-4", "002", "Store", ["x"], kind="code"),
-            judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"])]})
-        for tid in ("001", "002", "004", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
+            judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"]), judge_task("ENG-7", "005", "Bare", [])]})
+        for tid in ("001", "002", "004", "005", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
             (self.proj / "results" / f"{tid}.tree.txt").write_text(f"FRAME {tid}\n  TEXT Total: $10\n")
         for name, value in (("ENV_FILE", self.proj / "none.env"), ("say", lambda m: None)):
             p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
@@ -126,7 +126,7 @@ class FigmaJudge(unittest.TestCase):
         self.assertFalse(self.ev.called)
 
     def test_refuses_with_one_line(self):
-        for only, needle in ((None, "figma judge needs --only <ids>"), ("009", "009"), ("002", "002"), ("003", f"no node tree at {self.proj / 'results' / '003.tree.txt'}")):
+        for only, needle in ((None, "figma judge needs --only <ids>"), ("009", "009"), ("002", "002"), ("003", f"no node tree at {self.proj / 'results' / '003.tree.txt'}"), ("005", "005: no acceptance criteria to judge")):
             with self.subTest(only=only), self.assertRaises(SystemExit) as e:
                 self.judge(only, {})
             self.assertIn(needle, str(e.exception))
