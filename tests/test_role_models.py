@@ -118,13 +118,15 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": chain}}))
         with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
             fc.apply_config()
-        for up, want in (({astra}, astra), ({fable, astra}, astra), ({fable}, fable), (set(), opus)):  # the last is never probed
+        for up, want in (({astra}, opus), ({fable, astra}, fable), ({fable}, fable), (set(), opus)):  # the last is never probed; wayfinder needs Linear, so astra (pi) is never taken
             fc._PROBED.clear()
             with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
                 model, effort, note = fc.crew_pick("wayfinder")
             self.assertEqual(model, want)
         self.assertEqual(effort, "high")
-        self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
+        self.assertIn(f"{astra} skipped (a pi session has no Linear tools), {fable} unavailable (down), using its fallback", note)
+        with mock.patch.object(fc, "model_available", return_value=(True, "")):  # a role with no Linear need still takes the pi model
+            self.assertEqual(fc.crew_pick("helper", "planner")[0], astra)
 
     def test_a_pi_model_is_probed_with_pi_and_judged_by_its_events(self):
         ok = fc.subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}), "")
