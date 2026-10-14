@@ -43,6 +43,15 @@ class Frame0(unittest.TestCase):
             fc.frame0_register(self.wt, 58411)
         self.assertEqual([c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"][0], ["claude", "mcp", "remove", "frame0", "-s", "local"])
 
+    def test_up_still_launches_the_app_when_registering_fails(self):
+        app = self.wt / "Frame0.app"
+        app.mkdir()
+        with mock.patch.object(fc, "FRAME0_APP", app), mock.patch.object(fc, "frame0_register", side_effect=RuntimeError("boom")), \
+                mock.patch.object(fc, "frame0_pid", return_value=None), mock.patch.object(fc, "port_listening", side_effect=[False, True]), \
+                mock.patch.object(fc, "sh") as sh, mock.patch("builtins.print"):
+            self.assertEqual(fc.frame0_up(self.proj), (fc.frame0_port(self.proj), True))
+        self.assertEqual(sh.call_args.args[0][:2], ["open", "-n"])
+
     def test_pid_is_the_main_process_of_this_projects_instance(self):
         app = fc.FRAME0_APP / "Contents" / "MacOS" / "Frame0"
         flag = f"--user-data-dir={self.proj / 'frame0'}"

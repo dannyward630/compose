@@ -1728,7 +1728,10 @@ def frame0_up(proj):
     (data / "config.json").write_text(json.dumps({"api-server": True, "api-server-port": port}))
     if not design.exists():
         design.write_text(json.dumps(frame0_empty_doc()))
-    frame0_register(project_worktree(proj), port)
+    try:
+        frame0_register(project_worktree(proj), port)
+    except RuntimeError as e:  # the app still starts; only the MCP tools are missing
+        print(f"frame0 MCP server not registered: {e}")
     if frame0_pid(proj):
         return port, False
     if port_listening(port):
