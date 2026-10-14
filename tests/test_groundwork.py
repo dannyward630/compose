@@ -378,6 +378,13 @@ class DesignCrews(unittest.TestCase):
         started, out, _ = self.run_crews()
         self.assertEqual((len(started), "queued" in out), (2, False))
 
+    def test_a_named_id_that_is_skipped_prints_one_line_with_the_reason(self):
+        started, out, _ = self.run_crews(only="003,004,002,099,005", print_=True)
+        for line in ("003 skipped: its state is Done", "004 skipped: its state is In Review", "002 skipped: not a design task (kind code)", "099 skipped: no such task"):
+            self.assertIn(line, out)
+        self.assertEqual((out.count("skipped"), out.count("=====")), (4, 1))
+        self.assertNotIn("skipped", self.run_crews(only="005", print_=True)[1])
+
     def test_no_stored_figma_key_refuses(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         with self.assertRaises(SystemExit) as e:

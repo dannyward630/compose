@@ -1432,9 +1432,14 @@ def cmd_designcrews(a):
     """Start one design-NNN builder per open design task. `--print` shows the briefs instead."""
     proj = project_dir(a)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
-    metas = [m for m in load_tasks(proj, required=True)
-             if m.get("kind") == "design" and m.get("linear_state") not in ("Done", "Canceled", "In Review")
+    tasks = load_tasks(proj, required=True)
+    metas = [m for m in tasks if m.get("kind") == "design" and m.get("linear_state") not in ("Done", "Canceled", "In Review")
              and (not only or m["id"] in only)]
+    for tid in sorted(only or ()):  # a named id that is skipped says why
+        if not any(m["id"] == tid for m in metas):
+            m = next((m for m in tasks if m["id"] == tid), None)
+            print(f"{tid} skipped: " + ("no such task" if not m else f"not a design task (kind {m.get('kind')})" if m.get("kind") != "design"
+                                       else f"its state is {m.get('linear_state')}"))
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not figma:
         sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
