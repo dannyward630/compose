@@ -137,6 +137,17 @@ class DesignTasks(unittest.TestCase):
                     mock.patch.object(fc, "fast_json", return_value={"confirmed": False, "evidence": ""}):
                 self.assertEqual(fc.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
 
+    def test_acceptance_re_asks_a_refuted_not_met_once_and_a_confirm_error_never(self):
+        first = {"model": "m", "answers": {"c0": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}}}}
+        again = lambda c: {"model": "m", "answers": {"c0": {"choice": c, "probabilities": {c: 0.9}}}}
+        for second, confirm, ok, calls in (("MET", {"confirmed": False, "evidence": "satisfied"}, True, 2), ("NOT_MET", {"confirmed": False, "evidence": "satisfied"}, False, 2),
+                                           ("MET", "nope", False, 1)):
+            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", side_effect=[first, again(second)]) as ask, \
+                    mock.patch.object(fc, "fast_json", return_value=confirm):
+                res = fc.jev_acceptance({}, self.proj, "diff")
+            self.assertEqual((res["pass"], ask.call_count), (ok, calls), (second, confirm))
+        self.assertEqual((res["criteria"][0]["choice"]), "NOT_MET")
+
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
         with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask") as ask:

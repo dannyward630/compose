@@ -67,6 +67,10 @@ def judge_task(ident, tid, title, crits, kind="design"):
     return {"id": ident, "title": title, "description": desc, "status": "Todo", "blockedBy": []}
 
 
+def reask_reply(choice):
+    return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9}}}}
+
+
 class FigmaJudge(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
@@ -81,10 +85,10 @@ class FigmaJudge(unittest.TestCase):
         for name, value in (("ENV_FILE", self.proj / "none.env"), ("say", lambda m: None)):
             p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
 
-    def judge(self, only, replies, confirm=None, fail=None, blocks=False):
+    def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: replies[state["task"]]) as self.ask, \
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
                 mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
@@ -119,6 +123,23 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], len(res["failed"])), ("failed", 1))
         self.assertIn("004 NOT_MET p_not_met=0.90 Has a card field", self.out.getvalue())
         self.assertEqual([c.args[1]["id"] for c in self.ev.call_args_list], ["001"])
+
+    def test_a_refuted_not_met_or_unclear_is_re_asked_once_and_only_a_met_reply_passes(self):
+        refuted = {"confirmed": False, "evidence": "Criterion is satisfied"}
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=refuted, reask="MET")
+        row = res["criteria"][0]
+        self.assertEqual((res["status"], row["choice"], row["first_choice"], row["reask"]["choice"], row["evidence"]), ("passed", "MET", "NOT_MET", "MET", "Criterion is satisfied"))
+        self.assertEqual(self.ask.call_count, 2)
+        self.assertIn("Criterion is satisfied", self.ask.call_args.args[3]["c0"]["instructions"]["context"])
+        res = self.judge("004", {"Pay": [("UNCLEAR", 0.3)]}, reask="MET")
+        self.assertEqual((res["status"], self.ask.call_count, self.confirm.called), ("passed", 2, False))
+        for first, again in (("NOT_MET", "NOT_MET"), ("NOT_MET", "UNCLEAR"), ("UNCLEAR", "NOT_MET"), ("UNCLEAR", "UNCLEAR")):
+            res = self.judge("004", {"Pay": [(first, 0.9)]}, confirm=refuted, reask=again, blocks=True)
+            self.assertEqual((res["status"], len(res["unclear"]), self.ask.call_count), ("failed", 1, 2), (first, again))
+
+    def test_a_confirm_error_blocks_with_no_re_ask(self):
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=RuntimeError("down"), reask="MET", blocks=True)
+        self.assertEqual((res["status"], res["criteria"][0]["choice"], self.ask.call_count), ("blocked", "NOT_MET", 1))
 
     def test_only_all_met_passes_so_unclear_and_unconfirmed_not_met_block(self):
         res = self.judge("001", {"Cart page": [("NOT_MET", 0.0), ("UNCLEAR", 0.14)]}, confirm={"confirmed": False, "evidence": ""}, blocks=True)

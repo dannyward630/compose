@@ -1889,6 +1889,7 @@ def cmd_figma(a):
                     row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
                 if row.get("confirmed"):
                     failed.append(row)
+            choice = reask_criterion(env, cfg, {"task": meta["title"], "tree": text}, choices, rules, row, "figma judge")["choice"]
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)
         prev = {}
@@ -3165,7 +3166,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     choices = {"MET": "The code satisfies this criterion.", "NOT_MET": "The code violates or omits this criterion.",
                "UNCLEAR": "Cannot be decided from the code shown."}
     threshold = cfg.get("acceptance_threshold", 0.6)
-    rows, model = [], None
+    rows, model, states = [], None, {}
     for meta in code_tasks(load_tasks(proj)):
         m = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", meta["body"], re.S)
         crits = [l.strip()[1:].strip() for l in (m.group(1) if m else "").splitlines() if l.strip()[:1] in ("-", "*")]
@@ -3178,7 +3179,8 @@ def jev_acceptance(cfg, proj, diff, repo=None):
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": text, "task": meta["id"], "rules": rules}}
                      for i, text in enumerate(crits)}
-        out = jev_ask(env, cfg, {"task": meta.get("title", ""), "code": code[:150000]}, questions, "Jev acceptance")
+        states[meta["id"]] = {"task": meta.get("title", ""), "code": code[:150000]}
+        out = jev_ask(env, cfg, states[meta["id"]], questions, "Jev acceptance")
         model = out.get("model", model)
         for i, text in enumerate(crits):
             a = out.get("answers", {}).get(f"c{i}", {})
@@ -3207,6 +3209,8 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     with ThreadPoolExecutor(max_workers=6) as ex:
         list(ex.map(confirm, suspects))
     failed = [r for r in suspects if r.get("confirmed")]
+    for r in rows:
+        reask_criterion(env, cfg, states[r["task"]], choices, rules, r, "Jev acceptance")
     # Only MET passes: UNCLEAR and a NOT_MET the confirm call did not confirm both block, as unproven criteria.
     unclear = [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")]
     errors = [r for r in suspects if r.get("judge_error")]
@@ -3236,6 +3240,25 @@ def jev_ask(env, cfg, state, questions, label):
     LEDGER.add("typesafe", u.get("input_tokens") or u.get("prompt_tokens") or u.get("total_tokens") or 0, u.get("output_tokens") or 0,
                price if price is not None else None)
     return out
+
+def reask_criterion(env, cfg, state, choices, rules, row, label):
+    """The one re-ask both judges share: an UNCLEAR verdict, or a NOT_MET the confirm call refuted (confirmed=false, not a
+    judge error), is put to Jev once more for that criterion alone, with the confirmer's evidence as context. Only a MET reply
+    turns the row MET; both verdicts stay on the row. Anything else, and every judge error, is left as it was and still blocks."""
+    refuted = row["choice"] == "NOT_MET" and row.get("confirmed") is False and not row.get("judge_error")
+    if row["choice"] != "UNCLEAR" and not refuted:
+        return row
+    instructions = {"criterion": row["criterion"], "task": row["task"], "rules": rules}
+    if refuted:
+        instructions["context"] = f"An independent check was asked to show this criterion is violated and could not: {row.get('evidence', '')}"
+    out = jev_ask(env, cfg, state, {"c0": {"type": "choice", "criteria": choices, "instructions": instructions}}, label + " re-ask")
+    ans = (out.get("answers") or {}).get("c0") or {}
+    probs = ans.get("probabilities") or {}
+    row["first_choice"] = row["choice"]
+    row["reask"] = {"choice": ans.get("choice"), "p_met": round(probs.get("MET", 0), 3), "p_not_met": round(probs.get("NOT_MET", 0), 3)}
+    if ans.get("choice") == "MET":
+        row["choice"] = "MET"
+    return row
 
 def map_section(description, name):
     """The body under the map's `## <name>` heading (`## <name>:` or `## <name> (C1)` too), up to the next heading; "" when the map has none."""
