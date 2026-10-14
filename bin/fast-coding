@@ -223,10 +223,16 @@ def project_branch(proj):
     """The project's branch: `branch` in its verify.json (`init --branch`), else `fast-coding/<name>`."""
     return project_config(proj).get("branch") or f"fast-coding/{Path(proj).name}"
 
-def layer_prefix(proj):
-    """Review layer branches are `<prefix>layer-NN`: `<stored branch>-` when the project has one (`init --branch`), else `fast/<project>/`."""
-    b = project_config(proj).get("branch")
-    return f"{b}-" if b else f"fast/{Path(proj).name}/"
+def layer_prefix(repo, proj):
+    """Review layer branches are `<prefix>layer-NN`. The prefix recorded in verify.json (written when layers are first built) wins; a project
+    whose `fast/<project>/layer-NN` branches already exist, locally or as remote-tracking refs, keeps them; only a project with no layers
+    yet gets `<stored branch>-` (`init --branch`), else `fast/<project>/`."""
+    cfg, legacy = project_config(proj), f"fast/{Path(proj).name}/"
+    if cfg.get("layer_prefix"):
+        return cfg["layer_prefix"]
+    if sh(["git", "for-each-ref", "--count=1", "--format=%(refname)", f"refs/heads/{legacy}layer-*", f"refs/remotes/*/{legacy}layer-*"], repo, check=False).stdout.strip():
+        return legacy
+    return f"{cfg['branch']}-" if cfg.get("branch") else legacy
 
 def all_projects(repo):
     """{project name: (worktree path, project dir)} over every worktree. A project lives in its own worktree
@@ -2930,9 +2936,12 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget):
     generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
     groups = group_units([u for u in units if u["name"] == "groundwork"], budget) + group_units([u for u in units if u["name"] != "groundwork"], budget)
-    layers, prev = [], base
+    layers, prev, prefix = [], base, layer_prefix(repo, proj)
+    cfg_file = Path(proj) / "verify.json"
+    if cfg_file.exists() and project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
+        atomic_write(cfg_file, json.dumps({**project_config(proj), "layer_prefix": prefix}, indent=2))
     for i, g in enumerate(groups, 1):
-        branch = f"{layer_prefix(proj)}layer-{i:02d}"
+        branch = f"{prefix}layer-{i:02d}"
         sh(["git", "checkout", "-q", "-B", branch, prev], wt)
         for c in (c for u in g for c in u["commits"]):
             if not cherry_pick_same(wt, c):
@@ -2950,7 +2959,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget):
             and sh(["git", "diff", "--quiet", layers[-1]["branch"], chain[-1]], repo, check=False).returncode != 0:
         say(f"stack  STOP  the layers differ from {chain[-1]}; stacking task branches as they are")
         return None
-    for old in sh(["git", "branch", "--list", f"{layer_prefix(proj)}layer-*", "--format=%(refname:short)"], repo).stdout.split():
+    for old in sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo).stdout.split():
         if old not in {l["branch"] for l in layers}:
             sh(["git", "branch", "-D", old], repo, check=False)
     return layers
@@ -3008,7 +3017,7 @@ def register_stack(repo, proj, trunk, submit=False):
         return []
     say(f"stack  ok    ({stack_base}) <- {' <- '.join(stack)}")
     for l in layers or []:
-        say(f"layer  {l['branch'].removeprefix(layer_prefix(proj))}  {layer_note(l, budget)}")
+        say(f"layer  {l['branch'].removeprefix(layer_prefix(repo, proj))}  {layer_note(l, budget)}")
     if submit:
         sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
         q = gh("submit", "--auto")
@@ -5140,7 +5149,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     sh(["git", "worktree", "prune"], repo, check=False)
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
     kept = []
-    for b in sh(["git", "branch", "--list", f"fast/{name}/*", f"{layer_prefix(proj)}layer-*"], repo, check=False).stdout.split():
+    for b in sh(["git", "branch", "--list", f"fast/{name}/*", f"{layer_prefix(repo, proj)}layer-*"], repo, check=False).stdout.split():
         if "-bench-" in b:  # bench runs are measurements, never work to keep
             sh(["git", "branch", "-D", b], repo, check=False)
             continue
@@ -5150,6 +5159,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             sh(["git", "branch", "-D", b], repo, check=False)
         else:
             kept.append(b)
+    if (proj / "verify.json").exists() and "layer_prefix" in project_config(proj) \
+            and not sh(["git", "branch", "--list", f"{project_config(proj)['layer_prefix']}layer-*"], repo, check=False).stdout.strip():
+        atomic_write(proj / "verify.json", json.dumps({k: v for k, v in project_config(proj).items() if k != "layer_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
     line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
     pbranch = project_branch(proj)
     if wt != main_repo and not kept and trunk == pbranch:

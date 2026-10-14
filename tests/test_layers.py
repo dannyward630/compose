@@ -107,6 +107,24 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.layers(), [])
         self.assertTrue(any(l.startswith("layer  layer-01") for l in out))
 
+    def test_a_project_with_layer_branches_already_keeps_their_names(self):
+        self.git("branch", "fast/p/layer-09", "main")  # an earlier stack, before the stored branch named layers
+        self.stack(branch="fast-coding/p")
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast/p/")
+        self.git("branch", "-D", *self.layers())
+        self.stack(branch="fast-coding/p", layer_prefix="fast/p/")  # recorded, so no branch is needed to remember it
+        self.assertEqual(len(self.layers()), 3)
+
+    def test_layer_branches_on_the_remote_alone_keep_their_names(self):
+        self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "main")
+        self.stack(branch="fast-coding/p")
+        self.assertEqual(len(self.layers()), 3)
+
+    def test_the_first_build_records_the_names_it_chose(self):
+        self.stack(branch="fast-coding/p")
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast-coding/p-")
+
     def test_a_layers_pr_is_titled_from_its_tasks_and_the_jira_key(self):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         metas = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}]
