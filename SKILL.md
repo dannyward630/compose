@@ -240,6 +240,12 @@ Every plan, story, and task the designer writes is a Linear issue; it writes no 
 Every open design decision goes up as a card in `needs-user`, text by default, on a Lavish page only when a picture decides it (a wireframe, a layout comparison, a diagram).
 The designer never decides a product question.
 
+**Visual direction.**
+Before any screen story is built, the planning designer writes a visual direction for the surface as a Linear decision: anatomy, density and spacing measured from the research or competitors, status styling, and hierarchy.
+Each rule cites research, a Linear decision, or a measured value.
+Lowfi frames define flow and content only, never layout, spacing, or density.
+A card that only follows the lowfi on a visual question says so and gives the research-based alternative.
+
 **Design tasks.**
 A design task is a task issue (Task issue format) under a design story; its block adds `kind: design` and names `nodes:` in place of `files:`:
 

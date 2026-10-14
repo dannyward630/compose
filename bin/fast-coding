@@ -1499,6 +1499,10 @@ target Figma file is {figma}.
    Hand-off to code pastes Framelink JSON (never `get_design_context`) into the code task.
 6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
    visual.
+7. Before any screen story is built, write a visual direction for the surface as a Linear decision: anatomy, density and spacing
+   measured from the research or competitors, status styling, hierarchy. Each rule cites research, a Linear decision, or a measured
+   value. Lowfi frames define flow and content only, never layout, spacing, or density; a card that only follows the lowfi on a
+   visual question says so and gives the research-based alternative.
 """
 
 def cmd_designer(a):
