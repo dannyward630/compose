@@ -103,6 +103,49 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
 
+    def start_with_timeout(self, appears_after):
+        """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never)."""
+        calls, looks, out = [], [], []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                looks.append(1)
+                up = appears_after is not None and len(looks) >= appears_after and any(c[:2] == ("agent", "start") for c in calls)
+                return {"agents": [{"name": "claude", "pane_id": "w9:p7"}] if up else []}
+            if args[:2] == ("agent", "start"):
+                raise RuntimeError("herdr agent start: timeout")
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            return {}
+        a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
+                mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
+            try:
+                fc.cmd_crew(a)
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, out, calls
+
+    def test_a_start_that_timed_out_but_came_up_still_succeeds_with_one_warning(self):
+        code, out, calls = self.start_with_timeout(appears_after=3)
+        self.assertEqual(code, 0)
+        self.assertIn(("agent", "rename", "w9:p7", "shop-eol"), calls)
+        self.assertEqual(len([l for l in out if "timed out" in l]), 1)
+        self.assertTrue(any(l.startswith("teammate shop-eol started") for l in out))
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
+    def test_a_start_that_timed_out_and_never_came_up_exits_cleanly_and_registers_nothing(self):
+        code, out, calls = self.start_with_timeout(appears_after=None)
+        self.assertIsInstance(code, str)  # a plain message, not a traceback
+        self.assertIn("timeout", code)
+        self.assertIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
+
     def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
         for role, env in (("planner", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
             calls = []
