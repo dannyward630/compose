@@ -134,8 +134,33 @@ class ReadyCheckout(unittest.TestCase):
         self.assertTrue((wt / "node_modules" / "fresh").is_dir())
         self.assertFalse((repo / "node_modules" / "fresh").exists())
         self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
+        (wt / "bun.lock").write_text("new\n")  # a lockfile change is what makes the install run again
+        git(wt, "add", "-A")
+        git(wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "dep")
         with self.assertRaises(RuntimeError):
             fc.ready_checkout(repo, wt, install="exit 3")
+
+    def test_install_reruns_only_when_the_lockfile_changes(self):
+        root = Path(tempfile.mkdtemp())
+        repo, wt = root / "repo", root / "wt"
+        repo.mkdir()
+        (repo / ".gitignore").write_text("node_modules/\n")
+        (repo / "bun.lock").write_text("one\n")
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
+        git(repo, "init", "-q")
+        git(repo, "add", "-A")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        git(root, "clone", "-q", "--shared", str(repo), str(wt))
+        install = "mkdir -p node_modules && cat bun.lock >> node_modules/seen"
+        seen = lambda: (wt / "node_modules" / "seen").read_text()
+        fc.ready_checkout(repo, wt, install=install)
+        fc.ready_checkout(repo, wt, install=install)
+        self.assertEqual(seen(), "one\n")  # the same lockfile: no second install
+        (wt / "bun.lock").write_text("two\n")
+        git(wt, "add", "-A")
+        git(wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "dep")
+        fc.ready_checkout(repo, wt, install=install)
+        self.assertEqual(seen(), "one\ntwo\n")  # a changed lockfile installs again
 
     def test_lockfile_task_installs_on_its_own_and_hands_it_over(self):
         root = Path(tempfile.mkdtemp())

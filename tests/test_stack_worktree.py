@@ -33,6 +33,17 @@ class StackWorktree(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
 
+    def test_verify_installs_in_the_worktree_at_the_stack_top(self):
+        (self.repo / ".gitignore").write_text("node_modules/\n.fast-coding/\n")
+        (self.repo / "bun.lock").write_text("trunk\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "lock")
+        self.git("checkout", "-q", "-b", "top"); (self.repo / "bun.lock").write_text("top\n")
+        self.git("commit", "-qam", "dep"); self.git("checkout", "-q", "main")
+        cfg = {"install": "mkdir -p node_modules && cat bun.lock >> node_modules/seen"}
+        with mock.patch.object(fc, "stack_order", return_value=["top"]), mock.patch.object(fc, "linearize", return_value=["top"]):
+            wt, _, _ = fc.verify_root(self.repo, self.proj, cfg)
+        self.assertEqual((wt / "node_modules" / "seen").read_text(), "top\n")  # installed once, against the top layer's lockfile
+
 
 class ReviewGate(unittest.TestCase):
     def test_confirmed_review_findings_fail_verify(self):

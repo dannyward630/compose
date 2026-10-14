@@ -2681,7 +2681,7 @@ def stack_worktree(repo, proj, trunk):
                 sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
             else:
                 sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-        ready_checkout(repo, wt, install=project_config(proj).get("install"))  # verify runs its checks here
+        ready_checkout(repo, wt)
         tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
         if tools.is_dir() and not link.exists() and not link.is_symlink():
             link.symlink_to(tools)
@@ -2739,15 +2739,22 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's.
     `install` (verify.json `install`) runs in the checkout instead of linking: bundlers write a dependency's real path into
     unminified output, so a borrowed install builds different bytes than the project worktree's own. Links from an earlier
-    borrow are removed first, so the command never writes through one."""
+    borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
+    commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
     deps = dep_dirs(repo)
     exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
     stamp_graft_wiring(wt)
     if install and borrow:
+        stamp = Path(sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "fast-coding-install"], wt).stdout.strip())
+        locks = "".join(l + "\n" for l in sh(["git", "ls-tree", "-r", "HEAD"], wt, check=False).stdout.splitlines()
+                        if l.rsplit("/", 1)[-1].split("\t")[-1] in LOCKFILES)
+        if stamp.exists() and stamp.read_text() == locks:
+            return
         for d in deps:
             if (wt / d).is_symlink():
                 (wt / d).unlink()
         sh(install, wt)
+        stamp.write_text(locks)
         return
     for d in deps if borrow else ():
         link = wt / d
@@ -4132,6 +4139,7 @@ def verify_root(repo, proj, cfg):
     if not chain:
         return repo, cfg.get("review_base", trunk), None
     sh(["git", "checkout", "-q", chain[-1]], wt)
+    ready_checkout(repo, wt, install=cfg.get("install"))
     say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
     return wt, trunk, wt
 
@@ -4152,6 +4160,7 @@ def cmd_verify(a):
         cfg["e2e"] = [{**case, "driver": swap(case.get("driver")), "assert": swap(case.get("assert"))} for case in cfg.get("e2e", [])]
         cfg["e2e_setup"] = swap(cfg.get("e2e_setup"))
         cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
+        cfg["main_repo"] = repo
     try:
         verify_rounds(root, proj, cfg, a, rounds, t0)
     except PaymentRequired as e:
@@ -4175,6 +4184,8 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
     allowed = set(sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
     rejected = []
     for rnd in range(a.fix + 1):
+        if cfg.get("main_repo"):  # a fix round may have changed the lockfile
+            ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
         ok, report, findings = run_stages(repo, proj, cfg, a)
         rounds.append(report)
         if ok or rnd == a.fix:
@@ -4845,6 +4856,7 @@ def cmd_top(a):
     if not chain:
         sys.exit("no unmerged layers; the trunk already is the top")
     sh(["git", "checkout", "-q", "--detach", chain[-1]], wt)
+    ready_checkout(repo, wt, install=project_config(proj).get("install"))
     print(f"stack top {chain[-1]} ({len(chain)} layers on {trunk}) checked out at:\n{wt}")
 
 def cmd_resume(a):
