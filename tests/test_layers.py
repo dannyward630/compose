@@ -44,6 +44,42 @@ class Grouping(unittest.TestCase):
         self.assertEqual(fc.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
 
 
+class PrText(unittest.TestCase):
+    """A fake gh keeps one PR's title and body in a file; write_pr_text must only replace text the CLI itself wrote."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp()).resolve()
+        (self.dir / "gh").write_text('''#!/usr/bin/env python3
+import json, sys
+a, f = sys.argv[1:], "pr.json"
+try: pr = json.load(open(f))
+except FileNotFoundError: pr = None
+if a[:2] == ["pr", "view"]: sys.exit(1) if pr is None else print(json.dumps(pr))
+if a[:2] == ["pr", "edit"]: json.dump({"title": a[a.index("--title") + 1], "body": a[a.index("--body") + 1]}, open(f, "w"))
+''')
+        (self.dir / "gh").chmod(0o755)
+        self.env = mock.patch.dict(os.environ, {"PATH": f"{self.dir}:{os.environ['PATH']}"}); self.env.start(); self.addCleanup(self.env.stop)
+
+    def pr(self):
+        return json.loads((self.dir / "pr.json").read_text())
+
+    def sync(self, title, body):
+        before = fc.gh_pr_text(self.dir, "b")
+        return fc.write_pr_text(self.dir, self.dir, "b", before, title, body)
+
+    def test_text_is_written_on_a_new_pr_and_on_one_the_cli_wrote_but_never_over_an_edit(self):
+        self.assertTrue(self.sync("t1", "b1"))
+        self.assertTrue(self.sync("t2", "b2\n(231 lines)"))  # still the CLI's own text: refreshed
+        self.assertEqual(self.pr(), {"title": "t2", "body": "b2\n(231 lines)"})
+        (self.dir / "pr.json").write_text(json.dumps({"title": "t2", "body": "What\nWhy\nChecks"}))  # a person rewrote the body
+        self.assertFalse(self.sync("t3", "b3"))
+        self.assertEqual(self.pr(), {"title": "t2", "body": "What\nWhy\nChecks"})
+
+    def test_a_pr_from_before_the_record_existed_keeps_its_text(self):
+        (self.dir / "pr.json").write_text(json.dumps({"title": "hand", "body": "written"}))
+        self.assertFalse(self.sync("t", "b"))
+        self.assertEqual(self.pr(), {"title": "hand", "body": "written"})
+
+
 class Layers(unittest.TestCase):
     """A project branch with groundwork and every task's test on it, and task branches above it: the layers regroup all of it."""
     def setUp(self):

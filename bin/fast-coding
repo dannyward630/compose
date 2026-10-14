@@ -3000,6 +3000,25 @@ def layer_pr(proj, l, n, budget, metas):
     title = f"{key.group(1).upper() + ': ' if key else ''}{', '.join(held)} ({idx}/{n})"
     return title, "\n".join([*(f"- {h}" for h in held), "", layer_note(l, budget)])
 
+def gh_pr_text(wt, b):
+    """The title and body of the PR on branch b, or None when it has none."""
+    v = subprocess.run(["gh", "pr", "view", b, "--json", "title,body"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return json.loads(v.stdout) if v.returncode == 0 else None
+
+def write_pr_text(proj, wt, b, before, title, body):
+    """Write a layer's generated title and body on its PR only when the CLI owns the text: the PR was just created (before is None),
+    or its text still equals what the CLI wrote last time (recorded in pr_text.json). A person's or reviewer's edit, and any PR
+    from before the record existed, keeps its text; the size line is regenerated with the rest or not at all."""
+    rec_file = Path(proj) / "pr_text.json"
+    rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
+    last = rec.get(b)
+    if before is not None and not (last and (before["title"], before["body"].strip()) == (last["title"], last["body"].strip())):
+        return False
+    r = subprocess.run(["gh", "pr", "edit", b, "--title", title, "--body", body], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode == 0:
+        atomic_write(rec_file, json.dumps({**rec, b: {"title": title, "body": body}}, indent=2))
+    return r.returncode == 0
+
 def register_stack(repo, proj, trunk, submit=False):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
@@ -3037,6 +3056,7 @@ def register_stack(repo, proj, trunk, submit=False):
         say(f"layer  {l['branch'].removeprefix(layer_prefix(repo, proj))}  {layer_note(l, budget)}")
     if submit:
         sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
+        before = {b: gh_pr_text(wt, b) for b in stack}  # which PRs exist, and their text, before this submit touches anything
         q = gh("submit", "--auto")
         say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {(q.stdout + q.stderr).strip()[-400:]}")
         for b in stack if q.returncode == 0 else []:  # a real GitHub stack is one PR per layer, each on the layer below
@@ -3046,7 +3066,7 @@ def register_stack(repo, proj, trunk, submit=False):
             lay = next((l for l in layers or [] if l["branch"] == b), None)
             if pr and lay:
                 title, body = layer_pr(proj, lay, len(layers), budget, code_tasks(load_tasks(proj)))
-                subprocess.run(["gh", "pr", "edit", b, "--title", title, "--body", body], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                write_pr_text(proj, wt, b, before[b], title, body)
     sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     mirror_stack_state(repo, wt)
     return [stack]
