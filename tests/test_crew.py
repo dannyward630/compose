@@ -413,6 +413,29 @@ class StartPaneBusy(unittest.TestCase):
     def test_a_busy_pane_is_retried_until_it_starts(self):
         self.assertEqual(self.run_start(busy=3), 4)
 
+    def test_a_name_not_yet_registered_is_retried_like_a_busy_pane(self):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "start") and len(calls) == 1:
+                raise RuntimeError("herdr agent start: agent_name_not_found")
+            return {"agents": []} if args[:2] == ("agent", "list") else {}
+        with mock.patch.object(fc, "herdr", herdr):
+            fc.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
+        self.assertEqual([c[:2] for c in calls].count(("agent", "start")), 2)
+
+    def test_a_name_not_found_start_that_made_a_session_names_it_and_never_starts_a_second(self):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "start"):
+                raise RuntimeError("herdr agent start: agent_name_not_found")
+            return {"agents": [{"name": "claude", "pane_id": "wH:p19"}]} if args[:2] == ("agent", "list") else {}
+        with mock.patch.object(fc, "herdr", herdr):
+            fc.herdr_start_crew("shop-design-123", "--kind", "claude", "--pane", "wH:p19")
+        self.assertEqual([c[:2] for c in calls].count(("agent", "start")), 1)
+        self.assertIn(("agent", "rename", "wH:p19", "shop-design-123"), calls)
+
     def test_a_pane_busy_for_good_fails_loudly(self):
         with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
             self.run_start(busy=99)

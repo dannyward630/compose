@@ -774,16 +774,17 @@ def herdr_await_start(agent, tries=3):
 
 def herdr_start_crew(*args, tries=8):
     """`herdr agent start` for a teammate, retried while its pane is still coming up: starts running in parallel (designcrews,
-    testcrews) race each other and the new pane answers agent_pane_busy until its shell is there."""
+    testcrews) race each other and the new pane answers agent_pane_busy until its shell is there, or agent_name_not_found while herdr
+    has not yet registered the name the start waits for (the session may be up under its pane's default name: it is renamed)."""
     for i in range(tries):
         try:
             return herdr("agent", "start", *args, check=True, timeout=90)
         except RuntimeError as e:
-            if "timeout" in str(e) and "--pane" in args:  # the session can come up after the call gave up: name it rather than lose it
+            if ("timeout" in str(e) or "agent_name_not_found" in str(e)) and "--pane" in args:  # the session can come up after the call gave up: name it rather than lose it
                 pane = args[args.index("--pane") + 1]
                 if any(ag.get("pane_id") == pane for ag in live_agents()):
                     return herdr("agent", "rename", pane, args[0], check=True)
-            if "agent_pane_busy" not in str(e) or i == tries - 1:
+            if not any(c in str(e) for c in ("agent_pane_busy", "agent_name_not_found")) or i == tries - 1:
                 raise
             time.sleep(0.5 * (i + 1))
 
@@ -2116,7 +2117,7 @@ def herdr_agent_start(*args, tries=8):
     until its shell prompt is there, which is the harness racing itself and never a reason to fail a task."""
     for i in range(tries):
         started, err = herdr_error("agent", "start", *args, timeout=90)
-        if err != "agent_pane_busy" or i == tries - 1:
+        if err not in ("agent_pane_busy", "agent_name_not_found") or i == tries - 1:
             break
         time.sleep(0.5 * (i + 1))
     if err:

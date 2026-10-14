@@ -134,6 +134,11 @@ class AgentStartRace(unittest.TestCase):
         with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(fc.time, "sleep"):
             self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
 
+    def test_an_unregistered_name_is_retried(self):
+        answers = iter([(None, "agent_name_not_found"), ({"agent": {"name": "a"}}, None)])
+        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(fc.time, "sleep"):
+            self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
+
     def test_other_errors_and_a_pane_that_never_frees_still_fail(self):
         with mock.patch.object(fc, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(fc.time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "pane_not_found"):
