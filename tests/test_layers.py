@@ -177,6 +177,24 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.changed("fast/p/layer-04", "fast/p/layer-03"), {"t003.test", "003.src"})
         self.assertIn("task 003: 155 lines; over the 130-line budget", out[-1])
 
+    def test_a_submitted_stack_keeps_each_task_in_its_layer_when_sizes_change(self):
+        self.stack(review_layer_lines=300)
+        fc.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001", "002"]), ("fast/p/layer-03", ["003"]))])
+        self.git("checkout", "-q", "fast/p/003")
+        self.write("003.src", "c\n"); self.commit("shrink 003")  # 003 now fits with 001 and 002, so a regroup would merge layers 02 and 03
+        self.git("checkout", "-q", "fast-coding/p")
+        self.stack(review_layer_lines=300)
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src"})
+
+    def test_a_task_new_since_the_submit_gets_a_layer_above(self):
+        self.stack()
+        fc.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001"]))])
+        self.stack()
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src"})
+        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t002.test", "002.src", "t003.test", "003.src"})
+
     def test_a_rebuild_from_unchanged_commits_keeps_the_hashes(self):
         self.stack()
         before = self.git("rev-parse", "fast/p/layer-01", "fast/p/layer-02")

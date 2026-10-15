@@ -2960,18 +2960,36 @@ def cherry_pick_same(wt, c):
         sh(["git", "cherry-pick", "--abort"], wt, check=False)
     return p.returncode == 0
 
+def record_layers(proj, layers):
+    """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it."""
+    atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l["tasks"])) for l in layers}, indent=2))
+
+def group_by_record(proj, units, budget):
+    """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork), and
+    units no layer holds yet are grouped as usual into new layers above. [(recorded branch or None, units)]."""
+    rec_file = Path(proj) / "layers.json"
+    rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
+    groups, seen = [], set()
+    for b, names in rec.items():
+        held = [u for u in units if u["name"] in names and u["name"] not in seen]
+        seen |= {u["name"] for u in held}
+        if held:
+            groups.append((b, held))
+    new = [u for u in units if u["name"] not in seen]
+    return groups + [(None, g) for g in group_units([u for u in new if u["name"] == "groundwork"], budget) + group_units([u for u in new if u["name"] != "groundwork"], budget)]
+
 def build_layers(repo, proj, base, trunk, chain, wt, budget):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
     generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
-    groups = group_units([u for u in units if u["name"] == "groundwork"], budget) + group_units([u for u in units if u["name"] != "groundwork"], budget)
+    groups = group_by_record(proj, units, budget)
     layers, prev, prefix = [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
     if cfg_file.exists() and project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
         atomic_write(cfg_file, json.dumps({**project_config(proj), "layer_prefix": prefix}, indent=2))
-    for i, g in enumerate(groups, 1):
-        branch = f"{prefix}layer-{i:02d}"
+    for i, (rec_branch, g) in enumerate(groups, 1):
+        branch = rec_branch or f"{prefix}layer-{i:02d}"
         sh(["git", "checkout", "-q", "-B", branch, prev], wt)
         for c in (c for u in g for c in u["commits"]):
             if not cherry_pick_same(wt, c):
@@ -3072,6 +3090,8 @@ def register_stack(repo, proj, trunk, submit=False):
         before = {b: gh_pr_text(wt, b) for b in stack}  # which PRs exist, and their text, before this submit touches anything
         q = gh("submit", "--auto")
         say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {(q.stdout + q.stderr).strip()[-400:]}")
+        if q.returncode == 0 and layers:
+            record_layers(proj, layers)
         for b in stack if q.returncode == 0 else []:  # a real GitHub stack is one PR per layer, each on the layer below
             v = subprocess.run(["gh", "pr", "view", b, "--json", "number,baseRefName,url"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             pr = json.loads(v.stdout) if v.returncode == 0 else None
