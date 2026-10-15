@@ -230,5 +230,48 @@ class ProjectBranch(unittest.TestCase):
         self.assertIn("fast-coding/old", self.branches())
 
 
+class SquashMergedLayers(unittest.TestCase):
+    """Layers are squash-merged by PR: task branches were never PRs and ancestry is rewritten, so the merged layer that held a task proves it."""
+    def setUp(self):
+        self.r, self.run = repo()
+        self.bin = Path(tempfile.mkdtemp()).resolve()
+        (self.bin / "gh").write_text('''#!/usr/bin/env python3
+import json, sys
+a = sys.argv[1:]
+merged = open(__file__ + ".merged").read().split()
+head = a[a.index("--head") + 1] if "--head" in a else ""
+print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in merged else []))
+''')
+        (self.bin / "gh").chmod(0o755)
+        (self.bin / "gh.merged").write_text("fast/p/layer-01\n")
+        self.env = {**os.environ, **ENV, "PATH": f"{self.bin}:{os.environ['PATH']}"}
+        remote = self.r.parent / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        self.run("remote", "add", "origin", str(remote)); self.run("push", "-q", "origin", "main")
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
+        self.proj = self.r.parent / "fast-coding-p" / ".fast-coding" / "p"
+        tip = self.run("rev-parse", "main").stdout.strip()
+        for b in ("fast/p/001", "fast/p/002", "fast/p/layer-01", "fast/p/layer-02"):  # commits on top of main: never ancestors of it
+            c = self.run("commit-tree", "main^{tree}", "-p", tip, "-m", b).stdout.strip()
+            self.run("branch", b, c)
+        self.run("push", "-q", "origin", "fast/p/layer-01", "fast/p/layer-02")
+        (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
+
+    def test_clean_drops_tasks_of_a_squash_merged_layer_and_its_remote_branch_and_keeps_the_rest(self):
+        out = subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r)], capture_output=True, text=True, env=self.env).stdout
+        left = self.run("branch", "--format=%(refname:short)").stdout.split()
+        self.assertNotIn("fast/p/001", left); self.assertNotIn("fast/p/layer-01", left)
+        self.assertIn("fast/p/002", left); self.assertIn("fast/p/layer-02", left)
+        remote = self.run("ls-remote", "--heads", "origin").stdout
+        self.assertNotIn("fast/p/layer-01", remote); self.assertIn("fast/p/layer-02", remote)
+        self.assertIn("deleted origin/fast/p/layer-01", out)
+        self.assertIn("kept unmerged: fast/p/002, fast/p/layer-02", out)
+        (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")  # the last layer merges: everything goes
+        subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r)], capture_output=True, text=True, env=self.env)
+        self.assertEqual(self.run("branch", "--format=%(refname:short)").stdout.split(), ["main"])
+        self.assertFalse((self.r.parent / "fast-coding-p").exists())
+        self.assertEqual(self.run("ls-remote", "--heads", "origin").stdout.count("fast/p/"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
