@@ -103,8 +103,9 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
 
-    def start_with_timeout(self, appears_after):
-        """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never)."""
+    def start_with_timeout(self, appears_after, pane_busy=False):
+        """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never).
+        `pane_busy`: the pane's shell is running something (a launching agent) even while the list shows no agent."""
         calls, looks, out = [], [], []
         def herdr(*args, **kw):
             calls.append(args)
@@ -117,7 +118,11 @@ class Crew(unittest.TestCase):
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             if args[:2] == ("agent", "get"):
-                return {"agent": {"agent_status": "working"}}
+                up = (appears_after is not None and len(looks) >= appears_after) or (pane_busy and ("pane", "process-info") in [c[:2] for c in calls])
+                return {"agent": {"agent_status": "working"}} if up else None
+            if args[:2] == ("pane", "process-info"):
+                return {"process_info": {"shell_pid": 1, "foreground_process_group_id": 99 if pane_busy else 1,
+                                         "foreground_processes": [{"pid": 99, "name": "claude"}] if pane_busy else []}}
             return {}
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
@@ -138,6 +143,27 @@ class Crew(unittest.TestCase):
         self.assertEqual(len([l for l in out if "timed out" in l]), 1)
         self.assertTrue(any(l.startswith("teammate shop-eol started") for l in out))
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
+    def test_a_start_that_timed_out_and_came_up_after_the_wait_is_kept(self):
+        code, out, calls = self.start_with_timeout(appears_after=12)  # one look before the start, then the 10 of the wait miss it, the last check finds it
+        self.assertEqual(code, 0)
+        self.assertNotIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual(len([l for l in out if "timed out" in l]), 1)
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
+    def test_a_start_that_timed_out_with_a_process_launching_in_its_pane_is_kept(self):
+        code, out, calls = self.start_with_timeout(appears_after=None, pane_busy=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual(len([l for l in out if "timed out" in l]), 1)
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
+    def test_a_report_from_a_teammate_whose_record_is_missing_registers_it_again(self):
+        live = {"agent": {"name": "shop-eol", "pane_id": "w9:p7", "tab_id": "w9:t3", "workspace_id": "w9", "cwd": "/x"}}
+        with mock.patch.object(fc, "herdr", lambda *a, **k: live if a[:2] == ("agent", "get") else {}):
+            self.report("shop-eol", "done", "finished")
+        c = fc.crew_record(self.proj, "shop-eol")
+        self.assertEqual((c["pane"], c["tab"], c["space"]), ("w9:p7", "w9:t3", "w9"))
 
     def test_a_start_that_timed_out_and_never_came_up_exits_cleanly_and_registers_nothing(self):
         code, out, calls = self.start_with_timeout(appears_after=None)

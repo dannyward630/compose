@@ -811,9 +811,30 @@ def herdr_start_crew(*args, tries=8):
                         print(f"herdr agent start timed out but {args[0]} came up; continuing")
                         return herdr("agent", "rename", pane, args[0], check=True)
                     time.sleep(2)
+                if pane_launching(args[0], pane):  # one last look by name and by pane: an agent that can still come up is never declared dead
+                    print(f"herdr agent start timed out but {args[0]} is still starting in its pane; continuing")
+                    return None
             if not any(c in str(e) for c in ("agent_pane_busy", "agent_name_not_found")) or i == tries - 1:
                 raise
             time.sleep(0.5 * (i + 1))
+
+def pane_processes(pane):
+    """The processes running in `pane` in front of its shell: empty when the pane holds nothing but an idle shell."""
+    info = (herdr("pane", "process-info", "--pane", pane) or {}).get("process_info") or {}
+    return [p for p in info.get("foreground_processes", []) if p.get("pid") != info.get("shell_pid")] \
+        if info.get("foreground_process_group_id") != info.get("shell_pid") else []
+
+def pane_launching(agent, pane):
+    """True when `agent` is registered by name, listed on `pane`, or the pane runs a process that is still becoming it."""
+    return bool(herdr("agent", "get", agent)) or any(ag.get("pane_id") == pane for ag in live_agents()) or bool(pane_processes(pane))
+
+def pane_kill(pane):
+    """Stop whatever runs in `pane` in front of its shell, so closing the tab leaves nothing unregistered behind."""
+    for p in pane_processes(pane):
+        try:
+            os.kill(p["pid"], signal.SIGTERM)
+        except (OSError, KeyError):
+            pass
 
 def agent_name(slug, tid):
     """herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents. `<slug>-<id>`, slug trimmed to fit."""
@@ -1711,6 +1732,7 @@ def cmd_crew(a):
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     except RuntimeError as e:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
+        pane_kill(pane)
         herdr("tab", "close", tab["tab"]["tab_id"])
         for f in crew_dir(proj).glob(f"{name}.*"):
             f.unlink()
@@ -1758,6 +1780,13 @@ def crew_record(proj, name):
     f = crew_dir(proj) / f"{name}.json"
     return json.loads(f.read_text()) if f.exists() else None
 
+def crew_reregister(proj, name):
+    """A teammate whose record was lost (a start that gave up on it too early) reports anyway: rebuild the record from its live agent."""
+    ag = (herdr("agent", "get", name) or {}).get("agent")
+    if ag and ag.get("pane_id"):
+        atomic_write(crew_dir(proj) / f"{name}.json", json.dumps({"name": name, "agent": name, "role": "", "title": ag.get("title") or name, "model": "claude", "cwd": ag.get("cwd", ""),
+                                                                   "space": ag.get("workspace_id"), "tab": ag.get("tab_id"), "pane": ag["pane_id"], "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+
 def crew_attention(proj, name, state, message):
     """Badge the reporting pane (`needs you`, `blocked`, `done`); it never steals focus (`crew focus` jumps there on request).
     No notification here: a teammate's question goes up through the team lead, and the product owner is notified once,
@@ -1793,6 +1822,8 @@ def cmd_report(a):
     if a.state not in CREW_STATES:
         sys.exit(f"state is one of {', '.join(CREW_STATES)}")
     message = " ".join(a.message)
+    if not crew_record(proj, a.as_):
+        crew_reregister(proj, a.as_)
     write_report(proj, a.as_, a.state, message)
     if a.state == "tool-bug":
         log_tool_bug(proj, a.as_, message)
