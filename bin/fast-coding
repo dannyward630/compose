@@ -2062,6 +2062,111 @@ def frame0_down(proj):
         time.sleep(0.5)
     return True
 
+TREE_CHUNK_CHARS = 30000  # one judge request's share of a tree; the whole tree is judged in as many requests as it takes
+
+def hard_split(text, limit):
+    """Last resort for text that has no node boundary left: whole lines, a line longer than the limit cut by characters. Covers every character."""
+    out, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > limit:
+            if cur:
+                out.append(cur); cur = ""
+            out.append(line[:limit]); line = line[limit:]
+        if len(cur) + len(line) > limit:
+            out.append(cur); cur = ""
+        cur += line
+    return out + ([cur] if cur else [])
+
+def split_node(head, node, path, limit):
+    """Pieces of one Framelink node, each under the limit: the node whole, else its own fields followed by one run of pieces per child."""
+    piece = f"{head}\n" + json.dumps({"under": path, "node": node}, indent=2)
+    if len(piece) <= limit:
+        return [piece]
+    kids = node.get("children") if isinstance(node, dict) else None
+    if not kids:
+        return hard_split(piece, limit)
+    own = {k: v for k, v in node.items() if k != "children"}
+    own["children"] = f"{len(kids)} children, each in its own part below"
+    here = path + [str(node.get("name") or node.get("id"))]
+    out = split_node(head, own, path, limit)
+    for kid in kids:
+        out += split_node(head, kid, here, limit)
+    return out
+
+def tree_chunks(text, limit=TREE_CHUNK_CHARS):
+    """The saved tree as texts of at most `limit` characters that together hold all of it, cut along node boundaries: the tree file's
+    sections (NODE ..., WRITE RESULT ...) stay apart, an oversized section becomes its context (metadata, styles) and then each node,
+    and a node too big for one part becomes its own fields and then each child. Adjacent small pieces share a chunk."""
+    if len(text) <= limit:
+        return [text]
+    pieces = []
+    for sec in re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n")):
+        if len(sec) <= limit:
+            pieces.append(sec)
+            continue
+        head, _, body = sec.partition("\n")
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            pieces += hard_split(sec, limit)
+            continue
+        ctx = {k: v for k, v in doc.items() if k != "nodes"}
+        pieces += hard_split(f"{head} (context)\n" + json.dumps(ctx, indent=2), limit) if ctx else []
+        for n in doc.get("nodes") or []:
+            pieces += split_node(f"{head} (part of a tree too large for one request)", n, [], limit)
+    chunks = []
+    for piece in pieces:
+        if chunks and len(chunks[-1]) + len(piece) + 2 <= limit:
+            chunks[-1] += "\n\n" + piece
+        else:
+            chunks.append(piece)
+    return chunks
+
+def combine_choices(choices):
+    """One criterion over every chunk: NOT_MET if any chunk shows it, else MET if any chunk shows it, else UNCLEAR."""
+    return "NOT_MET" if "NOT_MET" in choices else "MET" if "MET" in choices else "UNCLEAR"
+
+def figma_judge_chunks(env, cfg, title, chunks, questions):
+    """One Jev request per chunk with every question; (answers per chunk, error text or None). Any request that fails or comes
+    back without an answer for a criterion is an error the caller records as a judge error: a chunk never judged is never a pass."""
+    outs = []
+    for k, chunk in enumerate(chunks, 1):
+        state = {"task": title, "tree": chunk}
+        if len(chunks) > 1:
+            state["tree_part"] = f"{k} of {len(chunks)}"
+        try:
+            out = jev_ask(env, cfg, state, questions, "figma judge")
+        except PaymentRequired:
+            raise
+        except Exception as e:  # noqa: BLE001
+            return outs, f"chunk {k} of {len(chunks)} could not be judged: {e}"
+        missing = [q for q in questions if (out.get("answers") or {}).get(q, {}).get("choice") not in ("MET", "NOT_MET", "UNCLEAR")]
+        if missing:
+            return outs, f"chunk {k} of {len(chunks)} came back without an answer for {', '.join(missing)}"
+        outs.append(out)
+    return outs, None
+
+def figma_reask(env, cfg, title, chunks, per_chunk, choices, rules, row):
+    """The shared re-ask over chunks. One chunk is exactly reask_criterion. Several: a refuted NOT_MET is put again to the chunks
+    that said NOT_MET and turns MET only when every one of them now says MET; an UNCLEAR is put to all chunks and turns MET when one
+    says MET and none says NOT_MET. Judge errors are left as they were."""
+    if len(chunks) == 1:
+        return reask_criterion(env, cfg, {"task": title, "tree": chunks[0]}, choices, rules, row, "figma judge")["choice"]
+    refuted = row["choice"] == "NOT_MET" and row.get("confirmed") is False and not row.get("judge_error")
+    if row["choice"] != "UNCLEAR" and not refuted:
+        return row["choice"]
+    targets = [k for k, c in enumerate(per_chunk) if c == "NOT_MET"] if refuted else range(len(chunks))
+    again = []
+    for k in targets:
+        r = reask_criterion(env, cfg, {"task": title, "tree": chunks[k], "tree_part": f"{k + 1} of {len(chunks)}"}, choices, rules, dict(row), "figma judge")
+        again.append(r["choice"])
+    row["first_choice"], row["reask"] = row["choice"], {"choices": again}
+    if (refuted and all(c == "MET" for c in again)) or (not refuted and "MET" in again and "NOT_MET" not in again):
+        row["choice"] = "MET"
+    return row["choice"]
+
 def figma_key(text):
     """The Figma file key in a figma.com URL or a bare key, else None."""
     m = re.search(r"figma\.com/(?:design|board|slides)/([A-Za-z0-9]+)(/branch/([A-Za-z0-9]+))?", text)
@@ -2153,29 +2258,40 @@ def cmd_figma(a):
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": c, "task": tid, "rules": rules}}
                      for i, c in enumerate(crits_id)}
-        out = jev_ask(env, cfg, {"task": meta["title"], "tree": text}, questions, "figma judge")
+        chunks = tree_chunks(text)
+        outs, chunk_error = figma_judge_chunks(env, cfg, meta["title"], chunks, questions)
         rows, failed = [], []
         for i, c in enumerate(crits_id):
-            ans = out.get("answers", {}).get(f"c{i}", {})
-            probs = ans.get("probabilities", {})
-            p = probs.get("NOT_MET", 0)
-            choice = ans.get("choice")
-            row = {"task": tid, "criterion": c, "choice": choice, "p_met": round(probs.get("MET", 0), 3),
-                   "p_not_met": round(p, 3), "confidence": ans.get("confidence")}
-            if p >= cfg.get("acceptance_threshold", 0.6):
+            if chunk_error:
+                rows.append({"task": tid, "criterion": c, "choice": None, "confirmed": False, "evidence": chunk_error, "judge_error": True})
+                continue
+            answers = [o["answers"][f"c{i}"] for o in outs]
+            per_chunk = [x["choice"] for x in answers]
+            p_not = [(x.get("probabilities") or {}).get("NOT_MET", 0) for x in answers]
+            p = max(p_not)
+            row = {"task": tid, "criterion": c, "choice": combine_choices(per_chunk),
+                   "p_met": round(max((x.get("probabilities") or {}).get("MET", 0) for x in answers), 3),
+                   "p_not_met": round(p, 3), "confidence": answers[p_not.index(p)].get("confidence")}
+            errors = []
+            for k in (k for k, pk in enumerate(p_not) if pk >= cfg.get("acceptance_threshold", 0.6)):
                 try:
                     row["confirmed"], row["evidence"] = confirm_call(
                         env, "You are verifying whether a node tree VIOLATES one acceptance criterion. Quote the node that "
                         "proves a violation. If you cannot show a concrete violation, answer confirmed=false. "
                         'Return JSON {"confirmed": bool, "evidence": str}.',
-                        f"CRITERION: {c}\n\nTREE:\n{text[:60000]}")
+                        f"CRITERION: {c}\n\nTREE:\n{chunks[k]}")
                 except PaymentRequired:
                     raise
                 except Exception as e:  # noqa: BLE001
-                    row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
-                if row.get("confirmed"):
-                    failed.append(row)
-            choice = reask_criterion(env, cfg, {"task": meta["title"], "tree": text}, choices, rules, row, "figma judge")["choice"]
+                    errors.append(str(e))
+                    continue
+                if row["confirmed"]:
+                    break
+            if errors and not row.get("confirmed"):
+                row["confirmed"], row["evidence"], row["judge_error"] = False, errors[0], True
+            if row.get("confirmed"):
+                failed.append(row)
+            choice = figma_reask(env, cfg, meta["title"], chunks, per_chunk, choices, rules, row)
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)
         prev = {}
@@ -2186,9 +2302,9 @@ def cmd_figma(a):
             except json.JSONDecodeError:
                 pass
         result = {"id": tid, "title": meta["title"], "status": "blocked" if any(r.get("judge_error") for r in rows) else "passed" if all(r["choice"] == "MET" for r in rows) else "failed", "kind": "design",
-                  "judge_errors": [r for r in rows if r.get("judge_error")],
+                  "judge_errors": [r for r in rows if r.get("judge_error")], "chunks": len(chunks), "tree_chars": len(text),
                   "criteria": rows, "failed": failed, "unclear": [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")], "attempts": (prev.get("attempts") or 0) + 1, "seconds": 0.0,
-                  "cost": 0.0, "model": out.get("model"), "branch": f"figma:{meta.get('figma') or stored}",
+                  "cost": 0.0, "model": outs[0].get("model") if outs else None, "branch": f"figma:{meta.get('figma') or stored}",
                   "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         atomic_write(rf, json.dumps(result))
         if result["status"] == "passed":

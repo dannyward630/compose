@@ -139,6 +139,14 @@ def reask_reply(choice):
     return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9}}}}
 
 
+def big_tree(variants=15, pad=10000):
+    """A Framelink-shaped tree of ~variants*pad characters: a Button set whose every variant holds a Tint child, as design 138 had."""
+    kids = [{"id": f"1:{i}", "name": f"variant={i}", "type": "COMPONENT", "padding": "x" * pad,
+             "children": [{"id": f"2:{i}", "name": "Tint", "type": "RECTANGLE"}]} for i in range(variants)]
+    doc = {"metadata": {"name": "File"}, "nodes": [{"id": "9:536", "name": "Button", "type": "COMPONENT_SET", "children": kids}], "globalVars": {"styles": {}}}
+    return "NODE 9:536\n" + json.dumps(doc, indent=2) + "\n"
+
+
 class FigmaJudge(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
@@ -255,6 +263,73 @@ class FigmaJudge(unittest.TestCase):
             self.assertIn("no list", self.confirm.call_args.args[1])
             self.assertIn("BLOCKED by a judge tool error", self.out.getvalue())
             self.assertFalse(self.ev.called)
+
+
+    def judge_big(self, answer, confirm=None, text=None):
+        """Judge task 001 on a big tree; answer(part_text) -> (choice, p_not_met) per chunk, one criterion."""
+        (self.proj / "results" / "001.tree.txt").write_text(text or big_tree())
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
+        self.states = []
+
+        def jev(env, cfg, state, q, label):
+            self.states.append(state)
+            choice, p = answer(state["tree"])
+            return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9, "NOT_MET": p}}}}
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "fast_json", return_value=confirm), \
+                mock.patch.object(fc, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
+            try:
+                fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
+            except SystemExit as e:
+                self.assertEqual(e.code, 1)
+        return json.loads((self.proj / "results" / "001.json").read_text())
+
+    def test_chunks_hold_every_node_and_stay_under_the_limit(self):
+        text = big_tree()
+        chunks = fc.tree_chunks(text)
+        self.assertGreater(len(chunks), 4)
+        self.assertTrue(all(len(c) <= fc.TREE_CHUNK_CHARS for c in chunks))
+        joined = "\n".join(chunks)
+        for i in range(15):
+            self.assertIn(f'"id": "1:{i}"', joined)
+            self.assertIn(f'"id": "2:{i}"', joined)
+        self.assertEqual(fc.tree_chunks("small tree\n"), ["small tree\n"])
+
+    def test_a_node_with_no_children_or_a_plain_text_tree_is_still_covered(self):
+        blob = "NODE 1:1\n" + "".join(f"line {i} " + "y" * 200 + "\n" for i in range(500))
+        chunks = fc.tree_chunks(blob)
+        self.assertTrue(all(len(c) <= fc.TREE_CHUNK_CHARS for c in chunks))
+        self.assertEqual("".join(chunks).count("line "), 500)
+        self.assertEqual("".join(fc.tree_chunks("z" * 70000 + "\n")).count("z"), 70000)
+
+    def test_a_big_tree_is_judged_whole_and_the_result_counts_the_chunks(self):
+        res = self.judge_big(lambda t: ("MET", 0.0) if '"id": "2:7"' in t else ("UNCLEAR", 0.0))
+        self.assertEqual((res["status"], res["chunks"], len(self.states)), ("passed", len(self.states), res["chunks"]))
+        self.assertGreater(res["chunks"], 1)
+        self.assertTrue(all(len(s["tree"]) <= fc.TREE_CHUNK_CHARS for s in self.states))
+        self.assertEqual([s["tree_part"] for s in self.states][:2], [f"1 of {res['chunks']}", f"2 of {res['chunks']}"])
+
+    def test_one_chunk_showing_not_met_fails_the_criterion_whatever_the_others_say(self):
+        res = self.judge_big(lambda t: ("NOT_MET", 0.9) if '"id": "1:12"' in t else ("MET", 0.0), confirm={"confirmed": True, "evidence": "variant=12"})
+        self.assertEqual((res["status"], res["criteria"][0]["choice"], res["criteria"][0]["evidence"]), ("failed", "NOT_MET", "variant=12"))
+
+    def test_no_chunk_showing_met_leaves_the_criterion_unmet(self):
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0))
+        self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
+
+    def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
+        def jev(env, cfg, state, q, label):
+            if state.get("tree_part", "").startswith("2 of"):
+                raise RuntimeError("max_tokens_exceeded")
+            return {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
+        (self.proj / "results" / "001.tree.txt").write_text(big_tree())
+        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
+        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+            fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
+        res = json.loads((self.proj / "results" / "001.json").read_text())
+        self.assertEqual(res["status"], "blocked")
+        self.assertIn("chunk 2 of", res["judge_errors"][0]["evidence"])
+        self.assertIn("max_tokens_exceeded", res["judge_errors"][0]["evidence"])
+        self.assertFalse(ev.called)
 
 
 class FigmaConnectorBriefs(unittest.TestCase):
