@@ -5566,6 +5566,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
         if why and not own_commits(main_repo, pbranch) and not (explicit or delete_unmerged):
             line += f"; project branch {pbranch} has no commits of its own (empty or design-only), so nothing was merged: kept; name it with --project {name} to remove it"
             why = None
+        elif not why and held and all(lb in layer_why for lb in held):  # layers squash the project branch's commits: its merge is theirs
+            why = f"every layer built from it is merged ({', '.join(held)})"
         elif not why and delete_unmerged:
             why = "UNMERGED, removed on --delete-unmerged"
         if why:
@@ -5591,7 +5593,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)
             line += f"; project branch {why}: removed worktree {wt} and branch {pbranch}"
         elif "no commits of its own" not in line:
-            line += f"; project branch {pbranch} not merged yet: worktree kept"
+            line += f"; project branch {pbranch} not merged yet" + (
+                f" (layers not merged: {', '.join(lb for lb in held if lb not in layer_why)})" if held else " (no recorded layers to prove it)"
+            ) + f": worktree kept; --delete-unmerged removes it anyway"
     print(line)
 
 def cmd_sync(a):

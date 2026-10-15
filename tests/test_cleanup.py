@@ -272,6 +272,20 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.assertFalse((self.r.parent / "fast-coding-p").exists())
         self.assertEqual(self.run("ls-remote", "--heads", "origin").stdout.count("fast/p/"), 0)
 
+    def test_clean_removes_the_project_branch_once_every_layer_built_from_it_is_merged(self):
+        wt = self.r.parent / "fast-coding-p"
+        (wt / "stub.txt").write_text("groundwork\n")  # the project branch's own commit: layers squash it, so ancestry never sees it
+        self.run("add", "stub.txt", cwd=wt); self.run("commit", "-qm", "groundwork", cwd=wt)
+        clean = lambda *a: subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r), *a], capture_output=True, text=True, env=self.env).stdout
+        out = clean()  # layer-02 is not merged: everything of the project stays
+        self.assertIn("kept unmerged", out)
+        self.assertTrue(wt.exists())
+        (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
+        out = clean()
+        self.assertIn("every layer built from it is merged", out)
+        self.assertFalse(wt.exists())
+        self.assertNotIn("fast-coding/p", self.run("branch", "--format=%(refname:short)").stdout.split())
+
 
 if __name__ == "__main__":
     unittest.main()
