@@ -223,6 +223,28 @@ def project_branch(proj):
     """The project's branch: `branch` in its verify.json (`init --branch`), else `fast-coding/<name>`."""
     return project_config(proj).get("branch") or f"fast-coding/{Path(proj).name}"
 
+def commit_convention(proj):
+    """A repo's commit convention, declared once as `commit_convention` in verify.json: {"types": [...], "example": "feat: ..."}.
+    verify.json is where the CLI already reads per-repo settings, and it needs no parsing of prose in AGENTS.md. None when undeclared."""
+    conv = project_config(proj).get("commit_convention")
+    return conv if isinstance(conv, dict) and conv.get("types") else None
+
+COMMIT_TYPES = {"feat": ["feat"], "fix": ["fix", "feat"], "test": ["test"], "deps": ["chore", "build"], "docs": ["docs", "chore"]}  # kind -> allowed types, best first
+CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
+
+def typed(message, kind, conv):
+    """`message` with the convention's type prefix for what the commit is (feat, fix, test, deps, docs); plain when no convention
+    is declared or it allows none of the kind's types."""
+    t = next((t for t in COMMIT_TYPES[kind] if conv and t in conv["types"]), None)
+    return f"{t}: {message}" if t else message
+
+def commit_rule(conv):
+    """The sentence a brief carries so whoever commits follows the repo's convention; empty when none is declared."""
+    if not conv:
+        return ""
+    return (f"Start every commit message with a type prefix, one of {', '.join(conv['types'])} (for example `{conv.get('example') or conv['types'][0] + ': ...'}`): "
+            "tests are test, dependencies and config are chore or build, docs are docs, the rest feat or fix. ")
+
 def layer_prefix(repo, proj):
     """Review layer branches are `<prefix>layer-NN`. The prefix recorded in verify.json (written when layers are first built) wins; a project
     whose `fast/<project>/layer-NN` branches already exist, locally or as remote-tracking refs, keeps them; only a project with no layers
@@ -925,6 +947,7 @@ def crew_preamble(proj, name, title):
             f"then keep working on what it does not touch, and never re-scope your brief.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
             f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, teammates, or Linear. "
+            f"{commit_rule(commit_convention(proj))}"
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
             f"Fact-check before you say it: every claim about the code, a tool, or a result comes from evidence you gathered (graft "
             f"output with file:line, a command and its output, a test run). Keep facts apart from hypotheses, write 'not verified' "
@@ -1448,7 +1471,7 @@ def turn_timeout(meta):
     return TURN_TIMEOUT + int(meta.get("test_timeout") or TEST_TIMEOUT)
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 
-def test_brief(meta, contract, budget=None):
+def test_brief(meta, contract, budget=None, conv=None):
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
     args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
@@ -1459,11 +1482,11 @@ def test_brief(meta, contract, budget=None):
             "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
             "(report `blocked` naming what is missing instead).\n"
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
-            "no CSS values, no tooling tests.\n"
+            "no CSS values, no tooling tests: never a test that asserts dependency lists, lint or tool configuration, or the contents of a config file; test behavior only.\n"
             f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
             "You work in your own worktree on your own branch; the CLI collects every test-writing teammate's commits onto the project branch. "
             "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
-            f"`git add {args} && git commit {args} -m \"<plain message>\"`.\n"
+            f"`git add {args} && git commit {args} -m \"{typed('<what the test covers>', 'test', conv) if conv else '<plain message>'}\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"
@@ -1483,7 +1506,7 @@ def cmd_testcrews(a):
     metas = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
     if a.print_:
         for m in metas:
-            print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget)}\n")
+            print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, commit_convention(proj))}\n")
         return
     herdr_space(proj)  # once, before the parallel starts
     model = "tests" if "tests" in CREW_MODELS else "groundwork" if "groundwork" in CREW_MODELS else None
@@ -1491,7 +1514,7 @@ def cmd_testcrews(a):
     def start(m):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=test_brief(m, contract, budget), force=False, cwd=str(wts[m["id"]]), model=model))
+                                        brief=test_brief(m, contract, budget, commit_convention(proj)), force=False, cwd=str(wts[m["id"]]), model=model))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")
@@ -2303,10 +2326,15 @@ def format_files(wt, files, base="HEAD"):
             out.append(f)
     return out
 
-def commit_message(meta):
-    """A task's commit says what changed, in the task title's words: no tool name, task id, or process."""
+def commit_message(meta, conv=None):
+    """A task's commit says what changed, in the task title's words: no tool name, task id, or process. With a commit convention it
+    starts with the type of the change: docs or dependency/config files only, else fix for a "Fix ..." title, else feat."""
     title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
-    return title or "Update " + ", ".join(meta.get("files") or ["files"])
+    msg = title or "Update " + ", ".join(meta.get("files") or ["files"])
+    files = meta.get("files") or []
+    kind = ("docs" if files and all(DOC_RE.search(f) for f in files) else "deps" if files and all(CONFIG_FILE_RE.search(f) for f in files)
+            else "fix" if re.match(r"fix\b", title, re.I) else "feat")
+    return typed(msg, kind, conv)
 
 def condense_failure(output):
     """A few lines naming the failing case(s) and why, for the implementer's next attempt. Empty when the output is already
@@ -2392,7 +2420,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         for f in meta["files"]:
             if (wt / f).exists():
                 (wt / f).unlink()
-        sh(["git", "commit", "-qam", "bench: reset implementation"], wt, check=False)
+        sh(["git", "commit", "-qam", typed("reset implementation", "deps", commit_convention(proj)) if commit_convention(proj) else "bench: reset implementation"], wt, check=False)
     before = digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
     red = run_test(meta, wt)
@@ -2569,7 +2597,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         elif formatted:
             say(f"{tid} format  {', '.join(formatted)}")
         sh(["git", "add", "-A"], wt)
-        sh(["git", "commit", "-qm", commit_message(meta)], wt, check=False)
+        sh(["git", "commit", "-qm", commit_message(meta, commit_convention(proj))], wt, check=False)
         sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
         if names_lockfile(meta):
             adopt_installs(repo, wt)
@@ -4286,12 +4314,12 @@ def fix_strays(touched, allowed, named=()):
     when it is working around a broken environment, not fixing a finding. A lockfile a task names in `files:` is part of the work."""
     return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in LOCKFILES and f not in named]
 
-def fix_message(reply, files):
+def fix_message(reply, files, conv=None):
     """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed."""
     line = next(iter((reply or "").strip().splitlines()), "").strip(" \"'`.")
     if line and len(line) <= 72 and not re.search(r"fast-coding|verif|finding|wave|task|linear|round", line, re.I):
-        return line
-    return "Fix " + ", ".join(Path(f).name for f in files[:3])
+        return typed(line, "fix", conv)
+    return typed("Fix " + ", ".join(Path(f).name for f in files[:3]), "fix", conv)
 
 def verify_rounds(repo, proj, cfg, a, rounds, t0):
     base = cfg.get("review_base")
@@ -4377,7 +4405,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         say(f"fix    done  {fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
         if changed:
             sh(["git", "add", "-A"], repo)
-            sh(["git", "commit", "-qm", fix_message(reply, sh(["git", "diff", "--cached", "--name-only"], repo).stdout.split())], repo, check=False)
+            sh(["git", "commit", "-qm", fix_message(reply, sh(["git", "diff", "--cached", "--name-only"], repo).stdout.split(), commit_convention(proj))], repo, check=False)
             say("fix    committed on " + (sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
         else:
             break
@@ -5148,7 +5176,7 @@ def cmd_init(a):
         print(f"worktree {wt}  branch {branch} (from {base})")
     if ignore_tool_files(wt):
         sh(["git", "add", ".gitignore"], wt)
-        sh(["git", "commit", "-qm", "Ignore local tool directories"], wt, check=False)
+        sh(["git", "commit", "-qm", typed("Ignore local tool directories", "deps", commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
     setup_graft(wt)
     repo_link = here / ".fast-coding" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)

@@ -23,6 +23,7 @@ Verify reads `.fast-coding/<project>/verify.json`.
 }
 ```
 
+`commit_convention` (`{"types": [...], "example": "feat: ..."}`) makes every commit the CLI makes, and every teammate brief, start with a type prefix: tests are `test`, docs `docs`, dependencies and config `chore` or `build`, fixes `fix`, the rest `feat`.
 `fix_model` overrides the fix model, which defaults to the implementer.
 `env_file` replaces `~/.fast-coding/.env` for this project.
 
