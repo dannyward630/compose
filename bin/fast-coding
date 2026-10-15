@@ -291,8 +291,8 @@ def project_dir(a):
 
 # ---------- tasks ----------
 
-# Linear is the record humans and agents share. The CLI never calls it: the team lead reads the feature and its tasks
-# through its Linear MCP tools and pipes them to `fast-coding sync`, which keeps them in the git-ignored results/tasks.json.
+# Linear is the record humans and agents share. The team lead reads the feature and its tasks through its Linear MCP tools
+# and pipes them to `fast-coding sync` (or `sync --from-linear` reads them with the workspace key), which keeps them in the git-ignored results/tasks.json.
 # A task is any issue under the feature (directly or under a story) whose description ends with this block:
 #   ```fast-coding
 #   id: 001
@@ -364,6 +364,49 @@ def sync_tasks(proj, data):
     if any((proj / "tasks").glob("*.md")):
         say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
     return tasks
+
+LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier }
+  inverseRelations(first: 250) { nodes { type issue { identifier } } }"""
+LINEAR_FEATURE = "query($id: String!) { issue(id: $id) { %s } }" % LINEAR_TREE_FIELDS
+LINEAR_CHILDREN = """query($id: String!, $after: String) { issue(id: $id) { children(first: 50, after: $after) {
+  pageInfo { hasNextPage endCursor } nodes { %s } } } }""" % LINEAR_TREE_FIELDS
+
+def linear_children(ident):
+    """Every child of an issue with the sync fields, all pages."""
+    nodes, after = [], None
+    while True:
+        page = linear_gql(LINEAR_CHILDREN, {"id": ident, "after": after})["issue"]["children"]
+        nodes += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            return nodes
+        after = page["pageInfo"]["endCursor"]
+
+def linear_sync_payload(proj):
+    """The payload `sync` takes on stdin, read from Linear (read-only) for the feature in linear.json: the feature, its
+    children, and theirs. A project scoped to stories fetches only those stories' children."""
+    link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
+    if not link.get("feature"):
+        sys.exit(f'{proj / "linear.json"}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
+    if not LINEAR_KEY:
+        sys.exit(f"sync --from-linear needs a Linear key for workspace {WORKSPACE!r}: pbpaste | fast-coding workspace key {WORKSPACE} --linear; "
+                 f"or pipe the JSON on stdin to `fast-coding sync --project {proj.name}` ({SYNC_SHAPE})")
+    stories = set(link.get("stories") or [])
+    try:
+        feature = linear_gql(LINEAR_FEATURE, {"id": link["feature"]})["issue"]
+        if not feature:
+            sys.exit(f"sync --from-linear: Linear has no issue {link['feature']}")
+        issues = []
+        for child in linear_children(link["feature"]):
+            if stories and child["identifier"] not in stories:
+                continue
+            issues += [child, *linear_children(child["identifier"])]
+    except (RuntimeError, OSError) as e:  # urllib errors name the status, never the key
+        sys.exit(f"sync --from-linear: Linear failed ({str(e)[:200]}); the stdin form still works ({SYNC_SHAPE})")
+    return {"feature": {"id": feature["identifier"], "title": feature["title"], "description": feature["description"] or ""},
+            "issues": [{"id": i["identifier"], "title": i["title"], "description": i["description"] or "", "status": i["state"]["name"],
+                        "parentId": i["parent"]["identifier"] if i["parent"] else None,
+                        "blockedBy": [r["issue"]["identifier"] for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks"]}
+                       for i in issues]}
 
 def atomic_write(path, text):
     """Write a state file so a reader sees the old file or the new one, never a half-written or empty one."""
@@ -5415,12 +5458,15 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     print(line)
 
 def cmd_sync(a):
-    """Store the feature and its tasks, read from Linear by the team lead and piped in as JSON, and list them."""
+    """Store the feature and its tasks, read from Linear (--from-linear) or piped in as JSON, and list them."""
     proj = project_dir(a)
-    try:
-        data = json.load(sys.stdin)
-    except json.JSONDecodeError as e:
-        sys.exit(f"sync: stdin is not JSON ({e}); expected {SYNC_SHAPE}")
+    if a.from_linear:
+        data = linear_sync_payload(proj)
+    else:
+        try:
+            data = json.load(sys.stdin)
+        except json.JSONDecodeError as e:
+            sys.exit(f"sync: stdin is not JSON ({e}); expected {SYNC_SHAPE}")
     tasks = sync_tasks(proj, data)
     f = linear_cache(proj)["feature"]
     print(f"{f['id']} {f['title']}: {len(tasks)} task(s) synced")
@@ -5501,7 +5547,7 @@ def main():
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
-                            ("sync", cmd_sync, "store the feature and its tasks, read from Linear by the team lead, from JSON on stdin"),
+                            ("sync", cmd_sync, "store the feature and its tasks: --from-linear reads them from Linear, else JSON on stdin"),
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("spec-check", cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
@@ -5539,6 +5585,8 @@ def main():
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
             s.add_argument("--branch", help="name the project's branch (default fast-coding/<project>); on an existing project, renames its branch to this")
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT> unless it chose one): a feature that needs that feature's code")
+        if name == "sync":
+            s.add_argument("--from-linear", action="store_true", help="read the feature, stories, and tasks from Linear with the workspace key (read-only) instead of stdin")
         if name == "spec-check":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of the project's cache")
         if name == "run":

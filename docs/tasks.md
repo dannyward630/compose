@@ -75,7 +75,8 @@ If you cannot write the test, it is not a task yet.
 
 ## Sync
 
-The team lead reads the feature and every issue under it with its Linear MCP tools and pipes them to `fast-coding sync`.
+`fast-coding sync --from-linear` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.
+Without a key, the team lead reads the feature and every issue under it with its Linear MCP tools and pipes this JSON to `fast-coding sync`.
 The JSON has this shape:
 
 ```json

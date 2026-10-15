@@ -112,6 +112,62 @@ class LinearStates(unittest.TestCase):
         fc.linear_event(self.proj, {}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
 
+class SyncFromLinear(unittest.TestCase):
+    """Feature ENG-1 > stories ENG-2, ENG-3 > tasks; ENG-2 has 3 tasks served 2 per page."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp())
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
+        self.queries = []
+        for name, value in (("LINEAR_KEY", KEY), ("linear_gql", self.gql), ("say", lambda m: None)):
+            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+
+    def node(self, i, parent, blocked=()):
+        desc = f"brief {i}\n\n```fast-coding\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
+        return {"identifier": i, "title": f"T{i}", "description": desc, "state": {"name": "Todo"}, "parent": {"identifier": parent} if parent else None,
+                "inverseRelations": {"nodes": [{"type": "blocks", "issue": {"identifier": b}} for b in blocked] + [{"type": "related", "issue": {"identifier": "ENG-99"}}]}}
+
+    def gql(self, query, variables):
+        self.queries.append(query)
+        kids = {"ENG-1": ["ENG-2", "ENG-3"], "ENG-2": ["ENG-4", "ENG-5", "ENG-6"], "ENG-3": []}
+        if "children" not in query:
+            return {"issue": self.node("ENG-1", None)}
+        ids, after = kids[variables["id"]], variables["after"]
+        start = int(after) if after else 0
+        chunk = ids[start:start + 2] if variables["id"] == "ENG-2" else ids
+        nodes = [self.node(i, variables["id"], ["ENG-4"] if i == "ENG-5" else ()) for i in chunk]
+        more = start + len(chunk) < len(ids)
+        return {"issue": {"children": {"pageInfo": {"hasNextPage": more, "endCursor": str(start + 2)}, "nodes": nodes}}}
+
+    def sync(self):
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(fc, "project_dir", return_value=self.proj):
+            fc.cmd_sync(SimpleNamespace(from_linear=True))
+        return out.getvalue()
+
+    def test_payload_is_the_stdin_shape_with_every_page(self):
+        data = fc.linear_sync_payload(self.proj)
+        self.assertEqual(data["feature"], {"id": "ENG-1", "title": "TENG-1", "description": "text ENG-1"})
+        self.assertEqual([i["id"] for i in data["issues"]], ["ENG-2", "ENG-4", "ENG-5", "ENG-6", "ENG-3"])
+        task = data["issues"][2]
+        self.assertEqual((task["parentId"], task["status"], task["blockedBy"]), ("ENG-2", "Todo", ["ENG-4"]))
+        self.assertIn("```fast-coding", task["description"])
+        self.assertFalse(any(w in q for q in self.queries for w in ("mutation", KEY)))  # read-only
+
+    def test_sync_stores_the_tasks_with_their_blockers(self):
+        self.assertIn("3 task(s) synced", self.sync())
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())["tasks"]
+        self.assertEqual([(t["id"], t["after"]) for t in tasks], [("004", ""), ("005", "004"), ("006", "")])
+
+    def test_stories_scope_skips_other_stories_children(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-3"]}))
+        self.assertEqual([i["id"] for i in fc.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
+
+    def test_no_key_points_to_stdin_and_prints_no_key(self):
+        with mock.patch.object(fc, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
+            fc.linear_sync_payload(self.proj)
+        self.assertIn("pipe the JSON on stdin", str(e.exception))
+        self.assertNotIn(KEY, str(e.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
