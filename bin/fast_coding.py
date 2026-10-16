@@ -5630,7 +5630,7 @@ def setup_graft(wt):
     if not existing_repo(wt):
         return say("graft    skipped: a new repository has no code to map yet")
     if not shutil.which("graft"):
-        return say("graft    not installed: `npm i -g @nanonets/graft`, then `fast-coding graft --project <slug>`")
+        return say(f"graft    not installed: `{GRAFT_INSTALL}`, then `fast-coding graft --project <slug>`")
     if not (wt / ".claude" / "helpers" / "graft-hooks.cjs").exists():
         p = sh(GRAFT_INIT + ["--dry-run", str(wt)], wt, timeout=120, check=False)
         dry = p.stdout + p.stderr  # graft prints the list on stderr
@@ -5652,10 +5652,64 @@ def cmd_graft(a):
     """Set graft up in the project's worktree again (after installing graft, or to rebuild the graph)."""
     setup_graft(project_worktree(project_dir(a)))
 
+HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
+TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
+GRAFT_INSTALL = "npm i -g @nanonets/graft"
+DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use
+    ("herdr", "herdr", "see https://herdr.dev", True, HERDR_MIN),
+    ("treehouse", "treehouse", TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
+    ("graft", "graft", GRAFT_INSTALL, False, None),
+    ("gh", "gh", "brew install gh", True, None),
+    ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", True, None),
+    ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", True, None),
+    ("npx", "npx", "brew install node", True, None),  # lavish-axi and figma-developer-mcp run through it
+    ("pi", "pi", "npm i -g @earendil-works/pi-coding-agent", False, None),
+    ("bp", "bp", "npm link in the browser-probe checkout", False, None),
+    ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", True, None),
+    ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", True, None),
+    ("writing-plans skill", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers@claude-plugins-official", False, None),
+)
+
+def version_of(tool):
+    """`<tool> --version` as a tuple of ints, or None when it prints nothing that looks like one."""
+    p = sh([tool, "--version"], None, timeout=20, check=False)
+    m = re.search(r"\d+(?:\.\d+)+", p.stdout + p.stderr)
+    return tuple(map(int, m.group().split("."))) if m else None
+
+def check_deps():
+    """Print one `MISSING: <name> (install: <command>)` line per tool or skill file that is absent (or below its floor), without
+    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, graft) only warn."""
+    bad = []
+    for name, how, install, required, floor in DEPS:
+        if isinstance(how, list):
+            ok = shutil.which(how[0]) and sh(how, None, timeout=20, check=False).returncode == 0
+        elif "/" in how:
+            ok = any(Path.home().glob(how)) if "*" in how else (Path.home() / how).exists()
+        else:
+            ok = shutil.which(how)
+        why = ""
+        if ok and floor:
+            v = version_of(how)
+            if v and v < tuple(map(int, floor.split("."))):
+                ok, why = False, f" {'.'.join(map(str, v))} is older than {floor}"
+        if not ok:
+            print(f"MISSING: {name}{why} (install: {install}){'' if required else ' - optional'}")
+            if required:
+                bad.append(name)
+    return bad
+
+def cmd_doctor(a):
+    """Check every tool and skill file fast-coding depends on; exit 1 when a required one is missing."""
+    if check_deps():
+        sys.exit(1)
+    print("every tool fast-coding needs is installed")
+
 def cmd_init(a):
     """Create the project's worktree `../fast-coding-<name>` on its branch (`fast-coding/<name>`, or --branch; from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
     `.fast-coding/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
+    if check_deps():  # before anything is created: a missing required tool stops here
+        sys.exit("init stopped: install what is missing above, then run it again (`fast-coding doctor` checks again)")
     here = Path(a.repo).resolve()
     name = a.project
     branch = a.branch or f"fast-coding/{name}"
@@ -5954,7 +6008,8 @@ def main():
         return cmd_timed(sys.argv[2:])
     ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn, help_ in (("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
+    for name, fn, help_ in (("doctor", cmd_doctor, "check every tool and skill file fast-coding depends on; one MISSING line each, exit 1 when a required one is absent"),
+                            ("init", cmd_init, "create .fast-coding/<project>/ skeleton"),
                             ("run", cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
