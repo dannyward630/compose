@@ -3915,7 +3915,7 @@ def jev_acceptance(cfg, proj, diff, repo=None):
                 r["confirmed"], r["evidence"] = False, "confirm budget spent"
                 return r
             code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in task_files["files"] + task_files["protected"]
-                                if repo and (repo / f).exists())
+                                if repo and (repo / f).is_file())
             sent = code[:remaining]
             budget[r["task"]] = remaining - len(sent)
         try:
