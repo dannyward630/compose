@@ -580,7 +580,7 @@ class AtomicState(unittest.TestCase):
 
 class RestrictedStart(unittest.TestCase):
     """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
-    P = ["claude_ai_Claude_Docs", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
+    P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
 
     def start(self, role, model="claude:claude-opus-5-5", **kw):
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
@@ -614,11 +614,11 @@ class RestrictedStart(unittest.TestCase):
         self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
         self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
 
-    def test_designer_keeps_linear_graft_and_figma(self):
+    def test_designer_keeps_linear_graft_and_claude_ai_figma(self):
         dropped = self.patterns(self.start("designer"))
-        for p in ("claude_ai_Linear", "graft", "framelink-figma", "plugin_product-management_figma"):
+        for p in ("claude_ai_Linear", "graft", "framelink-figma", "claude_ai_Figma"):
             self.assertNotIn(f"mcp__{p}__*", dropped)
-        self.assertIn("mcp__claude_ai_Notion__*", dropped)
+        self.assertLessEqual({"mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
 
     def test_only_design_roles_keep_skills(self):
         for role, off in [("orchestrator", True), ("planner", True), ("wayfinder", True), ("explore", True), ("toolsmith", True),
