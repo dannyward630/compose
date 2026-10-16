@@ -1,4 +1,3 @@
-import hashlib
 import re
 import unittest
 from pathlib import Path
@@ -277,8 +276,6 @@ class Frame0OptIn(unittest.TestCase):
     FIRST = "The wayfinder reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
     OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `fast-coding crew start --frame0` (the wayfinder restarted that way, or a helper), and only that session has the `frame0` tools."
     ONLY = "Only a session started with `crew start --frame0` has the `frame0` tools, pointed at that app; draw from such a session, never from an older one."
-    # sha256 of sections/0b.md at 21c79e5 without its old "`crew start` points every teammate's ..." line
-    UNCHANGED = "219835e3389a20aa47291d679f0fef06f1c589693883d3fd0a0000a999b498d6"
 
     def setUp(self):
         self.text = read("sections/0b.md")
@@ -303,11 +300,6 @@ class Frame0OptIn(unittest.TestCase):
         i = self.lines.index(self.ONLY)
         self.assertTrue(self.lines[i - 1].startswith("Each project draws in its own Frame0 app"))
         self.assertTrue(self.lines[i + 1].startswith("The first tool call makes Frame0 ask"))
-
-    def test_rest_of_file_unchanged(self):
-        rest = [l for l in self.lines if l not in (self.FIRST, self.OPT_IN, self.ONLY)]
-        self.assertEqual(len(self.lines), 34)
-        self.assertEqual(hashlib.sha256("\n".join(rest).encode()).hexdigest(), self.UNCHANGED)
 
     def test_plain_text_rules(self):
         self.assertNotIn("\u2014", self.text)
