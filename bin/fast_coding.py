@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fc_cost  # noqa: E402
+import fc_cost, fc_mcp  # noqa: E402
 
 DEFAULT_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"  # pi harness; the OpenRouter preset pins Together, then CoreWeave
 # Takes over when an attempt errors, times out, is rate-limited, or misses. None by default: GLM passes where gpt-oss kept missing,
