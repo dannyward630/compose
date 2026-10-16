@@ -13,6 +13,9 @@ import argparse, ast, fcntl, hashlib, shlex, json, os, re, shutil, signal, subpr
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fc_cost  # noqa: E402
+
 DEFAULT_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"  # pi harness; the OpenRouter preset pins Together, then CoreWeave
 # Takes over when an attempt errors, times out, is rate-limited, or misses. None by default: GLM passes where gpt-oss kept missing,
 # so a second model is opt-in (`models.fallback` in the config).
@@ -5366,6 +5369,10 @@ def cmd_projects(a):
         after = f"  (after {ps['after']})" if ps["after"] else ""
         print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{after}{flag}")
 
+def cmd_cost(a):
+    """Tokens per teammate session and per run provider; --json prints the rows and their total."""
+    raise NotImplementedError("cmd_cost")
+
 def cmd_status(a):
     """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress."""
     repo = Path(a.repo).resolve()
@@ -5850,6 +5857,7 @@ def main():
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("spec-check", cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
                             ("projects", cmd_projects, "list every project (feature) with its task progress"),
+                            ("cost", cmd_cost, "tokens per teammate session and per run provider; --json"),
                             ("status", cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
                             ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
@@ -5887,6 +5895,8 @@ def main():
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT> unless it chose one): a feature that needs that feature's code")
         if name == "sync":
             s.add_argument("--from-linear", action="store_true", help="read the feature, stories, and tasks from Linear with the workspace key (read-only) instead of stdin")
+        if name == "cost":
+            s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
         if name == "spec-check":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of the project's cache")
         if name == "run":
@@ -5958,6 +5968,7 @@ def main():
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
             s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
+            s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "models":
             s.add_argument("--probe", action="store_true")
