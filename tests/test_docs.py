@@ -5,6 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+MOVED = "0h 0a 0e 0b 0g 0d 1 2 3 3b 4 5 6 6a 7 8".split()
+
+
 def read(rel):
     return (ROOT / rel).read_text()
 
@@ -104,10 +107,11 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
 
 class SkillDoc(unittest.TestCase):
     def section(self, start, end="\n### "):
-        text = read("SKILL.md")
-        self.assertTrue(start in text, f"SKILL.md has no {start!r}")
+        moved = start.startswith("### ") and start.split()[1].rstrip(".") in MOVED
+        text = read("sections/" + start.split()[1].rstrip(".") + ".md") if moved else read("SKILL.md")
+        self.assertTrue(start in text, f"no {start!r}")
         body = text[text.index(start) :]
-        return body[: body.find(end, len(start))]
+        return body.split(end, 1)[0]
 
     def test_0d_carries_the_designer_spec(self):
         d = self.section("### 0d. ")
