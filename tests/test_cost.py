@@ -130,6 +130,25 @@ class CostRows(unittest.TestCase):
         self.assertEqual(fc_cost.rows(Path(tempfile.mkdtemp())), [])
         self.assertEqual(fc_cost.render([]).strip(), "cost  none")
 
+    def test_total_shares_the_column_widths(self):
+        def row(name, **kv):
+            return dict({"name": name, "role": "planner", "model": "m", "turns": 1, "input": 1, "cache_created": 1,
+                         "cache_read": 1, "output": 1, "note": "x"}, **kv)
+        cases = [[row("a", input=60000, cache_created=None), row("b", input=70000, turns=120, note="")],
+                 [row("long-name", cache_read=99999999999), row("other-name", cache_read=88888888888, output=None)]]
+        cols = ["turns", "input", "cache_created", "cache_read", "output", "note"]
+        for rows in cases:
+            lines = fc_cost.render(rows).splitlines()
+            head = lines[0]
+            at = {k: head.index(k.replace("_", " ")) for k in cols}
+            self.assertTrue(lines[-1].startswith("total"), lines[-1])
+            tot = fc_cost.total(rows)
+            for d, line in zip(rows + [dict(tot, note="")], lines[1:]):
+                for k in cols:
+                    want = "-" if d[k] is None else str(d[k])
+                    if want:
+                        self.assertEqual((line[at[k] - 2:at[k]], line[at[k]:at[k] + len(want)]), ("  ", want), "\n".join(lines))
+
 
 class CostCommand(unittest.TestCase):
     ROWS = [{"name": "shop-planner", "role": "planner", "model": "claude-opus-5-5", "turns": 3, "input": 11, "cache_created": 22, "cache_read": 33, "output": 44, "note": ""}]
