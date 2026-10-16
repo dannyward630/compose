@@ -137,6 +137,23 @@ class Layers(unittest.TestCase):
         self.assertIn("groundwork x2: 40 lines; generated, not counted: bun.lock (4000 lines)", notes[0])
         self.assertIn("task 001, 002: 230 lines", notes[1])
 
+    def test_test_commits_on_one_file_keep_the_trunks_order_whoever_owns_them(self):
+        """Two tasks protect one test file. A commit on it alone would go to the first of them, but it was written on top of a
+        commit the second task owns: it follows that commit into the second task's unit, so the layers replay the trunk's order
+        on every file and add up instead of conflicting."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test", "shared.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test"], "files": ["003.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("shared.test", "a\n" * 5); self.write("t002.test", "t\n" * 6); self.commit("test 002, with the shared file")  # 002's: two of its files
+        self.write("shared.test", "a\n" * 5 + "b\n" * 5); self.commit("more shared tests")  # on 001's file too, written on top of 002's commit
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src", "t002.test", "002.src", "shared.test"})
+        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test"), "a\n" * 5 + "b\n" * 4 + "b")
+        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
+
     def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
         out = self.stack(branch="fast-coding/p")
         self.assertEqual(self.git("branch", "--list", "fast-coding/p-layer-*", "--format=%(refname:short)").split(), ["fast-coding/p-layer-01", "fast-coding/p-layer-02", "fast-coding/p-layer-03"])

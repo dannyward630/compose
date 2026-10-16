@@ -3373,7 +3373,8 @@ def review_units(repo, proj, base, trunk, chain):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; the tests of a task not in the chain yet ride with the
-    last one."""
+    last one. Two tasks can protect one file: a commit on it never goes to a task before the one that took an earlier commit on
+    the same file, so every file's commits replay in the trunk's order and the layers apply."""
     protected = {m["id"]: set(m["protected"]) for m in code_tasks(load_tasks(proj))}
     ids = [b.rsplit("/", 1)[1] for b in chain]
     def unit(name, commits):
@@ -3383,14 +3384,19 @@ def review_units(repo, proj, base, trunk, chain):
             for f, n in g.items():
                 gen[f] = gen.get(f, 0) + n
         return {"name": name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
-    ground, owned = [], {t: [] for t in ids}
+    ground, owned, last = [], {t: [] for t in ids}, {}  # last: file -> position in the chain of the task that took its latest commit
     for c in sh(["git", "rev-list", "--reverse", "--no-merges", f"{base}..{trunk}"], repo).stdout.split():
         files = set(commit_facts(repo, c)[0])
         owner = next((t for t in ids + sorted(set(protected) - set(ids)) if files and files <= protected.get(t, set())), None)
-        if owner is None:
+        pos = None if owner is None else ids.index(owner) if owner in owned else len(ids) - 1
+        floor = max((last[f] for f in files if f in last), default=None)
+        if floor is not None and (pos is None or pos < floor):
+            pos = floor
+        if pos is None:
             ground.append(unit("groundwork", [c]))
         else:
-            owned[owner if owner in owned else ids[-1]].append(c)
+            owned[ids[pos]].append(c)
+            last.update(dict.fromkeys(files, pos))
     units, prev = ground, trunk
     for b, t in zip(chain, ids):
         units.append(unit(t, owned[t] + sh(["git", "rev-list", "--reverse", "--no-merges", f"{prev}..{b}"], repo).stdout.split()))
