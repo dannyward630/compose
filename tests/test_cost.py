@@ -71,6 +71,66 @@ class SessionUsage(unittest.TestCase):
         write(d / "a2.jsonl", [user("Your brief is the file /p/a.brief.md.", 50)], now - 10)
         self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a2.jsonl")
 
+    def test_find_session_stops_at_the_first_user_line(self):
+        cwd, read = "/w/s", []
+        log = fc_sessions.log_dir(cwd) / "s.jsonl"
+        write(log, [{"type": "summary"}, user("Your brief is the file /p/a.brief.md.", 5), "not json", '{"type": "us'])
+        real = open
+
+        class Counted:
+            def __init__(self, f):
+                self.f = f
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.f.close()
+
+            def __iter__(self):
+                for line in self.f:
+                    read.append(line)
+                    yield line
+
+            def __next__(self):
+                read.append(next(self.f))
+                return read[-1]
+
+            def readline(self, *a):
+                read.append(self.f.readline(*a))
+                return read[-1]
+
+            def read(self, *a):
+                t = self.f.read(*a)
+                read.extend(t.splitlines(True))
+                return t
+
+            def __getattr__(self, k):
+                return getattr(self.f, k)
+
+        def counted(f, *a, **k):
+            h = real(f, *a, **k)
+            return Counted(h) if Path(str(f)) == log else h
+        with mock.patch("builtins.open", side_effect=counted), mock.patch("io.open", side_effect=counted):
+            self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), log)
+        self.assertEqual(len([x for x in read if x]), 2, read)
+
+    def test_usage_parses_again_only_when_mtime_or_size_changes(self):
+        log = self.home / "c.jsonl"
+        write(log, [asst("m1", input_tokens=1, output_tokens=2)], 1_000_000)
+        want = {"model": "claude-sonnet-5-5", "turns": 1, "input": 1, "cache_created": 0, "cache_read": 0, "output": 2}
+        with mock.patch.object(fc_sessions.json, "loads", wraps=json.loads) as loads:
+            self.assertEqual(fc_sessions.usage(str(log)), want)
+            n = loads.call_count
+            self.assertEqual(fc_sessions.usage(log), want)
+            self.assertEqual(loads.call_count, n)
+            with log.open("a") as f:
+                f.write(json.dumps(asst("m2", input_tokens=10, output_tokens=20)) + "\n")
+            self.assertEqual(fc_sessions.usage(log), dict(want, turns=2, input=11, output=22))
+            self.assertGreater(loads.call_count, n)
+            write(log, [asst("m1", input_tokens=7, output_tokens=2)], 1_000_100)
+            self.assertEqual(fc_sessions.usage(log), dict(want, input=7))
+
 
 def project():
     proj = Path(tempfile.mkdtemp())
