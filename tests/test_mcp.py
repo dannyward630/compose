@@ -50,7 +50,7 @@ class RoleMcp(unittest.TestCase):
     def test_disallowed(self):
         self.assertEqual(set(fc_mcp.disallowed("planner", P)), pat(*P) - pat("claude_ai_Linear", "graft"))
         for r in ("designer", "design-review"):
-            self.assertEqual(set(fc_mcp.disallowed(r, P)), pat("claude_ai_Claude_Docs", "claude_ai_Google_Calendar", "claude_ai_Notion", "frame0"))
+            self.assertEqual(set(fc_mcp.disallowed(r, P + ["claude_ai_Figma"])), pat(*P) - pat("claude_ai_Linear", "graft", "framelink-figma"))
         self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P) - pat("graft"))
         self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("claude_ai_Linear", "graft", "frame0"))
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), set())
