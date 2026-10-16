@@ -637,6 +637,27 @@ class RestrictedStart(unittest.TestCase):
         self.assertEqual(args[args.index("--skill") + 1], str(fc.CLI_REPO / "SKILL.md"))
         self.assertNotIn("--disallowedTools", args)
 
+    def tail(self, args):
+        """What follows the --settings value: the patterns when any, the skills switch, then auto mode and the allow list."""
+        return args[args.index("--settings") + 2:]
+
+    def test_no_patterns_means_no_bare_disallowed_tools(self):
+        allow = ["--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"]
+        for servers, role, kw in [([], "planner", {}), (["claude_ai_Linear", "graft"], "planner", {}),
+                                  (["frame0", "graft", "claude_ai_Linear"], "planner", {"frame0": True}),
+                                  ([], "designer", {}), (["claude_ai_Linear", "graft", "claude_ai_Figma", "framelink-figma"], "designer", {})]:
+            with self.subTest(servers=servers, role=role, **kw):
+                self.P = servers
+                skills = [] if role == "designer" else ["--disable-slash-commands"]
+                self.assertEqual(self.tail(self.start(role, **kw)), skills + allow)  # a bare flag would swallow what follows
+
+    def test_patterns_sit_between_settings_and_the_allow_list(self):
+        self.P = ["claude_ai_Linear", "claude_ai_Notion", "graft", "frame0"]
+        tail = self.tail(self.start("planner"))
+        self.assertEqual(tail[0], "--disallowedTools")
+        self.assertEqual(set(tail[1:3]), {"mcp__claude_ai_Notion__*", "mcp__frame0__*"})
+        self.assertEqual(tail[3:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
+
     def test_briefs_name_skill_md_and_their_sections(self):
         p, d, w = fc.PLANNER_BRIEF, fc.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
