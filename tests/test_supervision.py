@@ -233,7 +233,7 @@ class Rewake(unittest.TestCase):
         self.assertIn(f"fast-coding's skill changed since you read it: {skill / 'SKILL.md'}", err)
 
     def test_a_second_hook_leaves_the_parked_one_alone(self):
-        held = fc.watch_lock(self.proj, "all", wait=False)
+        held = fc.watch_lock(self.proj, "orchestrator", wait=False)
         self.assertIsNotNone(held)
         code, err, _ = self.rewake([wsnap("passed")])
         self.assertEqual((code, err), (0, ""))
