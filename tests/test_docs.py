@@ -343,5 +343,55 @@ class LinearFields(unittest.TestCase):
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
+class LeadRelaysOnce(unittest.TestCase):
+    ONE_LINE = 'needs-user "<issue>: <n> cards <ids>; recommendation <one line>"'
+
+    def setUp(self):
+        self.text = read("sections/0h.md").replace("\\~", "~")
+        self.lines = self.text.splitlines()
+        start = next(i for i, l in enumerate(self.lines) if l.startswith("The engineering manager's loop:"))
+        end = next(i for i, l in enumerate(self.lines) if l.startswith("**When fast-coding itself fails**"))
+        self.relay = self.lines[start:end]
+        self.report = next(i for i, l in enumerate(self.lines) if l.startswith("The team lead reports at every point"))
+
+    def test_lead_forwards_the_one_line_unchanged(self):
+        line = next((l for l in self.relay if self.ONE_LINE in l), None)
+        self.assertIsNotNone(line, "the relay names the one-line needs-user")
+        self.assertIn("wayfinder", line)
+        self.assertIn("planner", line)
+        self.assertIn("unchanged", line)
+        self.assertRegex(line.lower(), r"never re-?sen")
+
+    def test_manager_asks_in_full_and_answers_travel_by_card_id(self):
+        relay = "\n".join(self.relay)
+        self.assertRegex(relay, r"engineering manager reads the issue once")
+        self.assertRegex(relay, r"every card in full")
+        self.assertIn('herdr agent prompt <slug>-wayfinder "<card id>: <answer>', relay)
+
+    def test_lead_report_carries_the_line_not_the_cards(self):
+        line = self.lines[self.report]
+        self.assertNotIn("carrying the wayfinder's open cards", line)
+        self.assertIn("needs-user", line)
+        self.assertIn("not the cards", line)
+
+    def test_lead_saves_linear_in_few_patches_near_its_reporting_rule(self):
+        hits = [i for i, l in enumerate(self.lines) if "save_issue" in l]
+        self.assertEqual(len(hits), 1, "one save_issue sentence")
+        line = self.lines[hits[0]]
+        self.assertLessEqual(abs(hits[0] - self.report), 2, "near the reporting rule")
+        for words in ("team lead drafts", "Decisions", "Plan", "one per section", "task issues", "whole issue"):
+            self.assertIn(words, line)
+
+    def test_new_lines_are_plain_and_the_older_sentences_stay(self):
+        new = [l for l in self.lines if self.ONE_LINE in l or "save_issue" in l or "<card id>" in l]
+        self.assertTrue(new)
+        for line in new:
+            self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+        self.assertNotIn("—", self.text)
+        self.assertIn(BriefsNameFiles.EM, self.lines)
+        self.assertIn('"read ' + BriefsNameFiles.FILES + '"', self.text)
+        self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md;", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
