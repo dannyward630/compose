@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, json, os, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -65,8 +65,10 @@ class RoleModels(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
-                mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"):
+                mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
+        self.assertIn("teammate p-groundwork started in tab 'groundwork' of space p on claude:claude-sonnet-5-5", out.getvalue())
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         self.assertEqual(start[start.index("--model") + 1], "claude-sonnet-5-5")
         self.assertEqual(json.loads((proj / "results" / "crew" / "p-groundwork.json").read_text())["model"], "claude:claude-sonnet-5-5")
@@ -196,8 +198,11 @@ class PlannerChain(unittest.TestCase):
         with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
-                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"):
+                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
+        self.assertIn("WARNING: wayfinder wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())
+        self.assertIn("teammate p-wayfinder started in tab 'wayfinder' of space p on claude:claude-opus-5-5 (high effort)", out.getvalue())
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         self.assertIn("claude-opus-5-5", start); self.assertIn("--effort", start); self.assertIn("high", start)
         rec = json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())
