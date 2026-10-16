@@ -661,7 +661,8 @@ class RestrictedStart(unittest.TestCase):
                 self.assertEqual(json.loads(args[args.index("--settings") + 1])["enabledPlugins"], {})
 
     def test_no_chrome_follows_model_and_effort(self):
-        self.assertEqual(self.start("planner", effort="high")[:6], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--settings"])
+        self.assertEqual(self.start("wayfinder", effort="high")[:6], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--settings"])
+        self.assertEqual(self.start("planner", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--autocompact", "150k", "--settings"])
         self.assertEqual(self.start("designer")[:4], ["--model", "claude-opus-5-5", "--no-chrome", "--settings"])
 
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
