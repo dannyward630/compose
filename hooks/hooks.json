@@ -17,6 +17,12 @@
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" skillcheck", "timeout": 10 }]
       }
     ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" reenter", "timeout": 10 }]
+      }
+    ],
     "Stop": [
       {
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" rewake", "asyncRewake": true, "timeout": 28800 }]

@@ -1854,7 +1854,7 @@ def cmd_crew(a):
         else:
             herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--no-chrome", *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES and not effort else []), "--settings", crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
+                  "--no-chrome", *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
@@ -5385,6 +5385,20 @@ def cmd_rewake(a):
     cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
 
+def cmd_reenter(a):
+    """Claude Code SessionStart hook (matcher compact): after a compaction the session continues by re-entering through 0r, not from scratch.
+    Its herdr tab carries the role, project, and worktree. Every other session returns at once, a headless one (`claude -p`,
+    which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
+    project, role = os.environ.get("FAST_CODING_PROJECT"), os.environ.get("FAST_CODING_ROLE")
+    if not role or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
+        return
+    proj = project_dir(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project))
+    print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
+    print(f"Re-read your brief file {crew_dir(proj) / f'{agent_name(project, role)}.brief.md'} now.")
+    print(f"Run `fast-coding status --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project}` and "
+          f"`fast-coding watch --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project} --now` to see the board.")
+    print("Re-read the feature's Decisions so far and Plan on Linear before acting.")
+
 def cmd_projects(a):
     """Every project (feature) across this repository's worktrees with its task progress; `status --project <name>` drills in."""
     repo = Path(a.repo).resolve()
@@ -5918,6 +5932,7 @@ def main():
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
+                            ("reenter", cmd_reenter, "Claude Code SessionStart hook: after a compaction, point the teammate back at its brief, the board, and Linear"),
                             ("skillcheck", cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a fast-coding session the skill changed since it read it"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
