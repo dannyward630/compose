@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
@@ -90,7 +90,7 @@ class FigmaCheck(unittest.TestCase):
         self.assertEqual(str(e.exception), "no Figma file: fast-coding figma check --figma <url or key>")
 
     def test_help_lists_check_and_judge(self):
-        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "figma", "--help"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"), "figma", "--help"], capture_output=True, text=True)
         self.assertIn("{check,tree,judge}", r.stdout)
 
 

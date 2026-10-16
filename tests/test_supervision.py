@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
@@ -237,7 +237,7 @@ class Detach(unittest.TestCase):
         done = self.dir / "done"
         started = self.dir / "started"
         work = f"import time; open({str(started)!r}, 'w').write('1'); time.sleep(1.5); open({str(done)!r}, 'w').write('ok')"
-        cli = Path(__file__).resolve().parents[1] / "bin" / "fast-coding"
+        cli = Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"
         follower = subprocess.Popen([sys.executable, "-c",
             "import importlib.machinery as m, importlib.util as u, sys; "
             f"s = u.spec_from_loader('fc', m.SourceFileLoader('fc', {str(cli)!r})); fc = u.module_from_spec(s); s.loader.exec_module(fc); "

@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 

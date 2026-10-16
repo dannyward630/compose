@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
@@ -101,7 +101,7 @@ class Groundwork(unittest.TestCase):
         self.assertNotIn("Project notes", self.planner(extra=None))
 
     def test_planner_is_a_command_with_issue_and_extra(self):
-        cli = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")
         top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
         self.assertRegex(top, r"[{,]planner[,}]")
         sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)

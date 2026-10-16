@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fc)
 
@@ -69,7 +69,7 @@ class SpecCheck(unittest.TestCase):
 
     def test_command_line_registers_spec_check(self):
         def cli(desc):
-            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "spec-check", "--stdin"],
+            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"), "spec-check", "--stdin"],
                                   input=json.dumps(data([task("ENG-3", "001")], desc)), capture_output=True, text=True, env={**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"})
         ok, bad = cli(SETTLED), cli("## Not yet specified\n\n- which color?")
         self.assertEqual((ok.returncode, ok.stdout.partition("\n")[0]), (0, "PASS ENG-1 feature"), ok.stderr)
