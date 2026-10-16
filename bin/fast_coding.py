@@ -1329,10 +1329,12 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text "<question>: <answer>"
    and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}} with every
    card's recommendation.
-3. Ask once. Open the page if there is one (`npx -y lavish-axi {page}`), then report, before any poll and whatever the CLI's
-   next_step text says: `fast-coding report --project {slug} --as {name} needs-user "<the text cards in full: question, why,
-   options, recommendation; 'accept every recommendation' is a one-word answer; plus 'visual cards open in Lavish: {page}' when
-   the page is open>"`. The team lead relays it to the engineering manager, which asks the product owner every open card at once.
+3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
+   first, with a card id per card; visual cards go on the page instead. Then ask once: open the page if there is one
+   (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step text says, one line:
+   `fast-coding report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
+   cards open in Lavish: {page}' when the page is open>"`. The team lead forwards the line unchanged; the engineering manager
+   reads the issue once and asks the product owner every card in full; answers travel by card id.
 4. Wait. Text answers come back as a prompt in this pane: the team lead forwards them with `herdr agent prompt {name} "<answers>"`.
    A visual page: `npx -y lavish-axi poll {page}` in the foreground of this pane. Never background or kill it, never reopen a
    session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside
@@ -1358,8 +1360,9 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description (`save_issue`, never a file): numbered steps, each with the files it
-     touches, the test that proves it, and its dependencies; decisions already made are not reopened. Stories missing: propose
-     them as one needs-user list (one per user-visible slice, acceptance criteria in each, in ship order) and create them in
+     touches, the test that proves it, and its dependencies; decisions already made are not reopened. Stories missing: draft
+     the proposal on the map (one per user-visible slice, acceptance criteria in each, in ship order) with a card id per
+     story, then name them in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line and create them in
      Linear only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only; other stories' tasks are not touched.
    - Task: lint it against the format and the cutting rules below; re-split it if it fails.
@@ -1374,8 +1377,11 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
    7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers. Name the test paths and say in
       the brief that signatures come from the contract.
-   Checks 1, 3, 6 are decision gaps: each is a text card (the question, why it matters, the options, your recommendation), all
-   of them in one `fast-coding report --project {slug} --as {name} needs-user "<the cards in full>"`. You never answer a card.
+   Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
+   recommendation) under Not yet specified on the map first, with a card id per card; then report one line per issue:
+   `fast-coding report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
+   The team lead forwards the line unchanged; the engineering manager reads the issue once and asks the product owner every
+   card in full; answers travel by card id. You never answer a card.
    Lavish only when a card is visual (a wireframe, layout comparison, or diagram): the wayfinder teammate draws it;
    start it as below with `wayfinder` in place of `explore`.
    Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
@@ -1444,9 +1450,12 @@ The screen that raised it: {reflect}
    and one answer button, and put one "accept every recommendation" button at the top; each sends exactly one
    window.lavish.queuePrompt with text "<question>: <answer>" and data {{question, answer}}; accept-all sends
    data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
-3. Ask once. Open the page if there is one (`npx -y lavish-axi {page}`), then report, before any poll and whatever the CLI's
-   next_step text says: `fast-coding report --project {slug} --as {name} needs-user "change {cid}: <the text cards in full; plus
-   'visual cards open in Lavish: {page}' when the page is open>"`.
+3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
+   first, with a card id per card; visual cards go on the page instead. Then ask once: open the page if there is one
+   (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step text says, one line:
+   `fast-coding report --project {slug} --as {name} needs-user "change {cid}: <issue>: <n> cards <ids>; recommendation <one
+   line>; 'visual cards open in Lavish: {page}' when the page is open>"`. The team lead forwards the line unchanged; the
+   engineering manager reads the issue once and asks the product owner every card in full; answers travel by card id.
 4. Wait. Text answers come back as a prompt in this pane. A visual page: `npx -y lavish-axi poll {page}` in the foreground of
    this pane. Never background or kill it, never reopen a session the product owner ended. Answers arrive in the poll's `text`
    column (and as JSON after "Context data:" inside `prompt`), not as a data field. If the poll is interrupted, or your Bash call
@@ -5186,7 +5195,7 @@ def report_time(at):
     return time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
 
 def watch_mem(proj, key):
-    """What one watcher (key: `all`, or its --from agents) last reported and which stalls it fired, in results/watch-<key>.json."""
+    """What one role's watcher (key: FAST_CODING_ROLE, else `manager`) last reported and which stalls it fired, in results/watch-<role>.json."""
     try:
         return json.loads((proj / "results" / f"watch-{key}.json").read_text())
     except (OSError, json.JSONDecodeError):
@@ -5309,12 +5318,12 @@ WATCH_INTERVAL = 2.0
 def cmd_watch(a, rewake=False):
     """Sleep on the project until something a team lead must act on happens, print it, exit. Zero tokens while waiting:
     run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
-    Each watcher (`all`, or its --from) remembers what it last reported, so a watch started later still reports what
-    happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
+    Each role's watcher (FAST_CODING_ROLE, else manager; --from only filters what is printed) remembers what it last
+    reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = project_dir(a); repo = Path(a.repo).resolve()
     sources = [agent_name(proj.name, x.strip()) if not x.strip().startswith(agent_name(proj.name, "")) else x.strip()
                for x in (a.from_ or "").split(",") if x.strip()]
-    key = ",".join(sorted(sources)) or "all"
+    key = os.environ.get("FAST_CODING_ROLE") or "manager"
     if a.now:
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
