@@ -240,6 +240,53 @@ class Rewake(unittest.TestCase):
         held.close()
 
 
+class Reenter(unittest.TestCase):
+    """SessionStart hook after a compaction: point a fast-coding teammate back at its brief, the board, and Linear."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.env = {"FAST_CODING_ROLE": "tests-021", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
+
+    def reenter(self, env):
+        out = io.StringIO()
+        with mock.patch.dict(fc.os.environ, env, clear=True), mock.patch.object(fc, "project_dir", return_value=self.proj) as pd, \
+                contextlib.redirect_stdout(out):
+            fc.cmd_reenter(SimpleNamespace())
+        return out.getvalue(), pd
+
+    def test_a_teammate_is_pointed_at_its_brief_the_board_and_linear(self):
+        out, _ = self.reenter(self.env)
+        self.assertIn(str(self.proj / "results" / "crew" / f"{fc.agent_name('hw', 'tests-021')}.brief.md"), out)
+        self.assertIn("hw-tests-021.brief.md", out)
+        self.assertIn("0r", out)
+        self.assertIn("fast-coding status --repo /r --project hw", out)
+        self.assertIn("fast-coding watch --repo /r --project hw --now", out)
+        self.assertIn("Decisions so far", out)
+        self.assertIn("Plan", out)
+
+    def test_the_team_lead_gets_the_same_reentry(self):
+        out, _ = self.reenter({**self.env, "FAST_CODING_ROLE": "orchestrator"})
+        self.assertIn("hw-orchestrator.brief.md", out)
+
+    def test_no_role_or_a_headless_session_prints_nothing(self):
+        for env in ({k: v for k, v in self.env.items() if k != "FAST_CODING_ROLE"}, {**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
+            out, pd = self.reenter(env)
+            self.assertEqual(out, "")
+            pd.assert_not_called()
+
+    def test_the_plugin_runs_it_on_a_compaction_and_help_lists_it(self):
+        root = Path(fc.__file__).resolve().parents[1]
+        hooks = fc.json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
+        cmds = lambda ev, m=None: [h["command"] for e in hooks.get(ev, []) if e.get("matcher") == m for h in e["hooks"]]
+        self.assertTrue(any(c.endswith(" reenter") for c in cmds("SessionStart", "compact")), hooks.get("SessionStart"))
+        self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit")[0].endswith(" guard"))
+        self.assertTrue(cmds("PostToolUse", "Skill")[0].endswith(" skillcheck"))
+        self.assertTrue(cmds("UserPromptSubmit")[0].endswith(" skillcheck"))
+        self.assertTrue(cmds("Stop")[0].endswith(" rewake"))
+        help_ = subprocess.run([str(root / "bin" / "fast-coding"), "--help"], capture_output=True, text=True).stdout
+        self.assertRegex(help_, r"\breenter\b")
+
+
 class Detach(unittest.TestCase):
     """run, verify, and resume work in their own session: a closed herdr tab or a dead Claude session ends only the
     follower that streams their log, never the work."""
