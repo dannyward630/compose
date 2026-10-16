@@ -772,6 +772,7 @@ def headless_env():
     return {k: v for k, v in os.environ.items() if not k.startswith("FAST_CODING_")}
 
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
+CREW_SETTINGS = json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
 
 def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
@@ -1306,7 +1307,8 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. The map is the feature issue {feature} on Linear:
+WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
+The map is the feature issue {feature} on Linear:
 its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
 1. Read the map, the spec or README named below, and the repo (`graft ask "<question>" --source`). Before asking anything, look
    for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
@@ -1341,7 +1343,8 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    `done` with the decisions in one line each.
 """
 
-PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Your ticket is {issue} on Linear; you are {name}.
+PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
+Your ticket is {issue} on Linear; you are {name}.
 You continue specing from where it stopped: the plan, the task issues, or a re-cut. You write Linear and the CLI's JSON only, never
 code. You never run `fast-coding run`: you never dispatch. You cut only for this ticket's feature, never for the whole project.
 Every teammate you start runs in its own pane (`fast-coding crew start`); never do its job inline.
@@ -1411,8 +1414,7 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.
 
-5. After cutting: `fast-coding sync` (the feature and every issue under it, read from Linear and piped in as step 2 of the
-   fast-coding skill says), then `fast-coding spec-check --project {slug}`, then `fast-coding tasks`; fix every FAIL and WARNING.
+5. After cutting: `fast-coding sync` (the feature and every issue under it, read from Linear and piped in) as sections/2.md says, then `fast-coding spec-check --project {slug}`, then `fast-coding tasks`; fix every FAIL and WARNING.
    A first cut and a re-cut are one diff: read the story's live task issues, compare them to the story and the map, then
    cancel, edit, add; ids stay monotonic, and a canceled task loses its `fast-coding` block.
    Once a task of the feature was dispatched, the edits go inside `fast-coding change start --why "<one line>"` (sync first)
@@ -1539,7 +1541,7 @@ def framelink_fetch(key, node=None, depth=None, env_file=None):
 
 DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear; the
 target Figma file is {figma}.
-1. Invoke the fast-coding skill and follow section 0d.
+1. Read SKILL.md and sections/0d.md, then follow 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `list_issues` search for "design system", "tokens", "Figma"; the
    Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
    (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
@@ -1817,7 +1819,8 @@ def cmd_crew(a):
     if not model.startswith("pi:") and claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(untrusted(Path(cwd).resolve()))
     try:
-        frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
+        if getattr(a, "frame0", False):
+            frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
     except (RuntimeError, OSError) as e:
         print(f"teammate {name} starts without the project's frame0 tools: {e}")
     if branch:
@@ -1842,12 +1845,14 @@ def cmd_crew(a):
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
             herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
-                  *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
+                  *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model))
         else:
             herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
+                  "--settings", CREW_SETTINGS, "--disallowedTools", *fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False)),
+                  *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
+                  "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
         if len(crew_reports(proj, name)) > seen or pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")
