@@ -639,6 +639,14 @@ class RestrictedStart(unittest.TestCase):
             with self.subTest(role=role):
                 self.assertEqual("--disable-slash-commands" in self.start(role), off)
 
+    def test_every_teammate_gets_the_trust_framing(self):
+        self.assertLess(len(fc.TRUST_PROMPT), 400)
+        for model in ("claude:claude-opus-5-5", "pi:x/y"):  # pi has the same --append-system-prompt flag as Claude Code
+            with self.subTest(model=model):
+                args = self.start("planner", model=model)
+                self.assertEqual(args[args.index("--append-system-prompt") + 1], fc.TRUST_PROMPT)
+                self.assertEqual(args.count("--append-system-prompt"), 1)
+
     def test_frame0_is_opt_in(self):
         self.assertNotIn("mcp__frame0__*", self.patterns(self.start("planner", frame0=True)))
         self.frame0.assert_called_once()
@@ -660,10 +668,11 @@ class RestrictedStart(unittest.TestCase):
                 args = self.start("planner")
                 self.assertEqual(json.loads(args[args.index("--settings") + 1])["enabledPlugins"], {})
 
-    def test_no_chrome_follows_model_and_effort(self):
-        self.assertEqual(self.start("wayfinder", effort="high")[:6], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--settings"])
-        self.assertEqual(self.start("planner", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--autocompact", "150k", "--settings"])
-        self.assertEqual(self.start("designer")[:4], ["--model", "claude-opus-5-5", "--no-chrome", "--settings"])
+    def test_no_chrome_and_trust_framing_follow_model_and_effort(self):
+        trust = ["--no-chrome", "--append-system-prompt", fc.TRUST_PROMPT]
+        self.assertEqual(self.start("wayfinder", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
+        self.assertEqual(self.start("planner", effort="high")[:10], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--autocompact", "150k", "--settings"])
+        self.assertEqual(self.start("designer")[:6], ["--model", "claude-opus-5-5", *trust, "--settings"])
 
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
         args = self.start("wayfinder", model="pi:x/y")
