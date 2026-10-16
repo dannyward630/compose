@@ -122,7 +122,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `fast-coding status [--project <name>] [--watch]` | Shows every project and every task |
 | `fast-coding stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `fast-coding resume --project <name>` | Continues after a billing halt |
-| `fast-coding clean --project <name>` | Removes what has merged |
+| `fast-coding clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
 | `fast-coding workspace [<name>]` | Lists or switches billing workspaces |
 
 Every command is documented in [docs/cli.md](docs/cli.md).

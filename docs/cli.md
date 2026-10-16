@@ -28,7 +28,7 @@ You review the plan, the task list, and the stack.
 5. Run `fast-coding run --project my-feature`, then `fast-coding verify --project my-feature`.
 
 When you ask, `fast-coding stack --project my-feature --submit` pushes and opens one draft PR per layer.
-After the PRs merge, `fast-coding clean --project my-feature` removes what merged and keeps what did not.
+After the PRs merge, `fast-coding clean --project my-feature` removes what merged, moves those tasks to Done in Linear with their story and the feature, and keeps what did not merge.
 
 Before the first run in a new repo, do these three things:
 
@@ -47,7 +47,7 @@ These commands create, list, and clean up projects.
 | `init` | Creates branch `fast-coding/<name>`, its worktree, and `.fast-coding/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s |
-| `clean` | Drops merged layers and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
+| `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
 | `graft` | Sets graft up again in the project's worktree |
 
 ### Tasks

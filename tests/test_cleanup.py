@@ -254,6 +254,28 @@ class ProjectBranch(unittest.TestCase):
         self.assertIn("fast-coding/old", self.branches())
 
 
+class FakeLinear:
+    """Linear in memory: issues by identifier, each with a state and a parent. A state's id is its name."""
+    TYPES = {"Todo": "unstarted", "In Progress": "started", "In Review": "started", "Done": "completed", "Canceled": "canceled"}
+
+    def __init__(self, **issues):
+        self.issues = {k.replace("_", "-"): {"state": s, "parent": p} for k, (s, p) in issues.items()}
+
+    def __call__(self, query, variables):
+        if "issueUpdate" in query:
+            self.issues[variables["id"]]["state"] = variables["s"]
+            return {"issueUpdate": {"success": True}}
+        ident, d = variables["id"], self.issues[variables["id"]]
+        st = lambda n: {"name": n, "type": self.TYPES[n]}
+        return {"issue": {"id": ident, "identifier": ident, "state": st(d["state"]),
+                          "team": {"states": {"nodes": [{"id": n, "name": n, "type": t} for n, t in self.TYPES.items()]}},
+                          "parent": {"identifier": d["parent"]} if d["parent"] else None,
+                          "children": {"nodes": [{"identifier": c, "state": st(cd["state"])} for c, cd in self.issues.items() if cd["parent"] == ident]}}}
+
+    def states(self, *idents):
+        return [self.issues[i]["state"] for i in idents]
+
+
 class SquashMergedLayers(unittest.TestCase):
     """Layers are squash-merged by PR: task branches were never PRs and ancestry is rewritten, so the merged layer that held a task proves it."""
     def setUp(self):
@@ -309,6 +331,41 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.assertIn("every layer built from it is merged", out)
         self.assertFalse(wt.exists())
         self.assertNotIn("fast-coding/p", self.run("branch", "--format=%(refname:short)").stdout.split())
+
+    def linear_project(self):
+        """Tasks 001 and 002 with issues under story ENG-2 of feature ENG-1, and 003, canceled and re-split, whose branch sits on main."""
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "linear": l, "after": ""} for t, l in (("001", "ENG-3"), ("002", "ENG-4"), ("003", "ENG-5"))]
+        (self.proj / "results").mkdir(exist_ok=True)
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        self.run("branch", "fast/p/003", "main")
+
+    def clean_here(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, self.env), mock.patch("sys.stdout", out):
+            fc.clean_project(self.r, "p", self.r.parent / "fast-coding-p", self.proj, explicit=True)
+        return out.getvalue()
+
+    def test_clean_moves_the_tasks_it_proves_merged_to_done_and_rolls_the_story_and_the_feature_up(self):
+        self.linear_project()
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2"), ENG_5=("Canceled", "ENG-2"))
+        with mock.patch.object(fc, "linear_gql", linear), mock.patch.object(fc, "LINEAR_KEY", "k"):
+            out = self.clean_here()  # layer-01 merged: 001 is Done, 003 stays Canceled, the story waits for 002, the feature for the project branch
+            self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "In Review", "Canceled", "In Review", "In Review"])
+            self.assertIn("linear ENG-3 -> Done", out)
+            (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
+            self.clean_here()  # every layer and the project branch merged: the story and the feature are Done too
+            self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "Done", "Canceled", "Done", "Done"])
+        self.assertFalse((self.r.parent / "fast-coding-p").exists())
+
+    def test_clean_without_a_linear_key_says_so_in_one_line_and_calls_nothing(self):
+        self.linear_project()
+        with mock.patch.object(fc, "linear_gql", side_effect=AssertionError("Linear called without a key")), \
+                mock.patch.object(fc, "LINEAR_KEY", ""), mock.patch.object(fc, "_linear_warned", []):
+            out = self.clean_here()
+        self.assertEqual(out.count("linear skipped"), 1, out)
+        self.assertIn("fast/p/001", out)  # the branches are still cleaned
+
 
 
 if __name__ == "__main__":

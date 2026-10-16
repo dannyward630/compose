@@ -695,7 +695,8 @@ def linear_restore(ident, fields):
 
 def rollup_state(children):
     """The state table for a story or epic: Done when every child is Done, In Review when every child is In Review or
-    Done, In Progress once any child started, else None (leave it)."""
+    Done, In Progress once any child started, else None (leave it). Canceled children do not count."""
+    children = [c for c in children if c["state"].get("type") != "canceled"]
     names = [(c["state"]["name"] or "").lower() for c in children]
     if names and all(n == "done" for n in names):
         return "Done"
@@ -747,6 +748,34 @@ def linear_event(proj, meta, event, result=None):
             linear_roll_up(proj, parent)
     except Exception as e:  # noqa: BLE001  Linear never stops a run
         say(f"linear {meta.get('linear')}: update failed ({str(e)[:200]}); the run goes on")
+
+def linear_merged(feature, metas, project_merged):
+    """clean's step through the state table: every task proven merged moves to Done, its story rolls up, and the feature is
+    Done once every story is and the project branch is merged; otherwise the feature is left as verify put it. A Canceled
+    task stays Canceled. Without a key one line says so; a Linear failure is said and never stops the clean."""
+    if not (metas or (feature and project_merged)) or not linear_ready():
+        return
+    try:
+        stories = []
+        for m in metas:
+            issue = linear_issue(m["linear"])
+            if issue["state"].get("type") == "canceled":
+                continue
+            linear_move(issue, "Done")
+            parent = (issue.get("parent") or {}).get("identifier")
+            if parent and parent != feature and parent not in stories:
+                stories.append(parent)
+        for s in stories:
+            issue = linear_issue(s)
+            target = rollup_state(issue["children"]["nodes"])
+            if target:
+                linear_move(issue, target)
+        if feature and project_merged:
+            issue = linear_issue(feature)
+            if rollup_state(issue["children"]["nodes"]) == "Done":
+                linear_move(issue, "Done")
+    except Exception as e:  # noqa: BLE001
+        say(f"linear: moving merged work to Done failed ({str(e)[:200]}); the states are yours to set")
 
 def linear_verified(proj):
     """verify PASS: the feature moves to In Review once every story is In Review or Done."""
@@ -5759,7 +5788,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             shutil.rmtree(w, ignore_errors=True)
     sh(["git", "worktree", "prune"], repo, check=False)
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
-    kept = []
+    kept, merged = [], []  # merged: the tasks whose branches this clean proved merged
+    link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
+    metas = {m["id"]: m for m in load_tasks(proj) if m.get("linear")}  # read now: a merged project's files go with its worktree
     prefix = layer_prefix(repo, proj)
     rec_file = proj / "layers.json"
     held = json.loads(rec_file.read_text()) if rec_file.exists() else {}  # layer branch -> the tasks it held
@@ -5789,13 +5820,15 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
         if why or delete_unmerged:
             print(f"clean  {b}: {why if why else 'UNMERGED, deleted on --delete-unmerged; any PR on GitHub is unaffected'}")
             sh(["git", "branch", "-D", b], repo, check=False)
+            if why and b.rsplit("/", 1)[-1] in metas:
+                merged.append(b.rsplit("/", 1)[-1])
         else:
             kept.append(b)
     if (proj / "verify.json").exists() and "layer_prefix" in project_config(proj) \
             and not sh(["git", "branch", "--list", f"{project_config(proj)['layer_prefix']}layer-*"], repo, check=False).stdout.strip():
         atomic_write(proj / "verify.json", json.dumps({k: v for k, v in project_config(proj).items() if k != "layer_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
     line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
-    pbranch = project_branch(proj)
+    pbranch, project_merged = project_branch(proj), False
     if wt != main_repo and not kept and trunk == pbranch:
         on = [project_config(proj)["review_base"]] if project_after(proj) else []  # merged into the project it was built on counts
         why = merge_evidence(main_repo, pbranch, [*on, "main", "origin/main", "master", "origin/master", current_branch(main_repo)], has_remote)
@@ -5806,6 +5839,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             why = f"every layer built from it is merged ({', '.join(held)})"
         elif not why and delete_unmerged:
             why = "UNMERGED, removed on --delete-unmerged"
+        else:
+            project_merged = bool(why)
         if why:
             stop_listeners_under(wt)
             if is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
@@ -5833,6 +5868,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 f" (layers not merged: {', '.join(lb for lb in held if lb not in layer_why)})" if held else " (no recorded layers to prove it)"
             ) + f": worktree kept; --delete-unmerged removes it anyway"
     print(line)
+    linear_merged(link.get("feature"), [metas[t] for t in merged], project_merged)
 
 def cmd_sync(a):
     """Store the feature and its tasks, read from Linear (--from-linear) or piped in as JSON, and list them."""
@@ -5933,7 +5969,7 @@ def main():
                             ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit pushes and opens one draft PR per layer"),
-                            ("clean", cmd_clean, "remove worktrees and branches"),
+                            ("clean", cmd_clean, "the post-merge step: remove task clones and merged branches, move the tasks proven merged to Done in Linear and roll their story and the feature up, and remove a merged project's worktree and branch"),
                             ("groundwork", cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", cmd_explore, "print the explore teammate's brief (a fast graft-only map of an existing repo); --extra adds notes"),
                             ("graft", cmd_graft, "set graft up in the project's worktree again: wire it for Claude Code and build the graph"),
