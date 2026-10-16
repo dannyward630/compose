@@ -97,6 +97,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 | `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |
 | `guard` | Runs as the PreToolUse hook that keeps the team lead from editing code |
 | `rewake` | Runs as the Stop hook that parks the team lead's next `watch` after each turn and wakes it on the event |
+| `skillcheck` | Runs as the UserPromptSubmit and Skill PostToolUse hook that tells a fast-coding session, once, which skill files changed since it read them |
 
 ### Workspaces
 

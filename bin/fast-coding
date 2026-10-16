@@ -1873,6 +1873,47 @@ def cmd_guard(a):
     if why:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 
+SKILL_DIR = Path.home() / ".claude" / "skills" / "fast-coding"  # the main checkout every live session reads: a merge changes it
+SKILL_SEEN = Path.home() / ".fast-coding" / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
+# ponytail: never pruned, a few hundred bytes per session; prune by mtime if the directory grows
+SKILL_FILES = ("SKILL.md", "sections/*.md", "commands/*.md")
+
+def skill_hashes():
+    """Each skill file's git blob hash, by absolute path."""
+    files = sorted(f for g in SKILL_FILES for f in SKILL_DIR.resolve().glob(g))
+    if not files:
+        raise FileNotFoundError(SKILL_DIR)
+    return {str(f): hashlib.sha1(b"blob %d\0" % len(b := f.read_bytes()) + b).hexdigest() for f in files}
+
+def skill_notice(session):
+    """Record the skill version this session sees; the notice naming what changed since it last saw one, else None."""
+    cur, f = skill_hashes(), SKILL_SEEN / f"{session}.json"
+    seen = json.loads(f.read_text()) if f.exists() else None
+    if seen != cur:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(cur))
+    changed = sorted(p for p in cur.keys() | (seen or {}).keys() if cur.get(p) != (seen or {}).get(p))
+    if seen is None or not changed:
+        return None
+    return f"fast-coding's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
+
+def cmd_skillcheck(a):
+    """Claude Code UserPromptSubmit and PostToolUse(Skill) hook: a session with a role, or one that loaded the fast-coding skill
+    (the Skill tool, or a typed /fast-coding command), hears once when the skill's files changed. Any error prints nothing."""
+    try:
+        ev = json.load(sys.stdin)
+        session = re.sub(r"[^\w-]", "", ev.get("session_id") or "")
+        if not session:
+            return
+        loads = "/" + (ev.get("tool_input") or {}).get("skill", "") if ev.get("hook_event_name") == "PostToolUse" else ev.get("prompt", "")
+        if re.match(r"/fast-coding(:|\s|$)", loads):
+            skill_notice(session)  # the version it loads now is the one it read
+        elif os.environ.get("FAST_CODING_ROLE") or (SKILL_SEEN / f"{session}.json").exists():
+            if ev.get("hook_event_name") == "UserPromptSubmit" and (note := skill_notice(session)):
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}}))
+    except Exception:
+        pass
+
 def write_report(proj, name, state, message):
     with open(crew_dir(proj) / f"{name}.status", "a") as f:
         f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "state": state, "message": message}) + "\n")
@@ -5187,6 +5228,11 @@ def cmd_watch(a, rewake=False):
                 manager_attention(proj, ev)
                 if rewake:
                     emit("fast-coding watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
+                    try:
+                        if note := skill_notice(a.session):  # a wake is a prompt the UserPromptSubmit hook never sees
+                            emit(note)
+                    except Exception:
+                        pass
                 for line in ev:
                     emit(f"[{now()}] {line}")
                 watch_save(proj, key, base=after)  # after printing: a watch killed in between reports it again rather than never
@@ -5206,12 +5252,16 @@ def cmd_watch(a, rewake=False):
 def cmd_rewake(a):
     """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
     wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once,
-    a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
+    a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too. A wake names skill files changed since the last one."""
     project = os.environ.get("FAST_CODING_PROJECT")
     if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
+    try:
+        session = re.sub(r"[^\w-]", "", json.load(sys.stdin).get("session_id") or "")
+    except Exception:
+        session = ""
     cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
-                                 timeout=0, stall=None, interval=WATCH_INTERVAL), rewake=True)
+                                 timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
 
 def cmd_projects(a):
     """Every project (feature) across this repository's worktrees with its task progress; `status --project <name>` drills in."""
@@ -5736,6 +5786,7 @@ def main():
                             ("teardown", cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
+                            ("skillcheck", cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a fast-coding session the skill changed since it read it"),
                             ("workspace", cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -5848,7 +5899,7 @@ def main():
     a = ap.parse_args()
     if a.cmd in DETACHED and not os.environ.get("FAST_CODING_DETACHED"):
         return detach(a)
-    if a.fn not in (cmd_workspace, cmd_guard, cmd_rewake):  # the hooks run in every session: no config, no output
+    if a.fn not in (cmd_workspace, cmd_guard, cmd_rewake, cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = apply_config()  # "default" when no workspace is chosen
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             say(f"workspace {ws}")

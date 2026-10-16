@@ -194,6 +194,17 @@ class Rewake(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         pd.assert_not_called()
 
+    def test_a_wake_carries_the_skill_change_notice(self):
+        skill = Path(tempfile.mkdtemp()).resolve()
+        (skill / "SKILL.md").write_text("v1\n")
+        with mock.patch.object(fc, "SKILL_DIR", skill), mock.patch.object(fc, "SKILL_SEEN", skill / "seen"), \
+                mock.patch.object(fc.sys, "stdin", io.StringIO('{"session_id": "lead"}')):
+            fc.skill_notice("lead")  # the version the team lead read
+            (skill / "SKILL.md").write_text("v2\n")
+            code, err, _ = self.rewake([wsnap("running"), wsnap("passed")])
+        self.assertEqual(code, 2)
+        self.assertIn(f"fast-coding's skill changed since you read it: {skill / 'SKILL.md'}", err)
+
     def test_a_second_hook_leaves_the_parked_one_alone(self):
         held = fc.watch_lock(self.proj, "all", wait=False)
         self.assertIsNotNone(held)

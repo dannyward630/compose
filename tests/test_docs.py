@@ -30,7 +30,7 @@ class CliAndTasksDocs(unittest.TestCase):
         figma = self.row(sec, "figma check\\|tree\\|judge")
         for word in ("check --figma", "tree --only", "Framelink", "judge --only", "linear.json", "results/NNN.tree.txt", "MET", "NOT_MET", "UNCLEAR"):
             self.assertIn(word, figma)
-        for cmd in ("crew start\\|list\\|focus\\|stop", "explore", "testcrews", "report", "watch", "teardown", "frame0 up", "guard", "rewake"):
+        for cmd in ("crew start\\|list\\|focus\\|stop", "explore", "testcrews", "report", "watch", "teardown", "frame0 up", "guard", "rewake", "skillcheck"):
             self.assertIn(f"| `{cmd}", sec)
 
     def test_tasks_design_section_shows_block_and_rules(self):
