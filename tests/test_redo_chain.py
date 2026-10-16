@@ -47,6 +47,28 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")  # one commit per layer, the old 011 is gone
         self.assertEqual(self.git("for-each-ref", "refs/fast-coding/replaced/"), "")  # nothing carries the old tip any more
 
+    def test_every_layer_above_a_layer_rewritten_by_hand_replays_only_its_own_commits(self):
+        # 011 rebased or reset by hand before this pass: no replaced ref records its old tip, only its reflog does
+        self.git("checkout", "-q", "-B", "fast/p/011", "fast/p/010"); (self.repo / "c.txt").write_text("new\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "task 011 redone"); self.git("checkout", "-q", "main")
+        chain = fc.linearize(self.repo, self.proj, "main", fc.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual([self.git("rev-list", "--count", f"main..fast/p/{t}") for t in ("012", "005")], ["3", "4"])
+        self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
+
+    def test_a_layer_above_one_resolved_by_hand_between_runs_replays_only_its_own_commits(self):
+        # 011 rewritten, then 012 rebased onto it by hand after a stopped run: 005 still carries the old 011 and the old 012
+        self.git("checkout", "-q", "-B", "fast/p/011", "fast/p/010"); (self.repo / "c.txt").write_text("new\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "task 011 redone")
+        self.git("checkout", "-q", "-B", "fast/p/012", "fast/p/011"); (self.repo / "012.txt").write_text("old\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "task 012"); self.git("checkout", "-q", "main")
+        chain = fc.linearize(self.repo, self.proj, "main", fc.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
+        self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
+
 
 class KeepFinishedLayers(unittest.TestCase):
     """A plain `run` re-enters every task: a layer that passed, or that a teammate finished by hand on top of its pass, keeps its
@@ -151,4 +173,5 @@ class RewrittenTrunk(unittest.TestCase):
             fc.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept
         self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
+        self.assertIn("(the old base recorded in this pass)", str(e.exception))  # the hint says where the old base came from
         self.assertIn("fast/p/011", "".join(str(c) for c in say.call_args_list))

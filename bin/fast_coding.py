@@ -3311,12 +3311,19 @@ def _linearize(repo, proj, trunk, wt):
         if not contains(prev, b):
             # b still carries the old commits of what it was built on: a layer below that was rebuilt or rebased, or the trunk
             # itself when it was rewritten (rebased onto a moved main). Replay only b's own commits: start above the old tip it
-            # was built on. The trunk's old tip comes from its reflog (fork-point); without one, a plain rebase is the best guess.
+            # was built on. That tip is, in order: one recorded in this pass (a rebuilt layer, or a layer rebased just now); one
+            # in the reflog of the layer below (fork-point), which holds a rewrite made before this pass, by hand or by a redo
+            # whose replaced ref is gone; one in the trunk's reflog; without any, a plain rebase is the best guess.
             old = [t for rb, t in tips if rb in linear and contains(t, b)]
-            fork = sh(["git", "merge-base", "--fork-point", trunk, b], repo, check=False).stdout.strip()
-            if fork and not old:
-                old.append(fork)
-            upstream = max(old, key=lambda t: int(sh(["git", "rev-list", "--count", f"{trunk}..{t}"], repo).stdout)) if old else prev
+            upstream = max(old, key=lambda t: int(sh(["git", "rev-list", "--count", f"{trunk}..{t}"], repo).stdout)) if old else ""
+            source = "the old base recorded in this pass"
+            for ref in dict.fromkeys((prev, trunk)):
+                if upstream:
+                    break
+                upstream = sh(["git", "merge-base", "--fork-point", ref, b], repo, check=False).stdout.strip()
+                source = f"the old base from the reflog of {ref}"
+            if not upstream:
+                upstream, source = prev, "no old base found: a plain rebase"
             tips.append((b, sh(["git", "rev-parse", b], repo).stdout.strip()))
             sh(["git", "checkout", "-q", b], wt)
             r = sh(["git", "rebase", "-q", "--onto", prev, upstream], wt, check=False)
@@ -3324,7 +3331,7 @@ def _linearize(repo, proj, trunk, wt):
                 sh(["git", "rebase", "--abort"], wt, check=False)
                 sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
                 STACK_STOP = (f"{b} conflicts when rebased onto {prev}; the layers below it are kept. Resolve by hand: "
-                              f"git checkout {b} && git rebase --onto {prev} {upstream}, then re-run")
+                              f"git checkout {b} && git rebase --onto {prev} {upstream} ({source}), then re-run")
                 say(f"stack  STOP  {STACK_STOP}")
                 break
         linear.append(b)
