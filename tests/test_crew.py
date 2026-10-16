@@ -13,14 +13,18 @@ def snap(proj):
             "crew": {f.stem: fc.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}}
 
 
-def setUpModule():  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
-    global _sleep
-    _sleep = mock.patch.object(fc.time, "sleep")
-    _sleep.start()
+_patches = [mock.patch.object(fc.time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
+            mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: [])]  # no test runs the real `claude mcp list`
+
+
+def setUpModule():
+    for p in _patches:
+        p.start()
 
 
 def tearDownModule():
-    _sleep.stop()
+    for p in _patches:
+        p.stop()
 
 
 class Crew(unittest.TestCase):
@@ -66,7 +70,7 @@ class Crew(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
-                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: []), mock.patch("builtins.print"):
+                mock.patch("builtins.print"):
             fc.cmd_crew(a)
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
