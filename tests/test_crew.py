@@ -691,6 +691,26 @@ class RestrictedStart(unittest.TestCase):
         self.assertEqual(set(tail[1:3]), {"mcp__claude_ai_Notion__*", "mcp__frame0__*"})
         self.assertEqual(tail[3:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
 
+    def test_orchestrator_and_planner_autocompact_at_150k_before_settings(self):
+        self.P = []  # same servers and skills switch for every role below, so their args differ only by --autocompact
+        base = self.start("wayfinder")
+        for role in ("orchestrator", "planner"):
+            with self.subTest(role=role):
+                args = self.start(role)
+                i = args.index("--autocompact")
+                self.assertEqual(args[i + 1], "150k")
+                self.assertLess(i, args.index("--settings"))
+                self.assertEqual(args.count("--autocompact"), 1)
+                self.assertEqual(args[:i] + args[i + 2:], base)  # nothing else moves, the --settings value on included
+
+    def test_other_roles_and_pi_starts_get_no_autocompact(self):
+        for role in ("wayfinder", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):
+            with self.subTest(role=role):
+                self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role)))
+        for role in ("orchestrator", "planner"):
+            with self.subTest(pi=role):
+                self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role, model="pi:x/y")))
+
     def test_briefs_name_skill_md_and_their_sections(self):
         p, d, w = fc.PLANNER_BRIEF, fc.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
