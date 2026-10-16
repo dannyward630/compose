@@ -3871,19 +3871,25 @@ def jev_acceptance(cfg, proj, diff, repo=None):
                "UNCLEAR": "Cannot be decided from the code shown."}
     threshold = cfg.get("acceptance_threshold", 0.6)
     rows, model, states = [], None, {}
+    hunks, cur = [], None
+    for line in diff.split("\n"):
+        if line.startswith("diff --git "):
+            cur = line.split(" b/")[-1]
+            hunks.append([cur, [line]])
+        elif cur is not None:
+            hunks[-1][1].append(line)
     for meta in code_tasks(load_tasks(proj)):
         crits = parse_criteria(meta["body"])
         if not crits:
             continue
         files = meta["files"] + meta["protected"]
-        code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in files if repo and (repo / f).exists() and (repo / f).stat().st_size < 200000
-                             and not LOCKFILE_RE.search(f))
+        code = "\n".join("\n".join(lines) for path, lines in hunks if path in files)
         if not code.strip():
             code = diff
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": text, "task": meta["id"], "rules": rules}}
                      for i, text in enumerate(crits)}
-        states[meta["id"]] = {"task": meta.get("title", ""), "code": code[:JEV_CODE_CAP]}
+        states[meta["id"]] = {"task": meta.get("title", ""), "code": code[:JEV_CODE_CAP], "files": files}
         out = jev_ask(env, cfg, states[meta["id"]], questions, "Jev acceptance")
         model = out.get("model", model)
         for i, text in enumerate(crits):
@@ -3895,16 +3901,24 @@ def jev_acceptance(cfg, proj, diff, repo=None):
         return {"pass": False, "criteria": [], "failed": [], "unclear": [], "note": "no acceptance criteria to judge"}
     suspects = [r for r in rows if r["p_not_met"] >= threshold]
     # Jev is a fast classifier; long compound criteria produce false NOT_MET. A second model must quote the violation.
+    budget, budget_lock = {}, threading.Lock()
     def confirm(r):
         task_files = next((m for m in load_tasks(proj) if m["id"] == r["task"]), {"files": [], "protected": []})
-        code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in task_files["files"] + task_files["protected"]
-                            if repo and (repo / f).exists())
+        with budget_lock:
+            remaining = budget.setdefault(r["task"], 60000)
+            if remaining <= 0:
+                r["confirmed"], r["evidence"] = False, "confirm budget spent"
+                return r
+            code = "\n\n".join(f"==== {f} ====\n{(repo / f).read_text()}" for f in task_files["files"] + task_files["protected"]
+                                if repo and (repo / f).exists())
+            sent = code[:remaining]
+            budget[r["task"]] = remaining - len(sent)
         try:
             r["confirmed"], r["evidence"] = confirm_call(
                 env, "You are verifying whether code VIOLATES one acceptance criterion. Quote the exact lines that prove "
                 "a violation. If every part of the criterion is satisfied, or you cannot show a concrete violation, "
                 'answer confirmed=false. Return JSON {"confirmed": bool, "evidence": str}.',
-                f"CRITERION: {r['criterion']}\n\nCODE:\n{code[:60000]}")
+                f"CRITERION: {r['criterion']}\n\nCODE:\n{sent}")
         except PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
