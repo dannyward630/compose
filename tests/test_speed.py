@@ -132,6 +132,34 @@ class AcceptanceJudge(unittest.TestCase):
             self.assertEqual([r["confirmed"] for r in spent], [False], prefix)
             self.assertNotIn(spent[0]["criterion"], [crit for crit, _ in sent])
 
+    def test_confirm_reads_only_regular_files_and_budgets_what_it_sends(self):
+        repo, proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "p"
+        for d in ("sections", "docs", "tests/fixtures"):
+            (repo / d).mkdir(parents=True)
+            (repo / d / "inner.md").write_text("INNER")
+        (repo / "a.py").write_text("A" * 50000)
+        proj.mkdir()
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            task_issue("ENG-2", "002", ["a1", "a2", "a3"], files="sections, a.py", protected="tests/fixtures, gone.py"),
+            task_issue("ENG-3", "003", ["b1"], files="docs")]})
+        reply = {"model": "m", "answers": {f"c{i}": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}} for i in range(3)}}
+        sent = []
+        def confirm_call(env, system, user, max_tokens=500):
+            crit, code = user.split("\n\nCODE:\n", 1)
+            sent.append((crit[len("CRITERION: "):], code))
+            return True, "x"
+        with mock.patch.object(fc, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+                mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
+            res = fc.jev_acceptance({}, proj, hunk("a.py", "x"), repo=repo)  # raises IsADirectoryError if a directory is read
+        whole = "==== a.py ====\n" + "A" * 50000
+        a = sorted((code for crit, code in sent if crit.startswith("a")), key=len)
+        self.assertEqual(a, [whole[:60000 - len(whole)], whole])  # the directories cost nothing; the second call gets the rest
+        self.assertNotIn("INNER", "".join(code for _, code in sent))
+        self.assertEqual([code for crit, code in sent if crit == "b1"], [""])  # only directories: still sent, with budget left
+        self.assertEqual([r["evidence"] for r in res["suspects"] if not r["confirmed"]], ["confirm budget spent"])
+        self.assertEqual(len(res["failed"]), 3)  # suspects are judged as before
+
 
 if __name__ == "__main__":
     unittest.main()
