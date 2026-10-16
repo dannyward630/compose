@@ -141,6 +141,16 @@ class Groundwork(unittest.TestCase):
         self.assertEqual(started, ["tests-002"])
         self.assertIn("tests-001 not started: agent_prompt_stalled", out.getvalue())
 
+    def test_a_named_task_that_needs_no_test_writer_says_why(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
+        out = io.StringIO()
+        with self.patched()[0], mock.patch("sys.stdout", out):
+            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="001,009", print_=True))
+        self.assertIn("001 skipped: its result is hand_done", out.getvalue())
+        self.assertIn("009 skipped: no such task", out.getvalue())
+        self.assertNotIn("===== tests-001", out.getvalue())
+
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
             fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))

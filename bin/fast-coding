@@ -1613,11 +1613,26 @@ def cmd_testcrews(a):
         sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (fast-coding groundwork, phase C)")
     contract, budget = contract_file.read_text(), getattr(a, "budget", None)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
-    metas = [m for m in load_tasks(proj, required=True) if not only or m["id"] in only]
+    tasks = load_tasks(proj, required=True)
+    def finished(m):  # why a task needs no test writer, or None
+        f = proj / "results" / f"{m['id']}.json"
+        status = json.loads(f.read_text()).get("status") if f.exists() else None
+        return (f"its result is {status}" if status in FINISHED
+                else f"its state is {m['linear_state']}" if m.get("linear_state") in ("Done", "Canceled") else None)
+    metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
+    for tid in sorted(only or ()):  # a named id that is skipped says why
+        if not any(m["id"] == tid for m in metas):
+            m = next((m for m in tasks if m["id"] == tid), None)
+            print(f"{tid} skipped: " + (finished(m) if m else "no such task"))
     if a.print_:
         for m in metas:
             print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, commit_convention(proj))}\n")
         return
+    if use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
+        held = slots(proj)
+        short = pool_shortfall(project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
+        if short:
+            sys.exit(f"testcrews: {short}")
     herdr_space(proj)  # once, before the parallel starts
     model = "tests" if "tests" in CREW_MODELS else "groundwork" if "groundwork" in CREW_MODELS else None
     wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
@@ -3008,10 +3023,30 @@ def slot_on(repo, branch, holder, detach=False):
     reuses a slot only when its commit is an ancestor of the next base, so a slot returned onto a task or test branch was
     "in use or dirty" for every lease after it and the pool ran dry while `status` showed it free."""
     exclude_paths(repo, ["/.treehouse/"])
-    out = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder).stdout
-    path = Path(json.loads(out)["path"])
+    p = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder, check=False)
+    if p.returncode and "in use or dirty" in p.stdout + p.stderr:
+        sys.exit(f"{holder}: " + (pool_shortfall(repo, 1) or p.stderr.strip().splitlines()[-1]))
+    if p.returncode:
+        raise RuntimeError(f"treehouse get for {holder}\n{p.stdout}\n{p.stderr}")
+    path = Path(json.loads(p.stdout)["path"])
     sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
     return path
+
+def pool_shortfall(repo, need):
+    """None when the pool can lease `need` more slots, else one line: how many it needs, how many are free, who holds the rest.
+    Free is an available slot, or room under max_trees (treehouse.toml in the main checkout, else treehouse's default 16)."""
+    if need <= 0:
+        return None
+    entries = json.loads(treehouse(repo, "status", "--json", check=False).stdout or "[]")
+    cfg = Path(sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo).stdout.strip()).parent / "treehouse.toml"
+    m = re.search(r"^\s*max_trees\s*=\s*(\d+)", cfg.read_text(), re.M) if cfg.exists() else None
+    cap = int(m.group(1)) if m else 16
+    free = sum(e.get("status") == "available" for e in entries) + max(0, cap - len(entries))
+    if free >= need:
+        return None
+    holders = [e.get("lease_holder") or f"slot {e.get('name')} ({e.get('status')})" for e in entries if e.get("status") != "available"]
+    return (f"needs {need} worktree slot(s), {free} free of max_trees = {cap}; held by {', '.join(holders)}. "
+            "Free slots (fast-coding testcrews --collect, fast-coding clean, treehouse return) or raise max_trees in treehouse.toml")
 
 def is_slot(repo, path):
     """Whether a path is a treehouse slot of this repository's pool, asked of treehouse rather than guessed from the path."""

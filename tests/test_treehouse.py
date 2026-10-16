@@ -71,6 +71,45 @@ class Treehouse(unittest.TestCase):
         again = fc.slot_on(self.repo, "next", "fast-coding:p:tests-002")
         self.assertEqual(again.resolve(), slot.resolve())
 
+    def cap(self, n):
+        (self.repo / "treehouse.toml").write_text(f"max_trees = {n}\n")
+        self.git("add", "treehouse.toml"); self.git("commit", "-qm", "cap the pool")
+
+    def test_testcrews_skips_finished_tasks_and_a_full_pool_stops_before_any_lease(self):
+        self.cap(2)
+        wt, proj = self.init()  # the project holds one of the two slots
+        task = lambda tid, **kw: {"id": tid, "title": tid, "files": [], "protected": [], "test": "true", "body": "", **kw}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [
+            task("001"), task("002", linear_state="Canceled"), task("003"), task("004"), task("005", linear_state="Done")]}))
+        (proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
+        (proj / "results" / "contract.md").write_text("c")
+        started = []
+        run = lambda: fc.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr_space"), \
+             mock.patch.object(fc, "cmd_crew", lambda ns: started.append(ns.role)):
+            with self.assertRaises(SystemExit) as e:
+                run()  # 003 and 004 need two slots, one is free
+            msg = str(e.exception.code)
+            self.assertNotIn("\n", msg)
+            for s in ("2 worktree", "1 free", "fast-coding:p:project"):
+                self.assertIn(s, msg)
+            self.assertEqual(sorted(self.status().values()), ["leased"])  # nothing leased, nothing started
+            self.assertEqual(started, [])
+            (proj / "results" / "004.json").write_text(json.dumps({"id": "004", "status": "passed"}))
+            run()
+        self.assertEqual(started, ["tests-003"])
+        self.assertEqual(list(fc.slots(proj)), ["tests-003"])
+
+    def test_a_lease_from_a_full_pool_exits_with_one_line_naming_the_holders(self):
+        self.cap(1)
+        wt, proj = self.init()
+        with self.assertRaises(SystemExit) as e:
+            fc.slot_on(self.repo, "main", "fast-coding:p:stackroot")
+        msg = str(e.exception.code)
+        self.assertNotIn("\n", msg)
+        for s in ("1 worktree", "0 free", "fast-coding:p:project"):
+            self.assertIn(s, msg)
+
     def test_stack_slot_is_reused_and_clean_hands_every_slot_back(self):
         wt, proj = self.init()
         first = fc.stack_worktree(wt, proj, "fast-coding/p")
