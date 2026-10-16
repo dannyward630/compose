@@ -1828,8 +1828,12 @@ def cmd_crew(a):
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     brief_file.write_text(crew_preamble(proj, name, title) + brief)
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
+    try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
+        skill = {"skill": skill_hashes()} if model.startswith("pi:") else {}
+    except OSError:
+        skill = {}
     atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
-                               "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+                               "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), **skill}, indent=2))
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
@@ -1902,6 +1906,10 @@ def skill_hashes():
         raise FileNotFoundError(SKILL_DIR)
     return {str(f): hashlib.sha1(b"blob %d\0" % len(b := f.read_bytes()) + b).hexdigest() for f in files}
 
+def skill_changed(seen, cur):
+    """The skill files whose hash differs between two skill_hashes() results: changed, added, or removed."""
+    return sorted(p for p in cur.keys() | seen.keys() if cur.get(p) != seen.get(p))
+
 def skill_notice(session):
     """Record the skill version this session sees; the notice naming what changed since it last saw one, else None."""
     if not session:  # no session id: every such caller would share one file
@@ -1911,7 +1919,7 @@ def skill_notice(session):
     if seen != cur:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(cur))
-    changed = sorted(p for p in cur.keys() | (seen or {}).keys() if cur.get(p) != (seen or {}).get(p))
+    changed = skill_changed(seen or {}, cur)
     if seen is None or not changed:
         return None
     return f"fast-coding's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
@@ -5093,6 +5101,13 @@ def watch_snapshot(repo, proj):
         n = ag.get("name") or ""
         if n.startswith(agent_name(proj.name, "")[:-1]):
             snap["agents"][n] = ag.get("agent_status")
+    pis = [c for f in sorted((proj / "results" / "crew").glob("*.json"))
+           if "skill" in (c := json.loads(f.read_text())) and c.get("agent", c["name"]) in snap["agents"]]
+    try:
+        cur = skill_hashes() if pis else {}
+    except OSError:
+        pis = []
+    snap["skill"] = {c["name"]: changed for c in pis if (changed := skill_changed(c["skill"], cur))}  # live pi teammates reading an old skill
     v = proj / "results" / "verify.json"
     if v.exists():
         try:
@@ -5219,6 +5234,9 @@ def watch_events(before, after):
         for r in reports[len(before.get("crew", {}).get(n, [])):]:
             if r["message"] != "started":
                 ev.append(f"event crew={n} state={r['state']} message={r['message']!r}")
+    for n, changed in after.get("skill", {}).items():
+        if changed != before.get("skill", {}).get(n):
+            ev.append(f"event crew={n} skill=stale changed={','.join(changed)}")
     for path, r in after.get("reflects", {}).items():
         if path in before.get("reflects", {}):
             continue
