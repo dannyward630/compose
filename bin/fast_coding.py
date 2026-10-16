@@ -771,7 +771,15 @@ def headless_env():
     return {k: v for k, v in os.environ.items() if not k.startswith("FAST_CODING_")}
 
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
-CREW_SETTINGS = json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
+def crew_settings(role):
+    enabled = {}
+    try:
+        enabled = (json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("enabledPlugins") or {})
+    except (OSError, ValueError):
+        pass
+    keep = fc_mcp.keeps_skills(role)
+    return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
+                       "enabledPlugins": {k: False for k in enabled if not k.startswith("fast-coding@") and not (keep and k.startswith("figma@"))}})
 
 def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
@@ -1846,7 +1854,7 @@ def cmd_crew(a):
         else:
             herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--settings", CREW_SETTINGS, *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
+                  "--no-chrome", *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES and not effort else []), "--settings", crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
