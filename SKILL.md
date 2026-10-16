@@ -24,6 +24,7 @@ Read `.fast-coding/linear.json` at the repo root: `{"project": "<Linear project 
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another) in the user's checkout, and never commit it.
 `fast-coding init` ignores `.fast-coding/` and `graft/` in every checkout before anything else, and copies this file into the project worktree.
 You create and edit issues and write judgment comments through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`); the CLI moves task, story, and feature states and writes the routine run comments with the workspace's Linear key.
+Every `list_issues` call passes `fields` (`id`, `title`, `status`, and more only when the body is needed): the default reply carries whole descriptions and costs about ten times the tokens.
 Confirm the file points at a real project before any other Linear call: `get_project` with its URL must return a project on its team.
 Scope every Linear read, search, and write to that project and team; when a project is in play, its feature comes from `.fast-coding/<slug>/linear.json`.
 Stop and ask the user, never guess, when any of these happen:
