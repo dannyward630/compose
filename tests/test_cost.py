@@ -1,6 +1,7 @@
-import importlib.machinery, importlib.util, io, json, os, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
 
@@ -128,6 +129,57 @@ class CostRows(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(fc_cost.rows(Path(tempfile.mkdtemp())), [])
         self.assertEqual(fc_cost.render([]).strip(), "cost  none")
+
+
+class CostCommand(unittest.TestCase):
+    ROWS = [{"name": "shop-planner", "role": "planner", "model": "claude-opus-5-5", "turns": 3, "input": 11, "cache_created": 22, "cache_read": 33, "output": 44, "note": ""}]
+    TOTAL = {"input": 11, "cache_created": 22, "cache_read": 33, "output": 44, "turns": 3, "teammates": 1}
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], cwd=self.repo, check=True)
+        self.proj = self.repo / ".fast-coding" / "shop"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+
+    def fake(self):
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(fc_cost, "rows", side_effect=lambda proj: [dict(self.ROWS[0], name=proj.name)]))
+        stack.enter_context(mock.patch.object(fc_cost, "total", side_effect=lambda rows: dict(self.TOTAL, teammates=len(rows[0]["name"]))))
+        stack.enter_context(mock.patch.object(fc_cost, "render", return_value="TABLE"))
+        return stack
+
+    def cost(self, as_json):
+        out = io.StringIO()
+        with self.fake(), mock.patch.object(fc, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
+            fc.cmd_cost(SimpleNamespace(repo=str(self.repo), project="shop", json=as_json))
+        return out.getvalue()
+
+    def test_prints_the_rendered_rows(self):
+        self.assertEqual(self.cost(False).strip(), "TABLE")
+
+    def test_json_has_rows_and_their_total(self):
+        self.assertEqual(json.loads(self.cost(True)), {"rows": [dict(self.ROWS[0], name="shop")], "total": dict(self.TOTAL, teammates=4)})
+
+    def test_main_with_no_sessions_prints_cost_none(self):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["fast-coding", "cost", "--project", "shop", "--repo", str(self.repo)]), \
+                mock.patch.object(fc, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
+            fc.main()
+        self.assertEqual(out.getvalue().strip(), "cost  none")
+
+    def test_status_puts_each_projects_totals_under_its_header(self):
+        other = self.repo / ".fast-coding" / "shop22"
+        (other / "results").mkdir(parents=True)
+        with self.fake():
+            lines = fc.render_status(self.repo, [self.proj, other]).splitlines()
+        heads = [i for i, line in enumerate(lines) if line.startswith("project ")]
+        self.assertEqual([lines[i + 1] for i in heads], ["  cost  11in  22cc  33cr  44out  (4 teammates)", "  cost  11in  22cc  33cr  44out  (6 teammates)"])
+        self.assertEqual(sum(line.startswith("  cost  ") for line in lines), 2)
+
+    def test_help_lists_cost(self):
+        out = subprocess.run([sys.executable, str(BIN / "fast_coding.py"), "--help"], capture_output=True, text=True).stdout
+        self.assertRegex(out, r"\bcost\b")
 
 
 if __name__ == "__main__":
