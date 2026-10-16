@@ -71,5 +71,64 @@ class SessionUsage(unittest.TestCase):
         self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a2.jsonl")
 
 
+def project():
+    proj = Path(tempfile.mkdtemp())
+    crew = proj / "results" / "crew"
+    crew.mkdir(parents=True)
+    for name, role, model, at in [("a-late", "planner", "claude:claude-opus-5-5", "2026-10-17 09:00:00"),
+                                  ("z-early", "implementer", "pi:openai/gpt-6-astra", "2026-10-17 08:00:00")]:
+        (crew / (name + ".json")).write_text(json.dumps({"name": name, "role": role, "model": model, "cwd": str(proj), "started_at": at}))
+        (crew / (name + ".brief.md")).write_text("brief")
+    (crew / "stray.json").write_text(json.dumps({"x": 1}))
+    run = {"pi:openrouter/x": {"calls": 3, "tokens_in": 1200, "tokens_out": 300, "cost": 0.01, "priced": True},
+           "typesafe": {"calls": 1, "tokens_in": 50, "tokens_out": 7, "cost": 0.0, "priced": False}, "total": 0.01}
+    (proj / "results" / "run-cost.json").write_text(json.dumps(run))
+    return proj
+
+
+class CostRows(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        log = self.proj / "a.jsonl"
+        found = lambda cwd, at, brief: log if Path(brief).name == "a-late.brief.md" else None  # noqa: E731
+        use = {"model": "claude-opus-5-5", "turns": 4, "input": 10, "cache_created": 200, "cache_read": 3000, "output": 40}
+        self.find = mock.patch.object(fc_sessions, "find_session", side_effect=found).start()
+        mock.patch.object(fc_sessions, "usage", return_value=use).start()
+        self.addCleanup(mock.patch.stopall)
+        self.rows = fc_cost.rows(self.proj)
+
+    def test_rows(self):
+        r = self.rows
+        self.assertEqual([x["name"] for x in r[:2]], ["z-early", "a-late"])
+        self.assertEqual({k: r[0][k] for k in ("role", "turns", "input", "cache_created", "cache_read", "output", "note")},
+                         {"role": "implementer", "turns": None, "input": None, "cache_created": None, "cache_read": None, "output": None, "note": "no session log"})
+        self.assertEqual({k: r[1][k] for k in ("turns", "input", "cache_created", "cache_read", "output", "note")},
+                         {"turns": 4, "input": 10, "cache_created": 200, "cache_read": 3000, "output": 40, "note": ""})
+        brief = self.proj / "results" / "crew" / "a-late.brief.md"
+        self.assertIn((str(self.proj), "2026-10-17 09:00:00", brief), [(str(c.args[0]), c.args[1], Path(c.args[2])) for c in self.find.call_args_list])
+        run = {x["name"]: x for x in r[2:]}
+        self.assertEqual(len(r), 4)
+        self.assertEqual({k: run["pi:openrouter/x"][k] for k in ("role", "turns", "input", "cache_created", "cache_read", "output")},
+                         {"role": "run", "turns": 3, "input": 1200, "cache_created": 0, "cache_read": 0, "output": 300})
+        self.assertEqual(run["typesafe"]["output"], 7)
+
+    def test_total(self):
+        t = fc_cost.total(self.rows)
+        self.assertEqual((t["input"], t["cache_created"], t["cache_read"], t["output"], t["teammates"]), (1260, 200, 3000, 347, 2))
+
+    def test_render(self):
+        lines = fc_cost.render(self.rows).splitlines()
+        self.assertEqual(len(lines), len(self.rows) + 2)
+        self.assertTrue(lines[-1].startswith("total"))
+        col = lines[0].index("role")
+        for row, line in zip(self.rows, lines[1:-1]):
+            self.assertEqual(line.index(row["role"], len(row["name"])), col, line)
+        self.assertIn(" - ", lines[1])
+
+    def test_empty(self):
+        self.assertEqual(fc_cost.rows(Path(tempfile.mkdtemp())), [])
+        self.assertEqual(fc_cost.render([]).strip(), "cost  none")
+
+
 if __name__ == "__main__":
     unittest.main()
