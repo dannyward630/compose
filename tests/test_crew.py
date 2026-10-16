@@ -81,7 +81,7 @@ class Crew(unittest.TestCase):
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
-        self.assertEqual(json.loads(start[start.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})  # no co-author trailer on a crew commit
+        self.assertEqual(json.loads(start[start.index("--settings") + 1])["attribution"], {"commit": "", "pr": ""})  # no co-author trailer on a crew commit
         self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
         self.assertEqual(calls[3][2], "shop-q-neb-12")
         self.assertIn("brief.md", calls[3][3])  # the brief goes in once the session is idle and ready
@@ -580,11 +580,17 @@ class AtomicState(unittest.TestCase):
 
 class RestrictedStart(unittest.TestCase):
     """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
+    SETTINGS = {"model": "opus", "enabledPlugins": {"fast-coding@fc": True, "figma@claude-plugins-official": True, "superpowers@sp": True, "ponytail@p": False,
+                                                    "fast-coding-extra@x": True, "my-fast-coding@x": True, "figmatic@x": True}}
     P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
 
-    def start(self, role, model="claude:claude-opus-5-5", **kw):
+    def start(self, role, model="claude:claude-opus-5-5", effort=None, **kw):
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         proj.mkdir(parents=True)
+        home = Path(tempfile.mkdtemp())
+        if self.SETTINGS is not None:  # None: the user has no settings file
+            (home / ".claude").mkdir()
+            (home / ".claude" / "settings.json").write_text(json.dumps(self.SETTINGS))
         calls = []
         def herdr(*args, **k):
             calls.append(args)
@@ -594,8 +600,9 @@ class RestrictedStart(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as self.frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
-                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"):
+                mock.patch.object(fc, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
+                mock.patch("pathlib.Path.home", return_value=home):
             fc.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         return list(start[start.index("--") + 1:])
@@ -605,9 +612,15 @@ class RestrictedStart(unittest.TestCase):
         i = args.index("--disallowedTools") + 1
         return set(args[i:next(j for j in range(i, len(args)) if args[j].startswith("--"))])
 
+    def plugins_off(self, role):
+        ep = json.loads((lambda a: a[a.index("--settings") + 1])(self.start(role)))["enabledPlugins"]
+        self.assertNotIn(False, [ep.get("fast-coding@fc")])  # fast-coding stays on
+        return {k for k, v in ep.items() if v is False}
+
     def test_planner_gets_crew_settings_and_drops_the_other_servers(self):
         args = self.start("planner")
-        self.assertEqual(json.loads(args[args.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
+        settings = json.loads(args[args.index("--settings") + 1])
+        self.assertEqual({k: settings[k] for k in ("attribution", "env")}, {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
         self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
         self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P if p not in ("claude_ai_Linear", "graft")})
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
@@ -632,8 +645,28 @@ class RestrictedStart(unittest.TestCase):
         self.assertIn("mcp__frame0__*", self.patterns(self.start("planner", frame0=False)))
         self.frame0.assert_not_called()
 
+    def test_every_plugin_but_fast_coding_is_off(self):
+        rest = {"superpowers@sp", "ponytail@p", "fast-coding-extra@x", "my-fast-coding@x", "figmatic@x"}
+        for role in ("planner", "orchestrator", "toolsmith", "design-x"):
+            with self.subTest(role=role):
+                self.assertEqual(self.plugins_off(role), rest | {"figma@claude-plugins-official"})
+        for role in ("designer", "design-003", "design-review"):  # the designer line keeps figma
+            with self.subTest(role=role):
+                self.assertEqual(self.plugins_off(role), rest)
+
+    def test_no_settings_file_or_key_means_no_plugins_listed(self):
+        for self.SETTINGS in (None, {"model": "opus"}):
+            with self.subTest(settings=self.SETTINGS):
+                args = self.start("planner")
+                self.assertEqual(json.loads(args[args.index("--settings") + 1])["enabledPlugins"], {})
+
+    def test_no_chrome_follows_model_and_effort(self):
+        self.assertEqual(self.start("planner", effort="high")[:6], ["--model", "claude-opus-5-5", "--effort", "high", "--no-chrome", "--settings"])
+        self.assertEqual(self.start("designer")[:4], ["--model", "claude-opus-5-5", "--no-chrome", "--settings"])
+
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
         args = self.start("wayfinder", model="pi:x/y")
+        self.assertFalse({"--no-chrome", "--settings"} & set(args))
         self.assertEqual(args[args.index("--skill") + 1], str(fc.CLI_REPO / "SKILL.md"))
         self.assertNotIn("--disallowedTools", args)
 
