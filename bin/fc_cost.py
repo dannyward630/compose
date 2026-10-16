@@ -56,13 +56,13 @@ def render(rows) -> str:
         return "cost  none"
     head = {"name": "name", "role": "role", "model": "model", "turns": "turns", "input": "input",
             "cache_created": "cache created", "cache_read": "cache read", "output": "output", "note": "note"}
-    w = {k: max(len(str(head[k])), *(len(fmt(r[k])) for r in rows)) for k in head}
-    lines = ["  ".join(str(head[k]).ljust(w[k]) for k in head).rstrip()]
-    for r in rows:
-        lines.append("  ".join(fmt(r[k]).ljust(w[k]) for k in head).rstrip())
     t = total(rows)
     tot = {"name": "total", "role": "", "model": "", "note": "", **t,
            "cache_created": t["cache_created"], "cache_read": t["cache_read"]}
+    w = {k: max(len(str(head[k])), *(len(fmt(r[k])) for r in [*rows, tot])) for k in head}
+    lines = ["  ".join(str(head[k]).ljust(w[k]) for k in head).rstrip()]
+    for r in rows:
+        lines.append("  ".join(fmt(r[k]).ljust(w[k]) for k in head).rstrip())
     lines.append("  ".join(fmt(tot[k]).ljust(w[k]) for k in head).rstrip())
     return "\n".join(lines)
 
