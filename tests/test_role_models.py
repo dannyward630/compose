@@ -9,12 +9,14 @@ _spec.loader.exec_module(fc)
 
 CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-sonnet-5-5",
         "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}
+SERVERS = ["claude_ai_Linear", "graft"]  # cmd_crew asks fc_mcp.installed_servers; no test runs the real `claude mcp list`
 
 
 class RoleModels(unittest.TestCase):
     """Teammate sessions are Claude Code; models.crew picks the model per role, and a model id always names its harness."""
     def setUp(self):
         p = mock.patch.object(fc, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS); p.start(); self.addCleanup(p.stop)
 
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
@@ -91,7 +93,8 @@ class PlannerChain(unittest.TestCase):
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
-        for p in (mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json")):
+        for p in (mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json"),
+                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS)):
             p.start(); self.addCleanup(p.stop)
         fc.apply_config(); fc._PROBED.clear()
         self.addCleanup(fc._PROBED.clear)
@@ -213,6 +216,7 @@ class DesignerModels(unittest.TestCase):
     """design-NNN builders fall to models.crew.design; the designer defaults to Opus 5.5 at high effort."""
     def setUp(self):
         p = mock.patch.object(fc, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS); p.start(); self.addCleanup(p.stop)
 
     def config(self, crew):
         d = Path(tempfile.mkdtemp())

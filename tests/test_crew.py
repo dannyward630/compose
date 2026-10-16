@@ -663,6 +663,7 @@ class PiStart(unittest.TestCase):
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
                 mock.patch.object(fc, "model_available", return_value=(True, "")), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing.ts"), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
