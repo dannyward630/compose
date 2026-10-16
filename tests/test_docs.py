@@ -203,5 +203,45 @@ class DesignerCommand(unittest.TestCase):
             self.assertNotRegex(line[3:] if line[:1].isdigit() else line, r"\. [A-Z]", line)
 
 
+class BriefsNameFiles(unittest.TestCase):
+    FILES = "SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0g.md, sections/4.md, sections/5.md, sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md, then continue from 0b"
+    EM = "The engineering manager's own session is outside the CLI's reach: it runs unrestricted, with every server and skill the product owner has."
+
+    def setUp(self):
+        self.text = read("sections/0h.md")
+        self.lines = self.text.splitlines()
+
+    def test_team_lead_brief_reads_the_files(self):
+        lead = [l for l in self.lines if l.startswith("- **Team lead**")]
+        self.assertEqual(len(lead), 1)
+        self.assertIn('"read ' + self.FILES + '"', lead[0].replace("\\~", "~"))
+        self.assertIn("--role orchestrator --title orchestrator --brief -", lead[0])
+        self.assertNotIn("invoke the fast-coding skill", self.text.lower())
+
+    def test_toolsmith_brief_reads_only_skill_md(self):
+        block = self.text.split("**When fast-coding itself fails**", 1)[1].split("The team lead reports at every point", 1)[0]
+        lines = [l for l in block.splitlines() if "toolsmith" in l and "brief" in l and "SKILL.md" in l]
+        self.assertTrue(lines, "a toolsmith brief line names SKILL.md")
+        for line in lines:
+            self.assertNotIn("sections/", line)
+            self.assertNotIn("herdr/SKILL.md", line)
+            self.assertNotRegex(line, r"invoke the `?fast-coding`? skill")
+
+    def test_herdr_is_read_as_a_file(self):
+        self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md; it carries the safety rules for panes and agents.", self.text.replace("\\~", "~"))
+        self.assertNotRegex(self.text.lower(), r"invoke the `?herdr`? skill")
+
+    def test_engineering_manager_sentence_once_after_the_loop(self):
+        self.assertEqual(self.text.count(self.EM), 1)
+        self.assertIn(self.EM, self.lines, "the sentence sits on its own line")
+        loop = next(i for i, l in enumerate(self.lines) if l.startswith("The engineering manager's loop:"))
+        change = self.lines.index("**A change of course reaches the product owner through you.**")
+        self.assertLess(loop, self.lines.index(self.EM))
+        self.assertLess(self.lines.index(self.EM), change)
+
+    def test_no_em_dash(self):
+        self.assertNotIn("\u2014", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
