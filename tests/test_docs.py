@@ -447,5 +447,46 @@ class CardsOnTheMap(unittest.TestCase):
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
+class PlannerSavesInPatches(unittest.TestCase):
+    SAVE_PATH = "Writing-plans' own save path does not apply."
+
+    def rule(self):
+        text = read("sections/1.md")
+        self.assertIn(self.SAVE_PATH + "\n", text)
+        return " ".join(text.split(self.SAVE_PATH, 1)[1].split()).lower()
+
+    def test_drafts_the_whole_plan_then_saves_in_few_patches_one_per_section(self):
+        rule = self.rule()
+        self.assertRegex(rule, r"drafts? the whole plan")
+        self.assertIn("decisions", rule)
+        self.assertRegex(rule, r"before (it )?sav")
+        self.assertRegex(rule, r"few `?save_issue`? patches")
+        self.assertIn("one per section", rule)
+
+    def test_task_detail_goes_on_task_issues_and_no_reread(self):
+        rule = self.rule()
+        self.assertIn("task issues", rule)
+        self.assertRegex(rule, r"never re-?reads? an issue it just wrote")
+
+    def test_reason_is_that_each_save_echoes_the_whole_issue(self):
+        rule = self.rule()
+        self.assertRegex(rule, r"echoes the whole issue")
+        self.assertIn("355k", rule)
+
+    def test_rule_is_stated_once_and_earlier_text_stays(self):
+        text = read("sections/1.md")
+        self.assertEqual(len(re.findall(r"(?i)echoes the whole issue", text)), 1)
+        flat = " ".join(text.split())
+        self.assertIn(" ".join(PlannerReadsWritingPlans.RUN[:3]), flat)
+        self.assertIn(PlannerReadsWritingPlans.SKILLS_OFF, flat)
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        text = read("sections/1.md")
+        self.assertNotIn("\u2014", text)
+        for line in text.splitlines()[1:]:
+            if not line.startswith("|"):
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
