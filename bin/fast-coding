@@ -1813,6 +1813,7 @@ def cmd_crew(a):
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+    seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
@@ -1823,16 +1824,20 @@ def cmd_crew(a):
             herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
-    except RuntimeError as e:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
-        pane_kill(pane)
-        herdr("tab", "close", tab["tab"]["tab_id"])
-        for f in crew_dir(proj).glob(f"{name}.*"):
-            f.unlink()
-        sys.exit(f"teammate {name} did not start: {e}")
+    except RuntimeError as e:
+        if len(crew_reports(proj, name)) > seen or pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
+            print(f"herdr agent start timed out but {name} came up; continuing")
+        else:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
+            pane_kill(pane)
+            herdr("tab", "close", tab["tab"]["tab_id"])
+            for f in crew_dir(proj).glob(f"{name}.*"):
+                f.unlink()
+            sys.exit(f"teammate {name} did not start: {e}")
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
-    herdr_await_start(agent)
+    if len(crew_reports(proj, name)) <= seen:  # one that has reported has started, and may be gone already
+        herdr_await_start(agent)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 

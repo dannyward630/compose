@@ -103,9 +103,10 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
 
-    def start_with_timeout(self, appears_after, pane_busy=False):
+    def start_with_timeout(self, appears_after, pane_busy=False, finishes=False):
         """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never).
-        `pane_busy`: the pane's shell is running something (a launching agent) even while the list shows no agent."""
+        `pane_busy`: the pane's shell is running something (a launching agent) even while the list shows no agent.
+        `finishes`: the teammate does its whole task and reports done while the start still waits, so its tab is gone when the start gives up."""
         calls, looks, out = [], [], []
         def herdr(*args, **kw):
             calls.append(args)
@@ -114,9 +115,13 @@ class Crew(unittest.TestCase):
                 up = appears_after is not None and len(looks) >= appears_after and any(c[:2] == ("agent", "start") for c in calls)
                 return {"agents": [{"name": "claude", "pane_id": "w9:p7"}] if up else []}
             if args[:2] == ("agent", "start"):
+                if finishes:
+                    fc.write_report(self.proj, "shop-eol", "done", "fast-forwarded the branch")
                 raise RuntimeError("herdr agent start: timeout")
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            if args[:2] == ("pane", "process-info") and finishes:
+                return None
             if args[:2] == ("agent", "get"):
                 up = (appears_after is not None and len(looks) >= appears_after) or (pane_busy and ("pane", "process-info") in [c[:2] for c in calls])
                 return {"agent": {"agent_status": "working"}} if up else None
@@ -156,6 +161,14 @@ class Crew(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn(("tab", "close", "w9:t3"), calls)
         self.assertEqual(len([l for l in out if "timed out" in l]), 1)
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
+    def test_a_start_that_timed_out_after_the_teammate_already_finished_is_kept(self):
+        code, out, calls = self.start_with_timeout(appears_after=None, finishes=True)
+        self.assertEqual(code, 0)
+        self.assertFalse(any("did not start" in l for l in out))
+        self.assertNotIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
 
     def test_a_report_from_a_teammate_whose_record_is_missing_registers_it_again(self):
