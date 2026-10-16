@@ -643,3 +643,33 @@ class RestrictedStart(unittest.TestCase):
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
         self.assertFalse(any("invoke the fast-coding skill" in b.lower() for b in (p, d, w)))
+
+
+class PiStart(unittest.TestCase):
+    def test_pi_teammate_loads_mcp_but_no_extension_packages(self):
+        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"; proj.mkdir(parents=True)
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                return {"agents": []}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            return {}
+        a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": "pi:x/y"})
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
+                mock.patch.object(fc, "model_available", return_value=(True, "")), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing.ts"), \
+                mock.patch("builtins.print"):
+            fc.cmd_crew(a)
+        start = next(c for c in calls if c[:2] == ("agent", "start"))
+        args = list(start[start.index("--") + 1:])
+        pairs = list(zip(args, args[1:]))
+        self.assertIn(("-e", "builtin:mcp"), pairs)  # its MCP servers, Linear among them
+        self.assertEqual([v for k, v in pairs if k == "-e"], ["builtin:mcp"])  # the herdr extension is absent here, so nothing else is loaded
+        for flag in ("--no-extensions", "--no-prompt-templates", "--skill"):
+            self.assertIn(flag, args)  # the user's npm extension packages and prompt templates stay off
+        self.assertNotIn("builtin:mcp", fc.probe_command("pi:x/y"))  # the implementer probe is unchanged

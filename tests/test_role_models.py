@@ -127,7 +127,7 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": chain}}))
         with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
             fc.apply_config()
-        for up, want in (({fable, astra}, fable), ({fable}, fable), ({astra, opus}, opus)):  # wayfinder needs Linear, so astra (pi) is never taken
+        for up, want in (({fable, astra}, astra), ({fable}, fable), ({opus}, opus)):  # a pi session has the Linear MCP too, so astra is probed first
             fc._PROBED.clear()
             with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
                 model, effort, note = fc.crew_pick("wayfinder")
@@ -137,7 +137,7 @@ class PlannerChain(unittest.TestCase):
             fc.crew_pick("wayfinder")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
         self.assertIn(f"{fable} unavailable (down)", str(e.exception)); self.assertIn(f"{opus} unavailable (down)", str(e.exception))
         self.assertIn("models.crew.planner", str(e.exception))
-        self.assertIn(f"{astra} skipped (a pi session has no Linear tools), {fable} unavailable (down), using its fallback", note)
+        self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
         with mock.patch.object(fc, "model_available", return_value=(True, "")):  # a role with no Linear need still takes the pi model
             self.assertEqual(fc.crew_pick("helper", "planner")[0], astra)
 
@@ -233,6 +233,40 @@ class DesignerModels(unittest.TestCase):
             self.config(crew)
             self.assertEqual(fc.crew_pick("designer"), ("claude:claude-opus-5-5", "high", "models.crew.designer default"))
         self.config({**CREW, "designer": "claude:claude-sonnet-5-5"}); self.assertEqual(fc.crew_pick("designer"), ("claude:claude-sonnet-5-5", None, "models.crew.designer"))
+
+
+class PiKeepsLinear(unittest.TestCase):
+    """A pi session loads its MCP servers (Linear among them), so the Linear roles probe a pi model like any other."""
+    astra, sonnet = "pi:openai/gpt-6-astra", "claude:claude-sonnet-5-5"
+    setUp = PlannerChain.setUp
+
+    def chain(self, role):
+        d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": {role: {"model": self.astra, "fallback": self.sonnet}}}}))
+        with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
+            fc.apply_config()
+        fc._PROBED.clear()
+
+    def test_linear_roles_take_the_pi_model(self):
+        self.assertFalse(hasattr(fc, "LINEAR_ROLES"))
+        for role in ("wayfinder", "planner", "designer", "planner-2"):
+            self.chain(role.split("-")[0])
+            with mock.patch.object(fc, "model_available", return_value=(True, "")) as probe:
+                model, _, note, skipped = fc.crew_pick_full(role)
+            self.assertEqual((model, skipped), (self.astra, []), role)
+            self.assertNotIn("Linear", note)
+            self.assertEqual(probe.call_args_list[0].args, (self.astra,))  # probed, not filtered out
+
+    def test_a_failed_pi_probe_reports_its_error(self):
+        for role in ("wayfinder", "planner", "designer"):
+            self.chain(role)
+            with mock.patch.object(fc, "model_available", side_effect=lambda m: (m != self.astra, "model not found")):
+                model, _, note, skipped = fc.crew_pick_full(role)
+            self.assertEqual(model, self.sonnet)
+            self.assertEqual(skipped, [f"{self.astra} unavailable (model not found)"])
+            self.assertNotIn("a pi session has no Linear tools", note)
+        with mock.patch.object(fc, "model_available", return_value=(False, "down")), self.assertRaises(SystemExit) as e:
+            fc.crew_pick_full("designer")  # nothing runs: still exits naming each probe error
+        self.assertIn(f"{self.astra} unavailable (down)", str(e.exception))
 
 
 if __name__ == "__main__":
