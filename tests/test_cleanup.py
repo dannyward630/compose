@@ -74,6 +74,30 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertIn("fast/p/tests-001", self.run("branch", "--list", "fast/p/tests-001").stdout)
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")  # the cherry-pick was aborted cleanly
 
+    def main_commits(self, name, text, msg):
+        (self.repo / name).write_text(text); self.run("add", name); self.run("commit", "-qm", msg)
+
+    def test_commits_already_picked_by_hand_or_by_patch_are_skipped_and_the_next_task_lands(self):
+        f = self.proj / "results" / "tasks.json"
+        f.write_text(json.dumps({"feature": {}, "tasks": json.loads(f.read_text())["tasks"] + [{"id": "003", "title": "C", "files": [], "protected": ["c_test.go"], "test": "true", "body": "c"}]}))
+        self.main_commits("t.py", "import a, b\n\ndef one():\n    pass\n", "base")
+        self.crew_commits("001", "t.py", "import a, b, c\n\ndef one():\n    pass\n\ndef two():\n    pass\n")
+        self.crew_commits("002", "b_test.go", "b\n")
+        self.main_commits("t.py", "import a, b, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n", "another task's test")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run("cherry-pick", "fast/p/tests-001")  # the team lead picks it by hand and resolves the conflict
+        (self.repo / "t.py").write_text("import a, b, c, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n\ndef two():\n    pass\n")
+        self.run("add", "t.py"); self.run("-c", "core.editor=true", "cherry-pick", "--continue")
+        trimmed = "import a, b, c, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n"
+        self.main_commits("t.py", trimmed, "Drop test two")  # then edits it on the branch: a replay would bring it back
+        self.run("cherry-pick", "fast/p/tests-002")  # a clean hand pick: same patch
+        self.crew_commits("003", "c_test.go", "c\n")
+        fc.collect_tests(self.proj)
+        self.assertEqual((self.repo / "t.py").read_text(), trimmed)
+        self.assertEqual(self.run("log", "--format=%s", "-2").stdout.split("\n")[:2], ["Test c_test.go", "Test b_test.go"])
+        self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")
+        self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
+
     def test_brief_states_the_line_budget(self):
         tasks = fc.load_tasks(self.proj)
         self.assertIn("at most 60 lines", fc.test_brief(tasks[0], "c"))
