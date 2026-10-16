@@ -748,3 +748,60 @@ class PiStart(unittest.TestCase):
         for flag in ("--no-extensions", "--no-prompt-templates", "--skill"):
             self.assertIn(flag, args)  # the user's npm extension packages and prompt templates stay off
         self.assertNotIn("builtin:mcp", fc.probe_command("pi:x/y"))  # the implementer probe is unchanged
+
+
+class CardsById(unittest.TestCase):
+    """Briefs write cards to the map and report one needs-user line; answers travel by card id."""
+
+    def flat(self, text, start, end):
+        text = " ".join(text.split())
+        return text[text.index(start):text.index(end, text.index(start))]
+
+    def needs_user(self, text):
+        import re
+        lines = re.findall(r'needs-user "([^"]*)"', " ".join(text.split()))
+        self.assertTrue(lines, text)
+        return lines
+
+    def test_wayfinder_and_change_step_3_write_cards_then_report_one_line(self):
+        for name, brief in (("wayfinder", fc.WAYFINDER_BRIEF), ("change", fc.CHANGE_BRIEF)):
+            with self.subTest(name):
+                step = self.flat(brief, " 3. ", " 4. ")
+                self.assertNotIn("the text cards in full", step)
+                self.assertIn("Not yet specified", step)  # cards land on the map first ...
+                self.assertLess(step.index("Not yet specified"), step.index("needs-user"))  # ... before the report
+                for line in self.needs_user(step):
+                    self.assertIn("cards", line)
+                    self.assertIn("recommendation", line)
+                    self.assertNotIn("in full", line)
+        self.assertTrue(self.needs_user(self.flat(fc.CHANGE_BRIEF, " 3. ", " 4. "))[0].startswith("change {cid}: "))
+
+    def test_planner_decision_cards_and_story_proposal_report_one_line(self):
+        self.assertNotIn("<the cards in full>", fc.PLANNER_BRIEF)
+        self.assertNotIn("one needs-user list", " ".join(fc.PLANNER_BRIEF.split()))
+        cards = self.flat(fc.PLANNER_BRIEF, "Checks 1, 3, 6", "Checks 2, 4, 5")
+        self.assertIn("Not yet specified", cards)
+        for line in self.needs_user(cards):
+            self.assertIn("cards", line)
+            self.assertIn("recommendation", line)
+        stories = self.flat(fc.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
+        self.assertIn("map", stories)  # stories are drafted on the map ...
+        self.assertIn("needs-user", stories)  # ... and named in one line
+
+    def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
+        for name in ("WAYFINDER_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):
+            with self.subTest(name):
+                text = " ".join(getattr(fc, name).split())
+                self.assertIn("card id", text)
+                self.assertIn("unchanged", text)
+
+    def test_placeholders_and_the_rest_of_the_template_stay(self):
+        import string
+        fields = {"WAYFINDER_BRIEF": {"feature", "name", "page", "slug", "wt"}, "PLANNER_BRIEF": {"issue", "name", "slug", "wt"},
+                  "CHANGE_BRIEF": {"cid", "feature", "name", "page", "reflect", "slug", "why", "wt"}}
+        for name, want in fields.items():
+            with self.subTest(name):
+                text = getattr(fc, name)
+                self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
+        for brief in (fc.WAYFINDER_BRIEF, fc.CHANGE_BRIEF):
+            self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
