@@ -108,12 +108,13 @@ class WatchMemory(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
 
-    def watch(self, snap, **kw):
+    def watch(self, snap, role=None, **kw):
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.05, interval=0.01, stall=10_000, rewake=False)
         a.__dict__.update(kw)
         out = []
+        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role is not None else {})
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=snap), \
-                mock.patch("builtins.print", out.append):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
             try:
                 fc.cmd_watch(a)
             except SystemExit:
@@ -142,14 +143,40 @@ class WatchMemory(unittest.TestCase):
                     fc.cmd_watch(a)
         self.assertEqual(seen, [[f"event crew={ORCH} state=needs-user message='which db?'"]])
 
-    def test_each_watcher_keeps_its_own_memory(self):
+    def later(self):
+        snap = wsnap("passed")
+        snap["crew"] = {"hw-x": [{"at": at(0), "state": "tool-bug", "message": "crash"}],
+                        "hw-y": [{"at": at(0), "state": "working", "message": "half way"}]}
+        return snap
+
+    def test_watches_in_one_role_share_memory_whatever_their_from(self):
+        self.watch(wsnap("running"), now=True, role="engineering-manager")
+        self.watch(wsnap("running"), now=True, role="engineering-manager", from_="orchestrator")
+        self.assertTrue(any("crew=hw-x state=tool-bug" in line for line in self.watch(self.later(), role="engineering-manager")))
+        out = self.watch(self.later(), role="engineering-manager", from_="orchestrator")  # already reported in this role
+        self.assertFalse(any("crew=hw-x" in line for line in out), out)
+        self.assertIn("event timeout", out[-1])
+
+    def test_now_with_from_marks_the_state_seen_for_the_whole_role(self):
         self.watch(wsnap("running"), now=True)
-        self.watch(wsnap("running"), now=True, from_="orchestrator")
-        later = wsnap("passed")
-        later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
-        self.watch(later)  # the team lead's own watch reports the task first
-        out = self.watch(later, from_="orchestrator")  # the engineering manager's watch still gets the team lead's question
-        self.assertTrue(any(f"event crew={ORCH} state=needs-user" in line for line in out), out)
+        now = self.watch(self.later(), now=True, from_="orchestrator")
+        self.assertFalse(any("crew=hw-y" in line for line in now), now)  # --from still filters what is printed
+        self.assertTrue(any("crew=hw-x state=tool-bug" in line for line in now), now)
+        self.assertIn("event timeout", self.watch(self.later())[-1])
+
+    def test_each_role_keeps_its_own_memory(self):
+        for role in ("orchestrator", "engineering-manager"):
+            self.watch(wsnap("running"), now=True, role=role)
+        for role in ("orchestrator", "engineering-manager"):
+            self.assertTrue(any("crew=hw-x state=tool-bug" in line for line in self.watch(self.later(), role=role)), role)
+            self.assertIn("event timeout", self.watch(self.later(), role=role)[-1])
+
+    def test_the_memory_file_is_named_for_the_role(self):
+        self.watch(wsnap(), now=True, role="engineering-manager", from_="orchestrator")
+        self.watch(wsnap(), now=True)
+        self.watch(wsnap(), now=True, role="", from_="x,orchestrator")
+        files = sorted(f.name for f in (self.proj / "results").glob("watch-*.json"))
+        self.assertEqual(files, ["watch-engineering-manager.json", "watch-manager.json"])
 
     def test_a_payment_halt_is_an_event(self):
         ev = fc.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
