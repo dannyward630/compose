@@ -70,7 +70,7 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("pane", "report-metadata"), ("agent", "get")])
+        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
         self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
@@ -78,9 +78,9 @@ class Crew(unittest.TestCase):
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
         self.assertEqual(json.loads(start[start.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}})  # no co-author trailer on a crew commit
-        sep = start.index("--")
-        self.assertIn("brief.md", start[sep + 1])  # the brief is the session's first prompt, passed at launch: no race with a later `herdr agent prompt`
-        self.assertNotIn(("agent", "prompt"), [c[:2] for c in calls])
+        self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
+        self.assertEqual(calls[3][2], "shop-q-neb-12")
+        self.assertIn("brief.md", calls[3][3])  # the brief goes in once the session is idle and ready
         prompt = (self.proj / "results" / "crew" / "shop-q-neb-12.brief.md").read_text()
         self.assertIn("fast-coding report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)

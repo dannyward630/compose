@@ -831,9 +831,9 @@ def herdr_error(*args, timeout=120):
     return out.get("result", out), None
 
 def herdr_await_start(agent, tries=3):
-    """Return once `agent` has started on the prompt it was launched with. The brief is the session's initial prompt, so nothing
-    can reach it first; this only confirms the submission landed (status working, blocked, or done), presses Enter when the box
-    kept the text without submitting, and fails loudly with the agent name when it still did not start."""
+    """Return once `agent` has started on its brief, the first prompt it gets. This only confirms the submission landed (status
+    working, blocked, or done), presses Enter when the box kept the text without submitting, and fails loudly with the agent name
+    when it still did not start."""
     def started():  # `done` counts too: a short first turn can finish before the check
         return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
     for attempt in range(tries + 1):
@@ -1817,11 +1817,11 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-            herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", first, "--tui-mode", "regular", "--no-extensions",
+            herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
                   *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model))
         else:
-            herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--", first,  # the prompt goes first: --allowedTools takes every argument after it as a tool
+            herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--settings", NO_ATTRIBUTION, "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")  # auto mode's classifier denied a first `npx` call as external code
     except RuntimeError as e:
@@ -1833,6 +1833,10 @@ def cmd_crew(a):
             for f in crew_dir(proj).glob(f"{name}.*"):
                 f.unlink()
             sys.exit(f"teammate {name} did not start: {e}")
+    try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
+        herdr("agent", "prompt", agent, first, check=True)
+    except RuntimeError as e:
+        sys.exit(f"teammate {name} came up but did not take its brief ({e}); send it with: herdr agent prompt {agent} {shlex.quote(first)}")
     herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
