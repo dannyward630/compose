@@ -101,6 +101,12 @@ class SkillCheck(unittest.TestCase):
             self.assertEqual(self.prompt(), "")
         self.assertEqual(self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "no session"}), "")
 
+    def test_an_empty_session_gets_no_notice(self):  # the Stop hook's stdin without a session_id: sessions would share one file
+        self.assertIsNone(fc.skill_notice(""))
+        (self.skill / "SKILL.md").write_text("v2\n")
+        self.assertIsNone(fc.skill_notice(""))
+        self.assertFalse(self.state.exists() and any(self.state.iterdir()))
+
     def test_the_plugin_registers_the_hook(self):
         hooks = json.loads((Path(__file__).resolve().parents[1] / "hooks" / "hooks.json").read_text())["hooks"]
         prompt = [h["command"] for e in hooks["UserPromptSubmit"] for h in e["hooks"]]

@@ -1904,6 +1904,8 @@ def skill_hashes():
 
 def skill_notice(session):
     """Record the skill version this session sees; the notice naming what changed since it last saw one, else None."""
+    if not session:  # no session id: every such caller would share one file
+        return None
     cur, f = skill_hashes(), SKILL_SEEN / f"{session}.json"
     seen = json.loads(f.read_text()) if f.exists() else None
     if seen != cur:
