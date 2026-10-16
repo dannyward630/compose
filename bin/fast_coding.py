@@ -4896,6 +4896,8 @@ def render_status(repo, projects):
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {project_after(proj)})" if project_after(proj) else ""
         out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{change_line(proj)}")
+        t = fc_cost.total(fc_cost.rows(proj))
+        out.append(f"  cost  {t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
@@ -5371,7 +5373,12 @@ def cmd_projects(a):
 
 def cmd_cost(a):
     """Tokens per teammate session and per run provider; --json prints the rows and their total."""
-    raise NotImplementedError("cmd_cost")
+    proj = project_dir(a)
+    rows = fc_cost.rows(proj)
+    if a.json:
+        print(json.dumps({"rows": rows, "total": fc_cost.total(rows)}, indent=2))
+    else:
+        print(fc_cost.render(rows))
 
 def cmd_status(a):
     """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress."""
