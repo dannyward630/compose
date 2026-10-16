@@ -53,7 +53,6 @@ WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
-LINEAR_ROLES = ("wayfinder", "planner", "designer")  # briefs that read and write Linear: only Claude Code sessions have the Linear MCP tools, pi sessions do not
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
 
@@ -1148,9 +1147,6 @@ def crew_pick_full(role, explicit=None):
             sys.exit(f"{label} is {m!r}, but teammate sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
                      f"or pi:<provider/model> (e.g. pi:openai/gpt-6-astra){where}; OpenCode ids are for implementers only")
     skipped = []
-    if key != "--model" and role.split("-", 1)[0] in LINEAR_ROLES:
-        skipped = [f"{m} skipped (a pi session has no Linear tools)" for m, _ in chain if not is_claude(m)]
-        chain = [c for c in chain if is_claude(c[0])] or [("claude", None)]
     for model, effort in chain:
         if (ok := model_available(model))[0]:
             break
@@ -1844,7 +1840,7 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-            herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
+            herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions", "-e", "builtin:mcp",
                   *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model))
         else:
