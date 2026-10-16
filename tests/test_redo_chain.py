@@ -102,3 +102,53 @@ class KeepFinishedLayers(unittest.TestCase):
             fc.cmd_run(mock.Mock(repo=str(self.repo), project="p", only=None, redo=True))
         os.environ.pop("FAST_CODING_REDO", None)
         self.assertEqual(ran, [["004", "005"], ["004", "005"], ["001", "003", "004", "005"]])  # Canceled stays out even on --redo
+
+
+class RewrittenTrunk(unittest.TestCase):
+    """The trunk itself was rebased onto a moved main: the chain still carries the trunk's old commits, which must not replay."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start()
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.git("init", "-q", "-b", "main")
+        (self.repo / "a.txt").write_text("five\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "init")
+        self.proj = self.repo / ".fast-coding" / "p"
+        (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
+        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "010", "after": ""}, {"id": "011", "after": "010"}]}))
+        self.git("checkout", "-q", "-b", "trunk")
+        (self.repo / "a.txt").write_text("FIVE\n"); self.git("commit", "-qam", "trunk work")
+        self.layer("010", "trunk", "010.txt", "x\n"); self.layer("011", "fast/p/010", "011.txt", "x\n")
+        self.git("checkout", "-q", "main"); (self.repo / "a.txt").write_text("5\n"); self.git("commit", "-qam", "main moves")
+        # the trunk rebased onto the moved main, its one commit resolved by hand: the chain's copy of it conflicts with this one
+        self.git("checkout", "-q", "-B", "trunk", "main")
+        (self.repo / "a.txt").write_text("5 FIVE\n"); self.git("commit", "-qam", "trunk work")
+
+    def tearDown(self):
+        self.env.stop()
+
+    def git(self, *a):
+        return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def layer(self, tid, base, name, text):
+        self.git("checkout", "-q", "-b", f"fast/p/{tid}", base)
+        (self.repo / name).write_text(text)
+        self.git("add", "-A"); self.git("commit", "-qm", f"task {tid}")
+
+    def test_the_chain_replays_only_its_own_commits_onto_the_rewritten_trunk(self):
+        chain = fc.linearize(self.repo, self.proj, "trunk", fc.stack_worktree(self.repo, self.proj, "trunk"))
+        self.assertEqual(chain, ["fast/p/010", "fast/p/011"])
+        self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")
+        self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/011"), "2")
+        self.assertEqual(self.git("show", "fast/p/011:a.txt"), "5 FIVE")
+
+    def test_a_layer_that_cannot_be_rebased_stops_the_run_with_one_line(self):
+        self.git("checkout", "-q", "fast/p/011"); (self.repo / "a.txt").write_text("eleven\n"); self.git("commit", "-qam", "task 011 edits a")
+        self.git("checkout", "-q", "trunk")
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
+        with mock.patch.object(fc, "say") as say, mock.patch.object(fc, "preflight", lambda m: None), mock.patch.object(fc, "herdr_space", lambda p: None), \
+             self.assertRaises(SystemExit) as e:
+            fc.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
+        self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept
+        self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
+        self.assertIn("fast/p/011", "".join(str(c) for c in say.call_args_list))

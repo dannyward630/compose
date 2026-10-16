@@ -2636,7 +2636,7 @@ def task_base(repo, proj, meta):
         chain = linearize(repo, proj, trunk, stack_worktree(repo, proj, trunk))
         missing = [b for b in unmerged if b not in chain]
         if missing:
-            raise RuntimeError(f"after: {', '.join(missing)} could not be chained (rebase conflict); resolve it, then re-run this task")
+            raise RuntimeError(f"after: {', '.join(missing)} could not be chained: {STACK_STOP or 'rebase conflict'}")
         # Base on the highest dependency, not the chain top: layers ordered after this task must stay above it in history.
         base = max(unmerged, key=chain.index)
         return base, sh(["git", "rev-parse", base], repo).stdout.strip()
@@ -3265,6 +3265,7 @@ def task_finished(proj, meta, redo=False):
     status = json.loads(f.read_text()).get("status") if f.exists() else None
     return f"its result is {status}" if status in FINISHED and not redo else None
 STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
+STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
 def linearize(repo, proj, trunk, wt):
     with STACK_LOCK:
@@ -3273,22 +3274,32 @@ def linearize(repo, proj, trunk, wt):
 def _linearize(repo, proj, trunk, wt):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
+    global STACK_STOP
+    STACK_STOP = ""
     chain = chain_order(repo, proj, trunk)
     linear, prev = [], trunk
     replaced = replaced_tips(repo, proj)
+    tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     for b in chain:
         if not contains(prev, b):
-            # A layer below was rebuilt: b still carries its old commits, which the rebuilt layer replaces. Start the replay above them.
-            old = [t for rb, t in replaced if rb in linear and contains(t, b)]
+            # b still carries the old commits of what it was built on: a layer below that was rebuilt or rebased, or the trunk
+            # itself when it was rewritten (rebased onto a moved main). Replay only b's own commits: start above the old tip it
+            # was built on. The trunk's old tip comes from its reflog (fork-point); without one, a plain rebase is the best guess.
+            old = [t for rb, t in tips if rb in linear and contains(t, b)]
+            fork = sh(["git", "merge-base", "--fork-point", trunk, b], repo, check=False).stdout.strip()
+            if fork and not old:
+                old.append(fork)
             upstream = max(old, key=lambda t: int(sh(["git", "rev-list", "--count", f"{trunk}..{t}"], repo).stdout)) if old else prev
+            tips.append((b, sh(["git", "rev-parse", b], repo).stdout.strip()))
             sh(["git", "checkout", "-q", b], wt)
             r = sh(["git", "rebase", "-q", "--onto", prev, upstream], wt, check=False)
             if r.returncode:
                 sh(["git", "rebase", "--abort"], wt, check=False)
                 sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-                say(f"stack  STOP  {b} conflicts when rebased onto {prev}; the layers below it are kept. Resolve by hand: "
-                    f"git checkout {b} && git rebase {prev}")
+                STACK_STOP = (f"{b} conflicts when rebased onto {prev}; the layers below it are kept. Resolve by hand: "
+                              f"git checkout {b} && git rebase --onto {prev} {upstream}, then re-run")
+                say(f"stack  STOP  {STACK_STOP}")
                 break
         linear.append(b)
         prev = b
@@ -3598,6 +3609,8 @@ def run_tasks(repo, proj, tasks, a):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
+        if STACK_STOP:
+            sys.exit(f"stack  STOP  {STACK_STOP}")
     herdr_space(proj)
     t0 = time.time()
     (proj / "results").mkdir(exist_ok=True)
@@ -3633,7 +3646,10 @@ def run_tasks(repo, proj, tasks, a):
             finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
             for f in finished:
                 p = running.pop(f)
-                r = f.result()
+                try:
+                    r = f.result()
+                except RuntimeError as e:  # a chain that no longer rebases: one line with the commands, not a traceback
+                    sys.exit(f"{p} STOP  {e}")
                 results.append(r)
                 if r["status"] in REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
                     reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
