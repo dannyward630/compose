@@ -81,5 +81,57 @@ class E2EBesideReview(unittest.TestCase):
         self.assertLess(max(a0, b0), min(a1, b1))  # the two waits overlap; wall time would depend on machine load
 
 
+def task_issue(ident, tid, crits, **kv):
+    body = "## Goal\nDo it.\n\n## Acceptance criteria\n" + "".join(f"- {c}\n" for c in crits)
+    block = "\n```fast-coding\n" + "\n".join(f"{k}: {v}" for k, v in {"id": tid, **kv, "test": "t"}.items()) + "\n```\n"
+    return {"id": ident, "title": tid, "description": body + block, "status": "Todo", "blockedBy": []}
+
+
+def hunk(path, body):
+    return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+{body}\n"
+
+
+class AcceptanceJudge(unittest.TestCase):
+    """The judge reads each task's own diff hunks, and confirm calls share one 60,000-character budget per task."""
+    def test_state_is_the_tasks_hunks_and_confirm_shares_one_budget_per_task(self):
+        repo, proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "p"
+        (repo / "tests").mkdir()
+        for f, n in (("a.py", 21000), ("tests/test_a.py", 21000), ("b.py", 31000)):
+            (repo / f).write_text("R" * n)  # whole files, which only confirm reads
+        proj.mkdir()
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            task_issue("ENG-2", "002", ["a1", "a2", "a3"], files="a.py", protected="tests/test_a.py"),
+            task_issue("ENG-3", "003", ["b1", "b2", "b3"], files="b.py"),
+            task_issue("ENG-4", "004", ["c1"], files="c.py")]})
+        diff = (hunk("a.py", "A_OWN") + hunk("lib/a.py", "NOT_MINE") + hunk("tests/test_a.py", "T_OWN") + hunk("b.py", "B" * 40000))
+        reply = {"model": "m", "answers": {f"c{i}": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}} for i in range(3)}}
+        sent = []
+        def confirm_call(env, system, user, max_tokens=500):
+            crit, code = user.split("\n\nCODE:\n", 1)
+            sent.append((crit[len("CRITERION: "):], code))
+            return True, "x"
+        with mock.patch.object(fc, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask, \
+                mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
+            res = fc.jev_acceptance({}, proj, diff, repo=repo)
+        states = {c.args[2]["task"]: c.args[2] for c in ask.call_args_list if c.args[4] == "Jev acceptance"}
+        a, b, c = states["002"], states["003"], states["004"]
+        self.assertEqual(a["files"], ["a.py", "tests/test_a.py"])
+        self.assertLess(a["code"].index("A_OWN"), a["code"].index("T_OWN"))
+        self.assertNotIn("NOT_MINE", a["code"])  # lib/a.py is another path, not a.py
+        self.assertNotIn("B" * 10, a["code"])
+        self.assertNotIn("R" * 10, a["code"] + b["code"])  # the state never reads the repo
+        self.assertTrue(b["code"].startswith("diff --git a/b.py b/b.py"))
+        self.assertEqual(len(b["code"]), fc.JEV_CODE_CAP)
+        self.assertEqual(c["code"], diff[:fc.JEV_CODE_CAP])  # no hunk of its own: the whole diff, capped
+        for prefix in ("a", "b"):
+            calls = [code for crit, code in sent if crit.startswith(prefix)]
+            self.assertEqual(len(calls), 2, prefix)  # the second call gets the rest of the budget, the third none
+            self.assertLessEqual(sum(map(len, calls)), 60000, prefix)
+            spent = [r for r in res["suspects"] if r["criterion"].startswith(prefix) and r.get("evidence") == "confirm budget spent"]
+            self.assertEqual([r["confirmed"] for r in spent], [False], prefix)
+            self.assertNotIn(spent[0]["criterion"], [crit for crit, _ in sent])
+
+
 if __name__ == "__main__":
     unittest.main()
