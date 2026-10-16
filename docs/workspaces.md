@@ -71,9 +71,9 @@ A Linear error never stops a run.
 - An entry is a model id, or `{"model": ..., "effort": "high"}`.
   The second form sets Claude Code's `--effort`, or pi's `--thinking` for a `pi:` model.
 - An entry may carry a `fallback`, which is another entry or an ordered list.
-- `crew start` probes the primary and then each fallback, once a day each.
+- `crew start` probes the model it would start on, then each fallback in turn, once a day each.
   It takes the first one that answers and prints which one and why.
-  It never probes the last entry.
+  When none answers, it stops before opening a tab and names each model with the error its probe got.
 - The team lead's model is the `orchestrator` entry, else `default`.
   It delegates, so it never uses `planner`.
   The wayfinder uses `planner` when it has no entry.

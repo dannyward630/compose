@@ -1116,8 +1116,8 @@ def crew_pick_full(role, explicit=None):
     """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
     models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning role (the wayfinder
     teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
-    probes its model first and then each fallback in order, taking the first one its harness can run; the last is used
-    unprobed. Teammate sessions run in pi or Claude Code."""
+    probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it
+    exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""
     if explicit and explicit not in CREW_MODELS:
         key, chain = "--model", [(explicit, None)]
     else:
@@ -1141,10 +1141,13 @@ def crew_pick_full(role, explicit=None):
     if key != "--model" and role.split("-", 1)[0] in LINEAR_ROLES:
         skipped = [f"{m} skipped (a pi session has no Linear tools)" for m, _ in chain if not is_claude(m)]
         chain = [c for c in chain if is_claude(c[0])] or [("claude", None)]
-    for i, (model, effort) in enumerate(chain):
-        if i == len(chain) - 1 or (ok := model_available(model))[0]:
+    for model, effort in chain:
+        if (ok := model_available(model))[0]:
             break
         skipped.append(f"{model} unavailable ({ok[1]})")
+    else:
+        sys.exit(f"{label}: no model in its chain can run: {', '.join(skipped)}. Fix the entry in {CONFIG_PATH} or pass --model; "
+                 f"`fast-coding models --probe` re-asks after a transient failure")
     return model, effort, label + (": " + ", ".join(skipped) + ", using its fallback" if skipped else ""), skipped
 
 def crew_fallback(proj, name, role, skipped, used):

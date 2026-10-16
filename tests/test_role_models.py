@@ -13,6 +13,9 @@ CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-s
 
 class RoleModels(unittest.TestCase):
     """Teammate sessions are Claude Code; models.crew picks the model per role, and a model id always names its harness."""
+    def setUp(self):
+        p = mock.patch.object(fc, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
+
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
@@ -94,9 +97,13 @@ class PlannerChain(unittest.TestCase):
             self.addCleanup(setattr, fc, k, {})
         self.probe_cache = d / "probe.json"
 
-    def probe(self, ok):
-        out = json.dumps({"is_error": not ok, "result": "ok" if ok else "model not found"})
-        return mock.patch.object(fc.subprocess, "run", return_value=fc.subprocess.CompletedProcess([], 0 if ok else 1, out, ""))
+    def probe(self, ok, down=("claude-fable-5-1",)):
+        """Every probe answers when ok; otherwise the models in `down` refuse with "model not found" and the rest answer."""
+        def run(cmd, **kw):
+            bad = not ok and cmd[cmd.index("--model") + 1] in down
+            out = json.dumps({"is_error": bad, "result": "model not found" if bad else "ok"})
+            return fc.subprocess.CompletedProcess(cmd, 1 if bad else 0, out, "")
+        return mock.patch.object(fc.subprocess, "run", side_effect=run)
 
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
@@ -118,12 +125,16 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": chain}}))
         with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
             fc.apply_config()
-        for up, want in (({astra}, opus), ({fable, astra}, fable), ({fable}, fable), (set(), opus)):  # the last is never probed; wayfinder needs Linear, so astra (pi) is never taken
+        for up, want in (({fable, astra}, fable), ({fable}, fable), ({astra, opus}, opus)):  # wayfinder needs Linear, so astra (pi) is never taken
             fc._PROBED.clear()
             with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
                 model, effort, note = fc.crew_pick("wayfinder")
             self.assertEqual(model, want)
         self.assertEqual(effort, "high")
+        with mock.patch.object(fc, "model_available", side_effect=lambda m: (False, "down")), self.assertRaises(SystemExit) as e:
+            fc.crew_pick("wayfinder")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
+        self.assertIn(f"{fable} unavailable (down)", str(e.exception)); self.assertIn(f"{opus} unavailable (down)", str(e.exception))
+        self.assertIn("models.crew.planner", str(e.exception))
         self.assertIn(f"{astra} skipped (a pi session has no Linear tools), {fable} unavailable (down), using its fallback", note)
         with mock.patch.object(fc, "model_available", return_value=(True, "")):  # a role with no Linear need still takes the pi model
             self.assertEqual(fc.crew_pick("helper", "planner")[0], astra)
@@ -136,6 +147,22 @@ class PlannerChain(unittest.TestCase):
         self.assertIn("Model not found", fc.probe_result("pi:openai/x", bad)[1])
         self.assertEqual(fc.probe_command("pi:openai/gpt-6-astra")[0], "pi")
         self.assertIn("openai/gpt-6-astra", fc.probe_command("pi:openai/gpt-6-astra"))
+
+    def test_a_lone_model_is_probed_and_a_refusal_fails_before_any_tab(self):
+        calls = []
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        a = SimpleNamespace(action="start", role="explore", repo=str(proj), project="p", model=None, title=None,
+                            brief="look", cwd=None, force=False)
+        with self.probe(False, down=("claude-sonnet-5-5",)), mock.patch.object(fc, "herdr", lambda *x, **k: calls.append(x)), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "project_dir", return_value=proj), \
+                mock.patch.object(fc, "project_worktree", return_value=proj), self.assertRaises(SystemExit) as e:
+            fc.cmd_crew(a)  # models.crew.default is one entry with no fallback
+        self.assertIn("claude:claude-sonnet-5-5 unavailable (model not found)", str(e.exception))
+        self.assertIn("models.crew.default", str(e.exception))
+        self.assertEqual(calls, [])
+        with self.assertRaises(SystemExit) as e:
+            fc.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (cached for the day now)
+        self.assertIn("--model", str(e.exception))
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
@@ -170,6 +197,9 @@ class PlannerChain(unittest.TestCase):
 
 class DesignerModels(unittest.TestCase):
     """design-NNN builders fall to models.crew.design; the designer defaults to Opus 5.5 at high effort."""
+    def setUp(self):
+        p = mock.patch.object(fc, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
+
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
