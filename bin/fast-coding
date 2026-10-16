@@ -762,6 +762,12 @@ class RateLimited(Exception):
         super().__init__("provider rate limit hit; session compacted")
         self.usage = usage
 
+def headless_env():
+    """The environment for a Claude Code process the CLI runs headless: no FAST_CODING_* at all, above all not the herdr
+    tab's role, project, and worktree, so the plugin's hooks treat it as no one's session (a team lead's Stop hook would
+    park a watch in it, and its guard would block an implementer's edits)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("FAST_CODING_")}
+
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
 
 def claude_once(cwd, prompt, timeout=900, model=None):
@@ -769,7 +775,7 @@ def claude_once(cwd, prompt, timeout=900, model=None):
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
            "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
     try:
         out = json.loads(p.stdout)
     except json.JSONDecodeError:
@@ -1088,7 +1094,7 @@ TRANSIENT = re.compile(r"overloaded|rate.?limit|too many requests|\b(5\d\d|429)\
 def probe_once(model, timeout):
     """(ok, why, transient) from one probe turn. Only a clear answer (ok, or a refusal such as an unknown model) is definite."""
     try:
-        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
         ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         return False, f"{type(e).__name__}: {e}"[:160], True
@@ -5190,9 +5196,10 @@ def cmd_watch(a, rewake=False):
 
 def cmd_rewake(a):
     """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
-    wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once."""
+    wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once,
+    a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
     project = os.environ.get("FAST_CODING_PROJECT")
-    if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project:
+    if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
     cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL), rewake=True)

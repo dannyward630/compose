@@ -164,6 +164,15 @@ class PlannerChain(unittest.TestCase):
             fc.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (cached for the day now)
         self.assertIn("--model", str(e.exception))
 
+    def test_headless_claude_runs_carry_no_fast_coding_env(self):
+        lead = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "p", "FAST_CODING_REPO": "/r"}  # the team lead's tab
+        done = fc.subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
+        with mock.patch.dict(fc.os.environ, lead), mock.patch.object(fc.subprocess, "run", return_value=done) as run:
+            fc.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
+            fc.claude_once(".", "hi")
+        for call in run.call_args_list:
+            self.assertEqual([k for k in call.kwargs.get("env") or fc.os.environ if k.startswith("FAST_CODING_")], [])
+
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
             fc.crew_pick("wayfinder"); fc.crew_pick("wayfinder")

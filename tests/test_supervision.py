@@ -165,7 +165,7 @@ class Rewake(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
-        self.env = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r"}
+        self.env = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
 
     def rewake(self, snaps, env=None):
         err = io.StringIO()
@@ -186,6 +186,11 @@ class Rewake(unittest.TestCase):
 
     def test_sessions_that_are_not_the_team_lead_return_at_once(self):
         code, err, pd = self.rewake([], env={"FAST_CODING_ROLE": "crew", "FAST_CODING_PROJECT": "hw"})
+        self.assertEqual((code, err), (0, ""))
+        pd.assert_not_called()
+
+    def test_a_headless_session_returns_at_once(self):
+        code, err, pd = self.rewake([], env={**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"})  # what Claude Code sets for `claude -p`
         self.assertEqual((code, err), (0, ""))
         pd.assert_not_called()
 
