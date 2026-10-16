@@ -393,5 +393,59 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md;", self.text)
 
 
+class CardsOnTheMap(unittest.TestCase):
+    FORM = '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`'
+
+    def setUp(self):
+        self.text = read("sections/0b.md")
+        self.lines = self.text.splitlines()
+
+    def step(self, n):
+        start = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. "))
+        end = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n + 1}. "))
+        self.assertLess(start, end, n)
+        return self.lines[start:end]
+
+    def test_steps_keep_their_order(self):
+        starts = [next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. ")) for n in range(1, 8)]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_step_2_writes_cards_to_the_map_first_numbered(self):
+        step = " ".join(self.step(2))
+        self.assertRegex(step, r"Not yet specified")
+        self.assertRegex(step, r"\bnumbered\b")
+        self.assertRegex(step, r"\bfirst\b")
+        self.assertIn("recommended option", step, "the card still carries its recommendation")
+
+    def test_step_3_reports_one_line_and_keeps_the_lavish_file(self):
+        step = " ".join(self.step(3))
+        self.assertIn(self.FORM, step)
+        self.assertIn("visual cards open in Lavish: <file>", step)
+        self.assertNotIn("the text cards in full", self.text)
+        self.assertNotIn("with the text cards", self.text)
+
+    def test_steps_3_and_6_forward_unchanged_read_once_answer_by_card_id(self):
+        both = " ".join(self.step(3) + self.step(6))
+        self.assertRegex(both, r"team lead forwards[^.]*unchanged")
+        self.assertRegex(both, r"engineering manager[^.]*reads the issue once")
+        self.assertRegex(both, r"by card id")
+        self.assertIn("herdr agent prompt", " ".join(self.step(3)))
+
+    def test_step_6_uses_the_one_line_form(self):
+        step = " ".join(self.step(6))
+        self.assertNotIn("text cards in a new `needs-user`", step)
+        self.assertIn("<n> cards <ids>", step)
+        self.assertIn("--agent-reply", step, "visual cards still go on the same page")
+
+    def test_plain_text_and_frame0_sentences_kept(self):
+        self.assertNotIn("\u2014", self.text)
+        for line in (Frame0OptIn.FIRST, Frame0OptIn.OPT_IN, Frame0OptIn.ONLY):
+            self.assertEqual(self.lines.count(line), 1, line)
+        new = ("<n> cards <ids>", "unchanged", "reads the issue once", "by card id", "numbered")
+        for line in self.step(2) + self.step(3) + self.step(6):
+            if any(m in line for m in new):
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
