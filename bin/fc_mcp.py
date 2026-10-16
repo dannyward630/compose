@@ -12,7 +12,7 @@ def keeps_skills(role) -> bool:
     raise NotImplementedError("fc_mcp.keeps_skills")
 
 
-def installed_servers() -> list[str]:
+def installed_servers(cwd) -> list[str]:
     raise NotImplementedError("fc_mcp.installed_servers")
 
 
