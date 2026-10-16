@@ -2901,11 +2901,16 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         if verdict == "pass":
             status = "passed"
             break
+        output = test.stdout + test.stderr
         problems = []
         if test.returncode != 0:
-            summary = entry["summary"] = condense_failure(test.stdout + test.stderr)
+            (proj / "results").mkdir(parents=True, exist_ok=True)
+            log_path = proj / "results" / f"{tid}.test.log"
+            log_path.write_text(output)
+            summary = entry["summary"] = condense_failure(output)
             problems.append(f"The test still fails.\nCommand: {meta['test']}\nExit code: {test.returncode}\n"
-                            + (f"What failed:\n{summary}\n" if summary else "") + f"Output (tail):\n{entry['test_output']}")
+                            + (f"What failed:\n{summary}\n" if summary else "") + f"Output (tail):\n{output[-1000:]}"
+                            + f"\nFull output: {log_path.resolve()}; read it before you change anything.")
         if over:
             problems.append(f"Your change is {lines} lines (added plus deleted); the hard limit is {MAX_DIFF_LINES}. Shrink it: revert "
                             "unrelated edits, drop new files that are not named in the task, remove long comments and duplication.")
