@@ -362,3 +362,56 @@ class Workspaces(unittest.TestCase):
         for bad in (("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
             with self.assertRaises(SystemExit):
                 ws(*bad)
+
+
+class RetryMessage(unittest.TestCase):
+    def run_three(self, summary="", backup=None):
+        """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path)."""
+        root = Path(tempfile.mkdtemp())
+        repo, proj = root / "repo", root / "proj"
+        repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        test = "python3 -c \"s=open('a.txt').read().strip(); print(s*5000); raise SystemExit(s!='yes')\""
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": test,
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        log = proj / "results" / "001.test.log"
+        prompts, seen = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt)
+            seen.append(log.read_text() if log.exists() else None)
+            (Path(cwd) / "a.txt").write_text(["a", "b", "yes"][len(prompts) - 1] + "\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+                mock.patch.object(fc, "condense_failure", return_value=summary), \
+                mock.patch.object(fc, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc, "FALLBACK_MODEL", backup), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.run_task(repo, proj, task, 3), prompts, seen, log
+
+    def test_retry_sends_a_short_tail_and_the_full_log_path(self):
+        r, prompts, seen, log = self.run_three(summary="case_x expected yes, got a")
+        self.assertEqual(r["status"], "passed")
+        self.assertEqual(seen[1:], ["a" * 5000 + "\n", "b" * 5000 + "\n"])  # whole output, overwritten by the next failed attempt
+        for p, ch in ((prompts[1], "a"), (prompts[2], "b")):
+            self.assertIn("What failed:\ncase_x expected yes, got a\n", p)
+            tail = p.split("Output (tail):\n", 1)[1].split("Full output: ", 1)[0]
+            self.assertTrue(900 <= tail.count(ch) <= 1000, tail.count(ch))
+            path = p.split("Full output: ", 1)[1].split(";", 1)[0]
+            self.assertTrue(Path(path).is_absolute(), path)
+            self.assertEqual(Path(path).resolve(), log.resolve())
+        self.assertEqual([len(e["test_output"]) for e in r["log"][:2]], [3000, 3000])
+
+    def test_no_summary_leaves_out_what_failed(self):
+        _, prompts, _, _ = self.run_three(summary="")
+        self.assertNotIn("What failed:", prompts[1])
+        self.assertIn("Full output: ", prompts[1])
+
+    def test_fallback_starts_from_the_task_and_ends_with_the_same_problems(self):
+        r, prompts, _, _ = self.run_three(backup=BACKUP)
+        self.assertEqual(r["log"][0]["fallback"]["to"], BACKUP)
+        self.assertTrue(prompts[1].startswith(prompts[0]))
+        problems = prompts[1][prompts[1].index("The test still fails."):]
+        self.assertIn("Full output: ", problems)
+        self.assertLess(len(problems), 2000)  # the short tail, not the 3,000-character one
