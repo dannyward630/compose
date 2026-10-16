@@ -66,9 +66,9 @@ class Crew(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
-                mock.patch("builtins.print"):
+                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: []), mock.patch("builtins.print"):
             fc.cmd_crew(a)
-        frame0.assert_called_once_with(fc.project_worktree(self.proj), fc.frame0_port(self.proj))  # before the session reads its MCP servers
+        frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
@@ -77,7 +77,7 @@ class Crew(unittest.TestCase):
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
-        self.assertEqual(json.loads(start[start.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}})  # no co-author trailer on a crew commit
+        self.assertEqual(json.loads(start[start.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})  # no co-author trailer on a crew commit
         self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
         self.assertEqual(calls[3][2], "shop-q-neb-12")
         self.assertIn("brief.md", calls[3][3])  # the brief goes in once the session is idle and ready
@@ -572,3 +572,70 @@ class AtomicState(unittest.TestCase):
             return r
         with mock.patch.object(fc, "load_tasks", load), mock.patch.object(fc, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["tasks"], {})
+
+
+class RestrictedStart(unittest.TestCase):
+    """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
+    P = ["claude_ai_Claude_Docs", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
+
+    def start(self, role, model="claude:claude-opus-5-5", **kw):
+        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        proj.mkdir(parents=True)
+        calls = []
+        def herdr(*args, **k):
+            calls.append(args)
+            return {"agents": []} if args[:2] == ("agent", "list") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else \
+                {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
+        a = type("A", (), dict(action="start", role=role, title="t", brief="b", **kw))  # no `frame0` unless given: internal callers build it so
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
+                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc, "frame0_register") as self.frame0, mock.patch.object(fc, "claude_trusted", return_value=True), \
+                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"):
+            fc.cmd_crew(a)
+        start = next(c for c in calls if c[:2] == ("agent", "start"))
+        return list(start[start.index("--") + 1:])
+
+    def patterns(self, args):
+        self.assertIn("--disallowedTools", args)
+        i = args.index("--disallowedTools") + 1
+        return set(args[i:next(j for j in range(i, len(args)) if args[j].startswith("--"))])
+
+    def test_planner_gets_crew_settings_and_drops_the_other_servers(self):
+        args = self.start("planner")
+        self.assertEqual(json.loads(args[args.index("--settings") + 1]), {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
+        self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
+        self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P if p not in ("claude_ai_Linear", "graft")})
+        self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
+        self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
+        self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
+
+    def test_designer_keeps_linear_graft_and_figma(self):
+        dropped = self.patterns(self.start("designer"))
+        for p in ("claude_ai_Linear", "graft", "framelink-figma", "plugin_product-management_figma"):
+            self.assertNotIn(f"mcp__{p}__*", dropped)
+        self.assertIn("mcp__claude_ai_Notion__*", dropped)
+
+    def test_only_design_roles_keep_skills(self):
+        for role, off in [("orchestrator", True), ("planner", True), ("wayfinder", True), ("explore", True), ("toolsmith", True),
+                          ("designer", False), ("design-003", False), ("design-review", False)]:
+            with self.subTest(role=role):
+                self.assertEqual("--disable-slash-commands" in self.start(role), off)
+
+    def test_frame0_is_opt_in(self):
+        self.assertNotIn("mcp__frame0__*", self.patterns(self.start("planner", frame0=True)))
+        self.frame0.assert_called_once()
+        self.assertIn("mcp__frame0__*", self.patterns(self.start("planner", frame0=False)))
+        self.frame0.assert_not_called()
+
+    def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
+        args = self.start("wayfinder", model="pi:x/y")
+        self.assertEqual(args[args.index("--skill") + 1], str(fc.CLI_REPO / "SKILL.md"))
+        self.assertNotIn("--disallowedTools", args)
+
+    def test_briefs_name_skill_md_and_their_sections(self):
+        p, d, w = fc.PLANNER_BRIEF, fc.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
+        self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
+        self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
+        self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
+        self.assertFalse(any("invoke the fast-coding skill" in b.lower() for b in (p, d, w)))
