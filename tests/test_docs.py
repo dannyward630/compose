@@ -308,5 +308,40 @@ class Frame0OptIn(unittest.TestCase):
             self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
+class LinearFields(unittest.TestCase):
+    SENTENCE = "Every `list_issues` call passes `fields` (`id`, `title`, `status`, and more only when the body is needed): the default reply carries whole descriptions and costs about ten times the tokens."
+    LEAD = "You create and edit issues and write judgment comments through the Linear MCP tools"
+
+    def test_sentence_once_in_section_0_right_after_the_mcp_line(self):
+        text = read("SKILL.md")
+        self.assertEqual(text.count(self.SENTENCE), 1)
+        section = text.split("\n### 0. ", 1)[1].split("\n### 0i. ", 1)[0]
+        lines = section.splitlines()
+        self.assertIn(self.SENTENCE, lines, "the sentence is its own line inside section 0")
+        lead = [i for i, l in enumerate(lines) if l.startswith(self.LEAD)]
+        self.assertEqual(len(lead), 1)
+        self.assertEqual(lines[lead[0] + 1], self.SENTENCE)
+        self.assertIn("`list_issues`", lines[lead[0]], "the MCP tools line itself is unchanged")
+
+    def test_size_and_one_pointer_per_moved_section(self):
+        text = read("SKILL.md")
+        self.assertLess(len(text.encode()), 30000)
+        lines = text.splitlines()
+        pointers = [l for l in lines if re.match(r"### \S+\. .*: read sections/\S+\.md$", l)]
+        expected = []
+        for sid in MOVED:
+            title = read(f"sections/{sid}.md").splitlines()[0].split(f"### {sid}. ", 1)[1]
+            expected.append(f"### {sid}. {title}: read sections/{sid}.md")
+            self.assertEqual(lines.count(expected[-1]), 1, sid)
+        self.assertEqual(pointers, expected, "pointer lines keep MOVED order and nothing else points")
+
+    def test_plain_dashes_and_one_sentence_per_line_in_section_0(self):
+        text = read("SKILL.md")
+        self.assertNotIn("\u2014", text)
+        for line in text.split("\n### 0. ", 1)[1].split("\n### 0i. ", 1)[0].splitlines()[1:]:
+            if not line.startswith("|"):
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
