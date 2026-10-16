@@ -243,5 +243,45 @@ class BriefsNameFiles(unittest.TestCase):
         self.assertNotIn("\u2014", self.text)
 
 
+class PlannerReadsWritingPlans(unittest.TestCase):
+    LS = "`ls ~/.claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md`"
+    SKILLS_OFF = "The planner session starts with skills off, so every skill it needs is read as a file."
+    RUN = [
+        "Read all of it.",
+        f"Then read the writing-plans skill file (the newest of {LS}) for how to write the plan, but not where: the plan is a `## Plan` section in the feature issue's description (`save_issue`), never a file.",
+        "Writing-plans' own save path does not apply.",
+        SKILLS_OFF,
+    ]
+
+    def test_planner_reads_the_newest_writing_plans_file(self):
+        text = read("sections/1.md")
+        self.assertNotRegex(text, r"(?i)invoke\W*superpowers:writing-plans")
+        self.assertIn(self.LS, text)
+        self.assertIn("the newest", text)
+        self.assertEqual(text.count(self.SKILLS_OFF), 1)
+
+    def test_edited_sentences_keep_their_words_and_order(self):
+        flat = " ".join(read("sections/1.md").split())
+        self.assertIn(" ".join(self.RUN), flat)
+
+    def test_rest_of_the_section_is_unchanged(self):
+        lines = read("sections/1.md").splitlines()
+        first = next(i for i, l in enumerate(lines) if l.startswith("Read all of it."))
+        last = next((i for i, l in enumerate(lines) if l.endswith(self.SKILLS_OFF)), None)
+        self.assertIsNotNone(last, self.SKILLS_OFF)
+        self.assertEqual(lines[0], "### 1. Plan from the spec")
+        self.assertEqual(lines[first - 1], "Input is the feature issue's map and its Decisions so far, plus `DESIGN.md`, a PRD, whatever the repo already had.")
+        self.assertTrue(lines[last + 1].startswith("`<project>` is a short slug for this piece of work"))
+        self.assertEqual(len(lines) - (last + 1 - first), 15)
+        self.assertTrue(lines[-1].startswith("The plan's `## Design facts`"))
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        text = read("sections/1.md")
+        self.assertNotIn("—", text)
+        for line in text.splitlines()[1:]:
+            if not line.startswith("|"):
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
