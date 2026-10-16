@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,39 +13,51 @@ def log_dir(cwd):
     return Path.home() / ".claude" / "projects" / slug
 
 
+_cache = {}
+
+
 def usage(path):
+    p = Path(path).resolve()
+    st = os.stat(p)
+    hit = _cache.get(str(p))
+    if hit and hit[0] == st.st_mtime and hit[1] == st.st_size:
+        return hit[2]
     sums = dict.fromkeys(KEYS.values(), 0)
     model, turns = None, 0
     seen = set()
-    for line in Path(path).read_text().splitlines():
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            continue
-        msg = obj.get("message")
-        if obj.get("type") != "assistant" or not isinstance(msg, dict):
-            continue
-        mid = msg.get("id")
-        if mid in seen:
-            continue
-        seen.add(mid)
-        turns += 1
-        if model is None:
-            model = msg.get("model")
-        for src, dst in KEYS.items():
-            sums[dst] += msg.get("usage", {}).get(src) or 0
-    return dict(model=model, turns=turns, **sums)
-
-
-def _first_user(path):
-    try:
-        for line in Path(path).read_text().splitlines():
+    with open(p) as f:
+        for line in f:
             try:
                 obj = json.loads(line)
             except ValueError:
                 continue
-            if obj.get("type") == "user":
-                return obj
+            msg = obj.get("message")
+            if obj.get("type") != "assistant" or not isinstance(msg, dict):
+                continue
+            mid = msg.get("id")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            turns += 1
+            if model is None:
+                model = msg.get("model")
+            for src, dst in KEYS.items():
+                sums[dst] += msg.get("usage", {}).get(src) or 0
+    result = dict(model=model, turns=turns, **sums)
+    _cache[str(p)] = (st.st_mtime, st.st_size, result)
+    return result
+
+
+def _first_user(path):
+    try:
+        with open(path) as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("type") == "user":
+                    return obj
     except OSError:
         pass
     return None
