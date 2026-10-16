@@ -1614,11 +1614,7 @@ def cmd_testcrews(a):
     contract, budget = contract_file.read_text(), getattr(a, "budget", None)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = load_tasks(proj, required=True)
-    def finished(m):  # why a task needs no test writer, or None
-        f = proj / "results" / f"{m['id']}.json"
-        status = json.loads(f.read_text()).get("status") if f.exists() else None
-        return (f"its result is {status}" if status in FINISHED
-                else f"its state is {m['linear_state']}" if m.get("linear_state") in ("Done", "Canceled") else None)
+    finished = lambda m: task_finished(proj, m)  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
@@ -2740,13 +2736,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     if wt.exists():
         shutil.rmtree(wt)
     sh(["git", "worktree", "prune"], repo, check=False)
-    if not tag and sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0 \
-            and sh(["git", "merge-base", "--is-ancestor", branch, "HEAD"], repo, check=False).returncode != 0 \
-            and (proj / "results" / f"{tid}.json").exists() and json.loads((proj / "results" / f"{tid}.json").read_text()).get("status") in FINISHED \
-            and not os.environ.get("FAST_CODING_REDO"):
+    why = not tag and task_finished(proj, meta, redo=bool(os.environ.get("FAST_CODING_REDO")))
+    if why:
         # A passed layer may already have a PR, and a hand-done one carries a teammate's commit. Never replace either silently;
         # `--redo` says the user wants it rebuilt.
-        say(f"{tid} keep    {json.loads((proj / 'results' / f'{tid}.json').read_text())['status']} branch {branch} exists and is unmerged; pass --redo to rebuild it")
+        say(f"{tid} keep    {why}; pass --redo to rebuild it")
         return json.loads((proj / "results" / f"{tid}.json").read_text())
     replace_branch(repo, proj, branch)  # a re-run (or --redo) replaces the previous attempt
     sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
@@ -3250,6 +3244,16 @@ def chain_order(repo, proj, trunk):
     return sorted(order, key=lambda b: (depth(b), rank[b]))
 
 FINISHED = ("passed", "hand_done")  # a layer whose branch is the record: a run keeps it unless told to --redo
+
+def task_finished(proj, meta, redo=False):
+    """Why a task needs no more work, or None: the one rule `run`, `resume`, and `testcrews` share. Done or Canceled on Linear,
+    always; else, unless --redo, a passed result (its branch kept, or gone because it landed, which `status` reads as merged) or
+    a hand_done one (finished by hand, wherever its commits are: it needs no branch and never moves Linear again)."""
+    if meta.get("linear_state") in ("Done", "Canceled"):
+        return f"its state is {meta['linear_state']}"
+    f = proj / "results" / f"{meta['id']}.json"
+    status = json.loads(f.read_text()).get("status") if f.exists() else None
+    return f"its result is {status}" if status in FINISHED and not redo else None
 STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
 
 def linearize(repo, proj, trunk, wt):
@@ -3528,10 +3532,18 @@ def cmd_run(a):
     only = set(a.only.split(",")) if a.only else None
     if sh(["git", "status", "--porcelain"], repo).stdout.strip():
         sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
-    tasks = [m for m in code_tasks(load_tasks(proj, required=True)) if not linear_done(m) and (not only or m["id"] in only)]
+    tasks = [m for m in code_tasks(load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
-    if getattr(a, "redo", False):
+    redo = bool(getattr(a, "redo", False))
+    kept = {m["id"]: task_finished(proj, m, redo) for m in tasks}
+    for tid, why in kept.items():
+        if why:
+            say(f"{tid} keep    {why}" + ("; pass --redo to rebuild it" if why.startswith("its result") else ""))
+    tasks = [m for m in tasks if not kept[m["id"]]]
+    if not tasks:
+        return say("nothing to run: every task is finished")
+    if redo:
         os.environ["FAST_CODING_REDO"] = "1"
     # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
     wt = project_worktree(proj)
@@ -5383,7 +5395,7 @@ def cmd_resume(a):
         m = run_marker(proj)
         if not m or pid_alive(m.get("pid")):
             sys.exit("nothing to resume: no payment halt and no interrupted run recorded for this project" + (" (a run is live)" if m else ""))
-        done = {t for t in m["tasks"] if (json.loads((proj / "results" / f"{t}.json").read_text()).get("status") if (proj / "results" / f"{t}.json").exists() else "") in (*FINISHED, "already_green")}
+        done = {t["id"] for t in load_tasks(proj, required=True) if task_finished(proj, t)}
         state = {"command": "run", "remaining": [t for t in m["tasks"] if t not in done], "args": m["args"], "halted_at": m["started_at"], "provider": "interrupted run"}
         (proj / "results" / "run.json").unlink(missing_ok=True)
     else:
@@ -5393,7 +5405,7 @@ def cmd_resume(a):
     if state["command"] == "run":
         if sh(["git", "status", "--porcelain"], repo).stdout.strip():
             sys.exit("repo has uncommitted changes; commit first")
-        tasks = [m for m in load_tasks(proj, required=True) if m["id"] in set(state["remaining"])]
+        tasks = [m for m in load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not task_finished(proj, m)]
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
