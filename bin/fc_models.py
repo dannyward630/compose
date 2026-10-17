@@ -82,10 +82,12 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     sdir.mkdir(exist_ok=True)
     import uuid
     sid = session or str(uuid.uuid4())  # --session-id must be a UUID
+    env = fc_core.clean_env()  # no secret but the key pi bills to: pi's tools, the task's test among them, inherit its env
+    if "OPENROUTER_API_KEY" in os.environ:  # pi's custom providers read the key from env
+        env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
-           "--no-prompt-templates", "--thinking", "low", "--model", model, *pi_turn_key_args(model), prompt]
-    # The key goes in --api-key, not the env: pi's tools (the task's test among them) inherit its env.
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=fc_core.clean_env())
+           "--no-prompt-templates", "--thinking", "low", "--model", model, prompt]
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
@@ -204,20 +206,10 @@ def pi_id(model):
     """The --model value for a `pi:<provider/model>` id."""
     return model.split(":", 1)[1]
 
-def pi_key_args(model):
-    """pi's --api-key for the OpenRouter key, only for models routed through OpenRouter (others keep pi's own auth)."""
-    key = fc_config.openrouter_key()
-    return ["--api-key", key] if key and "openrouter" in pi_id(model) else []
-
-def pi_turn_key_args(model):
-    """--api-key for a pi turn on `model` (pi's own id): the workspace's key on every model; without one, the shell's or
-    ~/.compose/.env's on OpenRouter models. Never the env: pi's tools, the task's test among them, inherit it."""
-    return ["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY else pi_key_args("pi:" + model)
-
 def probe_command(model):
     if model.startswith("pi:"):
         return ["pi", "-p", "--mode", "json", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
-                "--thinking", "off", "--model", pi_id(model), *pi_key_args(model), "Reply with exactly: ok"]
+                "--thinking", "off", "--model", pi_id(model), "Reply with exactly: ok"]
     return ["claude", "-p", "--model", fc_claude.claude_id(model), "--output-format", "json", "Reply with exactly: ok"]
 
 def probe_result(model, p):

@@ -248,7 +248,7 @@ def cmd_crew(a):
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
             fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions", "-e", "builtin:mcp",
                   *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
-                  *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), *fc_models.pi_key_args(model), "--append-system-prompt", TRUST_PROMPT)
+                  *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), "--append-system-prompt", TRUST_PROMPT)
         else:
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),

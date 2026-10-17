@@ -32,7 +32,6 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
-        # No key in the pane's env: pi's tools (the task's test among them) inherit it. pi gets it in --api-key below.
         pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {"GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1",
                                                                      "COMPOSE_CONFIG": fc_core.scratch_config()})
         fc_herdr.herdr("pane", "rename", pane, title)
@@ -40,8 +39,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
-                "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model,
-                *fc_models.pi_turn_key_args(model)]
+                "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
