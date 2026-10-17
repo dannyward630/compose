@@ -72,7 +72,7 @@ def expand_ports(text, env):
 
 def driver_e2e(case, repo):
     """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
-    env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
+    env = {**fc_core.clean_env(), **{k: str(v) for k, v in (case.get("env") or {}).items()}}
     setup = None
     if case.get("setup"):
         setup = subprocess.Popen(case["setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
@@ -91,7 +91,7 @@ def driver_e2e(case, repo):
             stop_group(setup)
     if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
         raise fc_models.PaymentRequired("jev e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
-    r = {"name": case.get("name"), "exit": code, "stdout": out[-4000:], "stderr": err[-2000:]}
+    r = {"name": case.get("name"), "exit": code, "stdout": fc_core.scrub(out)[-4000:], "stderr": fc_core.scrub(err)[-2000:]}
     m = re.search(r"^E2E_RESULT (\{.*\})$", out, re.M)
     if m:
         r["run"] = json.loads(m.group(1))
@@ -102,7 +102,7 @@ def jev_e2e(case, repo):
     A case with a `driver` key runs that command instead (the project's own browser driver)."""
     if case.get("driver"):
         return driver_e2e(case, repo)
-    script = ("import json,sys,subprocess\nfrom jev_ultrafast import Agent\n"
+    script = ("import json,os,sys,subprocess\nfrom jev_ultrafast import Agent\n"
               f"with Agent({case['url']!r}, {case['goal']!r}) as a:\n"
               "    last=None\n    for s in a.run(): last=s\n"
               "    dec=last['decisions']; txt=last['text_calls']\n"
@@ -112,7 +112,7 @@ def jev_e2e(case, repo):
               "'text_calls':len(txt),'text_in':side(txt,'input_tokens','prompt_tokens'),'text_out':side(txt,'output_tokens','completion_tokens')}\n"
               "    print('JEV_RESULT '+json.dumps({'status':last['status'],'elapsed_ms':last['elapsed_ms'],'steps':len(last['history']),'url':last['page']['url'],'usage':usage}))\n"
               "    sys.stdout.flush()\n"
-              f"    sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}))\n")
+              f"    sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}, env={{k: v for k, v in os.environ.items() if k not in {sorted(fc_core.SECRET_VARS)!r}}}))\n")
     # case["env"] (verify.json e2e_env merged with the case's env) reaches jev: set BU_CDP_URL/BU_NAME there to point
     # browser-harness at a `bp`-launched Chromium that has the extension under test loaded.
     env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}

@@ -8,8 +8,11 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     # --dir is required: with a git worktree, opencode otherwise resolves the project root to the main checkout and edits it.
     cmd = ["opencode", "run", "--format", "json", "--dir", str(cwd), "--model", model] + (["--session", session] if session else []) + [prompt]
     # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
+    env, key = fc_core.clean_env(), fc_config.openrouter_key()
+    if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}})
     for attempt in range(4):
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         # Parallel launches race on opencode's shared SQLite file. Back off and retry; nothing has run yet when this happens.
         if p.returncode and "database is locked" in (p.stdout + p.stderr) and attempt < 3:
             time.sleep(0.7 * (attempt + 1) + 0.3 * (hash(str(cwd)) % 5) / 5)
@@ -79,12 +82,10 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     sdir.mkdir(exist_ok=True)
     import uuid
     sid = session or str(uuid.uuid4())  # --session-id must be a UUID
-    env = dict(os.environ)
-    if "OPENROUTER_API_KEY" not in env and fc_core.load_env(fc_config.ENV_FILE).get("TEXT_MODEL_API_KEY"):  # pi's custom providers read the key from env
-        env["OPENROUTER_API_KEY"] = fc_core.load_env(fc_config.ENV_FILE)["TEXT_MODEL_API_KEY"].strip('"')
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
-           "--no-prompt-templates", "--thinking", "low", "--model", model, *(["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY else []), prompt]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+           "--no-prompt-templates", "--thinking", "low", "--model", model, *pi_turn_key_args(model), prompt]
+    # The key goes in --api-key, not the env: pi's tools (the task's test among them) inherit its env.
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=fc_core.clean_env())
     text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
@@ -204,8 +205,14 @@ def pi_id(model):
     return model.split(":", 1)[1]
 
 def pi_key_args(model):
-    """pi's --api-key for the workspace's OpenRouter key, only for models routed through OpenRouter (others keep pi's own auth)."""
-    return ["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY and "openrouter" in pi_id(model) else []
+    """pi's --api-key for the OpenRouter key, only for models routed through OpenRouter (others keep pi's own auth)."""
+    key = fc_config.openrouter_key()
+    return ["--api-key", key] if key and "openrouter" in pi_id(model) else []
+
+def pi_turn_key_args(model):
+    """--api-key for a pi turn on `model` (pi's own id): the workspace's key on every model; without one, the shell's or
+    ~/.compose/.env's on OpenRouter models. Never the env: pi's tools, the task's test among them, inherit it."""
+    return ["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY else pi_key_args("pi:" + model)
 
 def probe_command(model):
     if model.startswith("pi:"):
@@ -332,7 +339,7 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
     """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact."""
     body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+            "messages": [{"role": "system", "content": fc_core.scrub(system)}, {"role": "user", "content": fc_core.scrub(user)}]}
     req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
                                  data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {env['TEXT_MODEL_API_KEY']}", "Content-Type": "application/json"})
@@ -388,8 +395,8 @@ def confirm_call(env, system, user, max_tokens=500):
 def jev_ask(env, cfg, state, questions, label):
     """One TypeSafe (Jev) request: choice questions against one state, on the cost ledger. Returns Jev's whole reply."""
     req = urllib.request.Request("https://api.typesafe.ai/v1/systemone",
-                                 data=json.dumps({"model": env.get("TYPESAFE_MODEL", "jev-latest"), "state": state,
-                                                  "questions": questions}).encode(),
+                                 data=fc_core.scrub(json.dumps({"model": env.get("TYPESAFE_MODEL", "jev-latest"), "state": state,
+                                                                "questions": questions})).encode(),
                                  headers={"Authorization": f"Bearer {env['TYPESAFE_API_KEY']}", "Content-Type": "application/json"})
     out = http_json(req, f"typesafe ({label})")
     u = out.get("usage", {}) or {}

@@ -301,7 +301,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual((fc.fc_config.OPENROUTER_KEY, os.environ["OPENROUTER_API_KEY"], os.environ["TEXT_MODEL_API_KEY"]), ("sk-work",) * 3)
         self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
         self.assertEqual(os.environ["COMPOSE_FIX_MODEL"], "pi:f/x")
-        self.assertIn("sk-work", os.environ["OPENCODE_CONFIG_CONTENT"])
+        self.assertNotIn("OPENCODE_CONFIG_CONTENT", os.environ)  # OpenCode gets the key from a file, not an env its tools inherit
         self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:g/h")
 
     def test_switch_overrides_top_level(self):

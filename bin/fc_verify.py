@@ -226,7 +226,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
                 fc_core.say(f"e2e    browser launch failed: {(p.stderr or p.stdout).strip()[-300:]}")
         if cfg.get("e2e_setup"):
             # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
-            stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env={**os.environ, **env}, stdin=subprocess.DEVNULL,
+            stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env={**fc_core.clean_env(), **env}, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             time.sleep(cfg.get("e2e_setup_wait", 3))
         for i, case in enumerate(cfg.get("e2e", [])):
@@ -274,11 +274,11 @@ def run_stages(repo, proj, cfg, a):
     fc_herdr.herdr_stage(panes, "checks", "working")
     for c in cfg.get("checks", []):
         t1 = time.time()
-        p = fc_core.sh(c, repo, timeout=900, check=False)
+        p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
         if p.returncode and fc_jev.tool_error(p.stdout + p.stderr):
             fc_core.say(f"check  tool error; retrying once  {c}")
-            p = fc_core.sh(c, repo, timeout=900, check=False)
-        out = (p.stdout + p.stderr)[-3000:]
+            p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
+        out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
         tool = bool(p.returncode) and fc_jev.tool_error(out)
         report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
         ok &= p.returncode == 0

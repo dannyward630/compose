@@ -67,7 +67,7 @@ def reflect(proj, trigger, evidence, against=()):
     (proj / "results").mkdir(exist_ok=True)
     with REFLECT_LOCK:
         with open(proj / "results" / "evidence.jsonl", "a") as f:
-            f.write(json.dumps({"at": at, "trigger": trigger, "text": evidence}) + "\n")
+            f.write(fc_core.scrub(json.dumps({"at": at, "trigger": trigger, "text": evidence})) + "\n")
     quoted = [l.strip() for l in against if l and l.strip()]
     rec = {"at": at, "trigger": trigger, "evidence": evidence, "against": quoted, "verdicts": [], "flagged": []}
     try:
@@ -96,7 +96,7 @@ def reflect(proj, trigger, evidence, against=()):
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
         try:
             with open(path, "x") as f:
-                f.write(json.dumps(rec, indent=2))
+                f.write(fc_core.scrub(json.dumps(rec, indent=2)))
             return path, rec
         except FileExistsError:
             n += 1
@@ -326,7 +326,7 @@ def cmd_reflect(a):
     if a.dismiss:
         at = time.strftime("%Y-%m-%d %H:%M:%S")
         with open(proj / "results" / "evidence.jsonl", "a") as f:
-            f.write(json.dumps({"at": at, "trigger": "dismissed", "text": a.dismiss.strip(), "cut": True}) + "\n")
+            f.write(fc_core.scrub(json.dumps({"at": at, "trigger": "dismissed", "text": a.dismiss.strip(), "cut": True})) + "\n")
         print(f"dismissed the evidence up to {at}: later screens start after it")
         return
     evidence = (sys.stdin.read() if a.evidence == "-" else a.evidence).strip()

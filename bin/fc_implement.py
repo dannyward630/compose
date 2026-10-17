@@ -9,6 +9,7 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     fake = os.environ.get("COMPOSE_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
     if fake and os.environ.get("COMPOSE_FAKE_402_MATCH", "") in prompt:
         raise fc_models.PaymentRequired(fake, "Payment required to access this resource (simulated)")
+    prompt = fc_core.scrub(prompt)
     if fc_claude.is_claude(model):
         return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
     if model.startswith("pi:"):
@@ -31,18 +32,15 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
-        env = dict(os.environ)
-        if "OPENROUTER_API_KEY" not in env and fc_core.load_env(fc_config.ENV_FILE).get("TEXT_MODEL_API_KEY"):
-            env["OPENROUTER_API_KEY"] = fc_core.load_env(fc_config.ENV_FILE)["TEXT_MODEL_API_KEY"].strip('"')
-        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": env["OPENROUTER_API_KEY"]} if env.get("OPENROUTER_API_KEY") else {}),
-                                                           "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1"})
+        # No key in the pane's env: pi's tools (the task's test among them) inherit it. pi gets it in --api-key below.
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {"GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1"})
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model,
-                *(["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY else [])]
+                *fc_models.pi_turn_key_args(model)]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
@@ -193,12 +191,13 @@ HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely 
 
 def timed(cmd, cwd, limit, env=None):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
-    group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint."""
+    group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
+    comes back scrubbed of secrets: it goes on to models and results/."""
     p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     try:
         out, err = p.communicate(timeout=limit)
-        return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+        return subprocess.CompletedProcess(cmd, p.returncode, fc_core.scrub(out), fc_core.scrub(err))
     except subprocess.TimeoutExpired:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
@@ -208,18 +207,18 @@ def timed(cmd, cwd, limit, env=None):
             time.sleep(0.5)
             if p.poll() is not None:
                 break
-        out, err = p.communicate()
-        return subprocess.CompletedProcess(cmd, 124, (out or "")[-2000:], ((err or "")[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
+        out, err = (fc_core.scrub(x or "") for x in p.communicate())
+        return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
 
 def run_test(meta, wt):
     """A task's test command under the time limit (a task's block can set `test_timeout:`)."""
-    return timed(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT))
+    return timed(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT), env=fc_core.clean_env())
 
 def cmd_timed(argv):
     """`compose timed <seconds> -- <command>`: what implementers run their test through, so a hang fails fast."""
     if len(argv) < 3 or argv[1] != "--":
         sys.exit("usage: compose timed <seconds> -- <command>")
-    r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]))
+    r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]), env=fc_core.clean_env())
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 

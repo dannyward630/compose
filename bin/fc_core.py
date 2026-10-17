@@ -116,12 +116,41 @@ def project_dir(a):
     return proj
 
 
-def atomic_write(path, text):
-    """Write a state file so a reader sees the old file or the new one, never a half-written or empty one."""
+def atomic_write(path, text, keep_secrets=False):
+    """Write a state file so a reader sees the old file or the new one, never a half-written or empty one. Secrets are
+    scrubbed unless the file is the one that holds them (keep_secrets)."""
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(text)
+    tmp.write_text(text if keep_secrets else scrub(text))
     os.replace(tmp, path)
+
+
+# ---------- secrets: never in the env of project code, never in a text the CLI sends to a model or keeps ----------
+# apply_config exports keys for the CLI's own callers (pi, OpenCode, the text model, jev). A test that prints its env must not
+# find them, and nothing it prints may carry them to a model or into results/.
+SECRET_VARS = {"OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "TYPESAFE_API_KEY", "OPENCODE_CONFIG_CONTENT"}  # apply_config adds the config env's *_API_KEY names
+SECRET_VALUES = set()  # apply_config adds the workspace's keys and those in ~/.compose/.env
+REDACTED = "<redacted>"
+
+def clean_env(env=None):
+    """`env` (the process env by default) without the secret vars: for every process that runs project code, a model's tools included."""
+    return {k: v for k, v in (os.environ if env is None else env).items() if k not in SECRET_VARS}
+
+def scrub(text):
+    """text with the value of every secret var in the process env, and every key apply_config collected, as <redacted>."""
+    values = {os.environ.get(k) or "" for k in SECRET_VARS} | SECRET_VALUES
+    for v in sorted((v for v in values if len(v) >= 8), key=len, reverse=True):  # a short value would redact ordinary text
+        text = text.replace(v, REDACTED)
+    return text
+
+class Scrubbed:
+    """A text stream that scrubs what it writes: the CLI's stdout and stderr, which a detached run writes to results/<cmd>.log."""
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, text):
+        return self.stream.write(scrub(text))
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
 
 
 def digests(root, files):

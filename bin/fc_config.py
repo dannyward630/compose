@@ -49,7 +49,7 @@ def read_config():
 
 def write_config(cfg):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n")
+    fc_core.atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n", keep_secrets=True)
     CONFIG_PATH.chmod(0o600)  # it holds API keys
 
 def settings(cfg):
@@ -81,13 +81,30 @@ def apply_config():
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
+    fc_core.SECRET_VARS.update(k for k in st.get("env", {}) if k.endswith("_API_KEY"))
     if "openrouter_api_key" in st:
         if not st["openrouter_api_key"]:
             sys.exit(f"{CONFIG_PATH}: workspace {name!r} has an empty openrouter_api_key")
         OPENROUTER_KEY = st["openrouter_api_key"]
         os.environ["OPENROUTER_API_KEY"] = os.environ["TEXT_MODEL_API_KEY"] = OPENROUTER_KEY
-        os.environ["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": OPENROUTER_KEY}}}})
+    dotenv = fc_core.load_env(ENV_FILE)
+    fc_core.SECRET_VALUES.update(v for v in [OPENROUTER_KEY, LINEAR_KEY, *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
     return name
+
+def openrouter_key():
+    """The OpenRouter key a harness bills to: the workspace's, else the shell's, else ~/.compose/.env's. None leaves the harness on its own auth store."""
+    return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or fc_core.load_env(ENV_FILE).get("TEXT_MODEL_API_KEY", "").strip('"') or None
+
+def key_file(key):
+    """A 0600 file beside the config holding `key`, for a harness that reads its key from a file its config names, not from the env its tools inherit."""
+    f = CONFIG_PATH.parent / "openrouter.key"
+    if not (f.exists() and f.read_text() == key):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
+            out.write(key)
+        os.replace(tmp, f)  # parallel OpenCode turns never read a half-written key
+    return f
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 

@@ -246,6 +246,7 @@ def main():
         return detach(a)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config()  # "default" when no workspace is chosen
+        sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")
     try:

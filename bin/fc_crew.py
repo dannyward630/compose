@@ -232,7 +232,7 @@ def cmd_crew(a):
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
-    brief_file.write_text(crew_preamble(proj, name, title, reports_to) + brief)
+    brief_file.write_text(fc_core.scrub(crew_preamble(proj, name, title, reports_to) + brief))
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
         skill = {"skill": skill_hashes()} if model.startswith("pi:") else {}
