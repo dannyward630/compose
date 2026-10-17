@@ -53,7 +53,7 @@ class Groundwork(unittest.TestCase):
     def test_brief_covers_the_detected_toolchains_and_appends_the_notes(self):
         out = io.StringIO()
         with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
-            fc.cmd_groundwork(SimpleNamespace(repo=str(self.repo), project="p", extra="Stub Open(dsn string) (*sql.DB, error)."))
+            fc.fc_briefs.cmd_groundwork(SimpleNamespace(repo=str(self.repo), project="p", extra="Stub Open(dsn string) (*sql.DB, error)."))
         brief = out.getvalue()
         self.assertIn("Go module in server", brief)
         self.assertIn("Node package in client with yarn", brief)
@@ -65,7 +65,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
-            fc.cmd_wayfinder(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
+            fc.fc_briefs.cmd_wayfinder(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
         brief = out.getvalue()
         page = str(self.proj / "lavish" / "wayfinder.html")
         self.assertIn("NEB-9", brief)
@@ -83,7 +83,7 @@ class Groundwork(unittest.TestCase):
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
 
     def test_a_test_crew_commits_its_files_as_separate_paths(self):
-        brief = fc.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
+        brief = fc.fc_briefs.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
         self.assertIn("Test file: tests/test_a.py, tests/test_b.py.", brief)  # prose keeps the comma list
         self.assertIn("`git add tests/test_a.py tests/test_b.py && git commit tests/test_a.py tests/test_b.py -m", brief)
 
@@ -91,7 +91,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out), mock.patch("sys.stdin", io.StringIO(stdin)):
-            fc.cmd_planner(SimpleNamespace(repo=str(self.repo), project="p", issue=issue, extra=extra))
+            fc.fc_briefs.cmd_planner(SimpleNamespace(repo=str(self.repo), project="p", issue=issue, extra=extra))
         return out.getvalue()
 
     def test_planner_brief_names_the_feature_and_routes_every_gap(self):
@@ -124,7 +124,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
         out = io.StringIO()
         with self.patched()[0], mock.patch("sys.stdout", out):
-            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=True))
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=True))
         text = out.getvalue()
         self.assertIn("===== tests-002", text); self.assertNotIn("tests-001", text)
         self.assertIn("client/src/Form.test.js", text)
@@ -135,7 +135,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "results" / "contract.md").write_text("c")
         out = io.StringIO()
         with self.patched()[0], mock.patch("sys.stdout", out):
-            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=True))
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=True))
         text = out.getvalue()
         self.assertIn("git add client/src/Form.test.js && git commit client/src/Form.test.js -m", text)
         self.assertIn("Never run `git commit --amend`, `git reset`, `git rebase`", text)
@@ -148,8 +148,8 @@ class Groundwork(unittest.TestCase):
                 raise RuntimeError("agent_prompt_stalled")
             started.append(ns.role)
         with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", crew), mock.patch.object(fc.fc_herdr, "herdr_space"), \
-             mock.patch.object(fc, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
-            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
+             mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
         self.assertEqual(started, ["tests-002"])
         self.assertIn("tests-001 not started: agent_prompt_stalled", out.getvalue())
 
@@ -158,14 +158,14 @@ class Groundwork(unittest.TestCase):
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
         out = io.StringIO()
         with self.patched()[0], mock.patch("sys.stdout", out):
-            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="001,009", print_=True))
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="001,009", print_=True))
         self.assertIn("001 skipped: its result is hand_done", out.getvalue())
         self.assertIn("009 skipped: no such task", out.getvalue())
         self.assertNotIn("===== tests-001", out.getvalue())
 
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
-            fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))
 
 
 class Triage(unittest.TestCase):
@@ -260,7 +260,7 @@ class PlannerRules(unittest.TestCase):
         (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
-            fc.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
+            fc.fc_briefs.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
         self.brief = out.getvalue()
 
     def test_the_seven_spec_checks_come_in_numbered_order(self):

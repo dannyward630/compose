@@ -38,7 +38,7 @@ class TestCrewWorktrees(unittest.TestCase):
             p.start(); self.addCleanup(p.stop)
 
     def crew_commits(self, tid, name, text):
-        wt = fc.test_worktree(self.proj, tid)
+        wt = fc.fc_briefs.test_worktree(self.proj, tid)
         (wt / name).write_text(text)
         self.run("add", name, cwd=wt); self.run("commit", "-qm", f"Test {name}", cwd=wt)
 
@@ -46,7 +46,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.crew_commits("002", "b_test.go", "b\n")
         self.crew_commits("001", "a_test.go", "a\n")
         self.assertEqual(self.run("branch", "--show-current").stdout.strip(), "main")  # the project checkout never moved
-        fc.collect_tests(self.proj)
+        fc.fc_briefs.collect_tests(self.proj)
         log = self.run("log", "--format=%s", "-3").stdout.split("\n")
         self.assertEqual(log[:2], ["Test b_test.go", "Test a_test.go"])  # 001 first, then 002
         self.assertTrue((self.repo / "a_test.go").exists() and (self.repo / "b_test.go").exists())
@@ -70,7 +70,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.crew_commits("001", "a.txt", "teammate\n")
         (self.repo / "a.txt").write_text("main\n"); self.run("commit", "-qam", "main moved")
         with self.assertRaises(SystemExit) as e:
-            fc.collect_tests(self.proj)
+            fc.fc_briefs.collect_tests(self.proj)
         self.assertIn("tests-001", str(e.exception))
         self.assertIn("fast/p/tests-001", self.run("branch", "--list", "fast/p/tests-001").stdout)
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")  # the cherry-pick was aborted cleanly
@@ -93,7 +93,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.main_commits("t.py", trimmed, "Drop test two")  # then edits it on the branch: a replay would bring it back
         self.run("cherry-pick", "fast/p/tests-002")  # a clean hand pick: same patch
         self.crew_commits("003", "c_test.go", "c\n")
-        fc.collect_tests(self.proj)
+        fc.fc_briefs.collect_tests(self.proj)
         self.assertEqual((self.repo / "t.py").read_text(), trimmed)
         self.assertEqual(self.run("log", "--format=%s", "-2").stdout.split("\n")[:2], ["Test c_test.go", "Test b_test.go"])
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")
@@ -101,9 +101,9 @@ class TestCrewWorktrees(unittest.TestCase):
 
     def test_brief_states_the_line_budget(self):
         tasks = fc.fc_tasks.load_tasks(self.proj)
-        self.assertIn("at most 60 lines", fc.test_brief(tasks[0], "c"))
-        self.assertIn("at most 25 lines", fc.test_brief(tasks[1], "c"))  # the task's test_lines wins
-        self.assertIn("at most 40 lines", fc.test_brief(tasks[0], "c", 40))
+        self.assertIn("at most 60 lines", fc.fc_briefs.test_brief(tasks[0], "c"))
+        self.assertIn("at most 25 lines", fc.fc_briefs.test_brief(tasks[1], "c"))  # the task's test_lines wins
+        self.assertIn("at most 40 lines", fc.fc_briefs.test_brief(tasks[0], "c", 40))
 
 
 def server(cwd):

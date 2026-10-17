@@ -99,7 +99,7 @@ class Explore(unittest.TestCase):
         out = []
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent), \
                 mock.patch("builtins.print", side_effect=lambda s: out.append(s)):
-            fc.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
+            fc.fc_briefs.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
         brief = out[0]
         for want in ("ENG-7", "graft ask", "graft callers", "under 3 minutes", "at most 40 lines", "patch append", "the client lives in web/"):
             self.assertIn(want, brief)

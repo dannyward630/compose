@@ -854,7 +854,7 @@ class RestrictedStart(unittest.TestCase):
                 self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role, model="pi:x/y")))
 
     def test_briefs_name_skill_md_and_their_sections(self):
-        p, d, w = fc.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
+        p, d, w = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.fc_briefs.WAYFINDER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
@@ -906,7 +906,7 @@ class CardsById(unittest.TestCase):
         return lines
 
     def test_wayfinder_and_change_step_3_write_cards_then_report_one_line(self):
-        for name, brief in (("wayfinder", fc.WAYFINDER_BRIEF), ("change", fc.CHANGE_BRIEF)):
+        for name, brief in (("wayfinder", fc.fc_briefs.WAYFINDER_BRIEF), ("change", fc.fc_briefs.CHANGE_BRIEF)):
             with self.subTest(name):
                 step = self.flat(brief, " 3. ", " 4. ")
                 self.assertNotIn("the text cards in full", step)
@@ -916,24 +916,24 @@ class CardsById(unittest.TestCase):
                     self.assertIn("cards", line)
                     self.assertIn("recommendation", line)
                     self.assertNotIn("in full", line)
-        self.assertTrue(self.needs_user(self.flat(fc.CHANGE_BRIEF, " 3. ", " 4. "))[0].startswith("change {cid}: "))
+        self.assertTrue(self.needs_user(self.flat(fc.fc_briefs.CHANGE_BRIEF, " 3. ", " 4. "))[0].startswith("change {cid}: "))
 
     def test_planner_decision_cards_and_story_proposal_report_one_line(self):
-        self.assertNotIn("<the cards in full>", fc.PLANNER_BRIEF)
-        self.assertNotIn("one needs-user list", " ".join(fc.PLANNER_BRIEF.split()))
-        cards = self.flat(fc.PLANNER_BRIEF, "Checks 1, 3, 6", "Checks 2, 4, 5")
+        self.assertNotIn("<the cards in full>", fc.fc_briefs.PLANNER_BRIEF)
+        self.assertNotIn("one needs-user list", " ".join(fc.fc_briefs.PLANNER_BRIEF.split()))
+        cards = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Checks 1, 3, 6", "Checks 2, 4, 5")
         self.assertIn("Not yet specified", cards)
         for line in self.needs_user(cards):
             self.assertIn("cards", line)
             self.assertIn("recommendation", line)
-        stories = self.flat(fc.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
+        stories = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
         self.assertIn("map", stories)  # stories are drafted on the map ...
         self.assertIn("needs-user", stories)  # ... and named in one line
 
     def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
         for name in ("WAYFINDER_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):
             with self.subTest(name):
-                text = " ".join(getattr(fc, name).split())
+                text = " ".join(getattr(fc.fc_briefs, name).split())
                 self.assertIn("card id", text)
                 self.assertIn("unchanged", text)
 
@@ -943,7 +943,7 @@ class CardsById(unittest.TestCase):
                   "CHANGE_BRIEF": {"cid", "feature", "name", "page", "reflect", "slug", "why", "wt"}}
         for name, want in fields.items():
             with self.subTest(name):
-                text = getattr(fc, name)
+                text = getattr(fc.fc_briefs, name)
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
-        for brief in (fc.WAYFINDER_BRIEF, fc.CHANGE_BRIEF):
+        for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page

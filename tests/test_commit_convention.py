@@ -31,7 +31,7 @@ class CommitConvention(unittest.TestCase):
 
     def test_briefs_carry_the_convention_and_forbid_config_tests(self):
         meta = {"id": "001", "protected": ["tests/a.test.js"], "test": "true"}
-        plain, typed = fc.test_brief(meta, ""), fc.test_brief(meta, "", conv=CONV)
+        plain, typed = fc.fc_briefs.test_brief(meta, ""), fc.fc_briefs.test_brief(meta, "", conv=CONV)
         self.assertIn("<plain message>", plain)
         self.assertIn("test: ", typed)
         self.assertNotIn("<plain message>", typed)

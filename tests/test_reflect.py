@@ -759,7 +759,7 @@ class ChangeBrief(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", lambda p: self.repo), \
                 redirect_stdout(out):
-            fc.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
+            fc.fc_briefs.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
         return out.getvalue()
 
     def test_the_change_wayfinder_asks_on_its_own_page(self):

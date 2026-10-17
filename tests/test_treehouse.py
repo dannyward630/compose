@@ -49,11 +49,11 @@ class Treehouse(unittest.TestCase):
     def test_test_crew_slots_are_leased_then_returned_on_collect(self):
         wt, proj = self.init()
         (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
-        slot = fc.test_worktree(proj, "001")
+        slot = fc.fc_briefs.test_worktree(proj, "001")
         self.assertEqual(self.git("branch", "--show-current", cwd=slot), "fast/p/tests-001")
         (slot / "t_test.txt").write_text("t\n")
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
-        fc.collect_tests(proj)
+        fc.fc_briefs.collect_tests(proj)
         self.assertTrue((wt / "t_test.txt").exists())
         self.assertEqual(self.status()[slot.resolve()], "available")  # back in the pool, installs and all
         self.assertEqual(fc.fc_worktree.slots(proj), {})
@@ -65,10 +65,10 @@ class Treehouse(unittest.TestCase):
         self.git("add", "treehouse.toml"); self.git("commit", "-qm", "cap the pool")
         wt, proj = self.init()
         (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
-        slot = fc.test_worktree(proj, "001")
+        slot = fc.fc_briefs.test_worktree(proj, "001")
         (slot / "t_test.txt").write_text("t\n")
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
-        fc.collect_tests(proj)
+        fc.fc_briefs.collect_tests(proj)
         self.git("checkout", "-qb", "next"); self.git("commit", "-q", "--allow-empty", "-m", "main moved on"); self.git("checkout", "-q", "main")
         again = fc.fc_worktree.slot_on(self.repo, "next", "fast-coding:p:tests-002")
         self.assertEqual(again.resolve(), slot.resolve())
@@ -86,7 +86,7 @@ class Treehouse(unittest.TestCase):
         (proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
         (proj / "results" / "contract.md").write_text("c")
         started = []
-        run = lambda: fc.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
+        run = lambda: fc.fc_briefs.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)):
             with self.assertRaises(SystemExit) as e:
