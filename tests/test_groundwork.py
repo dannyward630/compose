@@ -169,7 +169,7 @@ class Groundwork(unittest.TestCase):
 
 
 class Explore(unittest.TestCase):
-    def test_brief_is_graft_only_time_boxed_and_names_the_feature(self):
+    def test_brief_is_trail_only_time_boxed_and_names_the_feature(self):
         proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
@@ -178,8 +178,20 @@ class Explore(unittest.TestCase):
                 mock.patch("builtins.print", side_effect=lambda s: out.append(s)):
             fc.fc_briefs.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
         brief = out[0]
-        for want in ("ENG-7", "graft ask", "graft callers", "under 3 minutes", "at most 40 lines", "patch append", "the client lives in web/"):
+        for want in ("ENG-7", "through trail only", "trail ask", "trail callers", "trail map", "trail skeleton", "under 3 minutes",
+                     "at most 40 lines", "patch append", "the client lives in web/"):
             self.assertIn(want, brief)
+        self.assertNotIn("graft", brief)
+        self.assertNotIn("graft", fc.fc_briefs.cmd_explore.__doc__)
+
+    def test_no_brief_names_a_graft_command(self):
+        b = fc.fc_briefs
+        self.assertIn('trail ask "<question>" --source', b.GROUNDWORK_BRIEF)
+        self.assertIn('trail ask "<question>" --source', b.WAYFINDER_BRIEF)
+        self.assertIn('trail ask "<question>" --source', b.CHANGE_BRIEF)
+        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+            self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
+            self.assertNotRegex(getattr(b, name), r"`graft\b", name)
 
 
 class Triage(unittest.TestCase):
@@ -329,11 +341,12 @@ class PlannerRules(unittest.TestCase):
 
     def test_the_seven_spec_checks_come_in_numbered_order(self):
         at = -1
-        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "graft ask", "protected:", "open how", "contract"), 1):
+        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "trail ask", "protected:", "open how", "contract"), 1):
             i = self.brief.find(kw, at + 1)
             self.assertGreater(i, at, f"spec check {n} ({kw}) missing or out of order")
             at = i
-        self.assertIn("graft callers", self.brief)
+        self.assertIn("trail callers", self.brief)
+        self.assertNotRegex(self.brief, r"\bgraft (ask|callers|map|skeleton|grep)\b")
         self.assertIn("as new", self.brief)
         self.assertIn("verify.json", self.brief)
 
