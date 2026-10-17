@@ -458,6 +458,54 @@ class PiKeyFromEnv(unittest.TestCase):
                 self.keyless(start)
 
 
+class HerdrPiKey(unittest.TestCase):
+    """The pi implementer started in a herdr pane gets the key from the process environment only: never in argv, never from .env."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / ".env").write_text('TEXT_MODEL_API_KEY="sk-env"\n')
+        (self.root / "wt").mkdir()
+        p = mock.patch.object(fc.fc_config, "ENV_FILE", self.root / ".env")
+        p.start(); self.addCleanup(p.stop)
+
+    def start(self, environ, workspace_key="sk-or-test"):
+        """Runs herdr_pi up to the agent start. Returns (pane env, start argv)."""
+        panes, starts, environ = [], [], {"OPENROUTER_API_KEY": None, **environ}
+        def agent_start(*args):
+            starts.append(args)
+            raise KeyboardInterrupt  # stop at the start; the turn is not under test
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
+        with mock.patch.object(fc.fc_config, "OPENROUTER_KEY", workspace_key), mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", agent_start), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env: panes.append(env) or "p1"), \
+                self.assertRaises(KeyboardInterrupt):
+            for k, v in environ.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", None, task)
+        return panes[0], starts[0]
+
+    def keyless(self, argv):
+        self.assertEqual(argv[argv.index("--model") + 1], "openrouter/x/y")
+        self.assertFalse([x for x in argv if x == "--api-key" or "sk-" in str(x)], argv)
+
+    def test_argv_has_no_key_with_or_without_a_workspace_key(self):
+        for workspace_key in ("sk-or-test", None):
+            for environ in ({"OPENROUTER_API_KEY": "sk-or-proc"}, {}):
+                with self.subTest(workspace_key=workspace_key, environ=environ):
+                    self.keyless(self.start(environ, workspace_key)[1])
+
+    def test_pane_gets_the_process_key_unchanged(self):
+        env, _ = self.start({"OPENROUTER_API_KEY": "sk-or-proc"})
+        self.assertEqual(env.get("OPENROUTER_API_KEY"), "sk-or-proc")  # not the workspace key, not .env's
+
+    def test_pane_gets_no_key_and_nothing_from_dotenv_without_the_variable(self):
+        for environ in ({}, {"TEXT_MODEL_API_KEY": "sk-tm"}):
+            with self.subTest(environ=environ):
+                env, _ = self.start(environ)
+                self.assertNotIn("OPENROUTER_API_KEY", env)
+                self.assertNotIn("sk-", json.dumps(env))
+                self.assertNotIn("OPENROUTER_API_KEY", os.environ)  # the fallback did not leak into the process either
+
+
 class RetryMessage(unittest.TestCase):
     def run_three(self, summary="", backup=None, session="s", reader_cost=0.0):
         """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path);
