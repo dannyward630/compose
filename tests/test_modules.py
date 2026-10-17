@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 
-RANK = ("fc_core", "fc_config", "fc_tasks", "fc_linear", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_layers", "fc_change", "fc_frame0", "fc_crew", "fc_init", "fc_figma", "fc_briefs", "fc_implement", "fc_jev", "fc_verify", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
+RANK = ("fc_core", "fc_config", "fc_tasks", "fc_linear", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_layers", "fc_change", "fc_frame0", "fc_crew", "fc_toolbug", "fc_init", "fc_figma", "fc_briefs", "fc_implement", "fc_jev", "fc_verify", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
 MODULES = {
     "fc_core": ("now", "fmt", "say", "Ledger", "LEDGER", "sh", "worktrees", "project_config", "project_branch", "commit_convention", "COMMIT_TYPES", "typed", "commit_rule", "all_projects", "project_dir", "atomic_write", "digests", "figma_key", "current_branch", "load_env", "free_port", "port_listening", "report_time", "project_after"),
     "fc_config": ("DEFAULT_MODEL", "FALLBACK_MODEL", "JEV_DIR", "PRICES", "CONFIG_PATH", "ENV_FILE", "OPENROUTER_KEY", "MAX_DIFF_LINES", "DOC_RE", "DEP_DIRS", "EXPR_L36", "EXPR_L37", "CREW_MODELS", "LINEAR_KEY", "WORKSPACE", "CREW_EFFORT", "CREW_FALLBACK", "PLANNING_ROLES", "CREW_DEFAULTS", "PROBE_CACHE", "read_config", "write_config", "settings", "apply_config", "WORKSPACE_ACTIONS", "read_key", "cmd_workspace"),
@@ -21,9 +21,10 @@ MODULES = {
     "fc_change": ("REFLECT_THRESHOLD", "REFLECT_EVIDENCE_CAP", "REFLECT_LOCK", "REFLECT_CHOICES", "REFLECT_RULES", "map_section", "LIST_ITEM", "decision_lines", "changes_dir", "last_change_done", "evidence_cut", "evidence_since", "reflect", "cmd_hold", "CHANGE_SYNC_MAX", "CHANGE_CONTENT", "load_change", "write_change", "change_ids", "open_change", "change_line", "fresh_sync", "begin_change", "change_diff", "issue_label", "change_comment", "change_start", "change_done", "undo_edits", "change_undo", "cmd_change", "cmd_reflect", "reflect_counts", "REFLECT_ON"),
     "fc_frame0": ("FRAME0_APP", "FRAME0_PORTS", "FRAME0_CLIENT", "frame0_port", "frame0_pid", "frame0_register", "frame0_command", "frame0_empty_doc", "frame0_up", "frame0_save", "frame0_down", "cmd_frame0"),
     "fc_crew": ("CREW_STATES", "CLI_REPO", "TOOL_BUGS", "crew_dir", "crew_reports", "tab_closed", "scratch_dir", "listeners_under", "stop_listeners_under", "TRUST_PROMPT", "crew_preamble", "crew_pick", "crew_pick_full", "crew_fallback", "crew_model", "crew_effort", "crew_workdir", "cmd_crew", "GUARDED_TOOLS", "GUARDED_ROLES", "CLI_FILE", "guard_decision", "cmd_guard", "SKILL_DIR", "SKILL_SEEN", "SKILL_FILES", "skill_hashes", "skill_changed", "skill_notice", "cmd_skillcheck", "write_report", "crew_unstart", "crew_record", "crew_reporting_to", "crew_reregister", "crew_attention", "desktop_notify", "manager_attention", "cmd_report", "log_tool_bug", "close_after_turn", "crew_closed", "TASK_TAB", "VERIFY_TAB", "teardown", "cmd_teardown"),
+    "fc_toolbug": ("REPO", "SECTIONS", "TOKEN_RE", "scrub", "environment", "issue_text", "gh_status", "open_matches", "post", "record_issue", "cmd_tool_bug"),
     "fc_init": ("FRAMELINK_ENV", "FRAMELINK_ADD", "GRAFT_INIT", "existing_repo", "setup_graft", "cmd_graft", "HERDR_MIN", "TREEHOUSE_MIN", "GRAFT_INSTALL", "DEPS", "user_mcp_servers", "version_of", "check_deps", "herdr_toml", "herdr_toast_warning", "cmd_doctor", "cmd_init", "merge_evidence", "merged_into", "own_commits", "live_crew", "clean_project", "cmd_clean"),
     "fc_figma": ("FIGMA_CONNECTOR", "FRAMELINK_SETUP", "framelink_fetch", "DESIGNER_BRIEF", "cmd_designer", "DESIGN_CONCURRENCY", "design_brief", "cmd_designcrews", "TREE_CHUNK_CHARS", "hard_split", "split_node", "tree_chunks", "combine_choices", "figma_judge_chunks", "figma_reask", "store_figma", "figma_tree", "cmd_figma"),
-    "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_worktree", "collect_tests"),
+    "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "cmd_toolsmith", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_worktree", "collect_tests"),
     "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "graft_pack", "branch_budget", "task_base", "PRETTIER_EXT", "format_files", "condense_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
     "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "driver_e2e", "jev_e2e"),
     "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "run_stages", "verify_root", "cmd_verify", "fix_strays", "fix_message", "verify_rounds"),
@@ -142,6 +143,7 @@ class FcLayers(ModuleChecks, unittest.TestCase): module = "fc_layers"
 class FcChange(ModuleChecks, unittest.TestCase): module = "fc_change"
 class FcFrame0(ModuleChecks, unittest.TestCase): module = "fc_frame0"
 class FcCrew(ModuleChecks, unittest.TestCase): module = "fc_crew"
+class FcToolbug(ModuleChecks, unittest.TestCase): module = "fc_toolbug"
 class FcInit(ModuleChecks, unittest.TestCase): module = "fc_init"
 class FcFigma(ModuleChecks, unittest.TestCase): module = "fc_figma"
 class FcBriefs(ModuleChecks, unittest.TestCase): module = "fc_briefs"
@@ -187,7 +189,7 @@ class Residue(unittest.TestCase):
         self.assertEqual(group.split(","), SUBCOMMANDS)
 
 
-MODULE_CLASSES = {"fc_core": FcCore, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_linear": FcLinear, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_layers": FcLayers, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_init": FcInit, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_verify": FcVerify, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
+MODULE_CLASSES = {"fc_core": FcCore, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_linear": FcLinear, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_layers": FcLayers, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_verify": FcVerify, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
 
 
 def load_tests(loader, tests, pattern):

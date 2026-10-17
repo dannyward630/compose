@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench  # noqa: E402
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 

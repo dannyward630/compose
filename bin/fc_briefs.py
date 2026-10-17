@@ -1,7 +1,7 @@
 import argparse, json, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew
+import fc_core, fc_config, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug
 
 
 # ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
@@ -181,6 +181,8 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 7. Report the cut with each story's task issue ids.
 """
 
+TOOLSMITH_BRIEF = ""  # the toolsmith's brief for one tool-bug entry; cmd_toolsmith fills it
+
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
@@ -263,6 +265,11 @@ def cmd_planner(a):
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
     print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=fc_herdr.agent_name(proj.name, "planner"))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
+
+def cmd_toolsmith(a):
+    """Print the toolsmith's brief for the project's newest tool-bug entry: the maintainer's toolsmith files and fixes on a
+    branch, anyone else's only reproduces, diagnoses, and files; exits non-zero when the project has no entry."""
+    raise NotImplementedError("cmd_toolsmith")
 
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
@@ -384,3 +391,4 @@ def collect_tests(proj, only=None):
         fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
         fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
+
