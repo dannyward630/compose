@@ -496,5 +496,64 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual(str(e.exception), "no Figma file: compose figma check --figma <url or key>")
 
 
+class ToolsmithBrief(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        self.log = self.home / ".compose" / "tool-bugs.jsonl"
+        for p in (mock.patch.object(fc.fc_crew, "TOOL_BUGS", self.log),
+                  mock.patch.object(fc.fc_config, "CONFIG_PATH", self.home / ".compose" / "config.json"),
+                  mock.patch.object(fc.fc_core, "project_dir", return_value=self.home / "shop")):
+            p.start(); self.addCleanup(p.stop)
+
+    def entry(self, project, message, **kw):
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.log, "a") as f:
+            f.write(json.dumps({"at": "2026-10-17 15:30:00", "project": project, "reporter": f"{project}-tests", "message": message,
+                                "cli_commit": "abc1234", "cli_repo": "/Users/alice9/code/compose", **kw}) + "\n")
+
+    def brief(self, state):
+        with mock.patch.object(fc.fc_toolbug, "gh_status", return_value=(state, None if state == "no-gh" else "alice9")) as gh, \
+                mock.patch("sys.stdout", io.StringIO()) as out:
+            fc.fc_briefs.cmd_toolsmith(SimpleNamespace(repo=".", project="shop"))
+        self.assertEqual(gh.call_count, 1)
+        return out.getvalue()
+
+    def test_every_variant_carries_the_newest_entry_of_its_project_and_the_filing_steps(self):
+        self.entry("shop", "crew start hung at the trust prompt", at="2026-10-17 09:00:00", cli_commit="1111111")
+        self.entry("shop", "report crashed with KeyError owner", at="2026-10-17 15:30:00", reporter="shop-impl-002")
+        self.entry("other", "other project's newer bug", at="2026-10-18 08:00:00", cli_commit="9999999")
+        for state in ("maintainer", "reporter", "no-gh"):
+            out = self.brief(state)
+            for s in ("report crashed with KeyError owner", "shop-impl-002", "2026-10-17 15:30:00", "abc1234",
+                      "SKILL.md", "# <command>: <symptom>", "--comment <n>", "--new"):
+                self.assertIn(s, out, state)
+            self.assertRegex(out, r"compose tool-bug file --project (shop|<slug>) --body")
+            for s in ("sections/", "trust prompt", "1111111", "other project's", "9999999"):
+                self.assertNotIn(s, out, state)
+
+    def test_the_maintainers_toolsmith_fixes_on_a_branch_and_never_merges(self):
+        self.entry("shop", "report crashed")
+        out = self.brief("maintainer")
+        for s in ("gh issue comment", "never merge or push", "Fixes #"):
+            self.assertIn(s, out)
+        self.assertNotIn("never edit or commit", out)
+
+    def test_anyone_elses_toolsmith_only_diagnoses_and_asks_before_filing(self):
+        self.entry("shop", "report crashed")
+        for state in ("reporter", "no-gh"):
+            out = self.brief(state)
+            for s in ("never edit or commit", "needs-user", "--approved"):
+                self.assertIn(s, out, state)
+            self.assertNotIn("never merge or push", out, state)
+
+    def test_no_entry_for_the_project_exits_naming_it(self):
+        for setup in (lambda: None, lambda: self.entry("other", "not ours")):
+            setup()
+            with self.assertRaises(SystemExit) as cm, mock.patch.object(fc.fc_toolbug, "gh_status", return_value=("maintainer", "alice9")):
+                fc.fc_briefs.cmd_toolsmith(SimpleNamespace(repo=".", project="shop"))
+            self.assertNotIn(cm.exception.code, (0, None))
+            self.assertIn("shop", str(cm.exception.code))
+
+
 if __name__ == "__main__":
     unittest.main()
