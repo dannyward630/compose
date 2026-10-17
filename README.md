@@ -1,4 +1,6 @@
-# compose
+![Compose](docs/images/compose.jpeg)
+
+# Compose
 
 You talk to one agent, and it runs a whole software team for you.
 The team ships the way real teams do.
