@@ -1,33 +1,60 @@
-import subprocess, tempfile, unittest
+import stat, subprocess, tempfile
 from pathlib import Path
-from tests.test_trail_setup import fc, repo_with, FakeGraft, FakeTrail  # noqa: F401
+from types import SimpleNamespace
+from unittest import mock
+from tests.test_trail_setup import fc, repo_with, FakeTrail
 
 
-class GraftPack(FakeGraft):
-    """Implementer and fixer prompts get a pack wherever graft keeps the graph: graft/, or .trail/cache/ once graft 0.23
-    moved the repo to trail. trail's learning banner is not part of it."""
-    def repo_on_trail(self):
+class TrailPack(FakeTrail):
+    """A pack from trail wherever the graph sits (.trail/cache/ or an old graft/), without trail's notes; graft never runs."""
+    def setUp(self):
+        super().setUp()
+        graft = self.log.parent / "graft"
+        graft.write_text('#!/bin/sh\necho "$*" >> "$TRAIL_LOG.graft"\n'); graft.chmod(stat.S_IRWXU)
+        self.addCleanup(lambda: self.assertFalse(Path(f"{self.log}.graft").exists(), "graft was started"))
+
+    def repo_on(self, graph):
         repo, _ = repo_with({"server/main.go": "package main\n"})
-        (repo / ".trail" / "cache").mkdir(parents=True)
-        (repo / ".trail" / "cache" / "INDEX.md").write_text("index")
+        (repo / graph).mkdir(parents=True)
+        (repo / graph / "INDEX.md").write_text("index")
         return repo
 
     def assert_pack(self, pack, query):
-        self.assertEqual(pack, f'graft ask — "{query}"  (lexical)\n\n1. main · function  [symbol]\n   server/main.go:L1-L1')
+        self.assertEqual(pack, f'trail ask — "{query}"  (lexical)\n\n1. main · function  [symbol]\n   server/main.go:L1-L1')
 
-    def test_a_graph_in_trail_cache_gives_a_pack_without_banners(self):
-        self.assert_pack(fc.fc_implement.graft_pack(self.repo_on_trail(), "main"), "main")
+    def test_a_graph_in_trail_cache_or_old_graft_gives_a_pack_without_banners(self):
+        self.assert_pack(fc.fc_implement.trail_pack(self.repo_on(".trail/cache"), "main"), "main")
+        self.assert_pack(fc.fc_implement.trail_pack(self.repo_on("graft"), "entry point"), "entry point")
+        self.assertTrue(self.calls()[-1].startswith("ask entry point --source -n 6 --no-refresh "))
 
-    def test_a_task_clone_gets_the_trail_graph_and_keeps_it_out_of_git(self):
-        repo = self.repo_on_trail()
-        clone = Path(tempfile.mkdtemp()) / "clone"
-        subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
-        fc.fc_worktree.ready_checkout(repo, clone)
-        self.assert_pack(fc.fc_implement.graft_pack(clone, "entry point", repo=repo), "entry point")
-        self.assertTrue((clone / ".trail" / "cache" / "INDEX.md").exists())
-        self.assertFalse((clone / "graft").exists())
-        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout.strip(), "")
+    def test_a_task_clone_gets_the_graph_rebuilt_in_trail_cache_and_keeps_it_out_of_git(self):
+        for graph in (".trail/cache", "graft"):
+            repo = self.repo_on(graph)
+            clone = Path(tempfile.mkdtemp()) / "clone"
+            subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+            fc.fc_worktree.ready_checkout(repo, clone)
+            self.assert_pack(fc.fc_implement.trail_pack(clone, "entry point", repo=repo, limit=3), "entry point")
+            self.assertTrue((clone / ".trail" / "cache" / "INDEX.md").exists())  # .trail/cache/ made before the build
+            self.assertEqual((clone / "graft").exists(), graph == "graft")
+            self.assertEqual(self.calls()[-2:], [f"build --no-gitignore --no-ignore {clone}", f"ask entry point --source -n 3 --no-refresh {clone}"])
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout, "")
 
+    def test_no_graph_or_a_failing_ask_gives_no_pack(self):
+        repo, _ = repo_with({"a.txt": "x\n"})
+        self.assertEqual((fc.fc_implement.trail_pack(repo, "main", repo=repo), self.calls()), ("", []))
+        failed = SimpleNamespace(returncode=1, stdout='trail ask — "main"  (lexical)\n')
+        with mock.patch.object(fc.fc_core, "sh", return_value=failed):
+            self.assertEqual(fc.fc_implement.trail_pack(self.repo_on("graft"), "main"), "")
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_the_implementer_prompt_names_trail_never_graft(self):
+        repo, _ = repo_with({"a.txt": "no\n"})
+        task, prompts = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                         "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}, []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt); (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value="PACK"):
+            fc.fc_implement.run_task(repo, Path(tempfile.mkdtemp()), task, 3)
+        self.assertIn('CONTEXT PACK from the repo\'s trail graph (exact file:line, with source). Use it instead of exploring. '
+                      'If you need more, run `trail ask "<question>"` or `trail callers <symbol>`; do not open unrelated files.\nPACK', prompts[0])
+        self.assertNotRegex(prompts[0], r"\bgraft\b")

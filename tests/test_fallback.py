@@ -33,7 +33,7 @@ class Fallback(unittest.TestCase):
                 raise RuntimeError("provider refused the request")
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, 3, reset_files=reset_files), calls
@@ -53,7 +53,7 @@ class Fallback(unittest.TestCase):
             limits.append(timeout)
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.fc_implement.run_task(repo, proj, task, 3)
         self.assertGreaterEqual(limits[0], fc.fc_models.TURN_TIMEOUT + 300)
@@ -114,8 +114,8 @@ class ReadyCheckout(unittest.TestCase):
         fc.fc_worktree.ready_checkout(repo, wt)  # idempotent: a re-run neither fails nor duplicates exclude lines
         self.assertTrue((wt / "client" / "node_modules").is_symlink())
         self.assertTrue((wt / "client" / "node_modules" / "jest").is_dir())
-        if subprocess.run(["which", "graft"], capture_output=True).returncode == 0:
-            subprocess.run(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], cwd=wt, capture_output=True)
+        if subprocess.run(["which", "trail"], capture_output=True).returncode == 0:
+            subprocess.run(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], cwd=wt, capture_output=True)
         self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
@@ -194,7 +194,7 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None):
+    def verify(self, writes, reply="", cfg=None, pack=""):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
@@ -212,7 +212,7 @@ class FixScope(unittest.TestCase):
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
         stages = iter([(False, {}, "finding"), (True, {}, "")])
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
                 mock.patch.object(fc.fc_verify, "run_stages", lambda *a: next(stages)), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
@@ -237,6 +237,11 @@ class FixScope(unittest.TestCase):
         self.verify({"a.go": "fixed\n"}, cfg={"review_context": "Paths are POSIX only by design."})
         self.assertIn("Paths are POSIX only by design.", self.prompt)
         self.assertIn("no hardening", self.prompt)
+
+    def test_fixer_gets_the_trail_pack(self):
+        self.verify({"a.go": "fixed\n"}, pack="PACK")
+        self.assertIn("CONTEXT PACK from trail (exact file:line). Use it instead of exploring.\nPACK\n\n", self.prompt)
+        self.assertNotRegex(self.prompt, r"\bgraft\b")
 
     def test_review_confirms_only_defects_against_the_requirements(self):
         systems = []
@@ -386,7 +391,7 @@ class RetryMessage(unittest.TestCase):
             seen.append(log.read_text() if log.exists() else None)
             (Path(cwd) / "a.txt").write_text(["a", "b", "yes"][len(prompts) - 1] + "\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_implement, "condense_failure", return_value=summary), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", backup), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
