@@ -25,19 +25,18 @@ def style_at(app, text):
 
 
 class FinishScreenTest(unittest.IsolatedAsyncioTestCase):
-    async def finish(self, lines, code, press):
+    async def finish(self, lines, code, press, check=lambda app: None):
         gate = threading.Event()
         fake = lambda results, yes: (gate.wait(5), (lines, code))[1]
         with mock.patch("fc_finish.finish", side_effect=fake) as finish:
             async with (app := Host()).run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
                 self.assertTrue(app.screen.query(LoadingIndicator) and style_at(app, "checking your model…"))
-                gate.set()
-                await app.workers.wait_for_complete()
+                gate.set(); await app.workers.wait_for_complete()
                 await pilot.pause()
                 buttons = {str(b.label): b for b in app.screen.query(Button)}
                 self.assertTrue(all(b.region.area and app.screen.region.contains_region(b.region) for b in buttons.values()))
-                buttons[press].press()
+                check(app); buttons[press].press()
                 await pilot.pause()
         finish.assert_called_once_with(RESULTS, yes=False)
         return app, set(buttons)
@@ -47,9 +46,10 @@ class FinishScreenTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((buttons, app.return_value), ({"Done"}, 0))
 
     async def test_lines_wrap_and_are_styled_by_kind(self):
-        app, _ = await self.finish(["compose is ready", "setup is not finished", PRESET], 1, "Quit")
-        styles = [style_at(app, t) for t in ("compose is ready", "setup is not finished", "Create the", "TAILWORD")]
-        self.assertTrue(all(styles) and len(set(styles[:3])) == 3, styles)
+        def check(app):  # read while the app runs: Quit closes it
+            styles = [style_at(app, t) for t in ("compose is ready", "setup is not finished", "Create the", "TAILWORD")]
+            self.assertTrue(all(styles) and len(set(styles[:3])) == 3, styles)
+        await self.finish(["compose is ready", "setup is not finished", PRESET], 1, "Quit", check)
 
     async def test_missing_keys_go_back_to_keys(self):
         app, buttons = await self.finish(["OpenRouter key skipped", "setup is not finished"], 1, "Back to keys")
