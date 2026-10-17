@@ -181,7 +181,15 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 7. Report the cut with each story's task issue ids.
 """
 
-TOOLSMITH_BRIEF = ""  # the toolsmith's brief for one tool-bug entry; cmd_toolsmith fills it
+TOOLSMITH_BRIEF = """You are the toolsmith teammate for project {project}: compose itself failed there, and the newest entry in the
+tool-bug log is your assignment: {reporter} at {at}, compose {cli_commit} in {cli_repo}:
+  {message}
+Read that repo's SKILL.md first; it is the only skill file to read, never another.
+1. Reproduce the bug from the report in your worktree, then find its root cause in the code.
+2. Write the body file: line 1 is `# <command>: <symptom>`, then the sections issue #1 has (`gh issue view 1 --repo {repo}`).
+3. File it: `compose tool-bug file --project {project} --body <file>`. Exit 2 means the search found an open issue already:
+   `--comment <n>` comments there when it is the same bug, `--new` creates a new one when it is not.
+{variant}"""
 
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
@@ -269,7 +277,33 @@ def cmd_planner(a):
 def cmd_toolsmith(a):
     """Print the toolsmith's brief for the project's newest tool-bug entry: the maintainer's toolsmith files and fixes on a
     branch, anyone else's only reproduces, diagnoses, and files; exits non-zero when the project has no entry."""
-    raise NotImplementedError("cmd_toolsmith")
+    proj = fc_core.project_dir(a)
+    entry, log = None, Path(fc_crew.TOOL_BUGS)
+    if log.exists():
+        for line in log.read_text().splitlines():
+            d = json.loads(line)
+            if d.get("project") == proj.name:
+                entry = d
+    if not entry:
+        sys.exit(f"no tool-bug entry for project {proj.name}")
+    repo, state = fc_toolbug.REPO, fc_toolbug.gh_status()[0]
+    if state == "maintainer":
+        variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch, with a test that
+   fails without the fix and passes with it, and run the full suite, not only your test.
+5. You never merge or push, and never write `Fixes #` in a commit message (a merge would close the issue before the product
+   owner's go): the `gh issue comment` with your branch and the fix's commit is what tells them.
+6. Report `done` with the branch and the issue's URL.
+"""
+    else:
+        variant = f"""4. You are not a maintainer on {repo}: you reproduce, diagnose, and file only, so never edit or commit anything; this
+   overrides the worktree line `crew start` puts first.
+5. Without `--approved` the filing saves a draft instead of posting: report `needs-user` with the saved path and your
+   diagnosis, and wait. On the go, run the same filing command with `--approved`, then report `done` with the issue's URL.
+"""
+        if state == "no-gh":
+            variant += "   gh does not work here: if the filing prints a `gh auth login` hint, put that in your needs-user line too.\n"
+    print(TOOLSMITH_BRIEF.format(project=proj.name, reporter=entry["reporter"], at=entry["at"], cli_commit=entry["cli_commit"],
+                                 cli_repo=entry["cli_repo"], message=entry["message"], repo=repo, variant=variant))
 
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
@@ -391,4 +425,3 @@ def collect_tests(proj, only=None):
         fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
         fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
-
