@@ -179,16 +179,16 @@ class WatchReflect(unittest.TestCase):
         after = self.snap({"/p/r1.json": {"trigger": "task:003", "error": None, "counts": (1, 0)},
                            "/p/r2.json": {"trigger": "verify", "error": None, "counts": (0, 0)},
                            "/p/r3.json": {"trigger": "task:004", "error": "no TYPESAFE_API_KEY", "counts": (0, 0)}})
-        ev = fc.watch_events(self.snap({}), after)
+        ev = fc.fc_watch.watch_events(self.snap({}), after)
         self.assertEqual(len(ev), 2)
         self.assertEqual(ev[0], "event reflect=/p/r1.json broken=1 unclear=0 trigger=task:003")
         self.assertTrue(ev[1].startswith("event reflect=/p/r3.json error='no TYPESAFE_API_KEY'"))
-        self.assertEqual(fc.watch_events(after, after), [])
+        self.assertEqual(fc.fc_watch.watch_events(after, after), [])
 
     def test_the_engineering_manager_does_not_get_screens(self):
         ev = ["event reflect=/p/r1.json broken=1 unclear=0 trigger=task:003"]
-        self.assertEqual(fc.watch_filter(ev, "hw", ["hw-orchestrator"]), [])
-        self.assertEqual(fc.watch_filter(ev, "hw", []), ev)
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", ["hw-orchestrator"]), [])
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", []), ev)
 
     def test_the_snapshot_drops_screens_a_closed_change_answered(self):
         proj = project()
@@ -196,10 +196,10 @@ class WatchReflect(unittest.TestCase):
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.fc_change.reflect(proj, "task:001", "x")
         with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
-            self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"][str(path)]["counts"], (1, 0))
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["reflects"][str(path)]["counts"], (1, 0))
             fc.fc_change.changes_dir(proj).mkdir(parents=True)
             (fc.fc_change.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
-            self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["reflects"], {})
 
     def test_the_snapshot_drops_screens_a_dismissal_answered(self):
         proj = project()
@@ -209,7 +209,7 @@ class WatchReflect(unittest.TestCase):
         with open(proj / "results" / "evidence.jsonl", "a") as f:
             f.write(json.dumps({"at": "2999-01-01 00:00:00", "trigger": "dismissed", "text": "a false alarm", "cut": True}) + "\n")
         with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
-            self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["reflects"], {})
 
     def test_a_screen_written_between_two_watches_is_reported_by_the_next(self):
         proj = project()
@@ -218,7 +218,7 @@ class WatchReflect(unittest.TestCase):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", return_value={}), \
                     mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 try:
-                    fc.cmd_watch(a)
+                    fc.fc_watch.cmd_watch(a)
                 except SystemExit:
                     pass
             return out
@@ -385,7 +385,7 @@ class ImplementerContradiction(unittest.TestCase):
         self.assertEqual((r["status"], r["attempts"], len(prompts)), ("contradiction", 1, 1))
         self.assertEqual(r["log"][-1]["contradiction"], found)
         self.assertIn("CONTRADICTION: <what the brief says>", prompts[0])
-        self.assertIn("contradiction", fc.FINAL_STATES)
+        self.assertIn("contradiction", fc.fc_watch.FINAL_STATES)
 
     def test_echoing_the_template_is_not_a_contradiction(self):
         r, prompts = self.run_with("Rules noted.\nCONTRADICTION: <what the brief says> / <what the code shows, file:line>")

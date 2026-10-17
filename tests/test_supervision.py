@@ -25,7 +25,7 @@ class Stalls(unittest.TestCase):
                 "run": run, "verify": verify, "run_end": run_end, "last": (NOW - last_ago, "teammate x reported working")}
 
     def stalls(self, snap, now=NOW):
-        return fc.watch_stalls(self.proj, snap, 240, now_s=now)
+        return fc.fc_watch.watch_stalls(self.proj, snap, 240, now_s=now)
 
     def test_quiet_project_fires_once(self):
         s = self.snap(crew={ORCH: ("working", 600)}, last_ago=600)
@@ -79,8 +79,8 @@ class Stalls(unittest.TestCase):
     def test_the_engineering_manager_receives_stalls_and_the_team_lead_too(self):
         ev = ["event stall=quiet agent=hw-orchestrator x", "event crew=hw-tests-001 state=done message='m'",
               "event stall=idle agent=hw-orchestrator the team lead has been idle"]
-        self.assertEqual(fc.watch_filter(ev, "hw", [ORCH]), [ev[0], ev[2]])
-        self.assertEqual(fc.watch_filter(ev, "hw", []), ev[:2])  # the team lead is idle because it waits on this watch
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", [ORCH]), [ev[0], ev[2]])
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", []), ev[:2])  # the team lead is idle because it waits on this watch
 
 
 class WatchTimeout(unittest.TestCase):
@@ -91,9 +91,9 @@ class WatchTimeout(unittest.TestCase):
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.01, interval=0.01, stall=10_000)
         out = []
         with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
-                mock.patch.object(fc, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
+                mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit) as e:
-                fc.cmd_watch(a)
+                fc.fc_watch.cmd_watch(a)
         self.assertEqual(e.exception.code, 2)
         self.assertIn("event timeout", out[-1])
         self.assertIn("pending tasks 1, teammates working hw-tests-001, run not live, verify not run", out[-1])
@@ -114,10 +114,10 @@ class WatchMemory(unittest.TestCase):
         a.__dict__.update(kw)
         out = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role is not None else {})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=snap), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
             try:
-                fc.cmd_watch(a)
+                fc.fc_watch.cmd_watch(a)
             except SystemExit:
                 pass
         return out
@@ -138,11 +138,11 @@ class WatchMemory(unittest.TestCase):
         seen = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}  # the engineering manager's watch: no role
         with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
-                mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]):
+                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=[snap, later, later, later]):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
                 with contextlib.suppress(SystemExit):
-                    fc.cmd_watch(a)
+                    fc.fc_watch.cmd_watch(a)
         self.assertEqual(seen, [[f"event crew={ORCH} state=needs-user message='which db?'"]])
 
     def test_the_engineering_managers_watch_passes_teammates_it_started_whatever_from_says(self):
@@ -157,11 +157,11 @@ class WatchMemory(unittest.TestCase):
         seen = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
         with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), \
-                mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
+                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
                 with contextlib.suppress(SystemExit):
-                    fc.cmd_watch(a)
+                    fc.fc_watch.cmd_watch(a)
         self.assertEqual(seen, [["event crew=hw-planner state=needs-user message='3 stories; accept-all'"]])
 
     def later(self):
@@ -200,7 +200,7 @@ class WatchMemory(unittest.TestCase):
         self.assertEqual(files, ["watch-engineering-manager.json", "watch-manager.json"])
 
     def test_a_payment_halt_is_an_event(self):
-        ev = fc.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
+        ev = fc.fc_watch.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
         self.assertTrue(any(e.startswith("event halt=payment provider=openrouter remaining=2") for e in ev), ev)
 
     def test_now_reports_a_crashed_run(self):
@@ -219,10 +219,10 @@ class Rewake(unittest.TestCase):
         """The hook reads its JSON from stdin: feed it here, since the real stdin may be a pipe nobody writes to (then the hook waits forever)."""
         err = io.StringIO()
         with mock.patch.dict(os.environ, env or self.env), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj) as pd, \
-                mock.patch.object(fc, "watch_snapshot", side_effect=snaps), mock.patch.object(fc, "WATCH_INTERVAL", 0.01), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=snaps), mock.patch.object(fc.fc_watch, "WATCH_INTERVAL", 0.01), \
                 mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"session_id": session}))), contextlib.redirect_stderr(err):
             try:
-                fc.cmd_rewake(SimpleNamespace())
+                fc.fc_watch.cmd_rewake(SimpleNamespace())
                 code = 0
             except SystemExit as e:
                 code = e.code
@@ -254,7 +254,7 @@ class Rewake(unittest.TestCase):
         self.assertIn(f"fast-coding's skill changed since you read it: {skill / 'SKILL.md'}", err)
 
     def test_a_second_hook_leaves_the_parked_one_alone(self):
-        held = fc.watch_lock(self.proj, "orchestrator", wait=False)
+        held = fc.fc_watch.watch_lock(self.proj, "orchestrator", wait=False)
         self.assertIsNotNone(held)
         code, err, _ = self.rewake([wsnap("passed")])
         self.assertEqual((code, err), (0, ""))
@@ -272,7 +272,7 @@ class Reenter(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj) as pd, \
                 contextlib.redirect_stdout(out):
-            fc.cmd_reenter(SimpleNamespace())
+            fc.fc_watch.cmd_reenter(SimpleNamespace())
         return out.getvalue(), pd
 
     def test_a_teammate_is_pointed_at_its_brief_the_board_and_linear(self):
@@ -373,9 +373,9 @@ class Detach(unittest.TestCase):
         proj = Path(tempfile.mkdtemp()) / "hw"
         out = []
         a = SimpleNamespace(repo=".", now=True, from_=None)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "watch_snapshot", return_value=wsnap("running", run=True)), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=wsnap("running", run=True)), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
-            fc.cmd_watch(a)
+            fc.fc_watch.cmd_watch(a)
         self.assertTrue(any(line.startswith("event run=live") for line in out), out)
 
 

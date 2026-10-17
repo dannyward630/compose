@@ -29,7 +29,7 @@ class Yolo(unittest.TestCase):
         out = io.StringIO()
         a = SimpleNamespace(repo=".", project="hw", push=push, words=list(words))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
-                mock.patch.object(fc, "watch_snapshot", return_value=snapshot or snap()), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snapshot or snap()), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
                 mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
             fc.cmd_yolo(a)
@@ -122,9 +122,9 @@ class Yolo(unittest.TestCase):
     def watch_now(self, s):
         out = []
         a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=s), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=s), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
-            fc.cmd_watch(a)
+            fc.fc_watch.cmd_watch(a)
         return out
 
     def test_watch_now_prints_yolo_first_and_marks_needs_user(self):

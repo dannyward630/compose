@@ -129,21 +129,21 @@ class SkillCheck(unittest.TestCase):
     def snapshot(self, proj, live):
         agents = {"agents": [{"name": "shop-eol", "agent_status": "working"}] if live else []}
         with mock.patch.object(fc.fc_herdr, "herdr", return_value=agents), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
-            return fc.watch_snapshot(Path("."), proj)
+            return fc.fc_watch.watch_snapshot(Path("."), proj)
 
     def test_a_live_pi_teammate_hears_once_through_watch(self):  # pi runs no Claude hooks: watch tells the team lead, who relays it
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         proj.mkdir(parents=True)
         self.assertEqual(self.crew_start(proj, "pi:a/b")["skill"], fc.fc_crew.skill_hashes())
         before = self.snapshot(proj, live=True)
-        self.assertEqual(fc.watch_events(before, self.snapshot(proj, live=True)), [])
+        self.assertEqual(fc.fc_watch.watch_events(before, self.snapshot(proj, live=True)), [])
         (self.skill / "SKILL.md").write_text("v2\n")
         after = self.snapshot(proj, live=True)
-        ev = fc.watch_events(before, after)
+        ev = fc.fc_watch.watch_events(before, after)
         self.assertEqual(ev, [f"event crew=shop-eol skill=stale changed={(self.skill / 'SKILL.md').resolve()}"])
-        self.assertEqual(fc.watch_filter(ev, "shop", []), ev)  # the team lead's watch
-        self.assertEqual(fc.watch_events(after, self.snapshot(proj, live=True)), [])  # said once
-        self.assertEqual(fc.watch_events(before, self.snapshot(proj, live=False)), [])  # a closed teammate needs nothing
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "shop", []), ev)  # the team lead's watch
+        self.assertEqual(fc.fc_watch.watch_events(after, self.snapshot(proj, live=True)), [])  # said once
+        self.assertEqual(fc.fc_watch.watch_events(before, self.snapshot(proj, live=False)), [])  # a closed teammate needs nothing
 
     def test_a_claude_teammate_is_left_to_its_hooks(self):
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
@@ -151,7 +151,7 @@ class SkillCheck(unittest.TestCase):
         self.assertNotIn("skill", self.crew_start(proj, "claude"))
         before = self.snapshot(proj, live=True)
         (self.skill / "SKILL.md").write_text("v2\n")
-        self.assertEqual(fc.watch_events(before, self.snapshot(proj, live=True)), [])
+        self.assertEqual(fc.fc_watch.watch_events(before, self.snapshot(proj, live=True)), [])
 
     def test_the_plugin_registers_the_hook(self):
         hooks = json.loads((Path(__file__).resolve().parents[1] / "hooks" / "hooks.json").read_text())["hooks"]

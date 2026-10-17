@@ -9,25 +9,23 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, fcntl, json, os, re, signal, sys, time
+import argparse, json, os, re, signal, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec  # noqa: E402
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch  # noqa: E402
 
 # ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
 YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
               "merging a toolsmith fix into fast-coding itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
-YOLO_HINT = "  yolo=on (answer with the recommendation; log it: fast-coding yolo decided ...)"
-
 def yolo_digest(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
-    snap = watch_snapshot(repo, proj)
+    snap = fc_watch.watch_snapshot(repo, proj)
     changed = lambda tid: (f := proj / "results" / f"{tid}.json").exists() and f.stat().st_mtime >= since
     tasks = {tid: t for tid, t in snap["tasks"].items() if changed(tid)}
     waiting = [f"{n}: {r[-1]['state']}  {r[-1]['message']}" for n, r in snap["crew"].items()
@@ -86,290 +84,6 @@ def cmd_yolo(a):
     print(f"push: {'yes, the verified stack is submitted' if y['push'] else 'no, the stack waits for you'}")
     print(YOLO_NEVER)
     print(f"back: `fast-coding yolo off --project {proj.name}` prints what happened")
-
-# ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
-
-def watch_snapshot(repo, proj):
-    """Everything a team lead decides on: each task's state, each herdr agent's status, run and verify markers."""
-    try:
-        tasks = fc_tasks.load_tasks(proj)
-    except json.JSONDecodeError:  # a writer that is not ours caught mid-write: one more look, then the real error
-        time.sleep(0.5)
-        tasks = fc_tasks.load_tasks(proj)
-    trunk_head = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
-    # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
-    snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "crashed": bool(fc_tasks.run_marker(proj)) and not fc_tasks.run_alive(proj), "verify": None, "halt": None,
-            "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
-            if (proj / "results" / "crew").exists() else {}}
-    try:
-        h = json.loads((proj / "results" / "resume.json").read_text())
-        snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or [])]
-    except (OSError, json.JSONDecodeError, KeyError):
-        pass
-    for m in tasks:
-        r = fc_status.task_state(repo, proj, m, trunk_head)
-        snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
-    for ag in (fc_herdr.herdr("agent", "list") or {}).get("agents", []):
-        n = ag.get("name") or ""
-        if n.startswith(fc_herdr.agent_name(proj.name, "")[:-1]):
-            snap["agents"][n] = ag.get("agent_status")
-    pis = [c for f in sorted((proj / "results" / "crew").glob("*.json"))
-           if "skill" in (c := json.loads(f.read_text())) and c.get("agent", c["name"]) in snap["agents"]]
-    try:
-        cur = fc_crew.skill_hashes() if pis else {}
-    except OSError:
-        pis = []
-    snap["skill"] = {c["name"]: changed for c in pis if (changed := fc_crew.skill_changed(c["skill"], cur))}  # live pi teammates reading an old skill
-    v = proj / "results" / "verify.json"
-    if v.exists():
-        try:
-            snap["verify"] = [int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed"))]  # a list: snapshots round-trip JSON
-        except (json.JSONDecodeError, OSError):
-            pass
-    # The newest sign of life anywhere in the project, and when the last run ended: the stall rules read these.
-    marks = [(fc_core.report_time(r[-1]["at"]), f"teammate {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
-    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if not f.name.startswith("watch")]
-    snap["last"] = list(max(marks)) if marks else [0, ""]
-    cost = proj / "results" / "run-cost.json"
-    snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
-    cut = fc_change.evidence_cut(proj)  # a screen a closed change or a dismissal already answered is not news, not even to `--now`
-    snap["reflects"] = {}
-    for f in sorted((proj / "results").glob("reflect-*.json")):
-        try:
-            r = json.loads(f.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        if r.get("at", "") > cut:
-            snap["reflects"][str(f)] = {"trigger": r.get("trigger"), "error": r.get("error"), "counts": fc_change.reflect_counts(r)}
-    return snap
-
-STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
-
-def watch_mem(proj, key):
-    """What one role's watcher (key: FAST_CODING_ROLE, else `manager`) last reported and which stalls it fired, in results/watch-<role>.json."""
-    try:
-        return json.loads((proj / "results" / f"watch-{key}.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-def watch_save(proj, key, **kv):
-    mem = watch_mem(proj, key) | kv
-    f = proj / "results" / f"watch-{key}.json"
-    f.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(f.with_suffix(".tmp"), json.dumps(mem))
-    f.with_suffix(".tmp").replace(f)  # atomic: a reader never sees half a file
-
-def watch_lock(proj, key, wait=True):
-    """One live watch per watcher, held until the returned file closes. None when another holds it and wait is False."""
-    (proj / "results").mkdir(parents=True, exist_ok=True)
-    f = open(proj / "results" / f"watch-{key}.lock", "w")
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        return f
-    except BlockingIOError:
-        f.close()
-        return None
-
-def watch_stalls(proj, snap, limit, now_s=None, key="all"):
-    """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once per watcher
-    (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence."""
-    now_s = now_s or time.time()
-    orch = fc_herdr.agent_name(proj.name, "orchestrator")
-    last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
-    if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
-        return []  # finished, or waiting on the product owner: silence is expected
-    pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
-    on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
-    working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
-    mem = watch_mem(proj, key)
-    fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
-    lead = orch in snap.get("crew", {}) or orch in snap["agents"]  # a project started without a team lead (a designer started directly) never has one
-    who = f" agent={orch}" if lead else ""
-    status = snap["agents"].get(orch, "gone")
-    if (seen.get(orch) or [None])[0] != status:
-        seen[orch] = [status, now_s]
-    ev = []
-    hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
-    tail = f"{f'team lead {status}' if lead else 'no team lead'}, pending tasks {len(pending)}{f', held {len(on_hold)}' if on_hold else ''}, teammates working {','.join(working) or 'none'}"
-    if lead:
-        tail += f"  (read: herdr agent read {orch} --lines 60; nudge: herdr agent prompt {orch} \"...\")"
-    def fire(key, what):
-        if key not in fired:
-            fired.add(key)
-            ev.append(f"event stall={what}; {tail}")
-    lt, what = snap.get("last") or (0, "")
-    if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
-        fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
-    tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
-    if tests and all(st == "done" for st, _ in tests.values()) and not snap["run"] and pending \
-            and all(snap["tasks"][t]["state"] == "pending" for t in pending):
-        done_at = max(t for _, t in tests.values())
-        if now_s - done_at >= limit:
-            fire(f"undispatched:{done_at}", f"undispatched{who} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
-    ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
-    if lead and ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
-        fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the team lead has not reported since")
-    since = seen[orch][1]
-    if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
-        fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
-    try:
-        watch_save(proj, key, fired=sorted(fired), seen=seen)
-    except OSError:
-        pass
-    return ev
-
-def watch_events(before, after):
-    """The actionable differences between two snapshots, one line each. Attempt counts and idle/done flaps are not events."""
-    ev = []
-    for tid, t in after["tasks"].items():
-        b = before["tasks"].get(tid, {})
-        if t["state"] != b.get("state") and (t["state"] in FINAL_STATES or t["state"] == "running"):
-            ev.append(f"event task={tid} state={t['state']} attempts={t['attempts']} cost=${t['cost']:.4f}"
-                      + (f" branch={t['note']}" if t["note"] else "") + (f" linear={t['linear']}" if t["linear"] else "") + f" title={t['title']!r}")
-    for n, st in after["agents"].items():
-        if st == "blocked" and before["agents"].get(n) != "blocked":
-            ev.append(f"event agent={n} status=blocked  (read: herdr agent read {n} --lines 60; steer: herdr agent prompt {n} \"...\")")
-    if before["run"] and not after["run"]:
-        passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
-        ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
-                  + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
-    if after.get("halt") and after["halt"] != before.get("halt"):
-        at_, provider, left = after["halt"]
-        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
-                  f"their word, then `fast-coding resume`)")
-    if after["verify"] and after["verify"] != before["verify"]:
-        ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
-    for n, reports in after.get("crew", {}).items():
-        for r in reports[len(before.get("crew", {}).get(n, [])):]:
-            if r["message"] != "started":
-                ev.append(f"event crew={n} state={r['state']} message={r['message']!r}")
-    for n, changed in after.get("skill", {}).items():
-        if changed != before.get("skill", {}).get(n):
-            ev.append(f"event crew={n} skill=stale changed={','.join(changed)}")
-    for path, r in after.get("reflects", {}).items():
-        if path in before.get("reflects", {}):
-            continue
-        if r["error"]:
-            ev.append(f"event reflect={path} error={r['error']!r}  (the screen did not run: judge the evidence yourself)")
-        elif sum(r["counts"]):
-            ev.append(f"event reflect={path} broken={r['counts'][0]} unclear={r['counts'][1]} trigger={r['trigger']}")
-    return ev
-
-def yolo_mark(proj, events):
-    """Under yolo, a question line tells the engineering manager it answers it itself."""
-    if not fc_tasks.yolo_state(proj):
-        return events
-    return [e + YOLO_HINT if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
-
-def watch_filter(events, slug, sources, direct=()):
-    """`--from` names the teammates whose reports wake you (the engineering manager watches only its team lead); without it you get
-    everything except the team lead's own reports, which go up to the engineering manager. `direct` names the teammates that report to
-    this watcher (crew_reporting_to): a planner or designer the engineering manager started itself passes whatever `--from` says, so
-    its needs-user and blocked reach the product owner (manager_attention) while the `--from orchestrator` watch runs."""
-    if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
-        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
-                or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
-    me = fc_herdr.agent_name(slug, "orchestrator")
-    return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
-
-WATCH_INTERVAL = 2.0
-
-def cmd_watch(a, rewake=False):
-    """Sleep on the project until something a team lead must act on happens, print it, exit. Zero tokens while waiting:
-    run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
-    Each role's watcher (FAST_CODING_ROLE, else manager; --from only filters what is printed) remembers what it last
-    reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
-    proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    sources = [fc_herdr.agent_name(proj.name, x.strip()) if not x.strip().startswith(fc_herdr.agent_name(proj.name, "")) else x.strip()
-               for x in (a.from_ or "").split(",") if x.strip()]
-    key = os.environ.get("FAST_CODING_ROLE") or "manager"
-    direct = lambda: fc_crew.crew_reporting_to(proj, key) if key == "manager" else ()  # the engineering manager's own teammates pass whatever --from says
-    if a.now:
-        cur = watch_snapshot(repo, proj)
-        empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
-                 "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
-        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, direct()))
-        if y := fc_tasks.yolo_state(proj):
-            lines.insert(0, f"event yolo=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} words={y.get('words', '')!r}")
-        if cur["run"]:
-            lines.append(f"event run=live pid={(fc_tasks.run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
-                         f"read results/run.log; do not start a second)")
-        for line in lines or ["event idle  nothing running"]:
-            print(line)
-        watch_save(proj, key, base=cur)  # the reconcile is the acknowledgement: the next watch reports only what changes after it
-        return
-    lock = watch_lock(proj, key, wait=not rewake)  # a second watch waits its turn; a second hook leaves it to the parked one
-    if not lock:
-        return
-    with lock:  # held until this watch returns or exits
-        before = watch_mem(proj, key).get("base") or watch_snapshot(repo, proj)
-        emit = (lambda s: print(s, file=sys.stderr)) if rewake else print
-        parent = os.getppid()
-        deadline = time.time() + a.timeout if a.timeout else None
-        try:
-            cfg_stall = json.loads((proj / "verify.json").read_text()).get("stall_seconds")
-        except (OSError, json.JSONDecodeError):
-            cfg_stall = None
-        limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
-        while True:
-            time.sleep(a.interval)
-            if rewake and os.getppid() != parent:
-                return  # the session that parked this hook is gone
-            after = watch_snapshot(repo, proj)
-            ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources, direct()))
-            if ev:
-                fc_crew.manager_attention(proj, ev)
-                if rewake:
-                    emit("fast-coding watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
-                    try:
-                        if note := fc_crew.skill_notice(a.session):  # a wake is a prompt the UserPromptSubmit hook never sees
-                            emit(note)
-                    except Exception:
-                        pass
-                for line in ev:
-                    emit(f"[{fc_core.now()}] {line}")
-                watch_save(proj, key, base=after)  # after printing: a watch killed in between reports it again rather than never
-                if rewake:
-                    sys.exit(2)
-                return
-            before = after
-            if deadline and time.time() > deadline:
-                watch_save(proj, key, base=after)
-                pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
-                working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
-                print(f"[{fc_core.now()}] event timeout  nothing changed in {fc_core.fmt(a.timeout)}: pending tasks {pending}, teammates working "
-                      f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
-                      f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")
-                sys.exit(2)
-
-def cmd_rewake(a):
-    """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
-    wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once,
-    a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too. A wake names skill files changed since the last one."""
-    project = os.environ.get("FAST_CODING_PROJECT")
-    if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
-        return
-    try:
-        session = re.sub(r"[^\w-]", "", json.load(sys.stdin).get("session_id") or "")
-    except Exception:
-        session = ""
-    cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
-                                 timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
-
-def cmd_reenter(a):
-    """Claude Code SessionStart hook (matcher compact): after a compaction the session continues by re-entering through 0r, not from scratch.
-    Its herdr tab carries the role, project, and worktree. Every other session returns at once, a headless one (`claude -p`,
-    which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
-    project, role = os.environ.get("FAST_CODING_PROJECT"), os.environ.get("FAST_CODING_ROLE")
-    if not role or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
-        return
-    proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project))
-    print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
-    print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{fc_herdr.agent_name(project, role)}.brief.md'} now.")
-    print(f"Run `fast-coding status --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project}` and "
-          f"`fast-coding watch --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project} --now` to see the board.")
-    print("Re-read the feature's Decisions so far and Plan on Linear before acting.")
 
 # ---------- bench ----------
 
@@ -490,7 +204,7 @@ def main():
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
                             ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
-                            ("watch", cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
+                            ("watch", fc_watch.cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", fc_status.cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", fc_layers.cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit pushes and opens one draft PR per layer"),
                             ("clean", fc_init.cmd_clean, "the post-merge step: remove task clones and merged branches, move the tasks proven merged to Done in Linear and roll their story and the feature up, and remove a merged project's worktree and branch"),
@@ -514,8 +228,8 @@ def main():
                             ("figma", fc_figma.cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", fc_crew.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
-                            ("rewake", cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
-                            ("reenter", cmd_reenter, "Claude Code SessionStart hook: after a compaction, point the teammate back at its brief, the board, and Linear"),
+                            ("rewake", fc_watch.cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
+                            ("reenter", fc_watch.cmd_reenter, "Claude Code SessionStart hook: after a compaction, point the teammate back at its brief, the board, and Linear"),
                             ("skillcheck", fc_crew.cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a fast-coding session the skill changed since it read it"),
                             ("workspace", fc_config.cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {fc_config.CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
@@ -547,8 +261,8 @@ def main():
         if name == "watch":
             s.add_argument("--now", action="store_true", help="print the current state as events and exit (session-start reconcile)")
             s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
-            s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {STALL_SECONDS})")
-            s.add_argument("--interval", type=float, default=WATCH_INTERVAL)
+            s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {fc_watch.STALL_SECONDS})")
+            s.add_argument("--interval", type=float, default=fc_watch.WATCH_INTERVAL)
             s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
@@ -639,7 +353,7 @@ def main():
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
     if a.cmd in DETACHED and not os.environ.get("FAST_CODING_DETACHED"):
         return detach(a)
-    if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
+    if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config()  # "default" when no workspace is chosen
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")

@@ -69,21 +69,21 @@ class Watch(unittest.TestCase):
 
     def test_task_final_and_running_are_events_attempts_are_not(self):
         a, b = self.snap(**{"001": "running"}), self.snap(**{"001": "passed"})
-        ev = fc.watch_events(a, b)
+        ev = fc.fc_watch.watch_events(a, b)
         self.assertEqual(len(ev), 1)
         self.assertIn("task=001 state=passed", ev[0]); self.assertIn("linear=ENG-7", ev[0])
         b["tasks"]["001"]["attempts"] = 2; b["tasks"]["001"]["state"] = "running"
-        self.assertEqual(fc.watch_events(self.snap(**{"001": "running"}), b), [])
-        self.assertIn("state=running", fc.watch_events(self.snap(**{"001": "pending"}), self.snap(**{"001": "running"}))[0])
+        self.assertEqual(fc.fc_watch.watch_events(self.snap(**{"001": "running"}), b), [])
+        self.assertIn("state=running", fc.fc_watch.watch_events(self.snap(**{"001": "pending"}), self.snap(**{"001": "running"}))[0])
 
     def test_agent_blocked_run_ended_verify(self):
         a, b = self.snap(**{"001": "passed"}), self.snap(**{"001": "passed"})
         b["agents"] = {"demo-001": "blocked"}; b["run"] = False; b["verify"] = (1, True)
-        ev = fc.watch_events(a, b)
+        ev = fc.fc_watch.watch_events(a, b)
         self.assertTrue(any("agent=demo-001 status=blocked" in e for e in ev))
         self.assertTrue(any("run=ended passed=1/1" in e for e in ev))
         self.assertTrue(any("verify=PASS" in e for e in ev))
-        self.assertEqual(fc.watch_events(b, b), [])
+        self.assertEqual(fc.fc_watch.watch_events(b, b), [])
 
     def test_pid_alive(self):
         self.assertTrue(fc.fc_tasks.pid_alive(os.getpid()))
@@ -177,5 +177,5 @@ class WatchCrash(unittest.TestCase):
         self.assertFalse(fc.fc_tasks.run_alive(proj))
         before = {"tasks": {}, "agents": {}, "run": True, "verify": None}
         after = {"tasks": {}, "agents": {}, "run": fc.fc_tasks.run_alive(proj), "crashed": True, "verify": None}
-        ev = fc.watch_events(before, after)
+        ev = fc.fc_watch.watch_events(before, after)
         self.assertEqual(len(ev), 1); self.assertIn("run=ended", ev[0]); self.assertIn("CRASHED", ev[0])

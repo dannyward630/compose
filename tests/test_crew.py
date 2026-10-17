@@ -46,13 +46,13 @@ class Crew(unittest.TestCase):
         before = snap(self.proj)
         self.report("shop-q-neb-12", "needs-user", "Which payment provider? I recommend Stripe")
         self.report("shop-orchestrator", "needs-user", "Tasks are ready for your go")
-        ev = fc.watch_events(before, snap(self.proj))
+        ev = fc.fc_watch.watch_events(before, snap(self.proj))
         self.assertEqual(len(ev), 2)
-        team_lead_view = fc.watch_filter(ev, "shop", [])  # everything but its own report, which goes up
+        team_lead_view = fc.fc_watch.watch_filter(ev, "shop", [])  # everything but its own report, which goes up
         self.assertEqual(team_lead_view, ["event crew=shop-q-neb-12 state=needs-user message='Which payment provider? I recommend Stripe'"])
-        engineering_manager_view = fc.watch_filter(ev, "shop", ["shop-orchestrator"])
+        engineering_manager_view = fc.fc_watch.watch_filter(ev, "shop", ["shop-orchestrator"])
         self.assertEqual(engineering_manager_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
-        self.assertEqual(fc.watch_events(snap(self.proj), snap(self.proj)), [])  # nothing new, no event
+        self.assertEqual(fc.fc_watch.watch_events(snap(self.proj), snap(self.proj)), [])  # nothing new, no event
 
     def test_a_teammate_the_engineering_manager_started_wakes_its_watch_whatever_from_says(self):
         """A planner or designer the engineering manager started itself (no team lead, or an epic) reports to it, so its watch
@@ -69,12 +69,12 @@ class Crew(unittest.TestCase):
         self.report("shop-designer", "blocked", "Framelink token missing")
         self.report("shop-tests", "needs-user", "which fixture?")
         self.report("shop-old", "needs-user", "legacy")
-        ev = fc.watch_events(before, snap(self.proj)) + ["event agent=shop-designer status=blocked  (read: ...)"]
+        ev = fc.fc_watch.watch_events(before, snap(self.proj)) + ["event agent=shop-designer status=blocked  (read: ...)"]
         direct = fc.fc_crew.crew_reporting_to(self.proj, "manager")
-        manager = fc.watch_filter(ev, "shop", ["shop-orchestrator"], direct)
+        manager = fc.fc_watch.watch_filter(ev, "shop", ["shop-orchestrator"], direct)
         self.assertEqual(manager, [e for e in ev if "shop-planner" in e or "shop-designer" in e])
-        self.assertEqual(fc.watch_filter(ev, "shop", ["shop-orchestrator"]), [])  # the record decides, never --from alone
-        self.assertEqual(fc.watch_filter(ev, "shop", [], direct), ev)  # the team lead's view is unchanged
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "shop", ["shop-orchestrator"]), [])  # the record decides, never --from alone
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "shop", [], direct), ev)  # the team lead's view is unchanged
         notified = []
         with mock.patch.object(fc.fc_crew, "desktop_notify", lambda title, body: notified.append((title, body))), mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("FAST_CODING_ROLE", None)
@@ -492,9 +492,9 @@ class ToolBug(unittest.TestCase):
         entry = json.loads(log.read_text().splitlines()[-1])
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
         self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
-        ev = fc.watch_events(before, snap(self.proj))
-        self.assertEqual(len(fc.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the engineering manager wakes on a teammate's tool-bug too
-        self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the team lead sees it
+        ev = fc.fc_watch.watch_events(before, snap(self.proj))
+        self.assertEqual(len(fc.fc_watch.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the engineering manager wakes on a teammate's tool-bug too
+        self.assertEqual(len(fc.fc_watch.watch_filter(ev, "shop", [])), 1)  # and the team lead sees it
 
     def test_every_brief_says_how_to_report_a_tool_bug(self):
         self.assertIn("tool-bug", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
@@ -707,7 +707,7 @@ class AtomicState(unittest.TestCase):
                 raise r
             return r
         with mock.patch.object(fc.fc_tasks, "load_tasks", load), mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
-            self.assertEqual(fc.watch_snapshot(Path("."), proj)["tasks"], {})
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["tasks"], {})
 
 
 class RestrictedStart(unittest.TestCase):
