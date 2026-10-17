@@ -7,17 +7,25 @@ Whenever the team learns something new, the plan changes with it.
 
 ```
 you, the product owner
- └── engineering manager   the one agent you talk to
-      ├── team lead        feature A: specs, steers, reviews
-      │    ├── planner     writes the plan and cuts the task tickets
-      │    ├── designer    designs in Figma with its own builders
-      │    └── teammates   explore, decide, test, build, verify
-      └── team lead        feature B, running at the same time
-           └── teammates   explore, decide, test, build, verify
+ └── engineering manager         the one agent you talk to
+      ├── team lead              feature A: specs, steers, reviews
+      │    ├── wayfinder         turns open decisions into cards for you
+      │    ├── planner           writes the plan and cuts the task tickets
+      │    ├── designer          carries the design into Figma
+      │    │    ├── builders     one per design task
+      │    │    └── reviewer     gates each build
+      │    └── teammates         explore, test, build, verify
+      ├── team lead              feature B, running at the same time
+      │    └── ...
+      ├── planner                started on a ticket with /fast-coding:planner
+      ├── designer               started on a ticket with /fast-coding:designer
+      └── toolsmith              fixes fast-coding itself on its own branch
 ```
 
 The engineering manager takes your request and hands each feature to its own team lead, so the features of one epic move forward at the same time.
 Each team lead takes its own teammates through the full software development life cycle, from discovery to pull requests you can review in minutes.
+Inside each team, a wayfinder brings you every open decision, a planner writes the plan and cuts the tickets, and a designer carries the design into Figma with its own builders and reviewer.
+Hand the engineering manager a ticket that already exists, and it starts a planner or a designer for it directly; a designer goes through the feature's team lead when one is running.
 The strongest models do the planning and bring every product decision to you.
 Fast, cheap agents write the code and verify it.
 The team leads steer their teammates while they work, and the engineering manager nudges any team lead that stalls.
