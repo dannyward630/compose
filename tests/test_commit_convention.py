@@ -2,6 +2,7 @@ import importlib.machinery, importlib.util, json, os, tempfile, unittest
 from pathlib import Path
 import sys
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
+os.environ["HERDR_ENV"] = ""
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("compose.py"))))

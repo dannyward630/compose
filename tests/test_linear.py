@@ -1,8 +1,9 @@
-import importlib.machinery, importlib.util, io, json, tempfile, unittest, urllib.error
+import importlib.machinery, importlib.util, io, json, os, tempfile, unittest, urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 import sys
+os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)

@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from tests.test_trail_setup import fc, repo_with, FakeTrail
+os.environ["HERDR_ENV"] = ""
 
 
 class TrailPack(FakeTrail):

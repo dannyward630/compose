@@ -1,5 +1,6 @@
 import os, subprocess, tempfile, unittest
 from pathlib import Path
+os.environ["HERDR_ENV"] = ""
 
 LAUNCHER = Path(__file__).resolve().parents[1] / "bin" / "compose"
 

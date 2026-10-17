@@ -2,6 +2,7 @@ import importlib.machinery, importlib.util, json, os, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys, time
+os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)

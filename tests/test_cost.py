@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
+os.environ["HERDR_ENV"] = ""
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))

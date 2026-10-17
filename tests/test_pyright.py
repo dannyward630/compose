@@ -1,6 +1,8 @@
 import json
+import os
 import unittest
 from pathlib import Path
+os.environ["HERDR_ENV"] = ""
 
 ROOT = Path(__file__).resolve().parents[1]
 

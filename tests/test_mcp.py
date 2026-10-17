@@ -1,6 +1,7 @@
-import subprocess, sys, unittest
+import os, subprocess, sys, unittest
 from pathlib import Path
 from unittest import mock
+os.environ["HERDR_ENV"] = ""
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))

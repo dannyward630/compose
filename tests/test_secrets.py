@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
+os.environ["HERDR_ENV"] = ""
 
 ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(ROOT / "bin" / "compose.py")))

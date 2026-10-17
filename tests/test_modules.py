@@ -7,6 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest import mock
+os.environ["HERDR_ENV"] = ""
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
@@ -222,6 +223,14 @@ class Residue(unittest.TestCase):
         self.assertIn("invalid choice: 'graft'", p.stderr)
 
 
+class TestModules(unittest.TestCase):
+    def test_every_test_module_clears_herdr_env(self):
+        """Run from a herdr pane, a test that reaches herdr_space would open a real space; discover never imports tests/__init__.py."""
+        for f in sorted((ROOT / "tests").glob("test_*.py")):
+            with self.subTest(f.name):
+                self.assertRegex(f.read_text(), r'(?m)^os\.environ\["HERDR_ENV"\] = ""$')
+
+
 MODULE_CLASSES = {"fc_core": FcCore, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_linear": FcLinear, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_layers": FcLayers, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_verify": FcVerify, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
 
 
@@ -234,4 +243,5 @@ def load_tests(loader, tests, pattern):
         suite.addTests(loader.loadTestsFromTestCase(MODULE_CLASSES[m]))
     if len(present) == len(RANK):
         suite.addTests(loader.loadTestsFromTestCase(Residue))
+    suite.addTests(loader.loadTestsFromTestCase(TestModules))
     return suite
