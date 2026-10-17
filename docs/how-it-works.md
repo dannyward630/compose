@@ -35,11 +35,13 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Five roles split the decisions.
+Seven roles split the decisions.
 
 | Who | Decides |
 |---|---|
-| Frontier model (Claude) | plan, tests, layer review, escalations; never merges |
+| Team lead (Claude, frontier) | spec, review of the planner's cut, tests, layer review, escalations; never writes code or merges |
+| Planner (frontier teammate) | the plan, the stories when a feature has none, and the task issues; never writes code |
+| Designer (Claude teammate) | design stories and tasks in Figma, built by its own crew; never writes repo files or decides a product question |
 | Fast implementer (GLM 5.3 Flash in pi) | makes one test green in one session; never writes tests |
 | Mercury | raises review findings, then confirms or drops them |
 | Jev (TypeSafe) | scores acceptance criteria, drives the browser, screens settled decisions against new evidence |
@@ -69,6 +71,43 @@ Three commands manage it:
    `teardown` does this too.
 
 On the first drawing after each app start, Frame0 asks you to allow "Frame0 MCP Server".
+
+## Planning
+
+Once wayfinder reports done, the team lead starts a planner teammate in its own tab instead of writing the plan itself.
+The planner reads the feature's map and its Decisions so far, plus `DESIGN.md`, a PRD, or whatever the repo already had.
+It writes the plan as a `## Plan` section in the feature issue's description, never as a file, and does not reopen a settled decision.
+When the feature has no stories, it first proposes them as one list for you, one per user-visible slice with acceptance criteria, and creates them on your go.
+Then it cuts the task issues under each story, and the team lead reviews that cut before anything is dispatched.
+
+Handed a story, the planner writes that story's tasks only.
+Handed a task, it lints and re-splits it, and that task is dispatched alone.
+Like the team lead, the planner's tab is denied edits, so it plans and never writes code.
+
+You can also start it yourself from the engineering manager with `/fast-coding:planner <issue or Linear project link>`.
+Its model is the `planner` entry under `models.crew`, as [workspaces.md](workspaces.md#crew-models) describes.
+
+## Design in Figma
+
+The wireframes settle flow and content.
+A designer teammate carries the design into Figma from wherever it stopped, as an entry into the same loop at the design step.
+Start it with `/fast-coding:designer <ticket> [--figma <file url or key>]`.
+The team lead starts it for a feature or story whose project it runs, and the engineering manager starts it for an epic or when no team lead is live.
+
+1. It reads before it writes: the ticket and its parents with their Decisions so far, the Frame0 wireframes, the repo's tokens and components through graft, `DESIGN.md`, and what the Figma file already has.
+2. Before any screen story is built, it writes a visual direction for the surface as a Linear decision, with every rule citing research, a decision, or a measured value.
+3. It files the design-system epic, design stories, and design tasks in Linear, never in the repo.
+   Each design task names the Figma page and frames it may touch.
+4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `fast-coding figma tree` and `fast-coding figma judge`.
+5. A `design-review` teammate then checks one image per story, and the result is handed to the code tasks as Framelink data.
+
+Every open design decision reaches you as a card with a recommendation, the same way wayfinder's do.
+The designer and its crew are Claude sessions, because Figma serves writes only to its allowlisted clients.
+Writes go through the official Figma connector, and every read goes through Framelink, which keeps reads off the connector's daily cap.
+The designer requires Framelink; [requirements.md](requirements.md#for-the-designer) shows how to set it up, and the designer's start stops with the install steps when it is missing.
+`fast-coding figma check --project <name> --figma <file url or key>` stores the target file and prints the Framelink setup when it cannot read the file.
+With no file stored, the designer asks you for one.
+Its model is the `designer` entry under `models.crew`, Opus 5.5 at high effort when the entry is missing.
 
 ## Linear
 
