@@ -322,6 +322,20 @@ class Detach(unittest.TestCase):
         self.assertIn("layer 001 passed", out.getvalue())
         self.assertIn("layer 001 passed", self.log.read_text())
 
+    def test_a_group_left_with_only_its_zombie_leader_ends_the_follow(self):
+        """macOS answers EPERM, not ESRCH, when the work's group has only its zombie leader left: the follow ends with
+        the work's exit code instead of crashing on the probe."""
+        done, real = Path(f"{self.log}.exit"), os.killpg
+        def killpg(group, sig):
+            if sig == 0 and done.exists() and done.read_text().strip():
+                raise PermissionError(1, "Operation not permitted")
+            return real(group, sig)
+        out = io.StringIO()
+        with mock.patch.object(os, "killpg", killpg), contextlib.redirect_stdout(out):
+            code = fc.follow([sys.executable, "-c", "print('layer 001 passed'); raise SystemExit(3)"], self.log)
+        self.assertEqual(code, 3)
+        self.assertIn("layer 001 passed", out.getvalue())
+
     def test_the_work_runs_in_its_own_session(self):
         with contextlib.redirect_stdout(io.StringIO()):
             fc.follow([sys.executable, "-c", "import os; print(os.getsid(0))"], self.log)

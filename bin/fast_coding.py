@@ -6163,7 +6163,7 @@ def follow(cmd, log):
         try:
             os.killpg(group, 0)
             return done.exists() and done.read_text().strip() != ""
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):  # macOS answers EPERM for a group left with only its zombie leader
             return True
     with open(log, "rb") as f:
         while True:
