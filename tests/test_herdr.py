@@ -227,3 +227,65 @@ class WatchCrash(unittest.TestCase):
         after = {"tasks": {}, "agents": {}, "run": fc.fc_tasks.run_alive(proj), "crashed": True, "verify": None}
         ev = fc.fc_watch.watch_events(before, after)
         self.assertEqual(len(ev), 1); self.assertIn("run=ended", ev[0]); self.assertIn("CRASHED", ev[0])
+
+
+class BareCompose(unittest.TestCase):
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def run_compose(self, *args, tty=True, herdr=True, claude=False, **env):
+        import pty, select, subprocess
+        tmp = Path(tempfile.mkdtemp())
+        fakebin, nobin, rec = tmp / "bin", tmp / "nobin", tmp / "rec"
+        [d.mkdir() for d in (fakebin, nobin, rec)]
+        (fakebin / "herdr").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$REC/argv\"; pwd > \"$REC/cwd\"\n")
+        (nobin / "claude").write_text("#!/bin/sh\nexit 0\n")
+        (fakebin / "herdr").chmod(0o755), (nobin / "claude").chmod(0o755)
+        path = ":".join([str(fakebin)] * herdr + [str(nobin)] * claude + ["/usr/bin:/bin"])
+        base = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "CI", "COMPOSE_NO_HERDR")}
+        master, slave = pty.openpty()
+        io = {"stdin": slave, "stdout": slave} if tty else {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE}
+        p = subprocess.Popen([sys.executable, str(self.ROOT / "bin" / "compose"), *args], stderr=subprocess.PIPE, cwd=tmp,
+                             env=base | {"PATH": path, "REC": str(rec), "NO_COLOR": "1"} | env, **io)
+        os.close(slave)
+        out = b""
+        while tty and select.select([master], [], [], 10)[0]:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:  # EIO once the child closed the pty (macOS)
+                break
+            if not chunk:
+                break
+            out += chunk
+        piped, err = p.communicate(timeout=20)
+        os.close(master)
+        return p.returncode, out.decode() + (piped or b"").decode(), err.decode(), rec, tmp
+
+    def test_attaches_in_current_directory(self):
+        for env in ({}, {"CI": "", "HERDR_ENV": "", "COMPOSE_NO_HERDR": ""}):
+            code, out, err, rec, tmp = self.run_compose(**env)
+            self.assertEqual(code, 0, err)
+            self.assertIn("opening herdr session compose: run claude in a pane and type /compose", out)
+            self.assertEqual((rec / "argv").read_text().split("\n"), ["session", "attach", "compose", ""])
+            self.assertEqual(os.path.realpath((rec / "cwd").read_text().strip()), os.path.realpath(tmp))
+
+    def test_failing_condition_prints_usage(self):
+        for kw in ({"tty": False}, {"HERDR_ENV": "1"}, {"CI": "1"}, {"COMPOSE_NO_HERDR": "1"}, {"CI": "false"}):
+            code, out, err, rec, _ = self.run_compose(**kw)
+            self.assertEqual(code, 2, kw)
+            self.assertIn("usage: compose", err)
+            self.assertNotIn("opening herdr", out)
+            self.assertFalse((rec / "argv").exists(), kw)
+
+    def test_herdr_missing(self):
+        for claude in (False, True):
+            code, out, err, rec, _ = self.run_compose(herdr=False, claude=claude)
+            self.assertEqual(code, 1)
+            self.assertIn("herdr is not installed: curl -fsSL https://herdr.dev/install.sh | sh", err)
+            self.assertIn("or run compose setup", err)
+
+    def test_subcommands_never_attach(self):
+        for args in (["--help"], ["tasks", "--help"]):
+            code, out, err, rec, _ = self.run_compose(*args)
+            self.assertEqual(code, 0, err)
+            self.assertIn("usage: compose", out)
+            self.assertFalse((rec / "argv").exists())
