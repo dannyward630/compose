@@ -1,0 +1,61 @@
+import os, subprocess, tempfile, unittest
+from pathlib import Path
+os.environ["HERDR_ENV"] = ""
+
+SCRIPT = Path(__file__).resolve().parents[1] / "bin" / "install.sh"
+COMPOSE = 'printf "%s|%s|%s\\n" "$0" "$*" "$PATH" >> "$HOME/compose.log"'
+UV_INSTALLER = 'echo "$UV_NO_MODIFY_PATH" > "$HOME/uv.flag"; mkdir -p "$HOME/.local/bin"; : > "$HOME/.local/bin/uv"'
+FAKES = {"uname": 'echo "${FAKE_OS:-Darwin}"', "uv": "true",
+         "curl": f'echo "$*" >> "$HOME/curl.log"\ncat <<\'EOF\'\n{UV_INSTALLER}\nEOF',
+         "git": 'echo "$*" >> "$HOME/git.log"\ncase "$*" in\n*clone*) for d; do :; done; mkdir -p "$d/bin"; '
+                'cp "$FAKE_COMPOSE" "$d/bin/compose";;\n*pull*) [ -z "${PULL_FAIL:-}" ] || '
+                '{ echo "fatal: cannot fast-forward" >&2; exit 1; };;\nesac'}
+
+def script(path, body):
+    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(f"#!/bin/sh\n{body}\n"); path.chmod(0o755)
+
+def link(path, to):
+    path.parent.mkdir(parents=True, exist_ok=True); path.symlink_to(to)
+
+
+class InstallSh(unittest.TestCase):
+    def setUp(self):  # sysbin is /bin and /usr/bin without the real git, curl, and uv
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup); root = Path(os.path.realpath(t.name))
+        self.home, self.bin, self.sysbin, self.fake = root / "home", root / "fake", root / "sys", root / "compose"
+        for p in [*Path("/bin").iterdir(), *Path("/usr/bin").iterdir()]:
+            if p.name not in ("git", "curl", "uv") and not os.path.lexists(self.sysbin / p.name): link(self.sysbin / p.name, p)
+        script(self.fake, COMPOSE); self.home.mkdir(); [script(self.bin / n, b) for n, b in FAKES.items()]
+    def log(self, name):
+        return (self.home / name).read_text() if (self.home / name).exists() else ""
+    def run_install(self, ok=True, **env):  # no /dev/tty in a new session, so setup must get --yes
+        env = {"HOME": str(self.home), "PATH": f"{self.bin}:{self.sysbin}", "FAKE_COMPOSE": str(self.fake), **env}
+        p = subprocess.run(["/bin/sh", str(SCRIPT)], env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, start_new_session=True, timeout=60)
+        self.assertEqual(p.returncode, 0 if ok else 1, p.stdout + p.stderr)
+        return p.stdout + p.stderr, self.log("compose.log").strip().split("|")
+    def test_refuses_other_systems_and_missing_tools(self):
+        for env, drop, word in (({"FAKE_OS": "Linux"}, "uv", "macOS"), ({}, "git", "git"), ({}, "curl", "curl")):
+            with self.subTest(word):
+                os.rename(self.bin / drop, self.home / drop)
+                try: out, ran = self.run_install(ok=False, **env)
+                finally: os.rename(self.home / drop, self.bin / drop)
+                self.assertEqual((len(out.strip().splitlines()), ran), (1, [""])); self.assertIn(word, out)
+    def test_clones_to_default_when_skill_link_has_no_compose(self):
+        skill, src = self.home / ".claude/skills/compose", self.home / ".compose/src"; link(skill, self.home)
+        self.assertEqual(self.run_install()[1][:2], [str(src / "bin/compose"), "setup --yes"])
+        self.assertIn("https://github.com/prodoxx/compose", self.log("git.log")); self.assertEqual(self.log("curl.log"), "")
+        self.assertEqual([Path(os.readlink(p)) for p in (self.home / ".local/bin/compose", skill)], [src / "bin/compose", src])
+    def test_skill_link_checkout_wins_and_stale_cli_link_is_repointed(self):
+        linked, other, cli = self.home / "linked", self.home / "other", self.home / ".local/bin/compose"
+        [script(c / "bin/compose", COMPOSE) for c in (linked, other)]; link(cli, self.home / "gone")
+        link(self.home / ".claude/skills/compose", linked); ran = self.run_install(COMPOSE_INSTALL_DIR=str(other))[1]
+        self.assertEqual((ran[:2], cli.readlink()), ([str(linked / "bin/compose"), "setup --yes"], linked / "bin/compose"))
+        self.assertNotIn("clone", self.log("git.log"))
+    def test_install_dir_failed_pull_real_file_and_missing_uv(self):
+        mine, cli = self.home / "mine", self.home / ".local/bin/compose"; script(mine / "bin/compose", COMPOSE)
+        (self.bin / "uv").unlink(); cli.parent.mkdir(parents=True); cli.write_text("mine")
+        out, ran = self.run_install(COMPOSE_INSTALL_DIR=str(mine), PULL_FAIL="1")
+        self.assertEqual(ran[:2], [str(mine / "bin/compose"), "setup --yes"]); self.assertIn("cannot fast-forward", out)
+        self.assertEqual((cli.read_text(), self.log("uv.flag")), ("mine", "1\n")); self.assertIn("pull --ff-only", self.log("git.log"))
+        self.assertIn("https://astral.sh/uv/install.sh", self.log("curl.log")); self.assertTrue(ran[2].startswith(f"{self.home}/.local/bin:"))
+        self.assertEqual([f for f in os.listdir(self.home) if f.endswith(("rc", "profile"))], [])
