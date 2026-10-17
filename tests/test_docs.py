@@ -545,7 +545,8 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout", skill)
         self.assertIn("ignores the tool's files: `graft/`, `.trail/` (where trail", zero_a)
         self.assertRegex(zero_a, r"`\.trail/` \(where trail (0\.23 )?keeps the graph\), and `\.compose/`")
-        self.assertIn("(with trail's `.ignore`)", zero_a)
+        # trail writes no root .ignore, so the doc must not claim one.
+        self.assertNotIn("trail's `.ignore`", zero_a)
         self.assertIn("sets trail up in the worktree: wired for Claude Code (`trail init --no-agents --no-global`", zero_a)
         self.assertIn("with every file trail writes kept out of git through `info/exclude`", zero_a)
         self.assertIn("Without trail installed it prints the install command; `compose trail --project <slug>`", zero_a)
