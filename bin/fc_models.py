@@ -155,6 +155,7 @@ def http_json(req, provider, timeout=90):
             out = json.load(r)
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:500]
+        e.close()
         payment_check(provider, body, e.code)
         raise RuntimeError(f"{provider}: HTTP {e.code} {e.reason}: {body.strip()}") from e
     err = out.get("error") if isinstance(out, dict) else None
