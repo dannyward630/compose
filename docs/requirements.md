@@ -16,7 +16,7 @@ Install each of these once per machine.
 | Claude Code | the team lead, every teammate session, model probes, `frame0` registration | [claude.com/claude-code](https://claude.com/claude-code) |
 | OpenRouter account and key | implementers, fixers, Mercury review | see [Keys](#keys) |
 | Linear account | the plan, stories, tasks, and decisions | Linear MCP connected in Claude Code; optional API key per [workspace](workspaces.md) |
-| gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true` |
+| gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true`; `gh auth login` is needed to file compose bugs as issues (`compose doctor` warns when gh is not logged in) |
 | macOS userland | `lsof`, `ps`, `pgrep`, `kill`, `open`: cleanup and launching Frame0 | ships with macOS |
 
 If you skip gh-stack, you can still use `run --no-stack`.
@@ -86,7 +86,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.compose/config.json` | workspaces, their keys, model choices (`COMPOSE_CONFIG` moves it) |
 | `~/.compose/.env` | verify's model keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
-| `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports |
+| `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports, with the issue URL once filed |
 | `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json`, `auth.json`, and the herdr extension |
