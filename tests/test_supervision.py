@@ -443,15 +443,23 @@ class TestHang(unittest.TestCase):
 
 class Timed(unittest.TestCase):
     def test_timed_kills_the_whole_group_and_says_it_hangs(self):
+        """The check looks only for this run's sleeps: a suite running at the same time has its own alive, and they are not ours to find."""
         import subprocess as sp, time
-        t0 = time.time()
-        r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "timed", "1", "--", "sh -c 'sleep 4017' & sleep 4017"],
-                   capture_output=True, text=True)
-        self.assertEqual(r.returncode, 124)
-        self.assertIn("hangs", r.stderr)
-        self.assertLess(time.time() - t0, 10)
-        time.sleep(0.5)
-        self.assertEqual(sp.run(["pgrep", "-f", "sleep 4017"], capture_output=True).stdout.strip(), b"")
+        n = 4018 + 2 * os.getpid()  # unique to this run while it lives (another suite's process has another pid), and even
+        other = sp.Popen(["sleep", str(n + 1)])  # odd, so never any run's own: stands in for another suite's sleep left alive
+        try:
+            t0 = time.time()
+            r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "timed", "1", "--", f"sh -c 'sleep {n}' & sleep {n}"],
+                       capture_output=True, text=True)
+            self.assertEqual(r.returncode, 124)
+            self.assertIn("hangs", r.stderr)
+            self.assertLess(time.time() - t0, 10)
+            time.sleep(0.5)
+            self.assertEqual(sp.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True).stdout.strip(), b"")
+            self.assertIsNone(other.poll())  # timed killed its own group, nothing outside it
+        finally:
+            other.kill()
+            other.wait()
 
 
 class JevLeash(unittest.TestCase):
