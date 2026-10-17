@@ -29,8 +29,8 @@ OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents
 DEP_DIRS = ("node_modules", "vendor", ".venv")  # git-ignored installs a task clone borrows from the main checkout
-# graft otherwise appends /graft/ to the tracked .gitignore and writes .ignore in every clone it builds or refreshes, which
-# the scope check rightly reads as an edit outside the task. Children (pi, OpenCode, their graft calls) inherit this.
+# trail otherwise appends /graft/ to the tracked .gitignore and writes .ignore in every clone it builds or refreshes, which
+# the scope check rightly reads as an edit outside the task. Children (pi, OpenCode, their trail calls) inherit this.
 os.environ.setdefault("GRAFT_NO_GITIGNORE", "1")
 os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 

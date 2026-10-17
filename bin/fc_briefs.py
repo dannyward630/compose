@@ -24,7 +24,7 @@ def detect_stacks(wt):
     return "\n".join(found) or "- no manifest found: read the README for how it builds and starts"
 
 GROUNDWORK_BRIEF = """You are the groundwork teammate for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
-read them first with `compose tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
+read them first with `compose tasks --repo {wt} --project {slug}`. Use `trail ask "<question>" --source` for code context.
 Commit on {trunk} in small commits with plain messages. Nothing is pushed.
 
 Phase A, toolchain (probe and report; you never change dependencies):
@@ -59,7 +59,7 @@ def cmd_groundwork(a):
 WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
 The map is the feature issue {feature} on Linear:
 its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
-1. Read the map, the spec or README named below, and the repo (`graft ask "<question>" --source`). Before asking anything, look
+1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking anything, look
    for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
    search in the project for the question's key terms. A decision found there is settled: do not ask it again.
 2. Chart the map body on the feature issue (`save_issue`), then write every open question as a card: the question, why it
@@ -117,7 +117,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    1. A Feature parent with a settled map: Destination, Decisions so far, Not yet specified empty, no open questions left.
    2. `### Codebase brief` in the feature's Notes; without it no file may be named.
    3. Acceptance criteria present, each a behavior a test can check, each traceable to a decision line or the spec's words.
-   4. Every criterion maps to a file or symbol via `graft ask` or `graft callers` in the worktree; new files are listed as new.
+   4. Every criterion maps to a file or symbol via `trail ask` or `trail callers` in the worktree; new files are listed as new.
    5. The test command is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
    6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
    7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers. Name the test paths and say in
@@ -195,7 +195,7 @@ CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on p
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 The screen that raised it: {reflect}
 1. Read the map, the evidence (the screen file above, its `evidence` field, and the team lead's notes at the end of this brief),
-   and the code each piece of evidence cites (`graft ask "<question>" --source`).
+   and the code each piece of evidence cites (`trail ask "<question>" --source`).
 2. Write one card per decision line the evidence calls into question: the line as recorded, the evidence quoted verbatim with
    its source, the options with one line each with "keep it as is" always among them, and your recommended option marked. Never
    choose for the product owner. Text by default; a card is visual only when its evidence is (a screenshot, a layout or flow
@@ -227,8 +227,8 @@ The screen that raised it: {reflect}
 """
 
 EXPLORE_BRIEF = """You are the explore teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
-Map the existing code for this feature fast, through graft only: `graft map`, `graft ask "<question>" --source`, `graft callers <symbol>`,
-`graft skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
+Map the existing code for this feature fast, through trail only: `trail map`, `trail ask "<question>" --source`, `trail callers <symbol>`,
+`trail skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
 Time box: under 3 minutes. Write no code and change no file.
 Write a codebase brief of at most 40 lines:
 - structure and entry points (server, client, how they start)
@@ -241,7 +241,7 @@ write), then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
-    """Print the explore teammate's brief: a fast graft-only map of an existing repo for the planners."""
+    """Print the explore teammate's brief: a fast trail-only map of an existing repo for the planners."""
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
