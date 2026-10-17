@@ -59,3 +59,37 @@ class StepsTable(unittest.TestCase):
         for row in [r for r in fc_steps.STEPS if r[5] == "key"]:
             ok, detail = fc_steps.check(row, self.co); self.assertTrue(ok, row[0]); self.assertFalse(re.search("sk-or|lin-test|ts-test|figd", detail), row[0])
         self.auth.unlink(); self.assertFalse(self.check("OpenRouter key")[0])
+
+class TrailRow(unittest.TestCase):
+    """The trail row (@trailhq/trail-code) sits right after jev; its check finds the `trail` command on PATH, never graft."""
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.bin2, self.co = tmp / "bin", tmp / "bin2", tmp / "co"
+        for d in (self.bin, self.bin2, self.co): d.mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": f"{self.bin}:{self.bin2}", "HOME": str(tmp / "home")}); p.start(); self.addCleanup(p.stop)
+        names = [r[0] for r in fc_steps.STEPS]
+        self.assertEqual(names.count("trail"), 1, names)
+        self.row = fc_steps.STEPS[names.index("trail")]
+
+    def fake(self, tool, where=None, mode=stat.S_IRWXU):
+        f = (where or self.bin) / tool; f.write_text("#!/bin/sh\necho 1.0.0\n"); f.chmod(mode)
+
+    def test_row_right_after_jev_with_its_fields(self):
+        names = [r[0] for r in fc_steps.STEPS]
+        self.assertEqual(names[names.index("jev") + 1:names.index("jev") + 3], ["trail", "treehouse"])
+        self.assertEqual(self.row, ("trail", "trail", "npm i -g @trailhq/trail-code", "default", False, "run"))
+
+    def test_other_rows_keep_place_level_mode_and_install(self):
+        rows = [r for r in fc_steps.STEPS if r[0] != "trail"]
+        self.assertEqual([(r[0], r[3], r[5], r[4]) for r in rows], [(n, l, m, bool(x)) for n, l, m, *x in ROWS])
+        self.assertEqual({r[0]: r[2] for r in rows if r[0] in INSTALLS}, INSTALLS)
+
+    def test_check_finds_trail_and_never_graft(self):
+        self.assertFalse(fc_steps.check(self.row, self.co)[0])  # nothing on PATH
+        self.fake("graft"); self.assertFalse(fc_steps.check(self.row, self.co)[0])  # only graft
+        self.fake("trail", self.bin2); self.assertEqual(fc_steps.check(self.row, self.co), (True, ""))  # later PATH entry, beside graft
+        (self.bin / "graft").unlink(); self.assertEqual(fc_steps.check(self.row, self.co), (True, ""))  # trail alone
+
+    def test_check_not_ok_for_a_trail_that_cannot_run(self):
+        self.fake("trail", mode=0o644); ok, detail = fc_steps.check(self.row, self.co)
+        self.assertFalse(ok); self.assertNotIn("1.0.0", detail)
