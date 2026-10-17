@@ -534,7 +534,21 @@ class NoGraftWord(unittest.TestCase):
                 self.assertNotRegex(line, self.GRAFT, f"{rel}:{n}")
 
     def test_skill_and_0a(self):
-        self.skipTest("not written yet")
+        self.assert_no_graft("SKILL.md", "sections/0a.md")
+        skill, zero_a = read("SKILL.md"), read("sections/0a.md")
+        self.assertIn("evidence gathered in this session: trail output with file:line, a command", skill)
+        rule = [l for l in skill.splitlines() if l.startswith("- Build a trail graph in the repo (`trail build .`")]
+        self.assertEqual(len(rule), 1, "one graph rule")
+        for cmd in ("`trail ask`", "`trail callers`", "Without trail"):
+            self.assertIn(cmd, rule[0])
+        # The old map folder is still ignored beside .trail/ and .compose/.
+        self.assertIn("`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout", skill)
+        self.assertIn("ignores the tool's files: `graft/`, `.trail/` (where trail", zero_a)
+        self.assertRegex(zero_a, r"`\.trail/` \(where trail (0\.23 )?keeps the graph\), and `\.compose/`")
+        self.assertIn("(with trail's `.ignore`)", zero_a)
+        self.assertIn("sets trail up in the worktree: wired for Claude Code (`trail init --no-agents --no-global`", zero_a)
+        self.assertIn("with every file trail writes kept out of git through `info/exclude`", zero_a)
+        self.assertIn("Without trail installed it prints the install command; `compose trail --project <slug>`", zero_a)
 
     def test_0d_and_0e(self):
         self.skipTest("not written yet")
