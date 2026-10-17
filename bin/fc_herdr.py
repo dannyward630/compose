@@ -278,3 +278,8 @@ def herdr_stage(panes, name, state, message=""):
 def herdr_space_is(space, name):
     """Only the project's own space is ever closed by its clean: a checkout path can be a pool slot another project now uses."""
     return any(w.get("workspace_id") == space and w.get("label") == name for w in (herdr("workspace", "list") or {}).get("workspaces", []))
+
+def herdr_attach():
+    """Bare `compose` on a terminal outside herdr: print the hint and exec `herdr session attach compose` in this directory.
+    Returns when a condition fails (no terminal, HERDR_ENV, CI, or COMPOSE_NO_HERDR set); exits 1 when herdr is not installed."""
+    raise NotImplementedError("not implemented: task 030")
