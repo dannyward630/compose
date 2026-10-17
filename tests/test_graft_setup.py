@@ -53,16 +53,16 @@ class GraftSetup(unittest.TestCase):
 
     def test_existing_repo_is_wired_built_and_kept_out_of_git(self):
         repo, run = repo_with({"server/main.go": "package main\n", "README.md": "x"})
-        fc.setup_graft(repo)
+        fc.fc_init.setup_graft(repo)
         self.assertTrue((repo / "graft" / "INDEX.md").exists())
         self.assertEqual(run("status", "--porcelain").stdout.strip(), "")  # wiring and graph are excluded, nothing shows up
         n = len(self.calls())
-        fc.setup_graft(repo)  # again: already wired, so only a rebuild
+        fc.fc_init.setup_graft(repo)  # again: already wired, so only a rebuild
         self.assertEqual([c.split()[0] for c in self.calls()[n:]], ["build"])
 
     def test_a_tracked_file_init_would_edit_means_build_only(self):
         repo, _ = repo_with({"server/main.go": "package main\n", ".mcp.json": "{\"mine\": true}"})
-        fc.setup_graft(repo)
+        fc.fc_init.setup_graft(repo)
         self.assertFalse(any(c.startswith("init") and "--dry-run" not in c for c in self.calls()))
         self.assertEqual(json.loads((repo / ".mcp.json").read_text()), {"mine": True})
         self.assertTrue((repo / "graft" / "INDEX.md").exists())
@@ -71,7 +71,7 @@ class GraftSetup(unittest.TestCase):
         # graft's session-start hook rewrites wired files when graft/.cache/wiring-stamp.json is missing or older than graft
         repo, _ = repo_with({"server/main.go": "package main\n", ".claude/helpers/graft-hooks.cjs": "x"})
         stamp = repo / "graft" / ".cache" / "wiring-stamp.json"
-        fc.setup_graft(repo)
+        fc.fc_init.setup_graft(repo)
         self.assertEqual(json.loads(stamp.read_text())["version"], "9.9.9")
         clone = Path(tempfile.mkdtemp()) / "clone"
         subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
@@ -80,13 +80,13 @@ class GraftSetup(unittest.TestCase):
 
     def test_a_new_repo_skips_graft(self):
         repo, _ = repo_with({"README.md": "x", "LICENSE": "x"})
-        fc.setup_graft(repo)
+        fc.fc_init.setup_graft(repo)
         self.assertEqual(self.calls(), [])
 
     def test_missing_graft_says_how_to_install(self):
         repo, _ = repo_with({"main.go": "package main\n"})
         with mock.patch.object(shutil, "which", return_value=None), mock.patch.object(fc.fc_core, "say") as say:
-            fc.setup_graft(repo)
+            fc.fc_init.setup_graft(repo)
         self.assertIn("npm i -g @nanonets/graft", say.call_args[0][0])
         self.assertEqual(self.calls(), [])
 

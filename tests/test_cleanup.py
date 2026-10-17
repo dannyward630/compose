@@ -344,7 +344,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
     def clean_here(self):
         out = io.StringIO()
         with mock.patch.dict(os.environ, self.env), mock.patch("sys.stdout", out):
-            fc.clean_project(self.r, "p", self.r.parent / "fast-coding-p", self.proj, explicit=True)
+            fc.fc_init.clean_project(self.r, "p", self.r.parent / "fast-coding-p", self.proj, explicit=True)
         return out.getvalue()
 
     def test_clean_moves_the_tasks_it_proves_merged_to_done_and_rolls_the_story_and_the_feature_up(self):

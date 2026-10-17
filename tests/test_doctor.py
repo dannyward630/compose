@@ -42,7 +42,7 @@ class Doctor(unittest.TestCase):
     def deps(self):
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            bad = fc.check_deps()
+            bad = fc.fc_init.check_deps()
         return bad, [l for l in out.getvalue().splitlines() if l.startswith("MISSING")]
 
     def test_all_present(self):
@@ -83,16 +83,16 @@ class Doctor(unittest.TestCase):
         (self.home / SKILLS[-1]).unlink()
         bad, lines = self.deps()
         self.assertEqual(bad, [])  # doctor and init only warn
-        self.assertEqual(lines, [f"MISSING: framelink-figma (install: {fc.FRAMELINK_ADD}) - needed for the designer",
+        self.assertEqual(lines, [f"MISSING: framelink-figma (install: {fc.fc_init.FRAMELINK_ADD}) - needed for the designer",
                                  "MISSING: framelink-figma token (install: put a Figma personal access token in "
                                  "~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600) - needed for the designer"])
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            self.assertEqual(fc.check_deps("designer"), ["framelink-figma", "framelink-figma token"])
+            self.assertEqual(fc.fc_init.check_deps("designer"), ["framelink-figma", "framelink-figma token"])
         self.assertEqual(len(out.getvalue().splitlines()), 2)  # only what the designer needs, nothing else
         (self.home / ".claude.json").unlink()  # no Claude Code config at all counts as not registered
         with mock.patch("sys.stdout", io.StringIO()):
-            self.assertIn("framelink-figma", fc.check_deps("designer"))
+            self.assertIn("framelink-figma", fc.fc_init.check_deps("designer"))
 
     def test_designer_start_stops_without_framelink(self):
         (self.home / SKILLS[-1]).unlink()
@@ -106,16 +106,16 @@ class Doctor(unittest.TestCase):
     def test_herdr_toasts_and_sounds_warn_when_not_off(self):
         """herdr's own toast and sound fire for every agent that finishes or needs input, so doctor names the two keys to set
         when either is on; delivery defaults to off, sound to on, so a missing key counts as its default."""
-        self.assertIsNone(fc.herdr_toast_warning())
+        self.assertIsNone(fc.fc_init.herdr_toast_warning())
         self.herdr_config('onboarding = false\n[ui]\nagent_panel_sort = "spaces"  # a comment\n\n[ui.toast]\ndelivery = "system"\n')
-        w = fc.herdr_toast_warning()
+        w = fc.fc_init.herdr_toast_warning()
         self.assertTrue(w.startswith("WARNING: herdr alerts the product owner for every agent, not only the engineering manager (ui.toast.delivery=system, ui.sound.enabled=true)"), w)
         self.assertIn('set [ui.toast] delivery = "off" and [ui.sound] enabled = false in ~/.config/herdr/config.toml', w)
         self.assertEqual(len(w.splitlines()), 1)
         self.herdr_config('[ui.sound]\nenabled = false\n')  # no [ui.toast] at all: herdr's default delivery is off
-        self.assertIsNone(fc.herdr_toast_warning())
+        self.assertIsNone(fc.fc_init.herdr_toast_warning())
         (self.home / ".config" / "herdr" / "config.toml").unlink()  # no config: sounds are on by default
-        self.assertIn("(ui.sound.enabled=true)", fc.herdr_toast_warning())
+        self.assertIn("(ui.sound.enabled=true)", fc.fc_init.herdr_toast_warning())
 
     def test_doctor_and_init_through_the_cli(self):
         env = {**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"}
