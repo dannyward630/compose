@@ -73,19 +73,32 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         raise fc_models.RateLimited(usage)
     return session, text, tools, usage
 
+LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `graft ask` output
+BANNERS = ("[graft]", "[trail]", "⬆ graft", "· no learnings")  # graft's and trail's own notes there, not code
+
 def graft_pack(wt, query, repo=None, limit=6):
-    """Context pack from a graft graph, $0 and no model. graft/ is git-ignored, so a worktree gets its own graph:
-    the main repo's graph is copied in as a cache and rebuilt from the worktree's files (so a bench reset is not leaked)."""
-    if repo and not (wt / "graft").exists() and (repo / "graft").exists():
+    """Context pack from a graft graph, $0 and no model. The graph is git-ignored, so a worktree gets its own graph:
+    the main repo's graph is copied in as a cache, at the same place (graft/ or .trail/cache/), and rebuilt from the
+    worktree's files (so a bench reset is not leaked)."""
+    src = repo and fc_worktree.graph_dir(repo)
+    if src and not fc_worktree.graph_dir(wt):
         import shutil
-        shutil.copytree(repo / "graft", wt / "graft")
+        shutil.copytree(src, wt / src.relative_to(repo), dirs_exist_ok=True)
         fc_core.sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
-    if not (wt / "graft").exists():
+    if not fc_worktree.graph_dir(wt):
         return ""
     p = fc_core.sh(["graft", "ask", query, "--source", "-n", str(limit), "--no-refresh", str(wt)], wt, timeout=60, check=False)
     if p.returncode:
         return ""
-    lines = [l for l in p.stdout.splitlines() if not l.startswith(("[graft]", "⬆ graft"))]  # drop banners and token-saved notes
+    lines, skip = [], None  # "learning": inside a learning block, which runs to a blank line; "blank": right after a banner
+    for l in p.stdout.splitlines():
+        if LEARNING_RE.match(l) or l.startswith(BANNERS):
+            skip = "learning" if LEARNING_RE.match(l) else "blank"
+        elif not l.strip() and skip:
+            skip = None  # the blank line closing what was dropped goes with it
+        elif skip != "learning":
+            skip = None
+            lines.append(l)
     return "\n".join(lines).strip()[:12000]
 
 def branch_budget(wt, base, allowed=None):

@@ -34,7 +34,7 @@ def setup_graft(wt):
             fc_core.sh(GRAFT_INIT + [str(wt)], wt, timeout=300, check=False)
             fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
             fc_core.say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
-    fc_worktree.exclude_paths(wt, ["/graft/"])  # the graph itself, also when `compose graft` runs without init
+    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/"])  # the graph itself, also when `compose graft` runs without init
     fc_worktree.stamp_graft_wiring(wt)
     fc_core.sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     fc_core.say("graft    graph built")

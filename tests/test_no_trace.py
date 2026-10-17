@@ -36,7 +36,7 @@ class NoTrace(unittest.TestCase):
         (self.repo / ".compose").mkdir()
         (self.repo / ".compose" / "linear.json").write_text('{"project": "x"}')  # step 0, in the user's checkout
         self.init()
-        self.assertEqual((self.wt / ".gitignore").read_text(), "node_modules\n/graft/\n.compose/\n")  # graft already there
+        self.assertEqual((self.wt / ".gitignore").read_text(), "node_modules\n/graft/\n.trail/\n.compose/\n")  # graft already there
         self.assertEqual(self.git(self.wt, "log", "--format=%s", "main..HEAD").splitlines(), ["Ignore local tool directories"])
         self.assertEqual(self.git(self.wt, "ls-files", ".compose"), "")
         self.assertTrue((self.wt / ".compose" / "p" / "verify.json").exists())

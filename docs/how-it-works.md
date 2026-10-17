@@ -148,7 +148,7 @@ A project is one feature in its own worktree.
 - The worktree is a [treehouse](https://github.com/kunchenguid/treehouse) slot from the repo's own git-ignored pool in `.treehouse/`.
   Without treehouse, it is `../compose-<name>`.
 - `.compose/<name>/` sits beside it and holds the Linear link, the verify config, and results.
-  `init` git-ignores it and `graft/` first.
+  `init` git-ignores it, `graft/`, and `.trail/` first.
 - The stack's trunk is the project branch, and one final PR brings it to your branch.
 - `init --after <other>` branches from another project's branch when the feature needs its code.
 

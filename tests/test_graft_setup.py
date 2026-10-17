@@ -22,7 +22,22 @@ case "$1 $2" in
       printf 'would write \\342\\200\\224 this repo:\\n  .claude/settings.json   graft statusline\\n  .claude/helpers/graft-hooks.cjs   hooks shim\\n  .mcp.json   mcpServers.graft\\n\\nnothing was written (--dry-run)\\n' >&2
       exit 0;; esac
     d="${@: -1}"; mkdir -p "$d/.claude/helpers"; echo x > "$d/.claude/helpers/graft-hooks.cjs"; echo '{}' > "$d/.claude/settings.json"; echo '{}' > "$d/.mcp.json";;
-  "build --no-gitignore") d="${@: -1}"; mkdir -p "$d/graft"; echo index > "$d/graft/INDEX.md";;
+  "build --no-gitignore") d="${@: -1}"; g="$d/graft"  # graft 0.23 keeps the graph in .trail/cache once the repo is on trail
+    if [ -d "$d/.trail/cache" ] || [ -d "$d/.trail/learnings" ]; then g="$d/.trail/cache"; fi
+    mkdir -p "$g"; echo index > "$g/INDEX.md";;
+  "ask "*) d="${@: -1}"; [ -f "$d/graft/INDEX.md" ] || [ -f "$d/.trail/cache/INDEX.md" ] || exit 1
+    printf '[graft] tokens saved ≈ 7,434 (95%%) — this pack ≈ 384 tok vs reading the 1 source file(s) whole ≈ 7,818 tok.\n\n'
+    printf 'graft ask — "%s"  (lexical)\n\n' "$2"
+    if [ "$2" = main ]; then cat <<'OUT'
+from Reggie's learning · Oct 17 · Use @trailhq/trail-code and call `trail`, not `graft`
+  decided     graft's npm package was renamed to `@trailhq/trail-code`.
+  .trail/learnings/2026-10-17-use-trailhq-trail-code.md
+
+[trail] starting from this learning gets you to a PR 3x faster.
+
+OUT
+    else printf '· no learnings about this yet\n\n'; fi
+    printf '1. main · function  [symbol]\n   server/main.go:L1-L1\n';;
 esac
 """
 
@@ -38,8 +53,7 @@ def repo_with(files):
     return r, run
 
 
-class GraftSetup(unittest.TestCase):
-    """An existing repo gets graft wired and built before anyone explores it; graft's files never reach git."""
+class FakeGraft(unittest.TestCase):
     def setUp(self):
         bindir = Path(tempfile.mkdtemp())
         (bindir / "graft").write_text(FAKE_GRAFT.replace("#!/bin/sh", "#!/bin/bash"))
@@ -50,6 +64,10 @@ class GraftSetup(unittest.TestCase):
 
     def calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
+
+
+class GraftSetup(FakeGraft):
+    """An existing repo gets graft wired and built before anyone explores it; graft's files never reach git."""
 
     def test_existing_repo_is_wired_built_and_kept_out_of_git(self):
         repo, run = repo_with({"server/main.go": "package main\n", "README.md": "x"})
@@ -78,6 +96,17 @@ class GraftSetup(unittest.TestCase):
         fc.fc_worktree.ready_checkout(repo, clone)  # a task clone or verify worktree starts without graft/ at all
         self.assertEqual(json.loads((clone / "graft" / ".cache" / "wiring-stamp.json").read_text())["version"], "9.9.9")
 
+    def test_a_repo_on_trail_gets_its_graph_in_trail_cache_kept_out_of_git(self):
+        repo, run = repo_with({"server/main.go": "package main\n", ".gitignore": "node_modules/\n"})
+        (repo / ".trail" / "learnings").mkdir(parents=True)  # what trail's session-start hook leaves behind
+        (repo / ".trail" / "hook.cjs").write_text("x")
+        fc.fc_init.setup_graft(repo)
+        self.assertTrue((repo / ".trail" / "cache" / "INDEX.md").exists())
+        self.assertFalse((repo / "graft").exists())
+        self.assertEqual(run("status", "--porcelain").stdout.strip(), "")
+        self.assertTrue(fc.fc_worktree.ignore_tool_files(repo))  # a clone of the delivered branch ignores it too
+        self.assertIn(".trail/", (repo / ".gitignore").read_text().splitlines())
+
     def test_a_new_repo_skips_graft(self):
         repo, _ = repo_with({"README.md": "x", "LICENSE": "x"})
         fc.fc_init.setup_graft(repo)
@@ -89,6 +118,32 @@ class GraftSetup(unittest.TestCase):
             fc.fc_init.setup_graft(repo)
         self.assertIn("npm i -g @nanonets/graft", say.call_args[0][0])
         self.assertEqual(self.calls(), [])
+
+
+class GraftPack(FakeGraft):
+    """Implementer and fixer prompts get a pack wherever graft keeps the graph: graft/, or .trail/cache/ once graft 0.23
+    moved the repo to trail. trail's learning banner is not part of it."""
+    def repo_on_trail(self):
+        repo, _ = repo_with({"server/main.go": "package main\n"})
+        (repo / ".trail" / "cache").mkdir(parents=True)
+        (repo / ".trail" / "cache" / "INDEX.md").write_text("index")
+        return repo
+
+    def assert_pack(self, pack, query):
+        self.assertEqual(pack, f'graft ask — "{query}"  (lexical)\n\n1. main · function  [symbol]\n   server/main.go:L1-L1')
+
+    def test_a_graph_in_trail_cache_gives_a_pack_without_banners(self):
+        self.assert_pack(fc.fc_implement.graft_pack(self.repo_on_trail(), "main"), "main")
+
+    def test_a_task_clone_gets_the_trail_graph_and_keeps_it_out_of_git(self):
+        repo = self.repo_on_trail()
+        clone = Path(tempfile.mkdtemp()) / "clone"
+        subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+        fc.fc_worktree.ready_checkout(repo, clone)
+        self.assert_pack(fc.fc_implement.graft_pack(clone, "entry point", repo=repo), "entry point")
+        self.assertTrue((clone / ".trail" / "cache" / "INDEX.md").exists())
+        self.assertFalse((clone / "graft").exists())
+        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout.strip(), "")
 
 
 class Explore(unittest.TestCase):

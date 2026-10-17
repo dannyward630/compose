@@ -120,7 +120,7 @@ def default_branch(repo):
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
-    for d in (".compose", "graft"):
+    for d in (".compose", "graft", ".trail/cache"):
         t = Path(path) / d
         if t.is_symlink() or t.is_file():
             t.unlink()
@@ -174,7 +174,12 @@ def exclude_paths(wt, rules):
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text("".join(l + "\n" for l in have + add))
 
-TOOL_DIRS = ("graft/", ".compose/")
+TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # graft 0.23 moves a repo's graph from graft/ to .trail/cache/
+
+def graph_dir(root):
+    """The folder holding the repo's graft graph: .trail/cache/ once graft 0.23 moved the repo to trail, else graft/.
+    None when neither has one."""
+    return next((Path(root) / d for d in (".trail/cache", "graft") if (Path(root) / d / "INDEX.md").exists()), None)
 
 def ignore_tool_files(wt):
     """Keep compose's and graft's own files out of the repository, before anything else is written: every checkout
@@ -217,7 +222,7 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
     commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
     deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
+    exclude_paths(wt, ["/graft/", "/.trail/", "/.ignore", *("/" + d for d in deps)])
     stamp_graft_wiring(wt)
     if install and borrow:
         stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())

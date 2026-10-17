@@ -22,7 +22,7 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 Everything that would be a ticket lives on Linear, never as files in the repo: the feature (with its decisions), its stories, its tasks.
 Read `.compose/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another) in the user's checkout, and never commit it.
-`compose init` ignores `.compose/` and `graft/` in every checkout before anything else, and copies this file into the project worktree.
+`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else, and copies this file into the project worktree.
 You create and edit issues and write judgment comments through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`); the CLI moves task, story, and feature states and writes the routine run comments with the workspace's Linear key.
 Every `list_issues` call passes `fields` (`id`, `title`, `status`, and more only when the body is needed): the default reply carries whole descriptions and costs about ten times the tokens.
 Confirm the file points at a real project before any other Linear call: `get_project` with its URL must return a project on its team.

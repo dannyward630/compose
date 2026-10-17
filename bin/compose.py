@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """compose: a frontier model plans, parallel fast implementers build, a local pipeline verifies. Stdlib only.
 
-Layout inside any repo (all of .compose/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
+Layout inside any repo (all of .compose/, graft/, and .trail/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
   .compose/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
   .compose/<project>/verify.json    local verification config
   .compose/<project>/results/       tasks.json (the team lead's Linear sync), one JSON per task run, verify results
