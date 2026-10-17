@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -46,4 +46,44 @@ test('type focuses the --selector element, even inside a shadow root, before typ
   const missing = bp(['type', 'typetest', 'x', '--selector', '#nope'], env);
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /no element matching "#nope"/);
+});
+
+// goal's environment: a fake uv on PATH records the env it gets; HOME (or COMPOSE_CONFIG) points at temp config.json and auth.json.
+const KEYS = ['TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'TEXT_MODEL_API_KEY'];
+const goalEnv = (files, extra = {}) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bp-goal-'));
+  const out = path.join(dir, 'env.txt');
+  mkdirSync(path.join(dir, 'bin'));
+  writeFileSync(path.join(dir, 'bin', 'uv'), `#!/bin/sh\nenv > "${out}"\n`); chmodSync(path.join(dir, 'bin', 'uv'), 0o755);
+  for (const [f, v] of Object.entries(files)) { mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); writeFileSync(path.join(dir, f), JSON.stringify(v)); }
+  const env = { HOME: dir, PATH: `${dir}/bin:${process.env.PATH}`, BP_PORT: '59873', JEV_DIR: dir, COMPOSE_CONFIG: undefined, ...Object.fromEntries(KEYS.map((k) => [k, undefined])) };
+  for (const [k, v] of Object.entries(extra)) env[k] = v.replace('$DIR', dir);
+  const r = bp(['goal', 'about:blank', 'stop'], env, dir);
+  assert.equal(r.status, 0, r.stderr);
+  for (const k of ['sk-or-', 'ts-']) assert.ok(!r.stdout.includes(k) && !r.stderr.includes(k), 'goal printed a key');
+  const seen = Object.fromEntries(readFileSync(out, 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  rmSync(dir, { recursive: true, force: true });
+  return Object.fromEntries(KEYS.filter((k) => k in seen).map((k) => [k, seen[k]]));
+};
+const auth = { typesafe: 'ts-test', workspaces: { default: { openrouter: 'sk-or-default' }, acme: { openrouter: 'sk-or-acme' }, bare: { linear: 'lin-x' } } };
+const all = (or) => ({ TYPESAFE_API_KEY: 'ts-test', OPENROUTER_API_KEY: or, TEXT_MODEL_API_KEY: or });
+
+test('goal gives the uv child the active workspace keys from auth.json', () => {
+  assert.deepEqual(goalEnv({ '.compose/config.json': { workspace: 'acme' }, '.compose/auth.json': auth }), all('sk-or-acme'));
+});
+
+test("goal falls back to default's OpenRouter key, and to the default workspace when config.json names none", () => {
+  assert.deepEqual(goalEnv({ '.compose/config.json': { workspace: 'bare' }, '.compose/auth.json': auth }), all('sk-or-default'));
+  assert.deepEqual(goalEnv({ '.compose/config.json': {}, '.compose/auth.json': auth }), all('sk-or-default'));
+});
+
+test('goal adds none of the keys without auth.json or without config.json', () => {
+  assert.deepEqual(goalEnv({ '.compose/config.json': { workspace: 'acme' } }), {});
+  assert.deepEqual(goalEnv({ '.compose/auth.json': auth }), {});
+});
+
+test("goal reads config.json and auth.json from $COMPOSE_CONFIG's directory, not ~/.compose", () => {
+  const decoy = { typesafe: 'ts-decoy', workspaces: { default: { openrouter: 'sk-or-decoy' } } };
+  const files = { '.compose/config.json': {}, '.compose/auth.json': decoy, 'alt/config.json': { workspace: 'acme' }, 'alt/auth.json': auth };
+  assert.deepEqual(goalEnv(files, { COMPOSE_CONFIG: '$DIR/alt/config.json' }), all('sk-or-acme'));
 });
