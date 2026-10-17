@@ -106,9 +106,10 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
-    if fc_worktree.stack_order(repo, proj):
+    if not a.no_stack and fc_worktree.stack_order(repo, proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
+        # `--no-stack` leaves the chain alone: a task with `after:` still rebases what it stacks on, the rest never wait on it.
         fc_layers.linearize(repo, proj, a.trunk, fc_worktree.stack_worktree(repo, proj, a.trunk))
         if fc_layers.STACK_STOP:
             sys.exit(f"stack  STOP  {fc_layers.STACK_STOP}")

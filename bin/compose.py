@@ -135,7 +135,7 @@ def main():
             s.add_argument("--attempts", type=int, default=3)
             s.add_argument("--parallel", type=int, default=3)
             s.add_argument("--trunk", default=None, help="trunk branch the stack targets (default: the branch you are on)")
-            s.add_argument("--no-stack", action="store_true", help="do not register passed branches with gh stack")
+            s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
         if name == "done":
             s.add_argument("--only", required=True, help="comma-separated task ids")

@@ -71,6 +71,20 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
 
+    def test_a_layer_built_on_a_chained_layer_below_its_new_neighbour_replays_only_its_own_commits(self):
+        # 012 rebuilt from a clone, as run writes it: its reflog holds only its tip. 005 still sits on 011, which stays chained.
+        self.git("branch", "-D", "fast/p/012", "fast/p/005"); self.layer("005", "fast/p/011", "005.txt", "old\n")
+        clone = Path(tempfile.mkdtemp()).resolve() / "c"
+        subprocess.run(["git", "clone", "-q", "--shared", str(self.repo), str(clone)], check=True)
+        cgit = lambda *a: subprocess.run(["git", *a], cwd=clone, check=True, capture_output=True, text=True)
+        cgit("checkout", "-q", "-b", "fast/p/012", "origin/fast/p/011"); (clone / "c.txt").write_text("twelve\n"); cgit("commit", "-qam", "task 012 edits c")
+        self.git("fetch", "-q", str(clone), "fast/p/012:fast/p/012")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
+        self.assertEqual(self.git("show", "fast/p/005:c.txt"), "twelve")
+
 
 class KeepFinishedLayers(unittest.TestCase):
     """A plain `run` re-enters every task: a layer that passed, or that a teammate finished by hand on top of its pass, keeps its
@@ -169,7 +183,7 @@ class RewrittenTrunk(unittest.TestCase):
     def test_a_layer_that_cannot_be_rebased_stops_the_run_with_one_line(self):
         self.git("checkout", "-q", "fast/p/011"); (self.repo / "a.txt").write_text("eleven\n"); self.git("commit", "-qam", "task 011 edits a")
         self.git("checkout", "-q", "trunk")
-        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=False)
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              self.assertRaises(SystemExit) as e:
             fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
@@ -177,3 +191,17 @@ class RewrittenTrunk(unittest.TestCase):
         self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
         self.assertIn("(the old base recorded in this pass)", str(e.exception))  # the hint says where the old base came from
         self.assertIn("fast/p/011", "".join(str(c) for c in say.call_args_list))
+
+    def test_no_stack_dispatches_without_rebasing_the_existing_layers(self):
+        self.git("checkout", "-q", "fast/p/011"); (self.repo / "a.txt").write_text("eleven\n"); self.git("commit", "-qam", "task 011 edits a")
+        self.git("checkout", "-q", "trunk")
+        tips = [self.git("rev-parse", f"fast/p/{t}") for t in ("010", "011")]
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
+        task = {"id": "012", "title": "012", "after": "", "files": [], "protected": [], "test": "true", "model": "m", "body": ""}
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch("builtins.print"), self.assertRaises(SystemExit):
+            fc.fc_run.run_tasks(self.repo, self.proj, [task], a)
+        said = [str(c.args[0]) for c in say.call_args_list]
+        self.assertFalse(any("STOP" in l for l in said), said)
+        self.assertTrue(any(l.startswith("run done   0/1 passed") for l in said))  # 012 ran: its test was already green
+        self.assertEqual([self.git("rev-parse", f"fast/p/{t}") for t in ("010", "011")], tips)
