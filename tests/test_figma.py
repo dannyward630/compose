@@ -342,6 +342,11 @@ class FigmaConnectorBriefs(unittest.TestCase):
             self.assertIn("one ToolSearch select call", brief)
             self.assertIn("Never use `plugin:*figma*` tools", brief)
 
+    def test_designer_brief_reads_tokens_through_trail(self):
+        designer = " ".join(fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd").split())
+        self.assertIn("the repo's tokens through trail (`trail ask \"<question>\" --source`)", designer)
+        self.assertNotRegex(designer, r"(?<![\w/.@-])graft(?![\w/-])")  # no graft command or word left anywhere in the brief
+
 
 if __name__ == "__main__":
     unittest.main()

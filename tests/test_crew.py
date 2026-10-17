@@ -1049,3 +1049,40 @@ class CardsById(unittest.TestCase):
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
         for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
+
+
+class PreambleNamesTrail(unittest.TestCase):
+    """Every teammate's preamble sends it to trail for file:line evidence; the tab still carries graft's env names."""
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
+        self.proj.mkdir(parents=True)
+
+    def test_every_role_fact_checks_with_trail_output(self):
+        for name, title, up in (("shop-orchestrator", "orchestrator", None), ("shop-tests-001", "tests 001", None),
+                                ("shop-planner", "planner", "manager"), ("shop-designer", "designer", "manager"), ("shop-q-neb-1", "q", "orchestrator")):
+            with self.subTest(name):
+                pre = " ".join(fc.fc_crew.crew_preamble(self.proj, name, title, up).split())
+                self.assertIn("(trail output with file:line, a command and its output, a test run)", pre)
+                self.assertNotRegex(pre, r"(?<![\w/.@-])graft(?![\w/-])")
+
+    def test_crew_start_still_passes_the_graft_env_to_the_tab(self):
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
+        a = type("A", (), {"action": "start", "role": "tests-001", "title": "tests 001", "brief": "Write the test."})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+            fc.fc_crew.cmd_crew(a)
+        tab = next(c for c in calls if c[:2] == ("tab", "create"))
+        envs = [tab[i + 1] for i, v in enumerate(tab) if v == "--env"]
+        self.assertIn("GRAFT_NO_GITIGNORE=1", envs)
+        self.assertIn("GRAFT_NO_IGNORE=1", envs)
+        brief = " ".join((fc.fc_crew.crew_dir(self.proj) / "shop-tests-001.brief.md").read_text().split())
+        self.assertIn("trail output with file:line", brief)  # the brief the session reads carries the new preamble
+        self.assertTrue(brief.endswith("Write the test."))
