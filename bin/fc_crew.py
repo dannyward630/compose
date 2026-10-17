@@ -71,7 +71,7 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"Commit messages describe the change itself in plain words; never mention compose, waves, task ids, teammates, or Linear. "
             f"{fc_core.commit_rule(fc_core.commit_convention(proj))}"
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
-            f"Fact-check before you say it: every claim about the code, a tool, or a result comes from evidence you gathered (graft "
+            f"Fact-check before you say it: every claim about the code, a tool, or a result comes from evidence you gathered (trail "
             f"output with file:line, a command and its output, a test run). Keep facts apart from hypotheses, write 'not verified' "
             f"or 'unknown' instead of a guess, and report failures and partial results plainly with the evidence.\n"
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "

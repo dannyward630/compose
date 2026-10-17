@@ -40,8 +40,8 @@ DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: 
 target Figma file is {figma}.
 1. Read SKILL.md and sections/0d.md, then follow 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `list_issues` search for "design system", "tokens", "Figma"; the
-   Frame0 pages (`compose frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
-   (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
+   Frame0 pages (`compose frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through trail
+   (`trail ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
    (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
 3. Load the `figma:figma-use` skill before every `use_figma` call.
    """ + FIGMA_CONNECTOR.replace("\n", "\n   ") + """ Tell every builder and the `design-review` teammate the same.
