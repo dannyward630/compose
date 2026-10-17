@@ -294,6 +294,13 @@ class Crew(unittest.TestCase):
                 fc.fc_crew.cmd_crew(type("A", (), {"action": "list"}))
             self.assertIn(shown, out.getvalue())
             self.assertNotIn("idle", out.getvalue())
+        # its last report says working, but its tab is closed: it is not working
+        (self.proj / "results" / "crew" / "shop-explore.status").write_text(json.dumps({"at": "2026-10-17 13:22:59", "state": "working", "message": "half way"}) + "\n")
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agents": [stranger]}), \
+                mock.patch("sys.stdout", out):
+            fc.fc_crew.cmd_crew(type("A", (), {"action": "list"}))
+        self.assertNotIn("working", out.getvalue()); self.assertIn("half way", out.getvalue())
 
     def test_team_lead_reports_to_engineering_manager(self):
         self.assertIn("the engineering manager", fc.fc_crew.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))

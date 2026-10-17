@@ -28,12 +28,15 @@ def watch_snapshot(repo, proj):
     for m in tasks:
         r = fc_status.task_state(repo, proj, m, trunk_head)
         snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
-    for ag in (fc_herdr.herdr("agent", "list") or {}).get("agents", []):
+    listed = fc_herdr.herdr("agent", "list")
+    agents = None if listed is None else listed.get("agents", [])
+    for ag in agents or []:
         n = ag.get("name") or ""
         if n.startswith(fc_herdr.agent_name(proj.name, "")[:-1]):
             snap["agents"][n] = ag.get("agent_status")
-    pis = [c for f in sorted((proj / "results" / "crew").glob("*.json"))
-           if "skill" in (c := json.loads(f.read_text())) and c.get("agent", c["name"]) in snap["agents"]]
+    records = [json.loads(f.read_text()) for f in sorted((proj / "results" / "crew").glob("*.json"))]
+    snap["closed"] = [c["name"] for c in records if fc_crew.tab_closed(c, agents)]  # whatever their last report says, not working
+    pis = [c for c in records if "skill" in c and c.get("agent", c["name"]) in snap["agents"]]
     try:
         cur = fc_crew.skill_hashes() if pis else {}
     except OSError:
@@ -99,7 +102,8 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         return []  # finished, or waiting on the product owner: silence is expected
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
     on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
-    working = [n for n, (st, _) in last.items() if st == "working" and n != orch]
+    closed = set(snap.get("closed", ()))
+    working = [n for n, (st, _) in last.items() if st == "working" and n != orch and n not in closed]
     mem = watch_mem(proj, key)
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
     lead = orch in snap.get("crew", {}) or orch in snap["agents"]  # a project started without a team lead (a designer started directly) never has one
@@ -120,7 +124,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
         fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
     tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
-    if tests and all(st == "done" for st, _ in tests.values()) and not snap["run"] and pending \
+    if tests and all(st == "done" or n in closed for n, (st, _) in tests.items()) and not snap["run"] and pending \
             and all(snap["tasks"][t]["state"] == "pending" for t in pending):
         done_at = max(t for _, t in tests.values())
         if now_s - done_at >= limit:
@@ -255,7 +259,7 @@ def cmd_watch(a, rewake=False):
             if deadline and time.time() > deadline:
                 watch_save(proj, key, base=after)
                 pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
-                working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working"]
+                working = [n for n, r in after["crew"].items() if r and r[-1]["state"] == "working" and n not in after.get("closed", ())]
                 print(f"[{fc_core.now()}] event timeout  nothing changed in {fc_core.fmt(a.timeout)}: pending tasks {pending}, teammates working "
                       f"{','.join(working) or 'none'}, run {'live' if after['run'] else 'not live'}, verify "
                       f"{'PASS' if after['verify'] and after['verify'][1] else 'FAIL' if after['verify'] else 'not run'}")

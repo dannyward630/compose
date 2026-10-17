@@ -60,6 +60,16 @@ class Stalls(unittest.TestCase):
         ev = self.stalls(self.snap(crew=crew, last_ago=100))
         self.assertTrue(any("stall=undispatched" in e for e in ev), ev)
 
+    def test_a_teammate_whose_tab_closed_is_not_working(self):
+        """tests-002 was collected before its `done` report landed: its last report says working, its tab is closed."""
+        s = self.snap(tasks=("passed",), crew={ORCH: ("working", 600), "hw-tests-002": ("working", 600)}, last_ago=600)
+        s["closed"] = ["hw-tests-002"]
+        self.assertEqual(self.stalls(s), [])
+        crew = {ORCH: ("working", 100), "hw-tests-001": ("done", 500), "hw-tests-002": ("working", 400)}
+        s = self.snap(crew=crew, last_ago=100); s["closed"] = ["hw-tests-002"]
+        ev = self.stalls(s)
+        self.assertTrue(any("stall=undispatched" in e and "teammates working none" in e for e in ev), ev)
+
     def test_run_ended_with_no_next_step(self):
         ev = self.stalls(self.snap(tasks=("passed",), crew={ORCH: ("working", 900)}, last_ago=100, run_end=NOW - 300))
         self.assertTrue(any("stall=no-next-step" in e for e in ev), ev)
@@ -97,6 +107,22 @@ class WatchTimeout(unittest.TestCase):
         self.assertEqual(e.exception.code, 2)
         self.assertIn("event timeout", out[-1])
         self.assertIn("pending tasks 1, teammates working hw-tests-001, run not live, verify not run", out[-1])
+        snap["closed"] = ["hw-tests-001"]
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
+            with self.assertRaises(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        self.assertIn("pending tasks 1, teammates working none,", out[-1])
+
+    def test_the_snapshot_names_teammates_whose_tab_is_closed(self):
+        proj = Path(tempfile.mkdtemp()) / "hw"; (proj / "results" / "crew").mkdir(parents=True)
+        for n in ("hw-tests-001", "hw-tests-002"):
+            (proj / "results" / "crew" / f"{n}.json").write_text(json.dumps({"name": n, "space": "w9"}))
+        live = {"agents": [{"name": "hw-tests-001", "workspace_id": "w9", "agent_status": "working"},
+                           {"name": "hw-tests-002", "workspace_id": "w1", "agent_status": "working"}]}  # same name, another space
+        for answer, closed in ((live, ["hw-tests-002"]), (None, [])):  # herdr cannot say: nobody counts as closed
+            with mock.patch.object(fc.fc_herdr, "herdr", return_value=answer), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+                self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["closed"], closed)
 
 
 def wsnap(state="pending", run=False, crashed=False, halt=None):

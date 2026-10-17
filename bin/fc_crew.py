@@ -20,6 +20,11 @@ def crew_reports(proj, name):
     f = crew_dir(proj) / f"{name}.status"
     return [json.loads(l) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
 
+def tab_closed(c, agents):
+    """A teammate's tab is closed when herdr's agent list (`agents`; None when herdr cannot say) has no agent of its name in
+    its space. Whatever its last report says, a teammate with a closed tab is not working."""
+    return agents is not None and not any(ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space") for ag in agents)
+
 def scratch_dir(proj, name=None):
     return proj / "scratch" / name if name else proj / "scratch"
 
@@ -159,11 +164,14 @@ def cmd_crew(a):
     proj = fc_core.project_dir(a)
     slug, wt = proj.name, fc_herdr.project_worktree(proj)
     if a.action == "list":
+        listed = fc_herdr.herdr("agent", "list")
+        agents = None if listed is None else listed.get("agents", [])
         for f in sorted(crew_dir(proj).glob("*.json")):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
-            live = next((ag for ag in fc_herdr.live_agents() if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
-            print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
+            live = next((ag for ag in agents or [] if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
+            state = "ended" if last.get("state") == "working" and tab_closed(c, agents) else last.get("state", "-")
+            print(f"  {c['name']:32} {state:10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
         sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
