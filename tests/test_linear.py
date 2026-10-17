@@ -189,8 +189,17 @@ class DesignTasks(unittest.TestCase):
         with mock.patch.object(urllib.request, "urlopen", side_effect=err):
             with self.assertRaises(RuntimeError) as e:
                 fc.fc_models.http_json(mock.Mock(), "typesafe (Jev acceptance)")
-        self.assertIn("max_tokens_exceeded", str(e.exception))
-        self.assertIn("400", str(e.exception))
+        self.assertEqual(str(e.exception), 'typesafe (Jev acceptance): HTTP 400 Bad Request: {"detail":{"error_type":"max_tokens_exceeded"}}')
+        self.assertTrue(err.fp.closed)
+
+    def test_a_refused_payment_closes_the_error_and_still_raises_payment_required(self):
+        for code, reason, body in ((402, "Payment Required", b""), (403, "Forbidden", b"insufficient credits on this key")):
+            err = urllib.error.HTTPError("u", code, reason, {}, io.BytesIO(body))
+            with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                with self.assertRaises(fc.fc_models.PaymentRequired) as e:
+                    fc.fc_models.http_json(mock.Mock(), "openrouter")
+            self.assertEqual((e.exception.provider, e.exception.message), ("openrouter", body.decode() or f"HTTP {code}"))
+            self.assertTrue(err.fp.closed, code)
 
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```compose\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
