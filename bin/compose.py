@@ -105,6 +105,8 @@ def main():
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
+                            ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug: scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
+                            ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", fc_frame0.cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0)"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
@@ -217,6 +219,13 @@ def main():
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug | contradiction")
             s.add_argument("message", nargs="+")
+        if name == "tool-bug":
+            s.add_argument("action", choices=("file",))
+            ex = s.add_mutually_exclusive_group()
+            ex.add_argument("--comment", type=int, help="comment on issue N instead of searching the open issues")
+            ex.add_argument("--new", action="store_true", help="open a new issue instead of searching the open issues")
+            s.add_argument("--approved", action="store_true", help="post although this machine is not the maintainer's")
+            s.add_argument("--body", required=True, help="file holding the raw report")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
