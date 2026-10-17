@@ -18,7 +18,7 @@ class FigmaCheck(unittest.TestCase):
     def check(self, figma=None):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
-            fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="check", figma=figma, only=None))
+            fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="check", figma=figma, only=None))
         return out.getvalue()
 
     def stored(self):
@@ -36,14 +36,14 @@ class FigmaCheck(unittest.TestCase):
 
     def test_store_figma_keeps_other_keys_and_creates_missing_file(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "OldKey123456", "x": 1}))
-        fc.store_figma(self.proj, "NewKey123456")
+        fc.fc_figma.store_figma(self.proj, "NewKey123456")
         self.assertEqual(self.stored(), {"feature": "ENG-1", "figma": "NewKey123456", "x": 1})
         (self.proj / "linear.json").unlink()
-        fc.store_figma(self.proj, "NewKey123456")
+        fc.fc_figma.store_figma(self.proj, "NewKey123456")
         self.assertEqual(self.stored(), {"figma": "NewKey123456"})
 
     def test_check_stores_a_url_then_shows_the_stored_key(self):
-        with mock.patch.object(fc, "framelink_fetch", return_value="{}") as fetch:
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", return_value="{}") as fetch:
             out = self.check("https://www.figma.com/design/AbCdEf123456/Shop?node-id=1-2")
             self.assertIn("figma file AbCdEf123456 stored in ", self.check())
         self.assertEqual(self.stored(), {"feature": "ENG-1", "figma": "AbCdEf123456"})
@@ -53,7 +53,7 @@ class FigmaCheck(unittest.TestCase):
         fetch.assert_called_with("AbCdEf123456", depth=1)
 
     def test_check_says_how_to_set_up_framelink_when_it_cannot_read(self):
-        with mock.patch.object(fc, "framelink_fetch", side_effect=RuntimeError(fc.FRAMELINK_SETUP)):
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=RuntimeError(fc.fc_figma.FRAMELINK_SETUP)):
             with self.assertRaises(SystemExit) as e:
                 self.check("AbCdEf123456")
         msg = str(e.exception)
@@ -63,12 +63,12 @@ class FigmaCheck(unittest.TestCase):
     def test_framelink_fetch_uses_env_file_depth_and_never_leaks_the_token(self):
         env = self.proj / "fl.env"
         with self.assertRaises(RuntimeError) as e:
-            fc.framelink_fetch("K", env_file=env)
+            fc.fc_figma.framelink_fetch("K", env_file=env)
         self.assertIn("claude mcp add framelink-figma", str(e.exception))
         env.write_text("FIGMA_API_KEY=figd_secret_token\n")
         ok = SimpleNamespace(returncode=0, stdout='{"nodes": []}', stderr="")
         with mock.patch.object(subprocess, "run", return_value=ok) as run:
-            self.assertEqual(fc.framelink_fetch("K", node="1:2", depth=1, env_file=env), '{"nodes": []}')
+            self.assertEqual(fc.fc_figma.framelink_fetch("K", node="1:2", depth=1, env_file=env), '{"nodes": []}')
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[:4], ["npx", "-y", "figma-developer-mcp", "fetch"])
         self.assertEqual(cmd[cmd.index("--env") + 1], str(env))
@@ -77,7 +77,7 @@ class FigmaCheck(unittest.TestCase):
         self.assertNotIn("figd_secret_token", " ".join(cmd))
         bad = SimpleNamespace(returncode=1, stdout="", stderr="403 token figd_secret_token rejected")
         with mock.patch.object(subprocess, "run", return_value=bad), self.assertRaises(RuntimeError) as e:
-            fc.framelink_fetch("K", env_file=env)
+            fc.fc_figma.framelink_fetch("K", env_file=env)
         self.assertIn("403 token *** rejected", str(e.exception))
         self.assertNotIn("figd_secret_token", str(e.exception))
 
@@ -107,12 +107,12 @@ class FigmaTree(unittest.TestCase):
         ns = dict(repo=".", project="p", action="tree", figma=None, only="001", node="1:2,3-4", depth=None, bindings=None)
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
-            fc.cmd_figma(SimpleNamespace(**{**ns, **kw}))
+            fc.fc_figma.cmd_figma(SimpleNamespace(**{**ns, **kw}))
         return out.getvalue()
 
     def test_saves_each_nodes_framelink_tree_then_the_write_results(self):
         (self.proj / "bind.txt").write_text('{"bound": "color/bg"}\n')
-        with mock.patch.object(fc, "framelink_fetch", side_effect=lambda key, node=None, depth=None: f"TREE {node}") as fetch:
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=lambda key, node=None, depth=None: f"TREE {node}") as fetch:
             out = self.tree(bindings=str(self.proj / "bind.txt"), depth=3)
         text = (self.proj / "results" / "001.tree.txt").read_text()
         self.assertEqual(text, 'NODE 1:2\nTREE 1:2\n\nNODE 3-4\nTREE 3:4\n\nWRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n{"bound": "color/bg"}\n')
@@ -125,7 +125,7 @@ class FigmaTree(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 self.tree(**kw)
             self.assertIn(msg, str(e.exception))
-        with mock.patch.object(fc, "framelink_fetch", side_effect=RuntimeError("framelink fetch failed")), self.assertRaises(SystemExit) as e:
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=RuntimeError("framelink fetch failed")), self.assertRaises(SystemExit) as e:
             self.tree()
         self.assertEqual(str(e.exception), "framelink fetch failed")
         self.assertFalse((self.proj / "results" / "001.tree.txt").exists())
@@ -168,7 +168,7 @@ class FigmaJudge(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
                 mock.patch.object(fc.fc_models, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
-                fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
             except SystemExit as e:
                 if not blocks:
                     raise
@@ -279,34 +279,34 @@ class FigmaJudge(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_models, "fast_json", return_value=confirm), \
                 mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
             try:
-                fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
             except SystemExit as e:
                 self.assertEqual(e.code, 1)
         return json.loads((self.proj / "results" / "001.json").read_text())
 
     def test_chunks_hold_every_node_and_stay_under_the_limit(self):
         text = big_tree()
-        chunks = fc.tree_chunks(text)
+        chunks = fc.fc_figma.tree_chunks(text)
         self.assertGreater(len(chunks), 4)
-        self.assertTrue(all(len(c) <= fc.TREE_CHUNK_CHARS for c in chunks))
+        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
         joined = "\n".join(chunks)
         for i in range(15):
             self.assertIn(f'"id": "1:{i}"', joined)
             self.assertIn(f'"id": "2:{i}"', joined)
-        self.assertEqual(fc.tree_chunks("small tree\n"), ["small tree\n"])
+        self.assertEqual(fc.fc_figma.tree_chunks("small tree\n"), ["small tree\n"])
 
     def test_a_node_with_no_children_or_a_plain_text_tree_is_still_covered(self):
         blob = "NODE 1:1\n" + "".join(f"line {i} " + "y" * 200 + "\n" for i in range(500))
-        chunks = fc.tree_chunks(blob)
-        self.assertTrue(all(len(c) <= fc.TREE_CHUNK_CHARS for c in chunks))
+        chunks = fc.fc_figma.tree_chunks(blob)
+        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
         self.assertEqual("".join(chunks).count("line "), 500)
-        self.assertEqual("".join(fc.tree_chunks("z" * 70000 + "\n")).count("z"), 70000)
+        self.assertEqual("".join(fc.fc_figma.tree_chunks("z" * 70000 + "\n")).count("z"), 70000)
 
     def test_a_big_tree_is_judged_whole_and_the_result_counts_the_chunks(self):
         res = self.judge_big(lambda t: ("MET", 0.0) if '"id": "2:7"' in t else ("UNCLEAR", 0.0))
         self.assertEqual((res["status"], res["chunks"], len(self.states)), ("passed", len(self.states), res["chunks"]))
         self.assertGreater(res["chunks"], 1)
-        self.assertTrue(all(len(s["tree"]) <= fc.TREE_CHUNK_CHARS for s in self.states))
+        self.assertTrue(all(len(s["tree"]) <= fc.fc_figma.TREE_CHUNK_CHARS for s in self.states))
         self.assertEqual([s["tree_part"] for s in self.states][:2], [f"1 of {res['chunks']}", f"2 of {res['chunks']}"])
 
     def test_one_chunk_showing_not_met_fails_the_criterion_whatever_the_others_say(self):
@@ -325,7 +325,7 @@ class FigmaJudge(unittest.TestCase):
         (self.proj / "results" / "001.tree.txt").write_text(big_tree())
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_linear, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
-            fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
+            fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
         res = json.loads((self.proj / "results" / "001.json").read_text())
         self.assertEqual(res["status"], "blocked")
         self.assertIn("chunk 2 of", res["judge_errors"][0]["evidence"])
@@ -335,8 +335,8 @@ class FigmaJudge(unittest.TestCase):
 
 class FigmaConnectorBriefs(unittest.TestCase):
     def test_designer_and_builder_briefs_name_the_connector_and_ban_the_plugin(self):
-        builder = fc.design_brief({"id": "001", "nodes": ["Page/A"]}, "AbCd", Path("r"))
-        designer = fc.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd")
+        builder = fc.fc_figma.design_brief({"id": "001", "nodes": ["Page/A"]}, "AbCd", Path("r"))
+        designer = fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd")
         for brief in (builder, designer):
             self.assertIn("mcp__claude_ai_Figma__*", brief)
             self.assertIn("one ToolSearch select call", brief)

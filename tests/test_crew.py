@@ -854,7 +854,7 @@ class RestrictedStart(unittest.TestCase):
                 self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role, model="pi:x/y")))
 
     def test_briefs_name_skill_md_and_their_sections(self):
-        p, d, w = fc.PLANNER_BRIEF, fc.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
+        p, d, w = fc.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.WAYFINDER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))

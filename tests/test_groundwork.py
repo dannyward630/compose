@@ -306,7 +306,7 @@ class DesignerBrief(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.wt), \
                 mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch.object(fc.fc_core, "say"), mock.patch("sys.stdout", out):
-            fc.cmd_designer(SimpleNamespace(repo=str(self.wt), project="p", extra=extra, figma=figma))
+            fc.fc_figma.cmd_designer(SimpleNamespace(repo=str(self.wt), project="p", extra=extra, figma=figma))
         return out.getvalue()
 
     def test_brief_names_the_project_and_the_tools_and_gates(self):
@@ -329,7 +329,7 @@ class DesignerBrief(unittest.TestCase):
         self.assertNotIn("OldKey000000", brief)
 
     def test_an_unreadable_figma_link_exits_without_storing_or_printing(self):
-        with mock.patch.object(fc.fc_core, "figma_key", return_value=None), mock.patch.object(fc, "store_figma") as store, \
+        with mock.patch.object(fc.fc_core, "figma_key", return_value=None), mock.patch.object(fc.fc_figma, "store_figma") as store, \
                 self.assertRaises(SystemExit) as e:
             self.brief(figma="https://example.com/nope")
         self.assertNotIn(e.exception.code, (0, None))
@@ -376,7 +376,7 @@ class DesignCrews(unittest.TestCase):
             if ns.role in busy: raise SystemExit("busy")
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space") as space, \
                 mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
-            fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
+            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space
 
     def test_print_shows_one_brief_per_open_design_task(self):
@@ -401,7 +401,7 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual(space.call_count, 1); self.assertIn("design-001 not started: busy", out)
         ns, meta = next(ns for ns in started if ns.role == "design-005"), fc.fc_tasks.load_tasks(self.proj)[-1]
         self.assertEqual((ns.project, ns.action, ns.title, ns.force, ns.cwd, ns.model), ("p", "start", "design 005", False, None, None))
-        self.assertEqual(ns.brief, fc.design_brief(meta, "AbCdEf123456", self.proj / "results"))
+        self.assertEqual(ns.brief, fc.fc_figma.design_brief(meta, "AbCdEf123456", self.proj / "results"))
         self.assertEqual([ns.role for ns in self.run_crews(only="005")[0]], ["design-005"])
 
     def test_starts_at_most_the_cap_and_prints_the_rest_with_the_command_to_start_them(self):
