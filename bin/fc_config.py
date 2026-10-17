@@ -1,16 +1,17 @@
 import json, os, re, sys
 from pathlib import Path
-import fc_core
+import fc_auth, fc_core
 
 
 # ---------- global config and workspaces ----------
-# ~/.compose/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
+# ~/.compose/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them. It never
+# holds a key: every key lives in auth.json (fc_auth), and old ones are moved there on the next apply_config.
 #   {"workspace": "work",
 #    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fallback_after": 2, "test_reader": "claude:<id>" or null, "fix": "pi:...",
 #               "crew": {"orchestrator": "claude:<id>", "<role>": "claude:<id>", "default": "claude:<id>", "small": "claude:<id>"}},
-#    "env": {"TYPESAFE_API_KEY": "..."},
+#    "env": {"OTHER_VAR": "..."},
 #    "parallel": 20,
-#    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
+#    "workspaces": {"work": {}, "personal": {"models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
 # `parallel` is how many agents start at once: the tasks of run and resume (else 3) and testcrews' writers (else all at once).
 # A command's own flag wins. designcrews never reads it: Figma's per-minute write rate limit caps its builders.
@@ -57,8 +58,8 @@ def read_config():
 
 def write_config(cfg):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n", keep_secrets=True)
-    CONFIG_PATH.chmod(0o600)  # it holds API keys
+    fc_core.atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n", keep_secrets=True)  # a config env's *_API_KEY stays as it is
+    CONFIG_PATH.chmod(0o600)  # settings stay private
 
 def settings(cfg):
     """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep."""
@@ -75,11 +76,20 @@ def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
     global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL
+    for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
+        print(line, file=sys.stderr)
     name, st = settings(read_config())
     PARALLEL = st.get("parallel")
     if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
         sys.exit(f"{CONFIG_PATH}: parallel must be a whole number of 1 or more, not {PARALLEL!r}")
-    WORKSPACE, LINEAR_KEY = name, st.get("linear_api_key") or None  # the CLI moves Linear states with it (full path only)
+    WORKSPACE = name
+    auth = fc_auth.read_auth(AUTH_PATH)
+    held = auth.get("workspaces", {})
+    own = held.get(name, {}).get("openrouter")
+    if own is not None and not own:  # the workspace's own empty key must not bill default's account
+        sys.exit(f"{AUTH_PATH}: workspace {name!r} has an empty openrouter key")
+    OPENROUTER_KEY = own if own is not None else held.get("default", {}).get("openrouter")
+    LINEAR_KEY = fc_auth.workspace_key(auth, name, "linear") or None  # the CLI moves Linear states with it (full path only)
     models = st.get("models", {})
     crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}
     CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
@@ -95,18 +105,18 @@ def apply_config():
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
     fc_core.SECRET_VARS.update(k for k in st.get("env", {}) if k.endswith("_API_KEY"))
-    if "openrouter_api_key" in st:
-        if not st["openrouter_api_key"]:
-            sys.exit(f"{CONFIG_PATH}: workspace {name!r} has an empty openrouter_api_key")
-        OPENROUTER_KEY = st["openrouter_api_key"]
+    if OPENROUTER_KEY:
         os.environ["OPENROUTER_API_KEY"] = os.environ["TEXT_MODEL_API_KEY"] = OPENROUTER_KEY
+    if auth.get("typesafe"):
+        os.environ["TYPESAFE_API_KEY"] = auth["typesafe"]
     dotenv = fc_core.load_env(ENV_FILE)
-    fc_core.SECRET_VALUES.update(v for v in [OPENROUTER_KEY, LINEAR_KEY, *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
+    fc_core.SECRET_VALUES.update(v for v in [OPENROUTER_KEY, LINEAR_KEY, auth.get("typesafe"), *(key for ws in held.values() for key in ws.values()),
+                                             *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
     return name
 
 def openrouter_key():
-    """The OpenRouter key a harness bills to: the workspace's, else the shell's, else ~/.compose/.env's. None leaves the harness on its own auth store."""
-    return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or fc_core.load_env(ENV_FILE).get("TEXT_MODEL_API_KEY", "").strip('"') or None
+    """The OpenRouter key a harness bills to: the workspace's from auth.json, else the shell's. None leaves the harness on its own auth store."""
+    return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or None
 
 def key_file(key):
     """A 0600 file beside the config holding `key`, for a harness that reads its key from a file its config names, not from the env its tools inherit."""
@@ -144,19 +154,24 @@ def cmd_workspace(a):
     if action == "add":
         if name == "default" or name in WORKSPACE_ACTIONS or name in spaces:
             sys.exit(f"workspace {name!r} already exists" if name in spaces or name == "default" else f"{name!r} is a reserved word")
-        spaces[name] = {"openrouter_api_key": read_key(name)}  # empty fails loudly on use instead of billing another account
-        print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | compose workspace key {name}"))
+        key = read_key(name)
+        spaces[name] = {}
+        fc_auth.set_key(AUTH_PATH, name, "openrouter", key)  # empty fails loudly on use instead of billing another account
+        print(f"added {name}" + ("" if key else f"; no key yet: pbpaste | compose workspace key {name}"))
     elif action == "key":
         linear = getattr(a, "linear", False)
         key = read_key(name, "Linear" if linear else "OpenRouter")
         if not key:
             sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + (" --linear" if linear else ""))
-        (cfg if name == "default" else spaces[name])["linear_api_key" if linear else "openrouter_api_key"] = key
+        fc_auth.set_key(AUTH_PATH, name, "linear" if linear else "openrouter", key)
         print(f"{name}: {'Linear' if linear else 'OpenRouter'} key set")
     elif action == "remove":
         if name == "default":
             sys.exit("default always exists; clear its key in the config's top level instead")
         del spaces[name]
+        auth = fc_auth.read_auth(AUTH_PATH)
+        auth.get("workspaces", {}).pop(name, None)
+        fc_auth.write_auth(AUTH_PATH, auth)
         if cfg.get("workspace") == name:
             cfg["workspace"] = "default"
             print(f"removed the active workspace {name}; now on default")
@@ -164,11 +179,15 @@ def cmd_workspace(a):
         cfg["workspace"] = name
     if action or name:
         write_config(cfg)
+    auth = fc_auth.read_auth(AUTH_PATH)
+    held = auth.get("workspaces", {})
+    dlin = held.get("default", {}).get("linear")
     current = cfg.get("workspace") or "default"
-    for n, entry in [("default", cfg), *spaces.items()]:
-        key = entry.get("openrouter_api_key")
-        state = "…" + key[-4:] if key else "not set" if "openrouter_api_key" in entry else "harness auth stores" if n == "default" else "inherits default"
-        lin = "set" if entry.get("linear_api_key") else "inherits default" if n != "default" and "linear_api_key" in cfg else "not set"
+    for n in ["default", *spaces]:
+        entry = held.get(n, {})
+        key = entry.get("openrouter")
+        state = "…" + key[-4:] if key else "not set" if "openrouter" in entry else "harness auth stores" if n == "default" else "inherits default"
+        lin = "set" if entry.get("linear") else "inherits default" if n != "default" and dlin else "not set"
         print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}, linear key {lin}")
     _, st = settings(cfg)
     m = st.get("models", {})

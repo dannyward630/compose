@@ -354,7 +354,7 @@ class Workspaces(unittest.TestCase):
         self.same((fc.fc_config.apply_config(), *self.keys()), ("personal", "sk-or-test-d0d0", "lin-test-def", "sk-or-test-d0d0", "sk-or-test-d0d0"))
 
     def test_old_keys_move_first_one_stderr_line_each_and_stdout_stays_clean(self):
-        import fc_auth
+        fc_auth = fc.fc_config.fc_auth  # the module apply_config calls, also after another test file reloaded bin/
         def move(*paths):  # the move lands the old config.json key in auth.json
             self.auth.write_text(json.dumps({"workspaces": {"work": {"openrouter": "sk-or-test-mv01"}}}))
             return ["moved workspaces.work.openrouter_api_key out of config.json", "moved TYPESAFE_API_KEY out of .env"]
