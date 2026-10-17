@@ -55,7 +55,7 @@ class Secrets(unittest.TestCase):
             prompts.append(prompt)
             (Path(cwd) / "a.txt").write_text(("a" if len(prompts) == 1 else "yes") + "\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_models, "pi_turn", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_models, "pi_turn", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_implement, "condense_failure", return_value=""), mock.patch.object(fc.fc_linear, "linear_event"):
             r = fc.fc_implement.run_task(repo, proj, task, 3)
         self.assertEqual(r["status"], "passed")

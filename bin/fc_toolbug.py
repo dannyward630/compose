@@ -23,7 +23,7 @@ def environment():
     import platform, shutil, subprocess
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=fc_crew.CLI_REPO, capture_output=True, text=True).stdout.strip()
     lines = [f"- compose: {commit}", f"- OS: {platform.platform()}", f"- Python: {platform.python_version()}"]
-    for tool in ("claude", "herdr", "graft", "gh"):
+    for tool in ("claude", "herdr", "trail", "gh"):
         if shutil.which(tool):
             out = subprocess.run([tool, "--version"], capture_output=True, text=True).stdout.splitlines()
             lines.append(f"- {tool}: {(out or [''])[0].strip()}")

@@ -45,8 +45,6 @@ These commands create, list, and clean up projects.
 | Command | Does |
 |---|---|
 | `doctor` | Checks every tool and skill file `compose` depends on (herdr, treehouse, trail, gh, gh stack, claude, npx, pi, bp, the `framelink-figma` MCP server and its token file, and the herdr, i-have-adhd, and writing-plans skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old one and exits 1 when a required one is missing; pi, bp, treehouse, and trail only warn, as does a gh that is installed but not logged in (`gh auth login`), and Framelink warns as `needed for the designer`. `init` runs the same check first and stops before creating anything, and `designer` checks Framelink first and stops before printing a brief |
-||||||| parent of 8131d71 (docs/cli.md and docs/requirements.md name trail)
-| `doctor` | Checks every tool and skill file `compose` depends on (herdr, treehouse, trail, gh, gh stack, claude, npx, pi, bp, the `framelink-figma` MCP server and its token file, and the herdr, i-have-adhd, and writing-plans skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old one and exits 1 when a required one is missing; pi, bp, treehouse, and trail only warn, and Framelink warns as `needed for the designer`. `init` runs the same check first and stops before creating anything, and `designer` checks Framelink first and stops before printing a brief |
 | `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s |

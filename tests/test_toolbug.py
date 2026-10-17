@@ -34,7 +34,7 @@ class Text(unittest.TestCase):
             env = fc.fc_toolbug.environment()
         commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=fc.fc_crew.CLI_REPO, capture_output=True, text=True).stdout.strip()
         self.assertEqual(env.strip().splitlines(), [f"- compose: {commit}", f"- OS: {platform.platform()}", f"- Python: {platform.python_version()}",
-                         "- claude: 2.1.302 (Claude Code)", "- herdr: herdr 0.9.1", "- graft: not installed", "- gh: gh version 2.94.0 (2026-09-01)"])
+                         "- claude: 2.1.302 (Claude Code)", "- herdr: herdr 0.9.1", "- trail: not installed", "- gh: gh version 2.94.0 (2026-09-01)"])
         self.assertNotIn("/", env)
 
     def test_issue_text_splits_the_title_fills_environment_and_root_cause_and_is_stable(self):
