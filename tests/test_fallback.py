@@ -1,5 +1,6 @@
 import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 import sys, time
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
@@ -312,46 +313,49 @@ class FixScope(unittest.TestCase):
         self.assertEqual(fc.fc_verify.fix_strays(["a.go", "yarn.lock"], {"a.go"}, {"yarn.lock"}), [])
 
 
-def ws(name=None, target=None, stdin=""):
-    with mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
-        fc.fc_config.cmd_workspace(type("A", (), {"name": name, "target": target}))
+def ws(name=None, target=None, stdin="", linear=False):
+    out = io.StringIO()
+    with mock.patch.object(sys, "stdin", io.StringIO(stdin)), redirect_stdout(out):
+        fc.fc_config.cmd_workspace(type("A", (), {"name": name, "target": target, "linear": linear}))
+    return out.getvalue()
 
 
 class Workspaces(unittest.TestCase):
     def setUp(self):
-        self.path = Path(tempfile.mkdtemp()) / "config.json"
-        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fix": "pi:f/x", "fallback_after": 3,'
+        root = Path(tempfile.mkdtemp())
+        self.path, self.auth = root / "config.json", root / "auth.json"
+        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fallback_after": 3,'
                              ' "test_reader": "claude:claude-haiku-x"},'
-                             ' "workspaces": {"work": {"openrouter_api_key": "sk-work"},'
-                             ' "personal": {"openrouter_api_key": "sk-home", "models": {"fallback": null}, "env": {"X_FC": "1"}}}}')
-        self.patches = [mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
-                        mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
-                        mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER),
-                        mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)]
-        for p in self.patches:
-            p.start()
+                             ' "workspaces": {"work": {}, "personal": {"models": {"fallback": null}}}}')
+        self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test-d0d0", "linear": "lin-test-def"},
+                                                        "work": {"openrouter": "sk-or-test-w1x2"}}, "typesafe": "ts-test"}))
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.object(fc.fc_config, "AUTH_PATH", self.auth),
+                  mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env"), mock.patch.dict(os.environ, {}),
+                  mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
+                  mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)):
+            p.start(); self.addCleanup(p.stop)
 
-    def tearDown(self):
-        for p in reversed(self.patches):
-            p.stop()
+    def keys(self):
+        return fc.fc_config.OPENROUTER_KEY, fc.fc_config.LINEAR_KEY, os.environ.get("OPENROUTER_API_KEY"), os.environ.get("TEXT_MODEL_API_KEY")
 
-    def test_active_workspace_sets_key_and_models(self):
-        self.assertEqual(fc.fc_config.apply_config(), "work")
-        self.assertEqual((fc.fc_config.OPENROUTER_KEY, os.environ["OPENROUTER_API_KEY"], os.environ["TEXT_MODEL_API_KEY"]), ("sk-work",) * 3)
-        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
-        self.assertEqual(os.environ["COMPOSE_FIX_MODEL"], "pi:f/x")
-        self.assertNotIn("OPENCODE_CONFIG_CONTENT", os.environ)  # OpenCode gets the key from a file, not an env its tools inherit
-        self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:g/h")
+    def test_keys_come_from_auth_json_with_the_default_fallback(self):
+        self.assertEqual((fc.fc_config.apply_config(), *self.keys()), ("work", "sk-or-test-w1x2", "lin-test-def", "sk-or-test-w1x2", "sk-or-test-w1x2"))
+        self.assertEqual((os.environ.get("TYPESAFE_API_KEY"), "OPENCODE_CONFIG_CONTENT" in os.environ), ("ts-test", False))  # OpenCode reads its key from a file
+        self.assertEqual((fc.fc_config.DEFAULT_MODEL, fc.fc_models.fallback_for("pi:a/b")), ("pi:a/b", "pi:g/h"))
         self.assertEqual((fc.fc_config.FALLBACK_AFTER, fc.fc_config.TEST_READER), (3, "claude:claude-haiku-x"))
+        ws("personal")  # no auth.json entry of its own
+        self.assertEqual((fc.fc_config.apply_config(), *self.keys()), ("personal", "sk-or-test-d0d0", "lin-test-def", "sk-or-test-d0d0", "sk-or-test-d0d0"))
 
-    def test_switch_overrides_top_level(self):
-        ws("personal")
-        self.assertEqual(oct(self.path.stat().st_mode & 0o777), "0o600")
-        self.assertEqual(fc.fc_config.apply_config(), "personal")
-        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-home")
-        self.assertEqual(os.environ["X_FC"], "1")
-        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")  # inherited from the top level
-        self.assertIsNone(fc.fc_models.fallback_for("pi:a/b"))  # personal turned the fallback off
+    def test_old_keys_move_first_one_stderr_line_each_and_stdout_stays_clean(self):
+        import fc_auth
+        def move(*paths):  # the move lands the old config.json key in auth.json
+            self.auth.write_text(json.dumps({"workspaces": {"work": {"openrouter": "sk-or-test-mv01"}}}))
+            return ["moved workspaces.work.openrouter_api_key out of config.json", "moved TYPESAFE_API_KEY out of .env"]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(fc_auth, "move_keys", side_effect=move) as moved, redirect_stdout(out), redirect_stderr(err):
+            fc.fc_config.apply_config()
+        moved.assert_called_once_with(self.path, fc.fc_config.ENV_FILE, self.auth)
+        self.assertEqual((err.getvalue().splitlines(), out.getvalue(), fc.fc_config.OPENROUTER_KEY), (move(), "", "sk-or-test-mv01"))
 
     def test_parallel_comes_from_the_config_and_a_workspace_overrides_it(self):
         fc.fc_config.apply_config()
@@ -369,57 +373,34 @@ class Workspaces(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "parallel must be a whole number"):
                 fc.fc_config.apply_config()
 
-    def test_unknown_workspace_refused(self):
-        with self.assertRaises(SystemExit):
-            ws("nope")
+    def test_add_key_remove_and_listing_use_auth_json_and_never_print_a_key(self):
+        listing = ws("add", "client-x", stdin="sk-or-test-c1c1\n") + ws("key", "client-x", stdin="lin-test-cx\n", linear=True)
+        listing += ws("key", "default", stdin="sk-or-test-r0t8\n") + ws()
+        self.assertEqual(json.loads(self.auth.read_text())["workspaces"]["client-x"], {"openrouter": "sk-or-test-c1c1", "linear": "lin-test-cx"})
+        for line in ("work             openrouter key …w1x2, linear key inherits default", "client-x         openrouter key …c1c1, linear key set",
+                     "default          openrouter key …r0t8, linear key set"):
+            self.assertIn(line, listing)
+        self.assertNotRegex(listing + self.path.read_text(), "test|api_key")  # no key printed, none in config.json
+        ws("remove", "client-x")
+        self.assertFalse({"client-x"} & {*json.loads(self.auth.read_text())["workspaces"], *fc.fc_config.read_config()["workspaces"]})
 
-    def test_pi_gets_the_workspace_key(self):
-        fc.fc_config.apply_config()
-        run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
-        with mock.patch.object(subprocess, "run", run):
-            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
-        cmd = run.call_args[0][0]
-        self.assertEqual(cmd[cmd.index("--api-key") + 1], "sk-work")
+    def test_an_empty_key_exits_instead_of_billing_default_and_names_are_checked(self):
+        ws("add", "later"); ws("later")
+        with self.assertRaises(SystemExit):
+            fc.fc_config.apply_config()
+        for bad in (("nope",), ("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
+            self.assertRaises(SystemExit, ws, *bad)
 
     def test_pi_turn_reports_the_providers_error_not_stderr(self):
         err = json.dumps({"message": 'Preset "glm-5-3-flash-fast" not found for this user.', "code": 404,
                           "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
         end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"):
-            with self.assertRaises(RuntimeError) as cm:
-                fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"), self.assertRaises(RuntimeError) as cm:
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))
         self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
         self.assertNotIn("No project session", str(cm.exception))
-
-    def test_add_key_switch_remove(self):
-        ws("add", "client-x", stdin="sk-client\n")
-        ws("client-x")
-        self.assertEqual(fc.fc_config.apply_config(), "client-x")
-        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-client")
-        ws("key", "client-x", stdin="sk-rotated")
-        fc.fc_config.apply_config()
-        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-rotated")
-        ws("remove", "client-x")  # removing the active one falls back to default
-        self.assertNotIn("client-x", fc.fc_config.read_config()["workspaces"])
-        self.assertEqual(fc.fc_config.settings(fc.fc_config.read_config())[0], "default")
-
-    def test_keyless_add_fails_loudly_on_use(self):
-        ws("add", "later")
-        ws("later")
-        with self.assertRaises(SystemExit):
-            fc.fc_config.apply_config()
-
-    def test_default_always_exists(self):
-        ws("default")
-        fc.fc_config.OPENROUTER_KEY = None
-        self.assertEqual(fc.fc_config.apply_config(), "default")
-        self.assertIsNone(fc.fc_config.OPENROUTER_KEY)  # no top-level key: harnesses keep their own auth stores
-        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
-        for bad in (("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
-            with self.assertRaises(SystemExit):
-                ws(*bad)
 
 
 class PiKeyFromEnv(unittest.TestCase):

@@ -45,9 +45,13 @@ class FakeLinear:
 
 class LinearKey(unittest.TestCase):
     def setUp(self):
-        self.cfg = Path(tempfile.mkdtemp()) / "config.json"
-        self.cfg.write_text(json.dumps({"workspace": "work", "workspaces": {"work": {"openrouter_api_key": "sk-or-x"}}}))
-        p = mock.patch.object(fc.fc_config, "CONFIG_PATH", self.cfg); p.start(); self.addCleanup(p.stop)
+        root = Path(tempfile.mkdtemp())
+        self.cfg, self.auth = root / "config.json", root / "auth.json"
+        self.cfg.write_text(json.dumps({"workspace": "work", "workspaces": {"work": {}}}))
+        self.auth.write_text(json.dumps({"workspaces": {"work": {"openrouter": "sk-or-x"}}}))
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.cfg), mock.patch.object(fc.fc_config, "AUTH_PATH", self.auth),
+                  mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env")):
+            p.start(); self.addCleanup(p.stop)
 
     def workspace(self, *args, stdin=""):
         a = SimpleNamespace(name=args[0] if args else None, target=args[1] if len(args) > 1 else None, linear="--linear" in args)
@@ -58,8 +62,8 @@ class LinearKey(unittest.TestCase):
 
     def test_the_key_comes_from_stdin_is_stored_per_workspace_and_never_printed(self):
         out = self.workspace("key", "work", "--linear", stdin=KEY + "\n")
-        self.assertEqual(json.loads(self.cfg.read_text())["workspaces"]["work"]["linear_api_key"], KEY)
-        self.assertNotIn(KEY, out)
+        self.assertEqual(json.loads(self.auth.read_text())["workspaces"]["work"]["linear"], KEY)
+        self.assertNotIn(KEY, out + self.cfg.read_text())
         listing = self.workspace()
         self.assertIn("linear key set", listing); self.assertNotIn(KEY, listing)
 
