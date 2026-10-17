@@ -45,7 +45,7 @@ class RoleModels(unittest.TestCase):
     def test_no_crew_config_keeps_claude_default(self):
         self.config({})
         self.assertEqual(fc.crew_model("groundwork"), "claude")
-        self.assertIsNone(fc.claude_id("claude"))
+        self.assertIsNone(fc.fc_claude.claude_id("claude"))
 
     def test_an_opencode_id_for_a_crew_is_refused_naming_the_key(self):
         self.config({"tests": "openai/gpt-x"})
@@ -70,7 +70,7 @@ class RoleModels(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
-                mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
         self.assertIn("teammate p-groundwork started in tab 'groundwork' of space p on claude:claude-sonnet-5-5", out.getvalue())
@@ -79,7 +79,7 @@ class RoleModels(unittest.TestCase):
         self.assertEqual(json.loads((proj / "results" / "crew" / "p-groundwork.json").read_text())["model"], "claude:claude-sonnet-5-5")
 
     def test_task_claude_model_routes_to_claude_code_with_that_model(self):
-        with mock.patch.object(fc, "claude_once", return_value=(None, "", 0, {})) as co, mock.patch.object(fc, "pi_turn") as pt:
+        with mock.patch.object(fc.fc_claude, "claude_once", return_value=(None, "", 0, {})) as co, mock.patch.object(fc, "pi_turn") as pt:
             fc.implementer("/tmp", "claude:claude-opus-5-5", "hi")
             fc.implementer("/tmp", "claude", "hi")
         self.assertEqual([c.kwargs["model"] for c in co.call_args_list], ["claude-opus-5-5", None])
@@ -177,7 +177,7 @@ class PlannerChain(unittest.TestCase):
         done = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
         with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run:
             fc.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
-            fc.claude_once(".", "hi")
+            fc.fc_claude.claude_once(".", "hi")
         for call in run.call_args_list:
             self.assertEqual([k for k in call.kwargs.get("env") or os.environ if k.startswith("FAST_CODING_")], [])
 
@@ -204,7 +204,7 @@ class PlannerChain(unittest.TestCase):
         with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
-                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
         self.assertIn("WARNING: wayfinder wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())

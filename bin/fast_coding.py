@@ -15,14 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear  # noqa: E402
-
-def is_claude(model):
-    return model == "claude" or str(model).startswith("claude:")
-
-def claude_id(model):
-    """The --model value for a Claude model id, or None for bare `claude` (Claude Code's own default)."""
-    return (model.split(":", 1)[1] or None) if str(model).startswith("claude:") else None
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude  # noqa: E402
 
 CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
 
@@ -163,7 +156,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
 
 def fallback_for(model):
     """The model to switch to after a miss, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
-    return fc_config.FALLBACK_MODEL if fc_config.FALLBACK_MODEL and model != fc_config.FALLBACK_MODEL and not is_claude(model) else None
+    return fc_config.FALLBACK_MODEL if fc_config.FALLBACK_MODEL and model != fc_config.FALLBACK_MODEL and not fc_claude.is_claude(model) else None
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -171,8 +164,8 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
     if fake and os.environ.get("FAST_CODING_FAKE_402_MATCH", "") in prompt:
         raise PaymentRequired(fake, "Payment required to access this resource (simulated)")
-    if is_claude(model):
-        return claude_once(cwd, prompt, model=claude_id(model))
+    if fc_claude.is_claude(model):
+        return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
     if model.startswith("pi:"):
         if herdr_env() and task and task.get("space"):
             return herdr_pi(cwd, model[3:], prompt, session, task, timeout)
@@ -213,41 +206,6 @@ class RateLimited(Exception):
     def __init__(self, usage):
         super().__init__("provider rate limit hit; session compacted")
         self.usage = usage
-
-def headless_env():
-    """The environment for a Claude Code process the CLI runs headless: no FAST_CODING_* at all, above all not the herdr
-    tab's role, project, and worktree, so the plugin's hooks treat it as no one's session (a team lead's Stop hook would
-    park a watch in it, and its guard would block an implementer's edits)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("FAST_CODING_")}
-
-NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
-def crew_settings(role):
-    enabled = {}
-    try:
-        enabled = (json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("enabledPlugins") or {})
-    except (OSError, ValueError):
-        pass
-    keep = fc_mcp.keeps_skills(role)
-    return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
-                       "enabledPlugins": {k: False for k in enabled if not k.startswith("fast-coding@") and not (keep and k.startswith("figma@"))}})
-
-def claude_once(cwd, prompt, timeout=900, model=None):
-    """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
-    # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
-           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
-    try:
-        out = json.loads(p.stdout)
-    except json.JSONDecodeError:
-        out = {}
-    if out.get("is_error"):
-        raise RuntimeError(f"claude -p error: {str(out.get('result', ''))[:300]}")
-    usage = out.get("usage", {})
-    tokens_in = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
-    fc_core.LEDGER.add("claude-subscription", tokens_in, usage.get("output_tokens", 0), 0.0)
-    return None, str(out.get("result", ""))[-1500:], out.get("num_turns", 0), {"tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
-                                                                                "cost": 0.0, "reference_cost": out.get("total_cost_usd")}
 
 # ---------- herdr ----------
 # Inside herdr (HERDR_ENV=1) the fleet is visible: one space per project, a `status` tab, one tab per task holding a named
@@ -540,7 +498,7 @@ def probe_command(model):
     if model.startswith("pi:"):
         return ["pi", "-p", "--mode", "json", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
                 "--thinking", "off", "--model", pi_id(model), *pi_key_args(model), "Reply with exactly: ok"]
-    return ["claude", "-p", "--model", claude_id(model), "--output-format", "json", "Reply with exactly: ok"]
+    return ["claude", "-p", "--model", fc_claude.claude_id(model), "--output-format", "json", "Reply with exactly: ok"]
 
 def probe_result(model, p):
     """(ok, why) from a finished probe process: Claude Code reports `is_error` in its JSON; pi streams events, so a clean exit
@@ -593,7 +551,7 @@ TRANSIENT = re.compile(r"overloaded|rate.?limit|too many requests|\b(5\d\d|429)\
 def probe_once(model, timeout):
     """(ok, why, transient) from one probe turn. Only a clear answer (ok, or a refusal such as an unknown model) is definite."""
     try:
-        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
+        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=fc_claude.headless_env())
         ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         return False, f"{type(e).__name__}: {e}"[:160], True
@@ -610,7 +568,7 @@ def cmd_models(a):
         sys.exit("models --probe clears the day's cached model probes and probes the crew models again")
     probe_clear()
     for model in dict.fromkeys(m for chain in [[(m, None)] for m in fc_config.CREW_MODELS.values()] + list(fc_config.CREW_FALLBACK.values()) for m, _ in chain):
-        if is_claude(model) or str(model).startswith("pi:"):
+        if fc_claude.is_claude(model) or str(model).startswith("pi:"):
             ok, why = model_available(model)
             print(f"{model}: {'ok' if ok else 'unavailable'} ({why})")
 
@@ -638,7 +596,7 @@ def crew_pick_full(role, explicit=None):
             if key in fc_config.CREW_MODELS else [fc_config.CREW_DEFAULTS[key]]
     label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in fc_config.CREW_DEFAULTS and key not in fc_config.CREW_MODELS else "")
     for m, _ in chain:
-        if not (is_claude(m) or str(m).startswith("pi:")):
+        if not (fc_claude.is_claude(m) or str(m).startswith("pi:")):
             where = "" if key == "--model" else f" in {fc_config.CONFIG_PATH}"
             sys.exit(f"{label} is {m!r}, but teammate sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
                      f"or pi:<provider/model> (e.g. pi:openai/gpt-6-astra){where}; OpenCode ids are for implementers only")
@@ -665,19 +623,6 @@ def crew_effort(role, explicit=None):
     """The Claude Code effort for the entry crew_pick chose, or None to keep Claude Code's default."""
     return crew_pick(role, explicit)[1]
 
-def claude_trusted(path):
-    """Whether Claude Code has accepted its folder-trust dialog for `path` or a parent (None when it cannot tell).
-    An untrusted folder parks a new session at the trust prompt, so `crew start` says so instead of starting one."""
-    try:
-        projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
-    except (OSError, json.JSONDecodeError):
-        return None
-    return any((projects.get(str(p)) or {}).get("hasTrustDialogAccepted") for p in (path, *path.parents))
-
-def untrusted(path):
-    return (f"Claude Code has never trusted {path}, so a session there would wait at its trust prompt. Run `claude` in "
-            f"{path} once and accept the prompt (the product owner decides that), then start this teammate again.")
-
 def crew_workdir(cwd, wt, name, role=None):
     """(directory, branch) a teammate session works in. A toolsmith's --cwd in a git repo, the project's own repo included, gets
     its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
@@ -690,8 +635,8 @@ def crew_workdir(cwd, wt, name, role=None):
     if not theirs or (theirs == common(wt) and role != "toolsmith"):
         return cwd, None
     top = Path(fc_core.sh(["git", "rev-parse", "--show-toplevel"], cwd).stdout.strip())
-    if claude_trusted(top) is False:
-        sys.exit(untrusted(top))
+    if fc_claude.claude_trusted(top) is False:
+        sys.exit(fc_claude.untrusted(top))
     exclude = Path(theirs) / "info" / "exclude"
     if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
         exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -1320,8 +1265,8 @@ def cmd_crew(a):
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
     cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name, a.role)
-    if not model.startswith("pi:") and claude_trusted(Path(cwd).resolve()) is False:
-        sys.exit(untrusted(Path(cwd).resolve()))
+    if not model.startswith("pi:") and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
+        sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
     try:
         if getattr(a, "frame0", False):
             frame0_register(cwd, frame0_port(proj))  # before the session starts: it reads its MCP servers once
@@ -1354,8 +1299,8 @@ def cmd_crew(a):
                   *(["--thinking", effort] if effort else []), "--model", pi_id(model), *pi_key_args(model), "--append-system-prompt", TRUST_PROMPT)
         else:
             herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
-                  *(["--model", claude_id(model)] if claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
+                  *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
+                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
@@ -3138,7 +3083,7 @@ def preflight(models):
             return f"{model}: {str(e)[-400:]}"
         finally:
             shutil.rmtree(root, ignore_errors=True)
-    models = sorted(m for m in models if m and not is_claude(m))  # Claude Code is the subscription; nothing to resolve
+    models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
     fc_core.say(f"preflight  {', '.join(models)}")
     with ThreadPoolExecutor(max_workers=max(1, len(models))) as ex:
         bad = [b for b in ex.map(probe, models) if b]

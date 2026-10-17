@@ -135,7 +135,7 @@ class Treehouse(unittest.TestCase):
         other.mkdir()
         self.git("init", "-q", "-b", "main", cwd=other)
         (other / "x").write_text("x\n"); self.git("add", "-A", cwd=other); self.git("commit", "-qm", "x", cwd=other)
-        with mock.patch.object(fc, "claude_trusted", return_value=True):
+        with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True):
             slot, branch = fc.crew_workdir(other, wt, "p-toolsmith")
         self.assertTrue(str(slot).startswith(str(other / ".treehouse")))
         self.assertEqual(self.git("branch", "--show-current", cwd=slot), branch)
