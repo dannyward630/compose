@@ -1,4 +1,5 @@
 """Key presence (never values), the Linear rule (an API key or the claude.ai Linear connector), and saving entered keys."""
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,8 +37,27 @@ def linear_state(status, connected):
 
 def save_key(kind, value, workspace, framelink_env):
     """Store one entered key (auth.json at fc_config.AUTH_PATH, or FIGMA_API_KEY in framelink_env); a line naming it, never its value."""
-    raise NotImplementedError("not implemented: task 017")
+    if not value:
+        return skipped_line(kind, workspace)
+    if kind == "figma":
+        env = Path(framelink_env)
+        kept = [line for line in env.read_text().splitlines() if not line.startswith("FIGMA_API_KEY=")] if env.exists() else []
+        env.parent.mkdir(parents=True, exist_ok=True)
+        fc_core.atomic_write(env, "\n".join([*kept, f"FIGMA_API_KEY={value}"]) + "\n", keep_secrets=True)
+        os.chmod(env, 0o600)
+        return "Figma token saved to the Framelink env file"
+    fc_auth.set_key(fc_config.AUTH_PATH, workspace, kind, value)
+    return f"{kind} key saved to auth.json for workspace {workspace}"
 
 def skipped_line(kind, workspace):
     """What stops working without the key of kind, and the command to set it later."""
-    raise NotImplementedError("not implemented: task 017")
+    later = f"pbpaste | compose workspace key {workspace}"
+    if kind == "openrouter":
+        return f"No OpenRouter key: without it run and verify have no model. Add one later: {later}"
+    if kind == "linear":
+        return (f"No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. "
+                f"Add one later: {later} --linear, or connect the claude.ai Linear connector")
+    if kind == "typesafe":
+        return "No TypeSafe key: without it verify and change cannot check your code. Add one later: compose setup"
+    if kind == "figma":
+        return "No Figma token: without it the designer cannot build your designs. Add one later: compose setup"
