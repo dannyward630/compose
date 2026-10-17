@@ -51,13 +51,19 @@ def claude_once(cwd, prompt, timeout=900, model=None):
 
 
 def claude_trusted(path):
-    """Whether Claude Code has accepted its folder-trust dialog for `path` or a parent (None when it cannot tell).
+    """Whether Claude Code has accepted its folder-trust dialog for `path` (None when it cannot tell), by Claude Code's own rule:
+    in a repo, the repo's main checkout or a folder from `path` up to the repo's top accepted it, and a folder above the repo never
+    counts, so a repo nested in a trusted folder still asks; outside git, `path` or any parent accepted it.
     An untrusted folder parks a new session at the trust prompt, so `crew start` says so instead of starting one."""
     try:
         projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
     except (OSError, json.JSONDecodeError):
         return None
-    return any((projects.get(str(p)) or {}).get("hasTrustDialogAccepted") for p in (path, *path.parents))
+    git = fc_core.sh(["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], None, check=False)
+    top, common = map(Path, git.stdout.splitlines()) if git.returncode == 0 else (None, None)
+    main = common.parent if common and common.name == ".git" else top  # a linked worktree's main checkout; a submodule is its own
+    folders = [p for p in (path, *path.parents) if not top or p.is_relative_to(top)] + ([main] if main else [])
+    return any((projects.get(str(p)) or {}).get("hasTrustDialogAccepted") for p in folders)
 
 def untrusted(path):
     return (f"Claude Code has never trusted {path}, so a session there would wait at its trust prompt. Run `claude` in "

@@ -251,6 +251,37 @@ class CrewWorkdir(unittest.TestCase):
         self.assertEqual(self.tool_git("worktree", "list").stdout.count("\n"), 1)  # nothing created
 
 
+class ClaudeTrust(unittest.TestCase):
+    """Claude Code's own rule: a folder in a repo is trusted through the repo's main checkout or a folder between it and the
+    repo's top, never through a folder above the repo; outside git any parent counts."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.home = Path(tempfile.mkdtemp())
+
+    def trusted(self, path, *accepted):
+        (self.home / ".claude.json").write_text(json.dumps({"projects": {str(p): {"hasTrustDialogAccepted": True} for p in accepted}}))
+        with mock.patch.object(Path, "home", return_value=self.home):
+            return fc.fc_claude.claude_trusted(path)
+
+    def test_a_repo_nested_in_a_trusted_folder_still_asks(self):
+        outer = Path(tempfile.mkdtemp()).resolve()
+        (outer / "repo" / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(outer / "repo")], check=True)
+        (outer / "plain" / "sub").mkdir(parents=True)
+        self.assertIs(self.trusted(outer / "repo", outer), False)
+        self.assertIs(self.trusted(outer / "repo" / "src", outer), False)
+        self.assertIs(self.trusted(outer / "repo" / "src", outer / "repo"), True)
+        self.assertIs(self.trusted(outer / "plain" / "sub", outer), True)
+
+    def test_a_worktree_shares_its_main_checkouts_trust(self):
+        main, git = repo_with({"src/a.py": ""})
+        main, wt = main.resolve(), Path(tempfile.mkdtemp()).resolve() / "wt"
+        git("worktree", "add", "-q", str(wt))
+        self.assertIs(self.trusted(wt / "src", main), True)
+        self.assertIs(self.trusted(wt, main / "src"), False)
+        self.assertIs(self.trusted(wt / "src", wt / "src"), True)
+
+
 class PlannerRules(unittest.TestCase):
     """The planner brief carries the seven-item spec check, its routing, the cutting rules, and the task issue format."""
     def setUp(self):
