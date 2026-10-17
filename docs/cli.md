@@ -94,6 +94,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 | `testcrews` | Runs one test-writing teammate per task, in parallel |
 | `report` | Lets a teammate report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |
 | `watch` | Blocks until something happens, prints one event line, and exits. `--now` prints the current state and marks it seen |
+| `yolo [--push] [words]\|decided\|off` | Records that the product owner is away in `results/yolo.json`: the engineering manager answers each question with the recommendation, and the words pre-answer questions verbatim. `--push` permits submitting the verified stack. `decided "<question>: <answer taken>"` logs an answer. `off` prints the digest (your instructions, decided for you, waiting on you, tried and failed, done, cost) and archives the file as `yolo-<since>.json` |
 | `teardown` | Closes finished tabs, stops leftover servers, and saves and quits Frame0 |
 | `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |
 | `guard` | Runs as the PreToolUse hook that keeps the team lead from editing code |

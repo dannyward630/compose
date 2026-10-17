@@ -2032,6 +2032,8 @@ def manager_attention(proj, events):
         if not m:
             continue
         who, state, message = m.groups()
+        if state == "needs-user" and yolo_state(proj):
+            continue  # the product owner is away: the engineering manager answers with the recommendation (0h Yolo)
         try:
             message = ast.literal_eval(message)
         except (ValueError, SyntaxError):
@@ -4183,6 +4185,83 @@ def cmd_hold(a):
     atomic_write(tmp, json.dumps(hold, indent=2))
     os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
+# ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
+YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
+              "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
+              "merging a toolsmith fix into fast-coding itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
+              "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
+YOLO_HINT = "  yolo=on (answer with the recommendation; log it: fast-coding yolo decided ...)"
+
+def yolo_state(proj):
+    """The posture file, or None when yolo is off. Unreadable counts as off, so notifications keep firing."""
+    try:
+        return json.loads((proj / "results" / "yolo.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+def yolo_digest(repo, proj, y):
+    """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
+    since = report_time(y["since"])
+    snap = watch_snapshot(repo, proj)
+    changed = lambda tid: (f := proj / "results" / f"{tid}.json").exists() and f.stat().st_mtime >= since
+    tasks = {tid: t for tid, t in snap["tasks"].items() if changed(tid)}
+    waiting = [f"{n}: {r[-1]['state']}  {r[-1]['message']}" for n, r in snap["crew"].items()
+               if r and r[-1]["state"] in ("needs-user", "blocked") and report_time(r[-1]["at"]) >= since]
+    if snap["halt"]:
+        waiting.append(f"payment halt at {snap['halt'][1]} ({snap['halt'][2]} task(s) left): top up, then `fast-coding resume`")
+    verify = snap["verify"] if snap["verify"] and snap["verify"][0] >= since else None
+    if verify and not verify[1]:
+        waiting.append("verify FAIL: read results/verify.json")
+    failed = [f"{tid} {t['title']}  {t['state']}" for tid, t in tasks.items() if t["state"] == "failed" or t["state"].startswith(("rejected_", "exhausted"))]
+    done = [f"{tid} {t['title']}  {t['state']}" for tid, t in tasks.items() if t["state"] in ("passed", "already_green", "merged")]
+    if verify and verify[1]:
+        done.append("verify PASS")
+    layers = proj / "layers.json"
+    if layers.exists() and layers.stat().st_mtime >= since:
+        done.append("stack submitted: " + ", ".join(json.loads(layers.read_text())))
+    elif stack := stack_order(repo, proj):
+        done.append(f"stack ok locally, not pushed: {' <- '.join(stack)}")
+    t = fc_cost.total(fc_cost.rows(proj))
+    task_cost = sum(v["cost"] for v in snap["tasks"].values())
+    sections = [("Your instructions", [y.get("words") or "(no words)", f"push: {'yes' if y.get('push') else 'no'}"]),
+                ("Decided for you", [f"{d['ts']}  {d['text']}" for d in y.get("decisions", [])]),
+                ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
+                ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
+    out = [f"yolo off for {proj.name}: away since {y['since']}"]
+    for head, items in sections:
+        out += ["", head] + [f"- {i}" for i in items or ["none"]]
+    return "\n".join(out)
+
+def cmd_yolo(a):
+    """Enter yolo (words pre-answer questions verbatim; --push permits the stack's submit), log a decision taken, or come back (`off`)."""
+    proj = project_dir(a); repo = Path(a.repo).resolve()
+    path = proj / "results" / "yolo.json"
+    y = yolo_state(proj)
+    words = list(a.words or [])
+    if words[:1] in (["off"], ["decided"]) and not y:
+        print(f"yolo is not on for {proj.name}; `fast-coding yolo --project {proj.name} [--push] [words]` turns it on")
+        sys.exit(1)
+    if words == ["off"]:
+        print(yolo_digest(repo, proj, y))
+        os.replace(path, path.with_name(f"yolo-{y['since'].replace(' ', 'T').replace(':', '')}.json"))
+        return
+    if words[:1] == ["decided"]:
+        if len(words) < 2:
+            sys.exit('yolo decided needs "<question>: <answer taken>"')
+        y["decisions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": " ".join(words[1:])})
+        atomic_write(path, json.dumps(y, indent=2))
+        print(f"logged for the product owner's return: {' '.join(words[1:])}")
+        return
+    y = y or {"since": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": []}
+    y.update(push=bool(a.push), words=" ".join(words) if words else y.get("words", ""))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(y, indent=2))
+    print(f"yolo on for {proj.name} since {y['since']}: the engineering manager answers with the recommendation and logs each answer")
+    print(f"your words: {y['words'] or '(none)'}")
+    print(f"push: {'yes, the verified stack is submitted' if y['push'] else 'no, the stack waits for you'}")
+    print(YOLO_NEVER)
+    print(f"back: `fast-coding yolo off --project {proj.name}` prints what happened")
+
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
 CHANGE_CONTENT = ("title", "description", "blockedBy")  # what a change of course edits; status moves are the run's own
 CANCELED = ("canceled", "cancelled")
@@ -4979,6 +5058,8 @@ def render_status(repo, projects):
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {project_after(proj)})" if project_after(proj) else ""
         out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{change_line(proj)}")
+        if y := yolo_state(proj):
+            out.append(f"  yolo on{' (push)' if y.get('push') else ''} since {y['since']}")
         t = fc_cost.total(fc_cost.rows(proj))
         out.append(f"  cost  {t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
@@ -5350,6 +5431,12 @@ def watch_events(before, after):
             ev.append(f"event reflect={path} broken={r['counts'][0]} unclear={r['counts'][1]} trigger={r['trigger']}")
     return ev
 
+def yolo_mark(proj, events):
+    """Under yolo, a question line tells the engineering manager it answers it itself."""
+    if not yolo_state(proj):
+        return events
+    return [e + YOLO_HINT if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
+
 def watch_filter(events, slug, sources):
     """`--from` names the teammates whose reports wake you (the engineering manager watches only its team lead); without it you get
     everything except the team lead's own reports, which go up to the engineering manager."""
@@ -5374,7 +5461,9 @@ def cmd_watch(a, rewake=False):
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
-        lines = watch_filter(watch_events(empty, cur), proj.name, sources)
+        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources))
+        if y := yolo_state(proj):
+            lines.insert(0, f"event yolo=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} words={y.get('words', '')!r}")
         if cur["run"]:
             lines.append(f"event run=live pid={(run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
                          f"read results/run.log; do not start a second)")
@@ -5400,7 +5489,7 @@ def cmd_watch(a, rewake=False):
             if rewake and os.getppid() != parent:
                 return  # the session that parked this hook is gone
             after = watch_snapshot(repo, proj)
-            ev = watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources)
+            ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources))
             if ev:
                 manager_attention(proj, ev)
                 if rewake:
@@ -6040,6 +6129,7 @@ def main():
                             ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
+                            ("yolo", cmd_yolo, "the product owner is away: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, `off` prints the digest and archives"),
                             ("change", cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
@@ -6124,6 +6214,9 @@ def main():
             s.add_argument("--only", help="comma-separated task ids to hold")
             s.add_argument("--reason", help="one line: why they wait")
             s.add_argument("--release", help="comma-separated task ids, or all")
+        if name == "yolo":
+            s.add_argument("--push", action="store_true", help="permission, given in advance, to submit the project's verified stack")
+            s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `off`")
         if name == "change":
             s.add_argument("action", choices=("start", "done", "undo"))
             s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
@@ -6163,7 +6256,11 @@ def main():
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
-    a = ap.parse_args()
+    a, extra = ap.parse_known_args()
+    if extra and a.cmd == "yolo":
+        a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
+    elif extra:
+        ap.error(f"unrecognized arguments: {' '.join(extra)}")
     if a.cmd in DETACHED and not os.environ.get("FAST_CODING_DETACHED"):
         return detach(a)
     if a.fn not in (cmd_workspace, cmd_guard, cmd_rewake, cmd_skillcheck):  # the hooks run in every session: no config, no output
