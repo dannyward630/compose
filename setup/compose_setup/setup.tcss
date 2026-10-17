@@ -1,0 +1,54 @@
+#title {
+    padding: 0 1;
+    text-style: bold;
+}
+
+#steps {
+    padding: 0 1;
+}
+
+#steps .pending {
+    color: $text-muted;
+}
+
+#steps .unchosen {
+    color: $text-disabled;
+    text-style: italic;
+}
+
+#steps .chosen {
+    color: $warning;
+}
+
+#steps .running {
+    color: $accent;
+    text-style: bold;
+}
+
+#steps .done {
+    color: $success;
+}
+
+#steps .ok {
+    color: $success;
+    text-style: italic;
+}
+
+#steps .skipped {
+    color: $error;
+}
+
+#steps .claude {
+    color: $warning;
+    text-style: italic;
+}
+
+#steps .manual {
+    color: $text-muted;
+    text-style: italic;
+}
+
+#steps .failed {
+    color: $error;
+    text-style: bold;
+}
