@@ -585,7 +585,19 @@ class NoGraftWord(unittest.TestCase):
         )
 
     def test_cli_and_requirements(self):
-        self.skipTest("not written yet")
+        self.assert_no_graft("docs/cli.md", "docs/requirements.md")
+        cli, reqs = read("docs/cli.md").splitlines(), read("docs/requirements.md").splitlines()
+        self.assertIn("| `trail` | Sets trail up again in the project's worktree |", cli)
+        doctor = [l for l in cli if l.startswith("| `doctor` |")]
+        self.assertEqual(len(doctor), 1, "one doctor row")
+        self.assertIn("(herdr, treehouse, trail, gh, gh stack, claude, npx, pi, bp, the `framelink-figma`", doctor[0])
+        self.assertIn("pi, bp, treehouse, and trail only warn, and Framelink warns as `needed for the designer`", doctor[0])
+        self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
+        self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
+        # Only the tool word changes: the neighbouring env row stays, and no env row is added or left behind.
+        self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)
+        for gone in ("COMPOSE_NO_GRAFT", "COMPOSE_NO_HERDR"):
+            self.assertFalse([l for l in reqs if gone in l], gone)
 
     def test_how_it_works_and_new_machine(self):
         self.skipTest("not written yet")
