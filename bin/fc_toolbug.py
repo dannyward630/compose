@@ -17,7 +17,7 @@ def environment():
     raise NotImplementedError("environment")
 
 def issue_text(raw, login=None):
-    """(title, body) from a body file's text: the title from its `# ` first line, the body in SECTIONS order with Environment
+    """(title, body) from a body file's text: the title from its `# ` first line, the body with its sections in input order, Environment
     filled here and Root cause "not found" when it has none, both scrubbed."""
     raise NotImplementedError("issue_text")
 
