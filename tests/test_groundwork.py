@@ -168,6 +168,20 @@ class Groundwork(unittest.TestCase):
             fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))
 
 
+class Explore(unittest.TestCase):
+    def test_brief_is_graft_only_time_boxed_and_names_the_feature(self):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
+        proj.mkdir(parents=True)
+        (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
+        out = []
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent), \
+                mock.patch("builtins.print", side_effect=lambda s: out.append(s)):
+            fc.fc_briefs.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
+        brief = out[0]
+        for want in ("ENG-7", "graft ask", "graft callers", "under 3 minutes", "at most 40 lines", "patch append", "the client lives in web/"):
+            self.assertIn(want, brief)
+
+
 class Triage(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(os.environ, {**ENV, "TEXT_MODEL_API_KEY": "k"}); self.env.start(); self.addCleanup(self.env.stop)

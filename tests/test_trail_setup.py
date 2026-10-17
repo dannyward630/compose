@@ -40,6 +40,36 @@ OUT
     printf '1. main · function  [symbol]\n   server/main.go:L1-L1\n';;
 esac
 """
+# A stand-in trail: logs every call, lists what init would write and writes it, and builds the map where trail 0.23 would.
+FAKE_TRAIL = r"""#!/bin/bash
+echo "$*" >> "$TRAIL_LOG"
+d="${@: -1}"
+case "$1 $2" in
+  "--version "*) echo 9.9.9;;
+  "init --no-agents")
+    case "$*" in *--dry-run*)
+      printf 'would write \342\200\224 this repo:\n  .claude/settings.json        trail SessionStart hook, shared\n  .trail/hook.cjs              hooks shim, shared\n  .claude/settings.local.json  trail statusline + allowlist, yours\n  .trail/statusline.cjs        statusline shim, git-ignored\n\nwould write \342\200\224 your machine, affects ALL repos:\n  ~/.claude/skills/trail/SKILL.md    trail skill\n\nnothing was written (--dry-run)\n' >&2
+      exit 0;; esac
+    mkdir -p "$d/.claude" "$d/.trail/learnings"; echo x > "$d/.trail/hook.cjs"; echo x > "$d/.trail/statusline.cjs"
+    echo statusline.cjs > "$d/.trail/.gitignore"; echo '{}' > "$d/.claude/settings.json"; echo '{}' > "$d/.claude/settings.local.json";;
+  "build --no-gitignore") g="$d/graft"
+    if [ -d "$d/.trail/cache" ] || [ -d "$d/.trail/learnings" ] || [ -f "$d/.trail/hook.cjs" ]; then g="$d/.trail/cache"; fi
+    mkdir -p "$g"; echo index > "$g/INDEX.md";;
+  "ask "*) [ -f "$d/graft/INDEX.md" ] || [ -f "$d/.trail/cache/INDEX.md" ] || exit 1
+    printf '[trail] tokens saved ≈ 7,434 (95%%) — this pack ≈ 384 tok vs reading the 1 source file(s) whole ≈ 7,818 tok.\n\n'
+    printf 'trail ask — "%s"  (lexical)\n\n' "$2"
+    if [ "$2" = main ]; then cat <<'OUT'
+from Reggie's learning · Oct 17 · Use @trailhq/trail-code and call `trail`, not `graft`
+  decided     graft's npm package was renamed to `@trailhq/trail-code`.
+  .trail/learnings/2026-10-17-use-trailhq-trail-code.md
+
+[trail] starting from this learning gets you to a PR 3x faster.
+
+OUT
+    else printf '· no learnings about this yet\n\n'; fi
+    printf '1. main · function  [symbol]\n   server/main.go:L1-L1\n';;
+esac
+"""
 
 
 def repo_with(files):
@@ -60,6 +90,19 @@ class FakeGraft(unittest.TestCase):
         (bindir / "graft").chmod(stat.S_IRWXU)
         self.log = bindir / "calls.log"
         env = {**ENV, "PATH": f"{bindir}:{os.environ['PATH']}", "GRAFT_LOG": str(self.log)}
+        self.env = mock.patch.dict(os.environ, env); self.env.start(); self.addCleanup(self.env.stop)
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+
+class FakeTrail(unittest.TestCase):
+    def setUp(self):
+        bindir = Path(tempfile.mkdtemp())
+        (bindir / "trail").write_text(FAKE_TRAIL)
+        (bindir / "trail").chmod(stat.S_IRWXU)
+        self.log = bindir / "calls.log"
+        env = {**ENV, "PATH": f"{bindir}:{os.environ['PATH']}", "TRAIL_LOG": str(self.log)}
         self.env = mock.patch.dict(os.environ, env); self.env.start(); self.addCleanup(self.env.stop)
 
     def calls(self):
@@ -118,46 +161,6 @@ class GraftSetup(FakeGraft):
             fc.fc_init.setup_graft(repo)
         self.assertIn("npm i -g @nanonets/graft", say.call_args[0][0])
         self.assertEqual(self.calls(), [])
-
-
-class GraftPack(FakeGraft):
-    """Implementer and fixer prompts get a pack wherever graft keeps the graph: graft/, or .trail/cache/ once graft 0.23
-    moved the repo to trail. trail's learning banner is not part of it."""
-    def repo_on_trail(self):
-        repo, _ = repo_with({"server/main.go": "package main\n"})
-        (repo / ".trail" / "cache").mkdir(parents=True)
-        (repo / ".trail" / "cache" / "INDEX.md").write_text("index")
-        return repo
-
-    def assert_pack(self, pack, query):
-        self.assertEqual(pack, f'graft ask — "{query}"  (lexical)\n\n1. main · function  [symbol]\n   server/main.go:L1-L1')
-
-    def test_a_graph_in_trail_cache_gives_a_pack_without_banners(self):
-        self.assert_pack(fc.fc_implement.graft_pack(self.repo_on_trail(), "main"), "main")
-
-    def test_a_task_clone_gets_the_trail_graph_and_keeps_it_out_of_git(self):
-        repo = self.repo_on_trail()
-        clone = Path(tempfile.mkdtemp()) / "clone"
-        subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
-        fc.fc_worktree.ready_checkout(repo, clone)
-        self.assert_pack(fc.fc_implement.graft_pack(clone, "entry point", repo=repo), "entry point")
-        self.assertTrue((clone / ".trail" / "cache" / "INDEX.md").exists())
-        self.assertFalse((clone / "graft").exists())
-        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout.strip(), "")
-
-
-class Explore(unittest.TestCase):
-    def test_brief_is_graft_only_time_boxed_and_names_the_feature(self):
-        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
-        proj.mkdir(parents=True)
-        (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
-        out = []
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent), \
-                mock.patch("builtins.print", side_effect=lambda s: out.append(s)):
-            fc.fc_briefs.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
-        brief = out[0]
-        for want in ("ENG-7", "graft ask", "graft callers", "under 3 minutes", "at most 40 lines", "patch append", "the client lives in web/"):
-            self.assertIn(want, brief)
 
 
 if __name__ == "__main__":

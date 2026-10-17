@@ -520,3 +520,30 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
         for word in ("`reports_to`", "results/crew/<agent>.json", "`COMPOSE_ROLE`", "whatever `--from` says", "`needs-user` and `blocked`", "Never start a second watch"):
             self.assertIn(word, line)
         self.assertNotIn("—", line)
+
+
+class NoGraftWord(unittest.TestCase):
+    """Every doc names trail: no standalone word graft is left (`graft/`, `GRAFT_NO_*`, and `mcp__graft__` still pass)."""
+    GRAFT = re.compile(r"(?<![\w/.@-])graft(?![\w/-])")
+
+    def assert_no_graft(self, *rels):
+        for rel in rels:
+            for old in ("@nanonets/graft", "brew install graft"):
+                self.assertNotIn(old, read(rel), rel)
+            for n, line in enumerate(read(rel).splitlines(), 1):
+                self.assertNotRegex(line, self.GRAFT, f"{rel}:{n}")
+
+    def test_skill_and_0a(self):
+        self.skipTest("not written yet")
+
+    def test_0d_and_0e(self):
+        self.skipTest("not written yet")
+
+    def test_4_and_readme(self):
+        self.skipTest("not written yet")
+
+    def test_cli_and_requirements(self):
+        self.skipTest("not written yet")
+
+    def test_how_it_works_and_new_machine(self):
+        self.skipTest("not written yet")
