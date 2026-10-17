@@ -7,7 +7,7 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 import compose as fc
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
-TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "graft": "0.16.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
+TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "trail": "0.23.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
 SKILLS = (".claude/skills/herdr/SKILL.md", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md",
           ".claude/plugins/cache/official/superpowers/7.0.0/skills/writing-plans/SKILL.md", ".config/figma-context-mcp/.env")
 
@@ -71,12 +71,13 @@ class Doctor(unittest.TestCase):
                                  f"MISSING: treehouse 2.0.1 is older than 3.1.2 (install: {fc.fc_worktree.TREEHOUSE_INSTALL}) - optional"])
 
     def test_optional_tools_only_warn(self):
-        for t in ("pi", "bp", "treehouse", "graft"):
+        for t in ("pi", "bp", "treehouse", "trail"):
             (self.bin / t).unlink()
         bad, lines = self.deps()
         self.assertEqual(bad, [])
-        self.assertEqual([l.split(" (")[0] for l in lines], ["MISSING: treehouse", "MISSING: graft", "MISSING: pi", "MISSING: bp"])
+        self.assertEqual([l.split(" (")[0] for l in lines], ["MISSING: treehouse", "MISSING: trail", "MISSING: pi", "MISSING: bp"])
         self.assertTrue(all(l.endswith(" - optional") for l in lines))
+        self.assertIn("MISSING: trail (install: npm i -g @trailhq/trail-code) - optional", lines)
 
     def test_framelink_is_required_only_for_the_designer(self):
         (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"frame0": {}}}))

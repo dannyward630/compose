@@ -16,7 +16,7 @@ GIT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": 
 class Treehouse(unittest.TestCase):
     """Real treehouse, in-project pools inside temp repos, so the tests never touch ~/.treehouse."""
     def setUp(self):
-        self.env = {**os.environ, **GIT, "HERDR_ENV": "", "COMPOSE_NO_GRAFT": "1", "COMPOSE_NO_TREEHOUSE": ""}
+        self.env = {**os.environ, **GIT, "HERDR_ENV": "", "COMPOSE_NO_TRAIL": "1", "COMPOSE_NO_TREEHOUSE": ""}
         p = mock.patch.dict(os.environ, self.env); p.start(); self.addCleanup(p.stop)
         self.repo = Path(tempfile.mkdtemp()).resolve() / "app"
         self.repo.mkdir()

@@ -10,7 +10,7 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 _spec.loader.exec_module(fc)
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
-ENV = {"COMPOSE_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+ENV = {"COMPOSE_NO_TRAIL": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
 def repo():

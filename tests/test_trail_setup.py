@@ -109,58 +109,72 @@ class FakeTrail(unittest.TestCase):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
 
-class GraftSetup(FakeGraft):
-    """An existing repo gets graft wired and built before anyone explores it; graft's files never reach git."""
+class TrailSetup(FakeTrail):
+    """An existing repo gets trail wired and built before anyone explores it; trail's files never reach git, and graft never runs."""
+    def setup(self, repo, which=shutil.which):
+        graft = self.log.parent / "graft"  # a logging graft on PATH that must stay silent
+        graft.write_text(f'#!/bin/sh\necho "$*" >> {graft}.log\n'); graft.chmod(stat.S_IRWXU)
+        with mock.patch.object(shutil, "which", side_effect=which), mock.patch.object(fc.fc_core, "say") as say:
+            fc.fc_init.setup_trail(repo)
+        self.assertFalse(Path(f"{graft}.log").exists())
+        return [c[0][0] for c in say.call_args_list]
 
-    def test_existing_repo_is_wired_built_and_kept_out_of_git(self):
+    def test_existing_repo_is_wired_built_into_trail_cache_and_kept_out_of_git(self):
         repo, run = repo_with({"server/main.go": "package main\n", "README.md": "x"})
-        fc.fc_init.setup_graft(repo)
-        self.assertTrue((repo / "graft" / "INDEX.md").exists())
-        self.assertEqual(run("status", "--porcelain").stdout.strip(), "")  # wiring and graph are excluded, nothing shows up
-        n = len(self.calls())
-        fc.fc_init.setup_graft(repo)  # again: already wired, so only a rebuild
-        self.assertEqual([c.split()[0] for c in self.calls()[n:]], ["build"])
+        self.assertEqual(self.setup(repo), ["trail    wired for Claude Code (4 files, kept out of git)", "trail    graph built"])
+        init, build = "init --no-agents --no-global --no-build", f"build --no-gitignore --no-ignore {repo}"
+        self.assertEqual(self.calls(), [f"{init} --dry-run {repo}", f"{init} {repo}", build])
+        self.assertTrue((repo / ".trail" / "cache" / "INDEX.md").exists() and not (repo / "graft").exists())
+        self.assertEqual(run("status", "--porcelain").stdout.strip(), "")
+        self.assertLessEqual({"/.trail/", "/.claude/settings.json", "/.claude/settings.local.json"},
+                             set((repo / ".git" / "info" / "exclude").read_text().splitlines()))
+        self.setup(repo)  # again: already wired, so only a rebuild
+        self.assertEqual(self.calls()[3:], [build])
 
-    def test_a_tracked_file_init_would_edit_means_build_only(self):
-        repo, _ = repo_with({"server/main.go": "package main\n", ".mcp.json": "{\"mine\": true}"})
-        fc.fc_init.setup_graft(repo)
+    def test_a_tracked_file_init_would_edit_means_build_only_still_in_trail_cache(self):
+        repo, run = repo_with({"server/main.go": "package main\n", ".claude/settings.json": "{}"})
+        self.assertEqual(self.setup(repo)[0], "trail    init skipped: it would edit tracked .claude/settings.json; building the graph only")
         self.assertFalse(any(c.startswith("init") and "--dry-run" not in c for c in self.calls()))
-        self.assertEqual(json.loads((repo / ".mcp.json").read_text()), {"mine": True})
-        self.assertTrue((repo / "graft" / "INDEX.md").exists())
+        self.assertTrue((repo / ".trail" / "cache" / "INDEX.md").exists() and not (repo / "graft").exists())
+        self.assertEqual(run("status", "--porcelain").stdout.strip(), "")
 
-    def test_tracked_wiring_gets_a_stamp_so_graft_never_refreshes_it(self):
-        # graft's session-start hook rewrites wired files when graft/.cache/wiring-stamp.json is missing or older than graft
-        repo, _ = repo_with({"server/main.go": "package main\n", ".claude/helpers/graft-hooks.cjs": "x"})
-        stamp = repo / "graft" / ".cache" / "wiring-stamp.json"
-        fc.fc_init.setup_graft(repo)
-        self.assertEqual(json.loads(stamp.read_text())["version"], "9.9.9")
+    def test_tracked_wiring_gets_a_stamp_in_trail_cache_in_the_repo_and_a_clone(self):
+        repo, _ = repo_with({"server/main.go": "package main\n", ".trail/hook.cjs": "x"})
+        stamp = Path(".trail") / "cache" / ".cache" / "wiring-stamp.json"
+        self.setup(repo)
+        self.assertEqual(json.loads((repo / stamp).read_text())["version"], "9.9.9")
         clone = Path(tempfile.mkdtemp()) / "clone"
         subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
-        fc.fc_worktree.ready_checkout(repo, clone)  # a task clone or verify worktree starts without graft/ at all
-        self.assertEqual(json.loads((clone / "graft" / ".cache" / "wiring-stamp.json").read_text())["version"], "9.9.9")
+        fc.fc_worktree.ready_checkout(repo, clone)
+        self.assertEqual(json.loads((clone / stamp).read_text())["version"], "9.9.9")
+        (clone / stamp).write_text('{"version": "1.0.0"}')  # a stamp from an older trail is renewed
+        fc.fc_worktree.stamp_trail_wiring(clone)
+        self.assertEqual(json.loads((clone / stamp).read_text())["version"], "9.9.9")
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout
+        self.assertEqual((status, (repo / "graft").exists()), ("", False))  # no stamp or map in graft/
 
-    def test_a_repo_on_trail_gets_its_graph_in_trail_cache_kept_out_of_git(self):
-        repo, run = repo_with({"server/main.go": "package main\n", ".gitignore": "node_modules/\n"})
-        (repo / ".trail" / "learnings").mkdir(parents=True)  # what trail's session-start hook leaves behind
-        (repo / ".trail" / "hook.cjs").write_text("x")
-        fc.fc_init.setup_graft(repo)
-        self.assertTrue((repo / ".trail" / "cache" / "INDEX.md").exists())
-        self.assertFalse((repo / "graft").exists())
-        self.assertEqual(run("status", "--porcelain").stdout.strip(), "")
-        self.assertTrue(fc.fc_worktree.ignore_tool_files(repo))  # a clone of the delivered branch ignores it too
-        self.assertIn(".trail/", (repo / ".gitignore").read_text().splitlines())
+    def test_untracked_wiring_or_no_trail_gets_no_stamp(self):
+        untracked, _ = repo_with({"main.go": "x"}); (untracked / ".trail").mkdir(); (untracked / ".trail" / "hook.cjs").write_text("x")
+        fc.fc_worktree.stamp_trail_wiring(untracked)
+        tracked, _ = repo_with({"main.go": "x", ".trail/hook.cjs": "x"})
+        with mock.patch.object(shutil, "which", return_value=None):
+            fc.fc_worktree.stamp_trail_wiring(tracked)
+        self.assertEqual((self.calls(), list(untracked.glob(".trail/cache")), list(tracked.glob(".trail/cache"))), ([], [], []))
 
-    def test_a_new_repo_skips_graft(self):
-        repo, _ = repo_with({"README.md": "x", "LICENSE": "x"})
-        fc.fc_init.setup_graft(repo)
+    def test_skips_say_why_and_start_nothing(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_TRAIL": "1"}):
+            self.assertEqual(self.setup(repo_with({"main.go": "package main\n"})[0]), ["trail    skipped: COMPOSE_NO_TRAIL is set"])
+        self.assertEqual(self.setup(repo_with({"README.md": "x", "LICENSE": "x"})[0]), ["trail    skipped: a new repository has no code to map yet"])
+        graft_only = lambda name: "/usr/local/bin/graft" if name == "graft" else None  # graft on PATH is no stand-in for trail
+        self.assertEqual(self.setup(repo_with({"main.go": "package main\n"})[0], graft_only),
+                         ["trail    not installed: `npm i -g @trailhq/trail-code`, then `compose trail --project <slug>`"])
         self.assertEqual(self.calls(), [])
 
-    def test_missing_graft_says_how_to_install(self):
-        repo, _ = repo_with({"main.go": "package main\n"})
-        with mock.patch.object(shutil, "which", return_value=None), mock.patch.object(fc.fc_core, "say") as say:
-            fc.fc_init.setup_graft(repo)
-        self.assertIn("npm i -g @nanonets/graft", say.call_args[0][0])
-        self.assertEqual(self.calls(), [])
+    def test_release_slot_removes_trail_whole(self):
+        slot = Path(tempfile.mkdtemp()); (slot / ".trail" / "learnings").mkdir(parents=True); (slot / "graft").mkdir()
+        with mock.patch.object(fc.fc_worktree, "treehouse") as th:
+            fc.fc_worktree.release_slot(slot, slot)
+        self.assertEqual((list(slot.iterdir()), th.call_args[0][1]), ([], "return"))
 
 
 if __name__ == "__main__":
