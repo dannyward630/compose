@@ -3,6 +3,15 @@ from pathlib import Path
 import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear
 
 
+def project_head(repo, proj):
+    """The commit a layer counts as merged into: the project branch's tip, so checking out anything else in the project's
+    worktree (peeking at the stack top) changes no task's state. A project without its own branch uses HEAD."""
+    for ref in (fc_core.project_branch(proj), "HEAD"):
+        r = fc_core.sh(["git", "rev-parse", "--verify", "-q", f"{ref}^{{commit}}"], repo, check=False)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    return ""
+
 def task_state(repo, proj, meta, trunk_head):
     """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk."""
     tid = meta["id"]
@@ -35,7 +44,7 @@ def render_status(repo, projects):
     for proj in projects:
         tasks = fc_tasks.load_tasks(proj)
         trunk = fc_core.current_branch(repo)
-        trunk_head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+        trunk_head = project_head(repo, proj)
         rows = [task_state(repo, proj, m, trunk_head) for m in tasks]
         layers = {b: i + 1 for i, b in enumerate(fc_worktree.stack_order(repo, proj))}
         counts = {}
@@ -73,7 +82,7 @@ def render_status(repo, projects):
 def project_summary(repo, proj):
     """One line per project: name, the feature's title, task counts by state, trunk, last activity."""
     tasks = fc_tasks.load_tasks(proj)
-    trunk_head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    trunk_head = project_head(repo, proj)
     counts = {}
     for m in tasks:
         st = task_state(repo, proj, m, trunk_head)["state"].split(" ")[0]

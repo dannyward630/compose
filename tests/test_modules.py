@@ -28,7 +28,7 @@ MODULES = {
     "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "driver_e2e", "jev_e2e"),
     "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "run_stages", "verify_root", "cmd_verify", "fix_strays", "fix_message", "verify_rounds"),
     "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "cmd_run", "preflight", "run_tasks", "reflect_task", "cmd_resume"),
-    "fc_status": ("task_state", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
+    "fc_status": ("project_head", "task_state", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
     "fc_spec": ("file_clashes", "cmd_tasks", "run_waves", "spec_check", "cmd_spec_check", "MAX_TASK_FILES", "MAX_TASK_BRIEF", "too_big"),
     "fc_watch": ("YOLO_HINT", "FINAL_STATES", "watch_snapshot", "STALL_SECONDS", "watch_mem", "watch_save", "watch_lock", "watch_stalls", "watch_events", "yolo_mark", "watch_filter", "WATCH_INTERVAL", "cmd_watch", "cmd_rewake", "cmd_reenter"),
     "fc_yolo": ("YOLO_NEVER", "yolo_digest", "cmd_yolo"),

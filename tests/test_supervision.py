@@ -203,6 +203,28 @@ class WatchMemory(unittest.TestCase):
         ev = fc.fc_watch.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
         self.assertTrue(any(e.startswith("event halt=payment provider=openrouter remaining=2") for e in ev), ev)
 
+    def test_checking_out_the_stack_top_and_back_reports_nothing(self):
+        """A task's state is measured against the project branch, not whatever the worktree has checked out: peeking at
+        the stack top (where every layer is an ancestor) and coming back must not replay passed and hand_done tasks."""
+        repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "fast-coding/hw"); git("commit", "-q", "--allow-empty", "-m", "init")
+        for tid in ("001", "002"):
+            git("checkout", "-q", "-b", f"fast/hw/{tid}"); git("commit", "-q", "--allow-empty", "-m", tid)
+        git("checkout", "-q", "fast-coding/hw")
+        proj = repo / ".fast-coding" / "hw"; (proj / "results").mkdir(parents=True)
+        (proj / "verify.json").write_text("{}")
+        (proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": "001", "title": "a"}, {"id": "002", "title": "b"}]}))
+        (proj / "results" / "001.json").write_text(json.dumps({"status": "passed"}))
+        (proj / "results" / "002.json").write_text(json.dumps({"status": "hand_done"}))
+        snaps = []
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
+            for ref in ("fast-coding/hw", "fast/hw/002", "fast-coding/hw"):
+                git("checkout", "-q", ref)
+                snaps.append(fc.fc_watch.watch_snapshot(repo, proj))
+        self.assertEqual({t: v["state"] for t, v in snaps[0]["tasks"].items()}, {"001": "passed", "002": "hand_done"})
+        self.assertEqual(fc.fc_watch.watch_events(snaps[0], snaps[1]) + fc.fc_watch.watch_events(snaps[1], snaps[2]), [])
+
     def test_now_reports_a_crashed_run(self):
         out = self.watch(wsnap("running", crashed=True), now=True)
         self.assertTrue(any("run=ended" in line and "CRASHED" in line for line in out), out)

@@ -15,7 +15,7 @@ def watch_snapshot(repo, proj):
     except json.JSONDecodeError:  # a writer that is not ours caught mid-write: one more look, then the real error
         time.sleep(0.5)
         tasks = fc_tasks.load_tasks(proj)
-    trunk_head = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    trunk_head = fc_status.project_head(repo, proj)
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
     snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "crashed": bool(fc_tasks.run_marker(proj)) and not fc_tasks.run_alive(proj), "verify": None, "halt": None,
             "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
