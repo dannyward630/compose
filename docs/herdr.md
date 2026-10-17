@@ -27,7 +27,8 @@ The team lead starts the planner after wayfinder, or you start it with `/compose
 
 You talk to the engineering manager, and you can also type into any teammate's tab directly.
 Teammates report up with `compose report` and pick a state from `working`, `needs-user`, `blocked`, `done`, `tool-bug`, and `contradiction`.
-A tool-bug is filed as an issue on prodoxx/compose by `compose toolsmith` and `compose tool-bug file`, which need gh logged in.
+`compose toolsmith` only prints the toolsmith's brief.
+The toolsmith it briefs files the tool-bug as an issue on prodoxx/compose with `compose tool-bug file`, which needs gh logged in to post.
 
 A `contradiction` report always wakes the team lead as a teammate event.
 It also screens the feature's decisions with Jev, which adds a `reflect=` event when it flags a decision line.
