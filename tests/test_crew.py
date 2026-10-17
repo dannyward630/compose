@@ -244,9 +244,10 @@ class Crew(unittest.TestCase):
         self.assertIn(("tab", "close", "w9:t3"), calls)
         self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
 
-    def start_without_brief(self, prompt_fails=False, late=False):
+    def start_without_brief(self, prompt_fails=None, late=False, screen="❯ \n"):
         """crew start where the session comes up but never takes its brief: herdr answers idle on every look and the wait for the start
-        gives up (`late`: the look after it gives up finds it working), or herdr rejects the prompt itself (`prompt_fails`)."""
+        gives up (`late`: the look after it gives up finds it working), or herdr rejects the prompt itself with the error code `prompt_fails`
+        (`agent_blocked`: the session sits at a dialog, `screen` is its pane)."""
         calls, out = [], []
         fc.fc_crew.write_report(self.proj, "shop-eol", "done", "an earlier session of the same name")
         def herdr(*args, **kw):
@@ -256,9 +257,9 @@ class Crew(unittest.TestCase):
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             if args[:2] == ("agent", "prompt") and prompt_fails:
-                raise RuntimeError("herdr agent prompt: agent_blocked")
+                raise RuntimeError(f"herdr agent prompt: {prompt_fails}")
             if args[:2] == ("agent", "get"):
-                return {"agent": {"agent_status": "working" if late and gave_up else "idle"}}
+                return {"agent": {"agent_status": "blocked" if prompt_fails == "agent_blocked" else "working" if late and gave_up else "idle"}}
             return {}
         gave_up = False
         def await_start(agent, first=None):
@@ -267,7 +268,7 @@ class Crew(unittest.TestCase):
             raise RuntimeError(f"{agent} did not start on its brief after 3 retries")
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
-                mock.patch.object(fc.fc_herdr, "herdr_text", return_value="❯ \n"), mock.patch.object(fc.fc_herdr, "herdr_await_start", side_effect=await_start), \
+                mock.patch.object(fc.fc_herdr, "herdr_text", return_value=screen), mock.patch.object(fc.fc_herdr, "herdr_await_start", side_effect=await_start), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
@@ -289,11 +290,33 @@ class Crew(unittest.TestCase):
         self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
 
     def test_a_session_that_rejects_its_brief_is_closed_too(self):
-        code, out, calls = self.start_without_brief(prompt_fails=True)
+        code, out, calls = self.start_without_brief(prompt_fails="agent_not_found")
         self.assertIsInstance(code, str)
-        self.assertIn("agent_blocked", code)
+        self.assertIn("agent_not_found", code)
         self.assertIn(("tab", "close", "w9:t3"), calls)
         self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
+
+    MCP_DIALOG = ("➜  compose claude --no-chrome --permission-mode auto\n\n" + "─" * 60 + "\n"
+                  "  New MCP server found in this project: graft\n\n"
+                  "  MCP servers may execute code or access system resources. All tool calls require approval.\n\n"
+                  "    Use this MCP server\n    Use this and all future MCP servers in this project\n"
+                  "  ❯ Continue without using this MCP server\n\n  Enter to confirm · Esc to cancel\n")
+
+    def test_a_session_waiting_at_a_dialog_keeps_its_tab_and_says_which_dialog(self):
+        """A session herdr calls blocked before its brief sits at a Claude Code dialog that is the product owner's to answer: crew start
+        names it from the pane, reports it, and leaves the tab and the record in place, rather than closing it and asking for a retry."""
+        code, out, calls = self.start_without_brief(prompt_fails="agent_blocked", screen=self.MCP_DIALOG)
+        self.assertIsInstance(code, str)
+        self.assertIn("New MCP server found in this project: graft", code)
+        self.assertIn("Continue without using this MCP server", code)
+        self.assertNotIn("Enter to confirm", code)
+        self.assertIn("herdr agent prompt shop-eol", code)  # how the brief goes in once the dialog is answered
+        self.assertNotIn("run the same crew start again", code)
+        self.assertNotIn(("tab", "close", "w9:t3"), calls)
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+        last = fc.fc_crew.crew_reports(self.proj, "shop-eol")[-1]
+        self.assertEqual(last["state"], "blocked")
+        self.assertIn("New MCP server found in this project: graft", last["message"])
 
     def test_a_session_that_starts_on_the_last_look_is_kept(self):
         code, out, calls = self.start_without_brief(late=True)
@@ -780,9 +803,11 @@ class RestrictedStart(unittest.TestCase):
                                                     "compose-extra@x": True, "my-compose@x": True, "figmatic@x": True}}
     P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
 
-    def start(self, role, model="claude:claude-opus-5-5", effort=None, **kw):
+    def start(self, role, model="claude:claude-opus-5-5", effort=None, mcpjson=None, **kw):
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         proj.mkdir(parents=True)
+        if mcpjson is not None:  # the session's cwd (crew_workdir below) holds this .mcp.json
+            (proj / ".mcp.json").write_text(json.dumps({"mcpServers": mcpjson}))
         home = Path(tempfile.mkdtemp())
         if self.SETTINGS is not None:  # None: the user has no settings file
             (home / ".claude").mkdir()
@@ -822,6 +847,12 @@ class RestrictedStart(unittest.TestCase):
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
         self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
         self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
+
+    def test_a_session_approves_the_graft_server_compose_wired_so_it_never_stops_at_the_mcp_dialog(self):
+        settings = lambda args: json.loads(args[args.index("--settings") + 1])
+        self.assertEqual(settings(self.start("orchestrator", mcpjson={"graft": {"command": "graft", "args": ["mcp"]}}))["enabledMcpjsonServers"], ["graft"])
+        self.assertNotIn("enabledMcpjsonServers", settings(self.start("orchestrator", mcpjson={"graft": {"command": "sh", "args": ["x"]}})))
+        self.assertNotIn("enabledMcpjsonServers", settings(self.start("orchestrator")))
 
     def test_designer_keeps_linear_graft_and_claude_ai_figma(self):
         dropped = self.patterns(self.start("designer"))

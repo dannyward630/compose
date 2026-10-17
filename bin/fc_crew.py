@@ -1,4 +1,4 @@
-import ast, hashlib, json, os, re, shutil, subprocess, sys, time
+import ast, hashlib, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
 import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0
 
@@ -250,7 +250,7 @@ def cmd_crew(a):
         else:
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
+                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
@@ -264,6 +264,13 @@ def cmd_crew(a):
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
         fc_herdr.herdr("agent", "prompt", agent, first, check=True)
     except RuntimeError as e:
+        if "agent_blocked" in str(e):  # a dialog before the first prompt (an MCP server, trust) is the product owner's to answer: keep the tab for it
+            dialog = fc_herdr.herdr_dialog(agent)
+            write_report(proj, name, "blocked", f"waiting at a Claude Code dialog before its brief: {dialog}")
+            crew_attention(proj, name, "blocked", dialog)
+            sys.exit(f"teammate {name} came up but waits at a Claude Code dialog, so it has not taken its brief: {dialog}\n"
+                     f"Its tab {title!r} is left open for the product owner to answer it there; then send the brief with: "
+                     f"herdr agent prompt {agent} {shlex.quote(first)}")
         crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
         sys.exit(f"teammate {name} came up but did not take its brief ({e}); its tab is closed and nothing is left registered: run the same crew start again")
     fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", f"{name}: {title}")

@@ -1,4 +1,4 @@
-import subprocess, sys, unittest
+import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -54,6 +54,19 @@ class RoleMcp(unittest.TestCase):
         self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P) - pat("graft"))
         self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("claude_ai_Linear", "graft", "frame0"))
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), pat("LINEAR_x", "Graft2"))
+
+    def test_wired_mcpjson_approves_only_the_graft_server_graft_init_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(fc_mcp.wired_mcpjson(d), [])  # no .mcp.json
+            for body, want in [({"mcpServers": {"graft": {"command": "graft", "args": ["mcp"]}}}, ["graft"]),
+                               ({"mcpServers": {"graft": {"type": "stdio", "command": "graft", "args": ["mcp"]}, "db": {"command": "pg-mcp"}}}, ["graft"]),
+                               ({"mcpServers": {"graft": {"command": "sh", "args": ["-c", "graft mcp"]}}}, []),  # the repo's own server of that name still asks
+                               ({"mcpServers": {"graft": {"command": "graft", "args": ["mcp"], "env": {"NODE_OPTIONS": "--require ./x.js"}}}}, []),
+                               ({"mcpServers": {"db": {"command": "pg-mcp"}}}, []), ([], [])]:
+                (Path(d) / ".mcp.json").write_text(json.dumps(body))
+                self.assertEqual(fc_mcp.wired_mcpjson(d), want, body)
+            (Path(d) / ".mcp.json").write_text("{not json")
+            self.assertEqual(fc_mcp.wired_mcpjson(d), [])
 
 
 if __name__ == "__main__":

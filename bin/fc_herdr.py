@@ -67,6 +67,15 @@ def herdr_ready(agent, timeout=60):
             return
         time.sleep(2)
 
+def herdr_dialog(agent):
+    """The dialog a blocked Claude session shows (its title, text, and choices, on one line), read from its pane: everything below
+    the last rule line, without the key hints. "unknown" when the pane cannot be read."""
+    lines = herdr_text("agent", "read", agent, "--source", "visible", "--lines", "40").splitlines()
+    rules = [i for i, ln in enumerate(lines) if ln.strip() and set(ln.strip()) <= set("─━-")]
+    body = [ln.strip().removeprefix("❯").strip() for ln in lines[rules[-1] + 1 if rules else 0:]]
+    text = " / ".join(ln for ln in body if ln and not ln.startswith(("Enter to confirm", "Esc to")))
+    return text[:400] or "unknown"
+
 def herdr_await_start(agent, first=None, tries=3):
     """Return once `agent` has started on its brief, the first prompt it gets. This only confirms the submission landed (status
     working, blocked, or done); when it did not, presses Enter for a box that kept the text without submitting, then sends `first`
