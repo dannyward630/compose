@@ -354,7 +354,7 @@ class Holds(unittest.TestCase):
     def test_status_shows_held_with_the_reason(self):
         self.hold(only="002", reason="D2 broken")
         with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
-            row = fc.task_state(Path("."), self.proj, task("002", "001"), "HEAD")
+            row = fc.fc_status.task_state(Path("."), self.proj, task("002", "001"), "HEAD")
         self.assertEqual((row["state"], row["note"]), ("held", "D2 broken"))
 
 

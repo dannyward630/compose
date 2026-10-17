@@ -142,10 +142,10 @@ class Yolo(unittest.TestCase):
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
-            lines = fc.render_status(Path("."), [self.proj]).splitlines()
+            lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
             self.assertIn(f"  yolo on (push) since {since}", lines)
             self.file.write_text(json.dumps({"since": since, "push": False, "words": "", "decisions": []}))
-            lines = fc.render_status(Path("."), [self.proj]).splitlines()
+            lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
         self.assertIn(f"  yolo on since {since}", lines)
 
     def test_help_and_docs_list_yolo(self):

@@ -62,7 +62,7 @@ class Sync(unittest.TestCase):
         self.assertEqual(set(fc.fc_tasks.linear_cache(self.proj)["issues"]), {"ENG-9", "ENG-5"})
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         done, todo = self.sync(issues)[:2]
-        state = lambda m: fc.task_state(self.proj, self.proj, m, "HEAD")["state"]
+        state = lambda m: fc.fc_status.task_state(self.proj, self.proj, m, "HEAD")["state"]
         self.assertEqual((state(done), state(todo)), ("merged", "pending"))
         self.assertTrue(fc.fc_tasks.linear_done(done) and not fc.fc_tasks.linear_done(todo))
 
@@ -80,7 +80,7 @@ class Sync(unittest.TestCase):
         tasks = [{"id": i, "title": i, "files": ["x.go"], "protected": [], "test": "t", "after": a, "linear": "", "body": ""} for i, a in specs]
         out = io.StringIO()
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
-                mock.patch.object(fc, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
+                mock.patch.object(fc.fc_status, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
                 mock.patch("sys.stdout", out):
             fc.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
         return "own the same file" in out.getvalue()
@@ -209,7 +209,7 @@ class DesignTasks(unittest.TestCase):
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "task_state", side_effect=state), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_status, "task_state", side_effect=state), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
             fc.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
         text = out.getvalue()
@@ -222,5 +222,5 @@ class DesignTasks(unittest.TestCase):
         for tid in ("001", "002"):
             (self.proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
         with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
-            rows = [fc.task_state(Path("."), self.proj, self.by[t], "HEAD")["state"] for t in ("001", "002")]
+            rows = [fc.fc_status.task_state(Path("."), self.proj, self.by[t], "HEAD")["state"] for t in ("001", "002")]
         self.assertEqual(rows, ["passed", "merged"])

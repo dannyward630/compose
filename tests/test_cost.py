@@ -188,7 +188,7 @@ class CostCommand(unittest.TestCase):
     def cost(self, as_json):
         out = io.StringIO()
         with self.fake(), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
-            fc.cmd_cost(SimpleNamespace(repo=str(self.repo), project="shop", json=as_json))
+            fc.fc_status.cmd_cost(SimpleNamespace(repo=str(self.repo), project="shop", json=as_json))
         return out.getvalue()
 
     def test_prints_the_rendered_rows(self):
@@ -208,7 +208,7 @@ class CostCommand(unittest.TestCase):
         other = self.repo / ".fast-coding" / "shop22"
         (other / "results").mkdir(parents=True)
         with self.fake():
-            lines = fc.render_status(self.repo, [self.proj, other]).splitlines()
+            lines = fc.fc_status.render_status(self.repo, [self.proj, other]).splitlines()
         heads = [i for i, line in enumerate(lines) if line.startswith("project ")]
         self.assertEqual([lines[i + 1] for i in heads], ["  cost  11in  22cc  33cr  44out  (4 teammates)", "  cost  11in  22cc  33cr  44out  (6 teammates)"])
         self.assertEqual(sum(line.startswith("  cost  ") for line in lines), 2)
