@@ -1,6 +1,6 @@
 import json, os, re, shutil, subprocess, sys
 from pathlib import Path
-import fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
+import fc_auth, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
 
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
@@ -45,18 +45,25 @@ TRAIL_INSTALL = "npm i -g @trailhq/trail-code"
 
 def check_deps(role=None):
     """Print one `MISSING: <name>[ <detail>] (install: <command>)` line per setup step that is not ok, without any network call;
-    a dangling owned link puts its detail inside the parens, and a key row names the key and its fix, never a value. Returns the
-    required steps that are missing: those stop `init`; the optional ones only warn. With a role, only what that role needs is
-    checked, and it is required (Framelink stops the designer's start)."""
-    bad = []
+    a dangling owned link puts its detail inside the parens, and a key row names the key and its fix, never a value. While `claude`
+    itself is missing, the rows that need it share one `waiting on Claude Code:` line instead of a MISSING line each (they still
+    count as missing when required). Returns the required steps that are missing: those stop `init`; the optional ones only warn.
+    With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
+    bad, waiting = [], []
     checkout = Path(__file__).resolve().parents[1]
+    claude = bool(shutil.which("claude"))
     for row in fc_steps.STEPS:
-        name, _, install, needed, _, mode = row
+        name, _, install, needed, needs_claude, mode = row
         if role and needed != role:
             continue
         required = needed == "required" or (role is not None and needed == role)
         ok, detail = fc_steps.check(row, checkout)
         if not ok:
+            if needs_claude and not claude:
+                waiting.append(name)
+                if required:
+                    bad.append(name)
+                continue
             note = "" if required else f" - needed for the {needed}" if needed == "designer" else " - optional"
             why = "" if mode == "key" else f" {detail}" if detail else ""
             if detail.startswith("dangling link "):
@@ -65,6 +72,8 @@ def check_deps(role=None):
                 print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
                 bad.append(name)
+    if waiting:
+        print("waiting on Claude Code: " + ", ".join(waiting))
     return bad
 
 def herdr_toml(path):
@@ -98,11 +107,15 @@ def herdr_toast_warning():
 
 def cmd_doctor(a):
     """Check every tool and skill file compose depends on; exit 1 when a required one is missing. Warns, never stops, when
-    herdr's own agent toasts or sounds would reach the product owner from every agent."""
+    herdr's own agent toasts or sounds would reach the product owner from every agent, or when a key still sits in config.json
+    or .env (the next compose command moves it to auth.json)."""
     if check_deps():
         sys.exit(1)
     if shutil.which("gh") and fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode != 0:
         print("WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)")
+    if old := fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE):
+        print("WARNING: " + ", ".join(f"{name} in {path}" for name, path in old)
+              + " still in the old places; the next compose command moves them to auth.json")
     if warning := herdr_toast_warning():
         print(warning)
     print("every tool compose needs is installed")
