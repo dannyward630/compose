@@ -441,7 +441,7 @@ class AutoReflect(unittest.TestCase):
         with mock.patch.object(fc.fc_change, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
                 mock.patch.object(fc.fc_crew, "crew_attention", lambda *a: None), redirect_stdout(out):
             fc.fc_crew.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
-            fc.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
+            fc.fc_verify.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
         self.assertIn("reported hw-tests-003 contradiction", out.getvalue())
         self.assertEqual(len([m for m in self.said if "reflect failed (disk full)" in m]), 2, self.said)
 
@@ -453,12 +453,12 @@ class AutoReflect(unittest.TestCase):
     def test_a_failed_verify_is_screened_with_its_findings(self):
         reflect = mock.MagicMock(return_value=(Path("/p/reflect-1.json"), {}))
         with mock.patch.object(fc.fc_change, "reflect", reflect):
-            fc.verify_failed(self.proj, [{}, {}], "confirmed [high] s.go: a query per answer")
+            fc.fc_verify.verify_failed(self.proj, [{}, {}], "confirmed [high] s.go: a query per answer")
             self.assertEqual(reflect.call_args.args[1], "verify")
             self.assertIn("after 2 round(s)", reflect.call_args.args[2])
             self.assertIn("a query per answer", reflect.call_args.args[2])
             reflect.reset_mock()
-            fc.verify_failed(self.proj, [{}], "  ")  # only tool errors failed: nothing about the app to screen
+            fc.fc_verify.verify_failed(self.proj, [{}], "  ")  # only tool errors failed: nothing about the app to screen
             reflect.assert_not_called()
 
 

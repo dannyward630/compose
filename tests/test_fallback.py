@@ -213,10 +213,10 @@ class FixScope(unittest.TestCase):
             return "s", reply, 1, {"cost": 0.0}
         stages = iter([(False, {}, "finding"), (True, {}, "")])
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])), \
+                mock.patch.object(fc.fc_verify, "run_stages", lambda *a: next(stages)), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
-                fc.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
+                fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
 
     def test_fix_inside_the_stack_commits_and_passes(self):
@@ -245,7 +245,7 @@ class FixScope(unittest.TestCase):
             return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
                 else {"confirmed": True, "evidence": "e"}
         with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
-            fc.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
+            fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
         review, confirm = systems
         self.assertIn("hardening", review[0])
         self.assertIn("hardening", confirm[0])
@@ -256,7 +256,7 @@ class FixScope(unittest.TestCase):
             fj = lambda env, system, user, max_tokens=4000: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
                 if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
             with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
-                return fc.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
+                return fc.fc_verify.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
         self.assertEqual(len(review("fileName:   'x.js',")["confirmed"]), 1)
         rv = review("lib output defaults to main.js")
         self.assertEqual((rv["confirmed"], rv["pass"]), ([], True))
@@ -270,9 +270,9 @@ class FixScope(unittest.TestCase):
         self.assertFalse((repo / "package-lock.json").exists())
 
     def test_no_stack_diff_still_refuses_lockfiles(self):
-        self.assertEqual(fc.fix_strays(["src/x.go", "client/yarn.lock"], set()), ["client/yarn.lock"])
-        self.assertEqual(fc.fix_strays(["src/x.go", "client/yarn.lock"], set(), {"client/yarn.lock"}), [])  # a task names it in files:
-        self.assertEqual(fc.fix_strays(["a.go", "yarn.lock"], {"a.go"}, {"yarn.lock"}), [])
+        self.assertEqual(fc.fc_verify.fix_strays(["src/x.go", "client/yarn.lock"], set()), ["client/yarn.lock"])
+        self.assertEqual(fc.fc_verify.fix_strays(["src/x.go", "client/yarn.lock"], set(), {"client/yarn.lock"}), [])  # a task names it in files:
+        self.assertEqual(fc.fc_verify.fix_strays(["a.go", "yarn.lock"], {"a.go"}, {"yarn.lock"}), [])
 
 
 def ws(name=None, target=None, stdin=""):

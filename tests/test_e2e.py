@@ -15,7 +15,7 @@ class E2eLifecycle(unittest.TestCase):
     """An e2e stage ends everything it started, so no server or browser answers the next round."""
     def stage(self, cfg):
         report, findings = {"e2e": []}, []
-        ok = fc.e2e_stage(Path(self.dir), cfg, {}, report, findings)
+        ok = fc.fc_verify.e2e_stage(Path(self.dir), cfg, {}, report, findings)
         return ok, report, findings
 
     def setUp(self):
@@ -92,7 +92,7 @@ class ToolErrors(unittest.TestCase):
         d = tempfile.mkdtemp()
         crash = f"echo x >> {d}/n; echo 'File \"/x/jev_ultrafast/model.py\", line 193' >&2; exit 1"
         report, findings = {"e2e": []}, []
-        ok = fc.e2e_stage(Path(d), {"e2e": [{"name": "c", "driver": crash}]}, {}, report, findings)
+        ok = fc.fc_verify.e2e_stage(Path(d), {"e2e": [{"name": "c", "driver": crash}]}, {}, report, findings)
         self.assertFalse(ok)
         self.assertEqual(findings, [])
         self.assertTrue(report["e2e"][0]["tool_error"])
@@ -100,7 +100,7 @@ class ToolErrors(unittest.TestCase):
 
     def test_an_app_failure_is_a_finding(self):
         report, findings = {"e2e": []}, []
-        ok = fc.e2e_stage(Path(tempfile.mkdtemp()), {"e2e": [{"name": "a", "driver": "echo 'AssertionError: no line' >&2; exit 1"}]}, {}, report, findings)
+        ok = fc.fc_verify.e2e_stage(Path(tempfile.mkdtemp()), {"e2e": [{"name": "a", "driver": "echo 'AssertionError: no line' >&2; exit 1"}]}, {}, report, findings)
         self.assertFalse(ok)
         self.assertEqual(len(findings), 1)
         self.assertFalse(report["e2e"][0]["tool_error"])

@@ -43,7 +43,7 @@ class StackWorktree(unittest.TestCase):
         self.git("commit", "-qam", "dep"); self.git("checkout", "-q", "main")
         cfg = {"install": "mkdir -p node_modules && cat bun.lock >> node_modules/seen"}
         with mock.patch.object(fc.fc_worktree, "stack_order", return_value=["top"]), mock.patch.object(fc.fc_layers, "linearize", return_value=["top"]):
-            wt, _, _ = fc.verify_root(self.repo, self.proj, cfg)
+            wt, _, _ = fc.fc_verify.verify_root(self.repo, self.proj, cfg)
         self.assertEqual((wt / "node_modules" / "seen").read_text(), "top\n")  # installed once, against the top layer's lockfile
 
 
@@ -54,9 +54,9 @@ class ReviewGate(unittest.TestCase):
         high = {"file": "s.go", "severity": "high", "note": "a query per answer", "confirmed": True}
         rv = {"pass": False, "issues": [high], "confirmed": [high]}
         a = SimpleNamespace(skip_e2e=True, skip_review=False)
-        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc, "llm_review", return_value=rv), \
-                mock.patch.object(fc, "review_inputs", return_value=("diff", "plan", "", [])):
-            ok, _, findings = fc.run_stages(proj, proj, {"review": True, "jev_acceptance": False}, a)
+        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_verify, "llm_review", return_value=rv), \
+                mock.patch.object(fc.fc_verify, "review_inputs", return_value=("diff", "plan", "", [])):
+            ok, _, findings = fc.fc_verify.run_stages(proj, proj, {"review": True, "jev_acceptance": False}, a)
         self.assertFalse(ok); self.assertIn("a query per answer", findings)
 
 

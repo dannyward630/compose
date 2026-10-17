@@ -22,10 +22,10 @@ class CommitConvention(unittest.TestCase):
 
     def test_no_convention_keeps_plain_messages(self):
         self.assertEqual(fc.fc_layers.commit_message({"title": "001 Save resumes", "files": ["a.js"]}), "Save resumes")
-        self.assertEqual(fc.fix_message("Save in one transaction", ["a.js"]), "Save in one transaction")
+        self.assertEqual(fc.fc_verify.fix_message("Save in one transaction", ["a.js"]), "Save in one transaction")
 
     def test_fix_loop_commit_is_a_fix_and_unlisted_types_fall_back(self):
-        self.assertEqual(fc.fix_message("Save in one transaction", ["a.js"], CONV), "fix: Save in one transaction")
+        self.assertEqual(fc.fc_verify.fix_message("Save in one transaction", ["a.js"], CONV), "fix: Save in one transaction")
         self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat", "build"]}), "build: Add lodash")
         self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat"]}), "Add lodash")
 
