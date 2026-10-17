@@ -27,14 +27,13 @@ Each optional tool turns on one feature:
 ## 2. Clone and link `compose`
 
 ```sh
-git clone https://github.com/prodoxx/fast-coding ~/code/compose
+git clone https://github.com/prodoxx/compose ~/code/compose
 cd ~/code/compose
 ln -s "$PWD" ~/.claude/skills/compose
 mkdir -p ~/.local/bin && ln -s "$PWD/bin/compose" ~/.local/bin/
 ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp     # the browser driver, optional
 ```
 
-The repository keeps its GitHub name, `fast-coding`, but the checkout lives at `~/code/compose`.
 `bp` also needs Playwright's Chromium: `npx playwright install chromium`.
 The skill link is how Claude Code finds the skill, the `/compose:*` commands, and the hooks.
 Open Claude Code once and check that `/compose` and its commands appear.
@@ -94,3 +93,14 @@ The first run in a repo asks for its Linear project and writes `.compose/linear.
 
 Run `git pull` in `~/code/compose` to update, since both links point into that checkout.
 After a pull, restart any long-running `compose watch` or `status --watch`, because it keeps running the code it started with.
+
+## Move a machine from fast-coding
+
+A machine set up before the rename has `fast-coding` links and `~/.fast-coding/`.
+Run the migration with the old checkout's path; it points the checkout at `prodoxx/compose`, pulls, moves `~/.fast-coding/` to `~/.compose/`, and swaps both links:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/prodoxx/compose/main/bin/migrate-to-compose.sh | bash -s -- ~/code/fast-coding
+```
+
+It is safe to run again, and it prints the few steps left by hand, starting with restarting Claude Code so `/compose:*` replaces `/fast-coding:*`.
