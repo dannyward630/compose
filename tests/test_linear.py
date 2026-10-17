@@ -71,9 +71,9 @@ class Sync(unittest.TestCase):
             issue("ENG-3", "Small", block(id="001", files="a.go, a2.go", test="t")),
             issue("ENG-4", "Wide", block(id="002", files="a.go, b.go, c.go", test="t")),
             issue("ENG-5", "Long", "x" * 3000 + "\n\n" + block(id="003", files="d.go", test="t"))])
-        self.assertIsNone(fc.too_big(small))
-        self.assertIn("owns 3 files", fc.too_big(wide))
-        self.assertIn("brief is", fc.too_big(long))
+        self.assertIsNone(fc.fc_spec.too_big(small))
+        self.assertIn("owns 3 files", fc.fc_spec.too_big(wide))
+        self.assertIn("brief is", fc.fc_spec.too_big(long))
 
     def clash_warning(self, *specs):
         """What `tasks` prints about a shared file for (id, after) tasks that all own x.go."""
@@ -82,7 +82,7 @@ class Sync(unittest.TestCase):
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc.fc_status, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
                 mock.patch("sys.stdout", out):
-            fc.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
+            fc.fc_spec.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
         return "own the same file" in out.getvalue()
 
     def test_shared_file_clashes_only_between_unordered_tasks(self):
@@ -211,7 +211,7 @@ class DesignTasks(unittest.TestCase):
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_status, "task_state", side_effect=state), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
-            fc.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
+            fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
         text = out.getvalue()
         self.assertIn("Checkout/Cart, Checkout/Pay", text)
         self.assertIn("WARNING two design tasks own the same page (one page per task):", text)

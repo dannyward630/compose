@@ -55,7 +55,7 @@ class FormatOnPass(unittest.TestCase):
 class Waves(unittest.TestCase):
     def test_independent_tasks_share_a_wave(self):
         t = lambda i, after="": {"id": i, "after": after}
-        waves = fc.run_waves([t("001"), t("002", "001"), t("003"), t("004", "001"), t("005", "002,003,004"),
+        waves = fc.fc_spec.run_waves([t("001"), t("002", "001"), t("003"), t("004", "001"), t("005", "002,003,004"),
                               t("006"), t("007", "006"), t("009", "042")])
         # an `after:` outside the list (merged, or another wave) does not make a task wait
         self.assertEqual(waves, [["001", "003", "006", "009"], ["002", "004", "007"], ["005"]])

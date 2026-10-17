@@ -38,7 +38,7 @@ def data(issues, desc=SETTLED):
 
 
 def check(issues, desc=SETTLED, root=None):
-    return {i: (ok, level, gaps) for ok, i, level, gaps in fc.spec_check(data(issues, desc), root)}
+    return {i: (ok, level, gaps) for ok, i, level, gaps in fc.fc_spec.spec_check(data(issues, desc), root)}
 
 
 def has(gaps, *kws):
@@ -50,7 +50,7 @@ class SpecCheck(unittest.TestCase):
         """The printed lines and the SystemExit (SystemExit(0) when it returns normally); no stdin reads the synced cache."""
         with mock.patch.object(sys, "stdin", io.StringIO(stdin or "")), mock.patch("sys.stdout", io.StringIO()) as out:
             try:
-                fc.cmd_spec_check(SimpleNamespace(**{"repo": ".", "project": None, **kw}, stdin=stdin is not None))
+                fc.fc_spec.cmd_spec_check(SimpleNamespace(**{"repo": ".", "project": None, **kw}, stdin=stdin is not None))
             except SystemExit as e:
                 return out.getvalue().splitlines(), e
         return out.getvalue().splitlines(), SystemExit(0)
@@ -120,9 +120,9 @@ class SpecCheck(unittest.TestCase):
     def test_serial_chain_and_file_clashes(self):
         chain = [task("ENG-3", "001"), task("ENG-4", "002", ["ENG-3"]), task("ENG-5", "003", [{"id": "ENG-4", "title": "T"}])]
         self.assertTrue(has(check(chain)["ENG-1"][2], "wave"))
-        self.assertEqual(fc.file_clashes([]), {})
+        self.assertEqual(fc.fc_spec.file_clashes([]), {})
         tasks = [{"id": "001", "files": ["a.go"]}, {"id": "002", "files": ["a.go", "b.go"]}, {"id": "003", "files": ["c.go"]}]
-        self.assertEqual(fc.file_clashes(tasks), {"a.go": ["001", "002"]})
+        self.assertEqual(fc.fc_spec.file_clashes(tasks), {"a.go": ["001", "002"]})
         two = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"),
                task("ENG-5", "003", files="b.go"), task("ENG-6", "004", files="b.go")]
         g, = [g for g in check(two)["ENG-1"][2] if "a.go" in g]
@@ -140,7 +140,7 @@ class SpecCheck(unittest.TestCase):
         fc.fc_tasks.sync_tasks(proj, data(clash, ""))
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
-            fc.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+            fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
         self.assertEqual(out.getvalue(), TASKS_OUT)
         self.assertEqual(fc.fc_tasks.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
