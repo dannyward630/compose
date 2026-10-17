@@ -273,7 +273,11 @@ def register_stack(repo, proj, trunk, submit=False):
         fc_core.sh(["git", "checkout", "-q", b], wt, check=False)
         if gh("view", "--json").returncode == 0:
             gh("unstack", "--local")
-    fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+    # gh stack 0.2+ refuses to init from a detached HEAD ("finding current branch: not on any branch"), and the trunk is often
+    # checked out in the user's tree, so init runs from one of the stack's own branches, which it adopts in place.
+    for b in stack:
+        if fc_core.sh(["git", "checkout", "-q", b], wt, check=False).returncode == 0:
+            break
     p = gh("init", "--base", stack_base, *stack)
     if p.returncode:
         fc_core.say(f"stack  FAIL  {' <- '.join(stack)}: {(p.stderr or p.stdout).strip()[-300:]}")
