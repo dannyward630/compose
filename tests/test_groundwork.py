@@ -147,7 +147,7 @@ class Groundwork(unittest.TestCase):
             if ns.role.endswith("001"):
                 raise RuntimeError("agent_prompt_stalled")
             started.append(ns.role)
-        with self.patched()[0], mock.patch.object(fc, "cmd_crew", crew), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+        with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", crew), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
             fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
         self.assertEqual(started, ["tests-002"])
@@ -230,7 +230,7 @@ class CrewWorkdir(unittest.TestCase):
 
     def test_another_repo_gets_a_worktree_on_a_new_branch(self):
         with mock.patch.object(Path, "home", return_value=self.home):
-            path, branch = fc.crew_workdir(str(self.tool), self.project, "shop-toolsmith")
+            path, branch = fc.fc_crew.crew_workdir(str(self.tool), self.project, "shop-toolsmith")
         self.assertTrue(branch.startswith("shop-toolsmith-"))
         self.assertEqual(path.parent, self.tool.resolve() / ".claude" / "worktrees")
         self.assertTrue((path / "bin" / "tool").exists())
@@ -238,15 +238,15 @@ class CrewWorkdir(unittest.TestCase):
         self.assertEqual(self.tool_git("status", "--porcelain").stdout.strip(), "")  # the worktree is excluded, not untracked noise
 
     def test_the_project_repo_and_plain_folders_run_where_pointed(self):
-        self.assertEqual(fc.crew_workdir(str(self.project), self.project, "x"), (self.project, None))
+        self.assertEqual(fc.fc_crew.crew_workdir(str(self.project), self.project, "x"), (self.project, None))
         plain = tempfile.mkdtemp()
-        self.assertEqual(fc.crew_workdir(plain, self.project, "x"), (Path(plain), None))
-        self.assertEqual(fc.crew_workdir(None, self.project, "x"), (self.project, None))
+        self.assertEqual(fc.fc_crew.crew_workdir(plain, self.project, "x"), (Path(plain), None))
+        self.assertEqual(fc.fc_crew.crew_workdir(None, self.project, "x"), (self.project, None))
 
     def test_an_untrusted_repo_is_named_up_front(self):
         (self.home / ".claude.json").write_text(json.dumps({"projects": {}}))
         with mock.patch.object(Path, "home", return_value=self.home), self.assertRaises(SystemExit) as e:
-            fc.crew_workdir(str(self.tool), self.project, "shop-toolsmith")
+            fc.fc_crew.crew_workdir(str(self.tool), self.project, "shop-toolsmith")
         self.assertIn("trust", str(e.exception))
         self.assertEqual(self.tool_git("worktree", "list").stdout.count("\n"), 1)  # nothing created
 
@@ -375,7 +375,7 @@ class DesignCrews(unittest.TestCase):
             started.append(ns)
             if ns.role in busy: raise SystemExit("busy")
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space") as space, \
-                mock.patch.object(fc, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
+                mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
             fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space
 

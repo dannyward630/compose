@@ -15,9 +15,9 @@ class Teardown(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         self.proj.mkdir(parents=True)
         for name, tab in (("shop-orchestrator", "t3"), ("shop-tests", "t9"), ("shop-e2e", "t10")):
-            (fc.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps({"name": name, "title": name, "tab": tab, "pane": "p"}))
-        fc.write_report(self.proj, "shop-tests", "done", "tests committed")
-        fc.write_report(self.proj, "shop-e2e", "working", "checking")
+            (fc.fc_crew.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps({"name": name, "title": name, "tab": tab, "pane": "p"}))
+        fc.fc_crew.write_report(self.proj, "shop-tests", "done", "tests committed")
+        fc.fc_crew.write_report(self.proj, "shop-e2e", "working", "checking")
         self.tabs = {"t1": "shell", "t2": "status", "t3": "orchestrator", "t4": "implementers", "t5": "006 006 Question",
                      "t6": "009 someone else's", "t7": "verify", "t8": "verify 12:10", "t9": "tests", "t10": "e2e", "t11": "notes"}
         self.agents = [("shop-orchestrator", "t3"), ("shop-006", "t5"), ("other-009", "t6")]
@@ -35,20 +35,20 @@ class Teardown(unittest.TestCase):
     def teardown(self):
         with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch("builtins.print"):
-            return fc.teardown(self.proj)
+            return fc.fc_crew.teardown(self.proj)
 
     def test_closes_runs_verify_and_done_crew_only(self):
         self.assertEqual(sorted(self.teardown()), sorted(["implementers", "006 006 Question", "verify", "verify 12:10", "tests"]))
         self.assertEqual(sorted(self.tabs), ["t1", "t10", "t11", "t2", "t3", "t6"])  # shell, status, team lead, unfinished teammate, others' tabs stay
-        self.assertEqual(fc.crew_record(self.proj, "shop-tests")["closed"]["why"], "teardown")
+        self.assertEqual(fc.fc_crew.crew_record(self.proj, "shop-tests")["closed"]["why"], "teardown")
         self.assertEqual(self.teardown(), [])  # idempotent
 
     def test_team_lead_done_tears_down_crew_done_closes_itself(self):
         def report(who):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                     mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
-                    mock.patch.object(fc, "teardown") as td, mock.patch.object(subprocess, "Popen") as popen:
-                fc.cmd_report(type("A", (), {"as_": who, "state": "done", "message": ["finished"]}))
+                    mock.patch.object(fc.fc_crew, "teardown") as td, mock.patch.object(subprocess, "Popen") as popen:
+                fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": "done", "message": ["finished"]}))
             return td, popen
         td, popen = report("shop-e2e")
         td.assert_not_called()
@@ -56,7 +56,7 @@ class Teardown(unittest.TestCase):
         self.assertEqual(cmd[0][-2:], ["shop-e2e", "t10"])  # waits for this agent, then closes its tab
         self.assertIn("agent wait", cmd[0][2])
         self.assertTrue(kw["start_new_session"])
-        self.assertIn("closed", fc.crew_record(self.proj, "shop-e2e"))
+        self.assertIn("closed", fc.fc_crew.crew_record(self.proj, "shop-e2e"))
         self.assertNotIn(("tab", "close", "t10"), self.calls)  # never closed synchronously, mid-turn
         td, popen = report("shop-orchestrator")
         td.assert_called_once_with(self.proj)

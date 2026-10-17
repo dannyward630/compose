@@ -431,23 +431,23 @@ class AutoReflect(unittest.TestCase):
         reflect = mock.MagicMock(return_value=(Path("/p/reflect.json"), {"flagged": []}))
         msg = "the API returns a list; Linear says: returns a dict (ENG-7); evidence: api.py:40".split()
         with mock.patch.object(fc.fc_change, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
-                mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(io.StringIO()):
-            fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=msg))
+                mock.patch.object(fc.fc_crew, "crew_attention", lambda *a: None), redirect_stdout(io.StringIO()):
+            fc.fc_crew.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=msg))
         self.assertEqual(reflect.call_args.args[1], "contradiction:hw-tests-003")
         self.assertEqual(reflect.call_args.kwargs["against"], ["returns a dict"])
 
     def test_a_screen_that_crashes_never_stops_a_report_or_a_verify(self):
         reflect, out = mock.MagicMock(side_effect=RuntimeError("disk full")), io.StringIO()
         with mock.patch.object(fc.fc_change, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
-                mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(out):
-            fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
+                mock.patch.object(fc.fc_crew, "crew_attention", lambda *a: None), redirect_stdout(out):
+            fc.fc_crew.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
             fc.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
         self.assertIn("reported hw-tests-003 contradiction", out.getvalue())
         self.assertEqual(len([m for m in self.said if "reflect failed (disk full)" in m]), 2, self.said)
 
     def test_every_crew_brief_says_how_to_report_one(self):
         with mock.patch.object(fc.fc_herdr, "project_worktree", lambda p: Path("/wt")):
-            text = fc.crew_preamble(self.proj, "hw-groundwork", "groundwork")
+            text = fc.fc_crew.crew_preamble(self.proj, "hw-groundwork", "groundwork")
         self.assertIn('contradiction "<what you found>; Linear says: <quoted line> (<issue>); evidence:', text)
 
     def test_a_failed_verify_is_screened_with_its_findings(self):

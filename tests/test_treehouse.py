@@ -88,7 +88,7 @@ class Treehouse(unittest.TestCase):
         started = []
         run = lambda: fc.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
-             mock.patch.object(fc, "cmd_crew", lambda ns: started.append(ns.role)):
+             mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)):
             with self.assertRaises(SystemExit) as e:
                 run()  # 003 and 004 need two slots, one is free
             msg = str(e.exception.code)
@@ -136,7 +136,7 @@ class Treehouse(unittest.TestCase):
         self.git("init", "-q", "-b", "main", cwd=other)
         (other / "x").write_text("x\n"); self.git("add", "-A", cwd=other); self.git("commit", "-qm", "x", cwd=other)
         with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True):
-            slot, branch = fc.crew_workdir(other, wt, "p-toolsmith")
+            slot, branch = fc.fc_crew.crew_workdir(other, wt, "p-toolsmith")
         self.assertTrue(str(slot).startswith(str(other / ".treehouse")))
         self.assertEqual(self.git("branch", "--show-current", cwd=slot), branch)
         self.assertEqual(self.git("branch", "--show-current", cwd=other), "main")  # the other repo's checkout never moves

@@ -57,11 +57,11 @@ class TestCrewWorktrees(unittest.TestCase):
         from types import SimpleNamespace
         self.crew_commits("001", "a_test.go", "a\n")
         a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False)
-        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc, "crew_reports", return_value=[{"state": "working"}]):
+        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "working"}]):
             with self.assertRaises(SystemExit) as e:
                 fc.cmd_run(a)
             self.assertIn("tests-001", str(e.exception)); rt.assert_not_called()
-        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc, "crew_reports", return_value=[{"state": "done"}]):
+        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "done"}]):
             fc.cmd_run(a)
             rt.assert_called_once()
         self.assertTrue((self.repo / "a_test.go").exists())  # collected before the run
@@ -121,20 +121,20 @@ class Leftovers(unittest.TestCase):
     def test_teardown_stops_servers_in_the_project_only(self):
         proj_wt = Path(tempfile.mkdtemp()).resolve()
         proj = proj_wt / ".fast-coding" / "p"
-        scratch = fc.scratch_dir(proj, "p-groundwork"); scratch.mkdir(parents=True)
+        scratch = fc.fc_crew.scratch_dir(proj, "p-groundwork"); scratch.mkdir(parents=True)
         mine, other = server(scratch), server(tempfile.mkdtemp())
         self.addCleanup(lambda: [(p.kill(), p.wait()) for p in (mine, other)])
         with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj_wt), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
                 mock.patch("sys.stdout", io.StringIO()):
-            fc.teardown(proj)
+            fc.fc_crew.teardown(proj)
         self.assertIsNotNone(mine.wait(timeout=5))
         self.assertIsNone(other.poll())
-        self.assertFalse(fc.scratch_dir(proj).exists())
+        self.assertFalse(fc.fc_crew.scratch_dir(proj).exists())
 
     def test_preamble_points_scratch_inside_the_project(self):
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent):
-            pre = fc.crew_preamble(proj, "shop-groundwork", "groundwork")
+            pre = fc.fc_crew.crew_preamble(proj, "shop-groundwork", "groundwork")
         self.assertIn(str(proj / "scratch" / "shop-groundwork"), pre)
         self.assertIn("never /tmp", pre)
 

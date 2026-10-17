@@ -137,7 +137,7 @@ class WatchMemory(unittest.TestCase):
         later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
         seen = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}  # the engineering manager's watch: no role
-        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
+        with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
@@ -156,7 +156,7 @@ class WatchMemory(unittest.TestCase):
                          "hw-tests": [{"at": at(0), "state": "needs-user", "message": "which fixture?"}]}
         seen = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
-        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), \
+        with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), \
                 mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
@@ -246,8 +246,8 @@ class Rewake(unittest.TestCase):
     def test_a_wake_carries_the_skill_change_notice(self):
         skill = Path(tempfile.mkdtemp()).resolve()
         (skill / "SKILL.md").write_text("v1\n")
-        with mock.patch.object(fc, "SKILL_DIR", skill), mock.patch.object(fc, "SKILL_SEEN", skill / "seen"):
-            fc.skill_notice("lead")  # the version the team lead read
+        with mock.patch.object(fc.fc_crew, "SKILL_DIR", skill), mock.patch.object(fc.fc_crew, "SKILL_SEEN", skill / "seen"):
+            fc.fc_crew.skill_notice("lead")  # the version the team lead read
             (skill / "SKILL.md").write_text("v2\n")
             code, err, _ = self.rewake([wsnap("running"), wsnap("passed")], session="lead")
         self.assertEqual(code, 2)

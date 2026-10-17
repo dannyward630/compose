@@ -12,7 +12,7 @@ _spec.loader.exec_module(fc)
 
 def snap(proj):
     return {"tasks": {}, "agents": {}, "run": False, "verify": None,
-            "crew": {f.stem: fc.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}}
+            "crew": {f.stem: fc.fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}}
 
 
 _patches = [mock.patch.object(time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
@@ -38,11 +38,11 @@ class Crew(unittest.TestCase):
 
     def report(self, who, state, msg):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
-            fc.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
+            fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
 
     def test_reports_wake_the_right_watcher(self):
-        fc.write_report(self.proj, "shop-q-neb-12", "working", "started")
-        fc.write_report(self.proj, "shop-orchestrator", "working", "started")
+        fc.fc_crew.write_report(self.proj, "shop-q-neb-12", "working", "started")
+        fc.fc_crew.write_report(self.proj, "shop-orchestrator", "working", "started")
         before = snap(self.proj)
         self.report("shop-q-neb-12", "needs-user", "Which payment provider? I recommend Stripe")
         self.report("shop-orchestrator", "needs-user", "Tasks are ready for your go")
@@ -60,25 +60,25 @@ class Crew(unittest.TestCase):
         a teammate the team lead started still goes up through the team lead only."""
         for who, up in (("shop-planner", "manager"), ("shop-designer", "manager"), ("shop-tests", "orchestrator"), ("shop-old", None)):
             rec = {"name": who, "role": who[5:], "title": who[5:], "space": "w9", "tab": "t", "pane": "p"} | ({"reports_to": up} if up else {})
-            (fc.crew_dir(self.proj) / f"{who}.json").write_text(json.dumps(rec))  # shop-old: a record from before reports_to existed
-            fc.write_report(self.proj, who, "working", "started")
-        self.assertEqual(fc.crew_reporting_to(self.proj, "manager"), ["shop-designer", "shop-planner"])
-        self.assertEqual(fc.crew_reporting_to(self.proj, "orchestrator"), ["shop-tests"])
+            (fc.fc_crew.crew_dir(self.proj) / f"{who}.json").write_text(json.dumps(rec))  # shop-old: a record from before reports_to existed
+            fc.fc_crew.write_report(self.proj, who, "working", "started")
+        self.assertEqual(fc.fc_crew.crew_reporting_to(self.proj, "manager"), ["shop-designer", "shop-planner"])
+        self.assertEqual(fc.fc_crew.crew_reporting_to(self.proj, "orchestrator"), ["shop-tests"])
         before = snap(self.proj)
         self.report("shop-planner", "needs-user", "3 stories NEB-4..6; recommendation accept-all")
         self.report("shop-designer", "blocked", "Framelink token missing")
         self.report("shop-tests", "needs-user", "which fixture?")
         self.report("shop-old", "needs-user", "legacy")
         ev = fc.watch_events(before, snap(self.proj)) + ["event agent=shop-designer status=blocked  (read: ...)"]
-        direct = fc.crew_reporting_to(self.proj, "manager")
+        direct = fc.fc_crew.crew_reporting_to(self.proj, "manager")
         manager = fc.watch_filter(ev, "shop", ["shop-orchestrator"], direct)
         self.assertEqual(manager, [e for e in ev if "shop-planner" in e or "shop-designer" in e])
         self.assertEqual(fc.watch_filter(ev, "shop", ["shop-orchestrator"]), [])  # the record decides, never --from alone
         self.assertEqual(fc.watch_filter(ev, "shop", [], direct), ev)  # the team lead's view is unchanged
         notified = []
-        with mock.patch.object(fc, "desktop_notify", lambda title, body: notified.append((title, body))), mock.patch.dict(os.environ, {}, clear=False):
+        with mock.patch.object(fc.fc_crew, "desktop_notify", lambda title, body: notified.append((title, body))), mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("FAST_CODING_ROLE", None)
-            fc.manager_attention(self.proj, manager)
+            fc.fc_crew.manager_attention(self.proj, manager)
         self.assertEqual(sorted(notified), [("shop: the engineering manager is blocked", "Framelink token missing  (from shop-designer)"),
                                             ("shop: the engineering manager needs you", "3 stories NEB-4..6; recommendation accept-all  (from shop-planner)")])
 
@@ -100,9 +100,9 @@ class Crew(unittest.TestCase):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                    mock.patch.object(fc, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
-                fc.cmd_crew(a)
-            self.assertEqual(fc.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
+                    mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
+                fc.fc_crew.cmd_crew(a)
+            self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
             self.assertIn(says, (self.proj / "results" / "crew" / f"shop-{role}.brief.md").read_text())
 
     def test_bad_state_refused(self):
@@ -125,7 +125,7 @@ class Crew(unittest.TestCase):
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register") as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print"):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
@@ -144,12 +144,12 @@ class Crew(unittest.TestCase):
         self.assertIn("fast-coding report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
-        self.assertEqual(fc.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
+        self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
     def test_started_is_written_before_the_agent_can_report(self):
         def herdr(*args, **kw):
             if args[:2] == ("agent", "start"):  # a fast teammate finishes before start returns
-                fc.write_report(self.proj, "shop-eol", "done", "one commit")
+                fc.fc_crew.write_report(self.proj, "shop-eol", "done", "one commit")
             if args[:2] == ("agent", "list"):
                 return {"agents": []}
             if args[:2] == ("agent", "get"):
@@ -159,8 +159,8 @@ class Crew(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
-            fc.cmd_crew(a)
-        self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
+            fc.fc_crew.cmd_crew(a)
+        self.assertEqual([r["state"] for r in fc.fc_crew.crew_reports(self.proj, "shop-eol")], ["working", "done"])
 
     def start_with_timeout(self, appears_after, pane_busy=False, finishes=False):
         """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never).
@@ -175,7 +175,7 @@ class Crew(unittest.TestCase):
                 return {"agents": [{"name": "claude", "pane_id": "w9:p7"}] if up else []}
             if args[:2] == ("agent", "start"):
                 if finishes:
-                    fc.write_report(self.proj, "shop-eol", "done", "fast-forwarded the branch")
+                    fc.fc_crew.write_report(self.proj, "shop-eol", "done", "fast-forwarded the branch")
                 raise RuntimeError("herdr agent start: timeout")
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
@@ -194,7 +194,7 @@ class Crew(unittest.TestCase):
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
             try:
-                fc.cmd_crew(a)
+                fc.fc_crew.cmd_crew(a)
                 code = 0
             except SystemExit as e:
                 code = e.code
@@ -227,14 +227,14 @@ class Crew(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(any("did not start" in l for l in out))
         self.assertNotIn(("tab", "close", "w9:t3"), calls)
-        self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
+        self.assertEqual([r["state"] for r in fc.fc_crew.crew_reports(self.proj, "shop-eol")], ["working", "done"])
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
 
     def test_a_report_from_a_teammate_whose_record_is_missing_registers_it_again(self):
         live = {"agent": {"name": "shop-eol", "pane_id": "w9:p7", "tab_id": "w9:t3", "workspace_id": "w9", "cwd": "/x"}}
         with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: live if a[:2] == ("agent", "get") else {}):
             self.report("shop-eol", "done", "finished")
-        c = fc.crew_record(self.proj, "shop-eol")
+        c = fc.fc_crew.crew_record(self.proj, "shop-eol")
         self.assertEqual((c["pane"], c["tab"], c["space"]), ("w9:p7", "w9:t3", "w9"))
 
     def test_a_start_that_timed_out_and_never_came_up_exits_cleanly_and_registers_nothing(self):
@@ -258,7 +258,7 @@ class Crew(unittest.TestCase):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
-                fc.cmd_crew(a)
+                fc.fc_crew.cmd_crew(a)
             self.assertEqual(calls[1][:2], ("tab", "create"))
             self.assertIn(f"FAST_CODING_ROLE={env}", calls[1], role)
             self.assertEqual(calls[2][2], f"shop-{role}")
@@ -281,25 +281,25 @@ class Crew(unittest.TestCase):
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("sys.stdout", out):
-            fc.cmd_crew(start)
+            fc.fc_crew.cmd_crew(start)
         self.assertIn("starting this one as shop-explore-2", out.getvalue())
         self.assertEqual(next(c for c in calls if c[:2] == ("agent", "start"))[2], "shop-explore-2")
-        self.assertEqual(fc.crew_record(self.proj, "shop-explore")["agent"], "shop-explore-2")
+        self.assertEqual(fc.fc_crew.crew_record(self.proj, "shop-explore")["agent"], "shop-explore-2")
         # the stranger is not the crew: it is not shown as live, the project's own numbered agent is
         mine = {"name": "shop-explore-2", "workspace_id": "w9", "agent_status": "working"}
         for agents, shown in (([stranger], "closed"), ([stranger, mine], "working")):
             out = io.StringIO()
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agents": agents}), \
                     mock.patch("sys.stdout", out):
-                fc.cmd_crew(type("A", (), {"action": "list"}))
+                fc.fc_crew.cmd_crew(type("A", (), {"action": "list"}))
             self.assertIn(shown, out.getvalue())
             self.assertNotIn("idle", out.getvalue())
 
     def test_team_lead_reports_to_engineering_manager(self):
-        self.assertIn("the engineering manager", fc.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
+        self.assertIn("the engineering manager", fc.fc_crew.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
-        pre = fc.crew_preamble(self.proj, "shop-tests", "tests")
+        pre = fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests")
         self.assertIn("never mention fast-coding", pre)
         self.assertIn("one test file per unit", pre)
         self.assertIn("not even a throwaway reference", pre)
@@ -312,7 +312,7 @@ class Crew(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *x, **k: calls.append(x)), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=False), \
                 self.assertRaises(SystemExit) as e:
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         self.assertIn("never trusted", str(e.exception.code))
         self.assertNotIn(("tab", "create"), [c[:2] for c in calls])  # no half-started tab left behind
 
@@ -320,17 +320,17 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
                 self.assertRaises(SystemExit):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
 
     def test_stop_waits_for_done_unless_forced(self):
-        (fc.crew_dir(self.proj) / "shop-q-1.json").write_text('{"tab": "w9:t3"}')
-        fc.write_report(self.proj, "shop-q-1", "needs-user", "Which one?")
+        (fc.fc_crew.crew_dir(self.proj) / "shop-q-1.json").write_text('{"tab": "w9:t3"}')
+        fc.fc_crew.write_report(self.proj, "shop-q-1", "needs-user", "Which one?")
         closed = []
         def stop(force):
             a = type("A", (), {"action": "stop", "role": "q-1", "force": force})
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                     mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: closed.append(args)):
-                fc.cmd_crew(a)
+                fc.fc_crew.cmd_crew(a)
         with self.assertRaises(SystemExit) as e:
             stop(False)
         self.assertIn("needs-user", str(e.exception))
@@ -338,7 +338,7 @@ class Crew(unittest.TestCase):
         stop(True)
         self.assertEqual(closed, [("tab", "close", "w9:t3")])
         closed.clear()
-        fc.write_report(self.proj, "shop-q-1", "done", "Resolved NEB-12")
+        fc.fc_crew.write_report(self.proj, "shop-q-1", "done", "Resolved NEB-12")
         stop(False)
         self.assertEqual(closed, [("tab", "close", "w9:t3")])
 
@@ -350,16 +350,16 @@ class Attention(unittest.TestCase):
         self.proj.mkdir(parents=True)
         for role, title in (("q-neb-1", "Payment provider"), ("q-neb-2", "Refund window"), ("q-neb-3", "Currency"), ("tests", "tests")):
             name = f"shop-{role}"
-            (fc.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps(
+            (fc.fc_crew.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps(
                 {"name": name, "role": role, "title": title, "space": "w9", "tab": f"w9:{role}", "pane": f"p-{role}"}))
-            fc.write_report(self.proj, name, "working", "started")
-        fc.write_report(self.proj, "shop-q-neb-3", "done", "Currency: USD only")
+            fc.fc_crew.write_report(self.proj, name, "working", "started")
+        fc.fc_crew.write_report(self.proj, "shop-q-neb-3", "done", "Currency: USD only")
         self.calls = []
 
     def report(self, who, state, msg):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                 mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)):
-            fc.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
+            fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
 
     def test_needs_user_badges_the_pane_without_notifying_or_focusing(self):
         """A teammate's question only badges its pane: the product owner hears of it once, from the engineering manager."""
@@ -368,7 +368,7 @@ class Attention(unittest.TestCase):
         self.assertIn("blocked=needs you", self.calls[0])
 
     def test_orchestrator_report_does_not_notify_either(self):
-        (fc.crew_dir(self.proj) / "shop-orchestrator.json").write_text(json.dumps(
+        (fc.fc_crew.crew_dir(self.proj) / "shop-orchestrator.json").write_text(json.dumps(
             {"name": "shop-orchestrator", "role": "orchestrator", "title": "orchestrator", "space": "w9", "tab": "w9:o", "pane": "p-o"}))
         self.report("shop-orchestrator", "needs-user", "Stripe or Adyen? I recommend Stripe")
         self.assertEqual([c[:2] for c in self.calls], [("pane", "report-metadata")])
@@ -384,11 +384,11 @@ class Attention(unittest.TestCase):
         with mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)), mock.patch.object(sys, "platform", "darwin"), \
                 mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
-                fc.manager_attention(self.proj, ev)  # the team lead watching its teammates
+                fc.fc_crew.manager_attention(self.proj, ev)  # the team lead watching its teammates
             self.assertEqual((self.calls, runs), ([], []))
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": ""}):
                 os.environ.pop("FAST_CODING_ROLE")
-                fc.manager_attention(self.proj, ev)
+                fc.fc_crew.manager_attention(self.proj, ev)
         self.assertEqual(self.calls, [])  # nothing goes through herdr
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0][0], "/usr/bin/osascript")
@@ -401,15 +401,15 @@ class Attention(unittest.TestCase):
         body = """-rm "x" `id` $(id) 'y'"""
         runs = []
         with mock.patch.object(sys, "platform", "darwin"), mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
-            self.assertTrue(fc.desktop_notify("shop: the engineering manager is blocked", body))
+            self.assertTrue(fc.fc_crew.desktop_notify("shop: the engineering manager is blocked", body))
         self.assertEqual(runs[0][-3:], ["--", "shop: the engineering manager is blocked", body])
         self.assertFalse(any("id" in s for s in runs[0][:-3]))
         runs.clear()
         with mock.patch.object(sys, "platform", "linux"), mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
             with mock.patch.object(shutil, "which", lambda name: "/usr/bin/notify-send"):
-                self.assertTrue(fc.desktop_notify("t", body))
+                self.assertTrue(fc.fc_crew.desktop_notify("t", body))
             with mock.patch.object(shutil, "which", lambda name: None):
-                self.assertFalse(fc.desktop_notify("t", body))
+                self.assertFalse(fc.fc_crew.desktop_notify("t", body))
         self.assertEqual(runs, [["notify-send", "--", "t", body]])
 
     def test_done_prompts_no_other_crew(self):
@@ -421,7 +421,7 @@ class Attention(unittest.TestCase):
         a = type("A", (), {"action": "focus", "role": "q-neb-2"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                 mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         self.assertEqual(self.calls, [("workspace", "focus", "w9"), ("tab", "focus", "w9:q-neb-2")])
 
 
@@ -434,35 +434,35 @@ class Guard(unittest.TestCase):
 
     def test_team_lead_cannot_edit_repo_files(self):
         for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".fast-coding/shop/notes.md"):
-            self.assertIsNotNone(fc.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
+            self.assertIsNotNone(fc.fc_crew.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
 
     def test_team_lead_keeps_its_own_files(self):
         for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
-            self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
+            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
         for role in ("orchestrator", "planner"):
-            self.assertIsNone(fc.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch/sync.json"), role), role)
-        self.assertIsNotNone(fc.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch.md"), "planner"))
-        self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
+            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch/sync.json"), role), role)
+        self.assertIsNotNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch.md"), "planner"))
+        self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
 
     def test_crew_and_unmarked_sessions_are_untouched(self):
         for role in ("crew", None, ""):
-            self.assertIsNone(fc.guard_decision("Edit", str(self.repo / "src/app.go"), role))
-        self.assertIsNone(fc.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
+            self.assertIsNone(fc.fc_crew.guard_decision("Edit", str(self.repo / "src/app.go"), role))
+        self.assertIsNone(fc.fc_crew.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
 
     def test_planner_is_guarded_like_the_team_lead(self):
-        self.assertEqual(fc.GUARDED_ROLES, ("orchestrator", "planner"))
+        self.assertEqual(fc.fc_crew.GUARDED_ROLES, ("orchestrator", "planner"))
         self.assertEqual(fc.fc_config.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
-        for tool in fc.GUARDED_TOOLS:
-            for role in fc.GUARDED_ROLES:
-                why = fc.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
+        for tool in fc.fc_crew.GUARDED_TOOLS:
+            for role in fc.fc_crew.GUARDED_ROLES:
+                why = fc.fc_crew.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
                 self.assertIn("team lead", why, (tool, role))
                 self.assertIn("planner", why.lower(), (tool, role))
         for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
-            self.assertIsNone(fc.guard_decision("Write", str(self.repo / f), "planner"), f)
-        self.assertIsNone(fc.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
-        self.assertIsNone(fc.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
+            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "planner"), f)
+        self.assertIsNone(fc.fc_crew.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
+        self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
         for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
-            self.assertIsNone(fc.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
+            self.assertIsNone(fc.fc_crew.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
 
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
@@ -470,7 +470,7 @@ class Guard(unittest.TestCase):
             out = io.StringIO()
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(ev)), \
                     mock.patch.object(sys, "stdout", out):
-                fc.cmd_guard(None)
+                fc.fc_crew.cmd_guard(None)
             if denied:
                 self.assertTrue(out.getvalue(), role)
                 self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny", role)
@@ -484,11 +484,11 @@ class ToolBug(unittest.TestCase):
 
     def test_tool_bug_is_recorded_logged_and_wakes_the_engineering_manager(self):
         log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
-        fc.write_report(self.proj, "shop-tests", "working", "started")
+        fc.fc_crew.write_report(self.proj, "shop-tests", "working", "started")
         before = snap(self.proj)
-        with mock.patch.object(fc, "TOOL_BUGS", log):
+        with mock.patch.object(fc.fc_crew, "TOOL_BUGS", log):
             self.report("shop-tests", "tool-bug", "run crashed on index.lock; worked around with --parallel 1")
-        self.assertEqual(fc.crew_reports(self.proj, "shop-tests")[-1]["state"], "tool-bug")
+        self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-tests")[-1]["state"], "tool-bug")
         entry = json.loads(log.read_text().splitlines()[-1])
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
         self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
@@ -497,7 +497,7 @@ class ToolBug(unittest.TestCase):
         self.assertEqual(len(fc.watch_filter(ev, "shop", [])), 1)  # and the team lead sees it
 
     def test_every_brief_says_how_to_report_a_tool_bug(self):
-        self.assertIn("tool-bug", fc.crew_preamble(self.proj, "shop-tests", "tests"))
+        self.assertIn("tool-bug", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
 
     def test_crew_can_start_in_another_directory(self):
         calls = []
@@ -512,7 +512,7 @@ class ToolBug(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
 
@@ -527,8 +527,8 @@ class ToolsmithWorktree(unittest.TestCase):
         slot = repo.parent / (repo.name + "-slot")
         git("worktree", "add", "-q", "-b", "fast-coding/shop", str(slot), cwd=repo)
         with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True):
-            path, branch = fc.crew_workdir(str(repo), slot, "shop-toolsmith", "toolsmith")
-            same, none = fc.crew_workdir(str(repo), slot, "shop-tests", "tests")
+            path, branch = fc.fc_crew.crew_workdir(str(repo), slot, "shop-toolsmith", "toolsmith")
+            same, none = fc.fc_crew.crew_workdir(str(repo), slot, "shop-tests", "tests")
         self.assertTrue(str(path).startswith(str(repo / ".claude" / "worktrees")) and branch)
         self.assertEqual(git("branch", "--show-current", cwd=path), branch)
         self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "fast-coding/shop"))
@@ -609,7 +609,7 @@ class Ready(unittest.TestCase):
                 mock.patch.object(fc.fc_herdr, "herdr_ready", lambda agent, **k: calls.append(("ready", agent))), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         heads = [c[:2] for c in calls]
         self.assertLess(heads.index(("agent", "start")), heads.index(("ready", "shop-tests")))
         self.assertLess(heads.index(("ready", "shop-tests")), heads.index(("agent", "prompt")))
@@ -732,10 +732,10 @@ class RestrictedStart(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register") as self.frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
+                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc.fc_crew, "crew_workdir", return_value=(str(proj), None)), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
                 mock.patch("pathlib.Path.home", return_value=home):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         return list(start[start.index("--") + 1:])
 
@@ -772,11 +772,11 @@ class RestrictedStart(unittest.TestCase):
                 self.assertEqual("--disable-slash-commands" in self.start(role), off)
 
     def test_every_teammate_gets_the_trust_framing(self):
-        self.assertLess(len(fc.TRUST_PROMPT), 400)
+        self.assertLess(len(fc.fc_crew.TRUST_PROMPT), 400)
         for model in ("claude:claude-opus-5-5", "pi:x/y"):  # pi has the same --append-system-prompt flag as Claude Code
             with self.subTest(model=model):
                 args = self.start("planner", model=model)
-                self.assertEqual(args[args.index("--append-system-prompt") + 1], fc.TRUST_PROMPT)
+                self.assertEqual(args[args.index("--append-system-prompt") + 1], fc.fc_crew.TRUST_PROMPT)
                 self.assertEqual(args.count("--append-system-prompt"), 1)
 
     def test_frame0_is_opt_in(self):
@@ -801,7 +801,7 @@ class RestrictedStart(unittest.TestCase):
                 self.assertEqual(json.loads(args[args.index("--settings") + 1])["enabledPlugins"], {})
 
     def test_no_chrome_and_trust_framing_follow_model_and_effort(self):
-        trust = ["--no-chrome", "--append-system-prompt", fc.TRUST_PROMPT]
+        trust = ["--no-chrome", "--append-system-prompt", fc.fc_crew.TRUST_PROMPT]
         self.assertEqual(self.start("wayfinder", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
         self.assertEqual(self.start("planner", effort="high")[:10], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--autocompact", "150k", "--settings"])
         self.assertEqual(self.start("designer")[:6], ["--model", "claude-opus-5-5", *trust, "--settings"])
@@ -809,7 +809,7 @@ class RestrictedStart(unittest.TestCase):
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
         args = self.start("wayfinder", model="pi:x/y")
         self.assertFalse({"--no-chrome", "--settings"} & set(args))
-        self.assertEqual(args[args.index("--skill") + 1], str(fc.CLI_REPO / "SKILL.md"))
+        self.assertEqual(args[args.index("--skill") + 1], str(fc.fc_crew.CLI_REPO / "SKILL.md"))
         self.assertNotIn("--disallowedTools", args)
 
     def tail(self, args):
@@ -881,7 +881,7 @@ class PiStart(unittest.TestCase):
                 mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing.ts"), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         args = list(start[start.index("--") + 1:])
         pairs = list(zip(args, args[1:]))

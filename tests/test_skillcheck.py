@@ -21,7 +21,7 @@ class SkillCheck(unittest.TestCase):
         (self.skill / "sections" / "lead.md").write_text("lead v1\n")
         (self.skill / "commands" / "planner.md").write_text("planner v1\n")
         (self.skill / "README.md").write_text("not the skill\n")
-        self.patches = [mock.patch.object(fc, "SKILL_DIR", self.skill), mock.patch.object(fc, "SKILL_SEEN", self.state)]
+        self.patches = [mock.patch.object(fc.fc_crew, "SKILL_DIR", self.skill), mock.patch.object(fc.fc_crew, "SKILL_SEEN", self.state)]
         for p in self.patches:
             p.start()
 
@@ -34,7 +34,7 @@ class SkillCheck(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role else {})
         stdin = io.StringIO(ev if isinstance(ev, str) else json.dumps(ev))
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, "stdin", stdin), mock.patch.object(sys, "stdout", out):
-            fc.cmd_skillcheck(None)
+            fc.fc_crew.cmd_skillcheck(None)
         return out.getvalue()
 
     def prompt(self, session="s1", text="go", role="crew"):
@@ -100,14 +100,14 @@ class SkillCheck(unittest.TestCase):
 
     def test_errors_print_nothing(self):
         self.assertEqual(self.hook("not json"), "")
-        with mock.patch.object(fc, "SKILL_DIR", self.skill / "missing"):
+        with mock.patch.object(fc.fc_crew, "SKILL_DIR", self.skill / "missing"):
             self.assertEqual(self.prompt(), "")
         self.assertEqual(self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "no session"}), "")
 
     def test_an_empty_session_gets_no_notice(self):  # the Stop hook's stdin without a session_id: sessions would share one file
-        self.assertIsNone(fc.skill_notice(""))
+        self.assertIsNone(fc.fc_crew.skill_notice(""))
         (self.skill / "SKILL.md").write_text("v2\n")
-        self.assertIsNone(fc.skill_notice(""))
+        self.assertIsNone(fc.fc_crew.skill_notice(""))
         self.assertFalse(self.state.exists() and any(self.state.iterdir()))
 
     def crew_start(self, proj, model):
@@ -121,9 +121,9 @@ class SkillCheck(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(time, "sleep"), mock.patch("builtins.print"), \
+                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(time, "sleep"), mock.patch("builtins.print"), \
                 mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
-            fc.cmd_crew(a)
+            fc.fc_crew.cmd_crew(a)
         return json.loads((proj / "results" / "crew" / "shop-eol.json").read_text())
 
     def snapshot(self, proj, live):
@@ -134,7 +134,7 @@ class SkillCheck(unittest.TestCase):
     def test_a_live_pi_teammate_hears_once_through_watch(self):  # pi runs no Claude hooks: watch tells the team lead, who relays it
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
         proj.mkdir(parents=True)
-        self.assertEqual(self.crew_start(proj, "pi:a/b")["skill"], fc.skill_hashes())
+        self.assertEqual(self.crew_start(proj, "pi:a/b")["skill"], fc.fc_crew.skill_hashes())
         before = self.snapshot(proj, live=True)
         self.assertEqual(fc.watch_events(before, self.snapshot(proj, live=True)), [])
         (self.skill / "SKILL.md").write_text("v2\n")

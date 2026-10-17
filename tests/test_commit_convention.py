@@ -40,8 +40,8 @@ class CommitConvention(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "verify.json").write_text(json.dumps({"commit_convention": CONV}))
         self.assertEqual(fc.fc_core.commit_convention(d), CONV)
-        self.assertIn("feat: add resume upload", fc.crew_preamble(d, "p-x", "t"))
-        self.assertNotIn("type prefix", fc.crew_preamble(Path(tempfile.mkdtemp()), "p-x", "t"))
+        self.assertIn("feat: add resume upload", fc.fc_crew.crew_preamble(d, "p-x", "t"))
+        self.assertNotIn("type prefix", fc.fc_crew.crew_preamble(Path(tempfile.mkdtemp()), "p-x", "t"))
 
 
 if __name__ == "__main__":
