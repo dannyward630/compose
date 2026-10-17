@@ -184,3 +184,41 @@ class FileCommand(unittest.TestCase):
 
 class Cli(unittest.TestCase):
     """`compose tool-bug` and `compose toolsmith` through the real entry point."""
+
+    def run_main(self, *args):
+        with mock.patch.object(sys, "argv", ["compose", *args]), mock.patch.object(fc.fc_config, "apply_config", return_value="default"), \
+                mock.patch.object(fc.fc_toolbug, "cmd_tool_bug") as bug, mock.patch.object(fc.fc_briefs, "cmd_toolsmith") as smith, \
+                mock.patch("sys.stderr", io.StringIO()):
+            fc.main()
+        return bug, smith
+
+    def test_tool_bug_passes_its_arguments(self):
+        bug, smith = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--comment", "3")
+        a = bug.call_args.args[0]
+        self.assertEqual((a.action, a.project, a.body, a.comment, a.new, a.approved), ("file", "shop", "b.md", 3, False, False))
+        smith.assert_not_called()
+        a = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--new", "--approved")[0].call_args.args[0]
+        self.assertEqual((a.comment, a.new, a.approved), (None, True, True))
+
+    def test_tool_bug_usage_errors(self):
+        self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md")[0].assert_called_once()
+        for args in (["file", "--body", "b.md", "--comment", "3", "--new"], ["file"], ["post", "--body", "b.md"], ["file", "--body", "b.md", "--comment", "x"]):
+            with self.subTest(args), self.assertRaises(SystemExit) as cm:
+                self.run_main("tool-bug", "--project", "shop", *args)
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_toolsmith_takes_only_repo_and_project(self):
+        bug, smith = self.run_main("toolsmith", "--repo", ".", "--project", "shop")
+        self.assertEqual((smith.call_args.args[0].repo, smith.call_args.args[0].project), (".", "shop"))
+        bug.assert_not_called()
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main("toolsmith", "--project", "shop", "--body", "b.md")
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_help_gives_each_a_one_line_summary(self):
+        with mock.patch("sys.stdout", io.StringIO()) as out, self.assertRaises(SystemExit):
+            self.run_main("--help")
+        lines = {l.split()[0]: l.split()[1:] for l in out.getvalue().splitlines() if l.startswith("    ") and l.split()}
+        for name in ("tool-bug", "toolsmith"):
+            with self.subTest(name):
+                self.assertTrue(lines.get(name))

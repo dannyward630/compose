@@ -39,7 +39,7 @@ HELPERS = {"fc_cost", "fc_mcp", "fc_sessions"}
 SETDEFAULTS = ["os.environ.setdefault('GRAFT_NO_GITIGNORE', '1')", "os.environ.setdefault('GRAFT_NO_IGNORE', '1')"]
 CONFIG_ONLY = ("DEFAULT_MODEL", "FALLBACK_MODEL", "OPENROUTER_KEY", "LINEAR_KEY", "WORKSPACE", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")
 LAUNCHER_SHA = "6da43b058089b473dce7bba234756d8af893868a06c45fa7cc8a0280ae40f676"
-SUBCOMMANDS = "doctor, init, run, verify, bench, resume, done, sync, tasks, spec-check, projects, cost, status, watch, top, stack, clean, groundwork, explore, graft, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
+SUBCOMMANDS = "doctor, init, run, verify, bench, resume, done, sync, tasks, spec-check, projects, cost, status, watch, top, stack, clean, groundwork, explore, graft, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, tool-bug, toolsmith, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
 
 
 def parse(name):
