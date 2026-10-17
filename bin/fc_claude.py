@@ -19,17 +19,15 @@ def headless_env():
 
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
 def crew_settings(role, cwd):
-    """The `--settings` JSON of a teammate session in `cwd`. Approvals passed here apply even before the folder is trusted (Claude Code's
-    MCP docs, "Project server approvals and workspace trust"); `claude -p` loads project servers without asking, so only these need it."""
+    """The `--settings` JSON of a teammate session in `cwd`."""
     enabled = {}
     try:
         enabled = (json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("enabledPlugins") or {})
     except (OSError, ValueError):
         pass
-    keep, wired = fc_mcp.keeps_skills(role), fc_mcp.wired_mcpjson(cwd)
+    keep = fc_mcp.keeps_skills(role)
     return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
-                       "enabledPlugins": {k: False for k in enabled if not k.startswith("compose@") and not (keep and k.startswith("figma@"))},
-                       **({"enabledMcpjsonServers": wired} if wired else {})})
+                       "enabledPlugins": {k: False for k in enabled if not k.startswith("compose@") and not (keep and k.startswith("figma@"))}})
 
 def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
