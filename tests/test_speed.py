@@ -26,10 +26,10 @@ class FormatOnPass(unittest.TestCase):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             (Path(cwd) / "a.go").write_text("package a\nfunc   F( ) int {\nreturn 1}\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            r = fc.run_task(repo, proj, task, 1)
+            r = fc.fc_implement.run_task(repo, proj, task, 1)
         self.assertEqual(r["status"], "passed")
         self.assertEqual(git("show", "fast/proj/001:a.go").stdout, "package a\n\nfunc F() int {\n\treturn 1\n}\n")
 
@@ -45,7 +45,7 @@ class FormatOnPass(unittest.TestCase):
         (wt / "bin.dat").write_bytes(b"\0\2")
         (wt / "old.mjs").write_bytes(b"a\n\n\n")
         git("add", "-A")
-        fc.format_files(wt, ["new.mjs", "bare.txt", "bin.dat", "old.mjs"], "HEAD")
+        fc.fc_implement.format_files(wt, ["new.mjs", "bare.txt", "bin.dat", "old.mjs"], "HEAD")
         self.assertEqual((wt / "new.mjs").read_bytes(), b"export {}\n")
         self.assertEqual((wt / "old.mjs").read_bytes(), b"a\n")
         self.assertEqual((wt / "bare.txt").read_bytes(), b"still none")

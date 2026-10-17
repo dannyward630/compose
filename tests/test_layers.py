@@ -43,7 +43,7 @@ class Grouping(unittest.TestCase):
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
         (r / "package.json").write_text('{"vite": "8"}\n'); (r / "yarn.lock").write_text("x\n" * 5000)
-        self.assertEqual(fc.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
+        self.assertEqual(fc.fc_implement.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
 
 
 class PrText(unittest.TestCase):

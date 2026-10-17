@@ -33,10 +33,10 @@ class Fallback(unittest.TestCase):
                 raise RuntimeError("provider refused the request")
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            return fc.run_task(repo, proj, task, 3, reset_files=reset_files), calls
+            return fc.fc_implement.run_task(repo, proj, task, 3, reset_files=reset_files), calls
 
     def test_turn_limit_leaves_room_for_the_tasks_test(self):
         root = Path(tempfile.mkdtemp())
@@ -53,9 +53,9 @@ class Fallback(unittest.TestCase):
             limits.append(timeout)
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            fc.run_task(repo, proj, task, 3)
+            fc.fc_implement.run_task(repo, proj, task, 3)
         self.assertGreaterEqual(limits[0], fc.fc_models.TURN_TIMEOUT + 300)
 
     def test_error_falls_back(self):
@@ -89,7 +89,7 @@ class Preflight(unittest.TestCase):
             if model == "pi:r/limited":
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             return "s", "OK", 0, {"cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl):
+        with mock.patch.object(fc.fc_implement, "implementer", impl):
             fc.preflight({PRIMARY, "pi:r/limited", "claude", None})  # a rate limit proves the model resolved; claude is not probed
             with self.assertRaises(SystemExit) as cm:
                 fc.preflight({PRIMARY, BACKUP})
@@ -212,7 +212,7 @@ class FixScope(unittest.TestCase):
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
         stages = iter([(False, {}, "finding"), (True, {}, "")])
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
                 mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
@@ -386,11 +386,11 @@ class RetryMessage(unittest.TestCase):
             seen.append(log.read_text() if log.exists() else None)
             (Path(cwd) / "a.txt").write_text(["a", "b", "yes"][len(prompts) - 1] + "\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "condense_failure", return_value=summary), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
+                mock.patch.object(fc.fc_implement, "condense_failure", return_value=summary), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", backup), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            return fc.run_task(repo, proj, task, 3), prompts, seen, log
+            return fc.fc_implement.run_task(repo, proj, task, 3), prompts, seen, log
 
     def test_retry_sends_a_short_tail_and_the_full_log_path(self):
         r, prompts, seen, log = self.run_three(summary="case_x expected yes, got a")

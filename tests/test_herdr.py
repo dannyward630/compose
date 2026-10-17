@@ -24,7 +24,7 @@ class AgentNames(unittest.TestCase):
 
     def test_implementer_routes_headless_outside_herdr(self):
         with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_models, "pi_turn", return_value=("s", "t", 0, {})) as pt:
-            fc.implementer("/tmp", "pi:x/y", "hi", None, task={"space": "w9"})
+            fc.fc_implement.implementer("/tmp", "pi:x/y", "hi", None, task={"space": "w9"})
             pt.assert_called_once()
 
 

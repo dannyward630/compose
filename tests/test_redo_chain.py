@@ -92,7 +92,7 @@ class KeepFinishedLayers(unittest.TestCase):
         for status in ("passed", "hand_done"):
             (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": status, "branch": "fast/p/001"}))
             with mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=AssertionError(f"a {status} layer was rebuilt")), mock.patch.object(fc.fc_core, "say"):
-                r = fc.run_task(self.repo, self.proj, {"id": "001", "title": "A", "files": [], "body": ""}, 1)
+                r = fc.fc_implement.run_task(self.repo, self.proj, {"id": "001", "title": "A", "files": [], "body": ""}, 1)
             self.assertEqual(r["status"], status)
             self.assertEqual(self.git("rev-parse", "fast/p/001"), self.tip)
 
@@ -102,10 +102,10 @@ class KeepFinishedLayers(unittest.TestCase):
         task = {"id": "001", "title": "A", "files": [], "body": ""}
         with mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=AssertionError("a hand_done task was rebuilt")), \
              mock.patch.object(fc.fc_linear, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc.fc_core, "say"):
-            self.assertEqual(fc.run_task(self.repo, self.proj, task, 1)["status"], "hand_done")
+            self.assertEqual(fc.fc_implement.run_task(self.repo, self.proj, task, 1)["status"], "hand_done")
         with mock.patch.dict(os.environ, {"FAST_CODING_REDO": "1"}), mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=RuntimeError("rebuilt")):
             with self.assertRaisesRegex(RuntimeError, "rebuilt"):
-                fc.run_task(self.repo, self.proj, task, 1)
+                fc.fc_implement.run_task(self.repo, self.proj, task, 1)
 
     def test_run_and_resume_schedule_only_the_tasks_that_need_work(self):
         (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")

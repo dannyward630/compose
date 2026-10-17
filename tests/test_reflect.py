@@ -262,7 +262,7 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
               [{"test_output": "AssertionError: expected 2, got 3"}]
         return {"id": meta["id"], "title": meta["title"], "status": st, "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": log}
     out = io.StringIO()
-    with mock.patch.object(fc, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
+    with mock.patch.object(fc.fc_implement, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
             mock.patch.object(fc.fc_worktree, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
             mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc.fc_change, "reflect", reflect), redirect_stdout(out):
         try:
@@ -374,10 +374,10 @@ class ImplementerContradiction(unittest.TestCase):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt)
             return "s", reply, 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "graft_pack", return_value=""), \
                 mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            return fc.run_task(repo, proj, meta, 3), prompts
+            return fc.fc_implement.run_task(repo, proj, meta, 3), prompts
 
     def test_a_contradiction_ends_the_task_without_more_attempts(self):
         found = "the brief says a.txt exports answer() / a.txt is plain text, a.txt:1"
@@ -392,14 +392,14 @@ class ImplementerContradiction(unittest.TestCase):
         self.assertEqual((r["status"], len(prompts)), ("failed", 3))
 
     def test_only_a_line_that_starts_with_it_counts(self):
-        self.assertIsNone(fc.contradiction("I would write CONTRADICTION: x / y if I found one"))
-        self.assertEqual(fc.contradiction("a\nCONTRADICTION: first / one\nCONTRADICTION: last / two"), "last / two")
+        self.assertIsNone(fc.fc_implement.contradiction("I would write CONTRADICTION: x / y if I found one"))
+        self.assertEqual(fc.fc_implement.contradiction("a\nCONTRADICTION: first / one\nCONTRADICTION: last / two"), "last / two")
 
     def test_markdown_around_the_line_still_counts(self):
         found = "brief says x / code shows y, a.txt:1"
         for line in (f"`CONTRADICTION: {found}`", f"**CONTRADICTION:** {found}", f"- CONTRADICTION: {found}", f"  CONTRADICTION: {found}"):
-            self.assertEqual(fc.contradiction(f"Read a.txt.\n{line}\n"), found, line)
-        self.assertIsNone(fc.contradiction("`CONTRADICTION: <what the brief says> / <what the code shows, file:line>`"))
+            self.assertEqual(fc.fc_implement.contradiction(f"Read a.txt.\n{line}\n"), found, line)
+        self.assertIsNone(fc.fc_implement.contradiction("`CONTRADICTION: <what the brief says> / <what the code shows, file:line>`"))
 
 
 class AutoReflect(unittest.TestCase):

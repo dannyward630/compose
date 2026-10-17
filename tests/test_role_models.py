@@ -80,8 +80,8 @@ class RoleModels(unittest.TestCase):
 
     def test_task_claude_model_routes_to_claude_code_with_that_model(self):
         with mock.patch.object(fc.fc_claude, "claude_once", return_value=(None, "", 0, {})) as co, mock.patch.object(fc.fc_models, "pi_turn") as pt:
-            fc.implementer("/tmp", "claude:claude-opus-5-5", "hi")
-            fc.implementer("/tmp", "claude", "hi")
+            fc.fc_implement.implementer("/tmp", "claude:claude-opus-5-5", "hi")
+            fc.fc_implement.implementer("/tmp", "claude", "hi")
         self.assertEqual([c.kwargs["model"] for c in co.call_args_list], ["claude-opus-5-5", None])
         pt.assert_not_called()
         self.assertIsNone(fc.fc_models.fallback_for("claude:claude-opus-5-5"))

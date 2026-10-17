@@ -206,16 +206,16 @@ class Triage(unittest.TestCase):
 class CondenseFailure(unittest.TestCase):
     def test_short_output_keyless_or_failing_calls_add_nothing(self):
         with mock.patch.object(fc.fc_models, "fast_json", side_effect=AssertionError("no call for short output")):
-            self.assertEqual(fc.condense_failure("FAIL x"), "")
+            self.assertEqual(fc.fc_implement.condense_failure("FAIL x"), "")
         long = "noise\n" * 400
         with mock.patch.object(fc.fc_models, "fast_env", return_value={}):
-            self.assertEqual(fc.condense_failure(long), "")
+            self.assertEqual(fc.fc_implement.condense_failure(long), "")
         with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
                 mock.patch.object(fc.fc_models, "fast_json", side_effect=TimeoutError()):
-            self.assertEqual(fc.condense_failure(long), "")
+            self.assertEqual(fc.fc_implement.condense_failure(long), "")
         with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
                 mock.patch.object(fc.fc_models, "fast_json", return_value={"summary": "TestScore: want 2, got 1"}):
-            self.assertEqual(fc.condense_failure(long), "TestScore: want 2, got 1")
+            self.assertEqual(fc.fc_implement.condense_failure(long), "TestScore: want 2, got 1")
 
 
 class CrewWorkdir(unittest.TestCase):

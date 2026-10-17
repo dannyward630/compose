@@ -387,7 +387,7 @@ class TestHang(unittest.TestCase):
     def test_a_hanging_test_fails_fast_with_a_reason(self):
         import tempfile, time
         t0 = time.time()
-        r = fc.run_test({"test": "sleep 30", "test_timeout": "1"}, tempfile.mkdtemp())
+        r = fc.fc_implement.run_test({"test": "sleep 30", "test_timeout": "1"}, tempfile.mkdtemp())
         self.assertLess(time.time() - t0, 10)
         self.assertEqual(r.returncode, 124)
         self.assertIn("hangs", r.stderr)
@@ -414,7 +414,7 @@ class JevLeash(unittest.TestCase):
 
     def test_a_jev_case_is_killed_at_its_limit(self):
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
+             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
             r = fc.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.tool_error(r["stderr"]))
