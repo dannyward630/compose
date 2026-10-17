@@ -330,7 +330,8 @@ class Workspaces(unittest.TestCase):
         self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test-d0d0", "linear": "lin-test-def"},
                                                         "work": {"openrouter": "sk-or-test-w1x2"}}, "typesafe": "ts-test"}))
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.object(fc.fc_config, "AUTH_PATH", self.auth),
-                  mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env"), mock.patch.dict(os.environ, {}),
+                  mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env"),
+                  mock.patch.dict(os.environ, {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}, clear=True),  # the real environment may hold real keys
                   mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
                   mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)):
             p.start(); self.addCleanup(p.stop)
@@ -338,13 +339,18 @@ class Workspaces(unittest.TestCase):
     def keys(self):
         return fc.fc_config.OPENROUTER_KEY, fc.fc_config.LINEAR_KEY, os.environ.get("OPENROUTER_API_KEY"), os.environ.get("TEXT_MODEL_API_KEY")
 
+    def same(self, got, want):
+        """Compares item by item without printing either side: a wrong value may be a real key."""
+        for i, (g, w) in enumerate(zip(got, want, strict=True)):
+            self.assertTrue(g == w, f"item {i} differs")
+
     def test_keys_come_from_auth_json_with_the_default_fallback(self):
-        self.assertEqual((fc.fc_config.apply_config(), *self.keys()), ("work", "sk-or-test-w1x2", "lin-test-def", "sk-or-test-w1x2", "sk-or-test-w1x2"))
-        self.assertEqual((os.environ.get("TYPESAFE_API_KEY"), "OPENCODE_CONFIG_CONTENT" in os.environ), ("ts-test", False))  # OpenCode reads its key from a file
+        self.same((fc.fc_config.apply_config(), *self.keys()), ("work", "sk-or-test-w1x2", "lin-test-def", "sk-or-test-w1x2", "sk-or-test-w1x2"))
+        self.same((os.environ.get("TYPESAFE_API_KEY"), "OPENCODE_CONFIG_CONTENT" in os.environ), ("ts-test", False))  # OpenCode reads its key from a file
         self.assertEqual((fc.fc_config.DEFAULT_MODEL, fc.fc_models.fallback_for("pi:a/b")), ("pi:a/b", "pi:g/h"))
         self.assertEqual((fc.fc_config.FALLBACK_AFTER, fc.fc_config.TEST_READER), (3, "claude:claude-haiku-x"))
         ws("personal")  # no auth.json entry of its own
-        self.assertEqual((fc.fc_config.apply_config(), *self.keys()), ("personal", "sk-or-test-d0d0", "lin-test-def", "sk-or-test-d0d0", "sk-or-test-d0d0"))
+        self.same((fc.fc_config.apply_config(), *self.keys()), ("personal", "sk-or-test-d0d0", "lin-test-def", "sk-or-test-d0d0", "sk-or-test-d0d0"))
 
     def test_old_keys_move_first_one_stderr_line_each_and_stdout_stays_clean(self):
         import fc_auth
@@ -355,7 +361,7 @@ class Workspaces(unittest.TestCase):
         with mock.patch.object(fc_auth, "move_keys", side_effect=move) as moved, redirect_stdout(out), redirect_stderr(err):
             fc.fc_config.apply_config()
         moved.assert_called_once_with(self.path, fc.fc_config.ENV_FILE, self.auth)
-        self.assertEqual((err.getvalue().splitlines(), out.getvalue(), fc.fc_config.OPENROUTER_KEY), (move(), "", "sk-or-test-mv01"))
+        self.same((err.getvalue().splitlines(), out.getvalue(), fc.fc_config.OPENROUTER_KEY), (move(), "", "sk-or-test-mv01"))
 
     def test_parallel_comes_from_the_config_and_a_workspace_overrides_it(self):
         fc.fc_config.apply_config()
@@ -376,11 +382,11 @@ class Workspaces(unittest.TestCase):
     def test_add_key_remove_and_listing_use_auth_json_and_never_print_a_key(self):
         listing = ws("add", "client-x", stdin="sk-or-test-c1c1\n") + ws("key", "client-x", stdin="lin-test-cx\n", linear=True)
         listing += ws("key", "default", stdin="sk-or-test-r0t8\n") + ws()
-        self.assertEqual(json.loads(self.auth.read_text())["workspaces"]["client-x"], {"openrouter": "sk-or-test-c1c1", "linear": "lin-test-cx"})
+        self.same([json.loads(self.auth.read_text())["workspaces"]["client-x"]], [{"openrouter": "sk-or-test-c1c1", "linear": "lin-test-cx"}])
         for line in ("work             openrouter key …w1x2, linear key inherits default", "client-x         openrouter key …c1c1, linear key set",
                      "default          openrouter key …r0t8, linear key set"):
             self.assertIn(line, listing)
-        self.assertNotRegex(listing + self.path.read_text(), "test|api_key")  # no key printed, none in config.json
+        self.assertFalse(any(w in listing + self.path.read_text() for w in ("-test-", "api_key")))  # no key printed, none in config.json
         ws("remove", "client-x")
         self.assertFalse({"client-x"} & {*json.loads(self.auth.read_text())["workspaces"], *fc.fc_config.read_config()["workspaces"]})
 
