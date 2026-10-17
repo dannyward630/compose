@@ -1,4 +1,4 @@
-import io, json, os, stat, subprocess, sys, tempfile, unittest
+import io, json, os, re, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -6,6 +6,7 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import compose as fc
+import fc_steps
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
 TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "trail": "0.23.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
@@ -14,8 +15,8 @@ SKILLS = (".claude/skills/herdr/SKILL.md", ".claude/plugins/marketplaces/i-have-
 
 
 class Doctor(unittest.TestCase):
-    """check_deps looks only at PATH and the skill files under HOME: one MISSING line per absent or too-old entry, and only the
-    required ones come back (those stop init)."""
+    """check_deps walks the setup steps table with its check: one MISSING line per row that is not ok, and only the required
+    rows come back (those stop init)."""
     def setUp(self):
         self.bin = Path(tempfile.mkdtemp()) / "bin"
         self.bin.mkdir()
@@ -40,69 +41,74 @@ class Doctor(unittest.TestCase):
         (self.home / ".config" / "herdr").mkdir(parents=True, exist_ok=True)
         (self.home / ".config" / "herdr" / "config.toml").write_text(text)
 
-    def deps(self):
+    def deps(self, role=None):
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            bad = fc.fc_init.check_deps()
+            bad = fc.fc_init.check_deps(role)
         return bad, [l for l in out.getvalue().splitlines() if l.startswith("MISSING")]
 
-    def test_all_present(self):
-        self.assertEqual(self.deps(), ([], []))
+    def rows(self, *names):  # the real rows by name, in table order
+        return mock.patch.object(fc_steps, "STEPS", tuple(r for r in fc_steps.STEPS if r[0] in names))
 
-    def test_missing_required_tool_and_skill_file(self):
-        (self.bin / "herdr").unlink()
-        (self.home / SKILLS[0]).unlink()
-        bad, lines = self.deps()
-        self.assertEqual(bad, ["herdr", "herdr skill"])
-        self.assertEqual(lines[0], "MISSING: herdr (install: see https://herdr.dev)")
-        self.assertIn("MISSING: herdr skill (install: mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md)", lines)
+    def test_rows_report_misses_floors_and_levels(self):
+        fake = mock.patch.object(fc_steps, "STEPS", (
+            ("herdr", "herdr", "see https://herdr.dev", "required", False, "run"),
+            ("treehouse", "treehouse", "brew install treehouse", "default", False, "run"),
+            ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", "required", False, "run"),
+            ("herdr skill", SKILLS[0], "herdr --skill", "required", False, "run"),
+            ("superpowers", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers", "default", True, "run"),
+            ("framelink-figma", lambda c: ("framelink-figma" in fc_steps.user_mcp_servers(), ""), "claude mcp add x", "designer", True, "run")))
+        with fake:
+            self.assertEqual(self.deps(), ([], []))
+            self.fake("herdr", "herdr 0.8.0")
+            self.fake("treehouse", "v2.0.1")
+            self.fake("gh", "gh version 2.94.0", body='[ "$1" = stack ] && exit 1')
+            (self.home / SKILLS[0]).unlink()
+            (self.home / SKILLS[2]).unlink()
+            (self.home / ".claude.json").unlink()
+            self.assertEqual(self.deps(), (["herdr", "gh stack", "herdr skill"], [
+                "MISSING: herdr 0.8.0 is older than 0.9.3 (install: see https://herdr.dev)",
+                "MISSING: treehouse 2.0.1 is older than 3.1.2 (install: brew install treehouse) - optional",
+                "MISSING: gh stack (install: gh extension install github/gh-stack)",
+                "MISSING: herdr skill (install: herdr --skill)",
+                "MISSING: superpowers (install: claude plugin install superpowers) - optional",
+                "MISSING: framelink-figma (install: claude mcp add x) - needed for the designer"]))
+            self.assertEqual(self.deps("designer"), (["framelink-figma"], ["MISSING: framelink-figma (install: claude mcp add x)"]))
 
-    def test_gh_without_the_stack_extension(self):
-        self.fake("gh", "gh version 2.94.0", body='[ "$1" = stack ] && exit 1')  # `gh stack --version` fails: no extension
-        bad, lines = self.deps()
-        self.assertEqual(bad, ["gh stack"])
-        self.assertEqual(lines, ["MISSING: gh stack (install: gh extension install github/gh-stack)"])
+    def test_dangling_owned_link(self):
+        self.home = self.home.resolve()
+        os.environ["HOME"] = str(self.home)
+        link = self.home / ".local" / "bin" / "compose"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(self.home / "gone" / "compose")
+        with self.rows("compose CLI link"):
+            self.assertEqual(self.deps(), (["compose CLI link"], [
+                f"MISSING: compose CLI link (dangling link {link} -> {self.home}/gone/compose; install: compose setup)"]))
 
-    def test_old_version_counts_as_missing(self):
-        self.fake("herdr", "herdr 0.8.0")
-        self.fake("treehouse", "v2.0.1")
-        bad, lines = self.deps()
-        self.assertEqual(bad, ["herdr"])
-        self.assertEqual(lines, ["MISSING: herdr 0.8.0 is older than 0.9.3 (install: see https://herdr.dev)",
-                                 f"MISSING: treehouse 2.0.1 is older than 3.1.2 (install: {fc.fc_worktree.TREEHOUSE_INSTALL}) - optional"])
-
-    def test_optional_tools_only_warn(self):
-        for t in ("pi", "bp", "treehouse", "trail"):
-            (self.bin / t).unlink()
-        bad, lines = self.deps()
-        self.assertEqual(bad, [])
-        self.assertEqual([l.split(" (")[0] for l in lines], ["MISSING: treehouse", "MISSING: trail", "MISSING: pi", "MISSING: bp"])
-        self.assertTrue(all(l.endswith(" - optional") for l in lines))
-        self.assertIn("MISSING: trail (install: npm i -g @trailhq/trail-code) - optional", lines)
-
-    def test_framelink_is_required_only_for_the_designer(self):
-        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"frame0": {}}}))
-        (self.home / SKILLS[-1]).unlink()
-        bad, lines = self.deps()
-        self.assertEqual(bad, [])  # doctor and init only warn
-        self.assertEqual(lines, [f"MISSING: framelink-figma (install: {fc.fc_init.FRAMELINK_ADD}) - needed for the designer",
-                                 "MISSING: framelink-figma token (install: put a Figma personal access token in "
-                                 "~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600) - needed for the designer"])
+    def test_key_rows_name_the_key_never_a_value(self):
+        auth = self.home / ".config" / "compose" / "auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test"}}}))
+        (self.home / SKILLS[-1]).write_text("FIGMA_API_KEY=figd-test\n")
         out = io.StringIO()
-        with mock.patch("sys.stdout", out):
-            self.assertEqual(fc.fc_init.check_deps("designer"), ["framelink-figma", "framelink-figma token"])
-        self.assertEqual(len(out.getvalue().splitlines()), 2)  # only what the designer needs, nothing else
-        (self.home / ".claude.json").unlink()  # no Claude Code config at all counts as not registered
-        with mock.patch("sys.stdout", io.StringIO()):
-            self.assertIn("framelink-figma", fc.fc_init.check_deps("designer"))
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", auth.parent / "config.json"), mock.patch.object(fc.fc_config, "AUTH_PATH", auth), \
+             mock.patch.object(fc.fc_config, "ENV_FILE", auth.parent / ".env"), mock.patch.object(fc_steps, "FRAMELINK_ENV", self.home / SKILLS[-1]), \
+             self.rows(*(r[0] for r in fc_steps.STEPS if r[5] == "key")), mock.patch("sys.stdout", out):
+            bad = fc.fc_init.check_deps()
+        self.assertEqual(("TypeSafe key" in bad, "OpenRouter key" in bad, "framelink-figma token" in out.getvalue()), (True, False, False))
+        self.assertEqual(len([l for l in out.getvalue().splitlines() if l.startswith("MISSING: TypeSafe key") and "(install: " in l]), 1)
+        self.assertFalse({"sk-or-test", "figd-test"} & set(re.findall(r"[\w-]+", out.getvalue())))
 
-    def test_designer_start_stops_without_framelink(self):
-        (self.home / SKILLS[-1]).unlink()
-        repo = Path(tempfile.mkdtemp())
-        r = subprocess.run([sys.executable, CLI, "designer", "--project", "p", "--repo", str(repo)], capture_output=True, text=True,
-                           env={**os.environ})
+    def test_init_and_designer_start_stop_on_a_miss(self):
+        (self.home / ".claude.json").unlink()
+        repo = Path(tempfile.mkdtemp())  # not even a git repository: init must stop before it touches anything
+        env = {**os.environ, "COMPOSE_NO_TREEHOUSE": "1"}
+        r = subprocess.run([sys.executable, CLI, "init", "--project", "p", "--repo", str(repo)], capture_output=True, text=True, env=env)
+        self.assertEqual((r.returncode, list(repo.iterdir())), (1, []))
+        self.assertIn("init stopped", r.stderr)
+        r = subprocess.run([sys.executable, CLI, "designer", "--project", "p", "--repo", str(repo)], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("MISSING: framelink-figma token", r.stdout)
+        self.assertIn("MISSING: framelink-figma (", r.stdout)
         self.assertIn("designer stopped", r.stderr)
 
     def test_herdr_toasts_and_sounds_warn_when_not_off(self):
@@ -118,26 +124,6 @@ class Doctor(unittest.TestCase):
         self.assertIsNone(fc.fc_init.herdr_toast_warning())
         (self.home / ".config" / "herdr" / "config.toml").unlink()  # no config: sounds are on by default
         self.assertIn("(ui.sound.enabled=true)", fc.fc_init.herdr_toast_warning())
-
-    def test_doctor_and_init_through_the_cli(self):
-        env = {**os.environ, "COMPOSE_NO_TREEHOUSE": "1"}
-        r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, "every tool compose needs is installed"))
-        self.herdr_config('[ui.toast]\ndelivery = "system"\n')
-        r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)  # a warning, never a stop
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual([l.split(" ")[0] for l in r.stdout.strip().splitlines()], ["WARNING:", "every"])
-        self.herdr_config('[ui.toast]\ndelivery = "off"\n\n[ui.sound]\nenabled = false\n')
-        (self.bin / "claude").unlink()
-        r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)
-        self.assertEqual((r.returncode, r.stdout.strip()), (1, "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"))
-        repo = Path(tempfile.mkdtemp())  # not even a git repository: init must stop before it touches anything
-        r = subprocess.run([sys.executable, CLI, "init", "--project", "p", "--repo", str(repo)], capture_output=True, text=True, env=env)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("MISSING: claude", r.stdout)
-        self.assertIn("init stopped", r.stderr)
-        self.assertEqual(list(repo.iterdir()), [])
-        self.assertFalse((repo.parent / "compose-p").exists())
 
 
     GH_WARNING = "WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)"
