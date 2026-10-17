@@ -6,51 +6,52 @@ import fc_core, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
 FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
 FRAMELINK_ADD = f"claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry"
 
-GRAFT_INIT = ["graft", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
+TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
 
 def existing_repo(wt):
     """True when the repository already has code: a tracked file beyond a README, a license, or git's own dotfiles."""
     files = fc_core.sh(["git", "ls-files"], wt, check=False).stdout.split()
     return any(not re.match(r"(?i)(readme|licen[cs]e|\.git)", Path(f).name) for f in files)
 
-def setup_graft(wt):
-    """An existing repo gets graft before anyone reads its code: wired for Claude Code (unless that would touch a tracked
-    file) and built. graft's files stay out of git through info/exclude. Safe to run again."""
-    if os.environ.get("COMPOSE_NO_GRAFT"):
-        return fc_core.say("graft    skipped: COMPOSE_NO_GRAFT is set")
+def setup_trail(wt):
+    """An existing repo gets trail before anyone reads its code: wired for Claude Code (unless that would touch a tracked
+    file) and built. trail's files stay out of git through info/exclude. Safe to run again."""
+    if os.environ.get("COMPOSE_NO_TRAIL"):
+        return fc_core.say("trail    skipped: COMPOSE_NO_TRAIL is set")
     if not existing_repo(wt):
-        return fc_core.say("graft    skipped: a new repository has no code to map yet")
-    if not shutil.which("graft"):
-        return fc_core.say(f"graft    not installed: `{GRAFT_INSTALL}`, then `compose graft --project <slug>`")
-    if not (wt / ".claude" / "helpers" / "graft-hooks.cjs").exists():
-        p = fc_core.sh(GRAFT_INIT + ["--dry-run", str(wt)], wt, timeout=120, check=False)
-        dry = p.stdout + p.stderr  # graft prints the list on stderr
+        return fc_core.say("trail    skipped: a new repository has no code to map yet")
+    if not shutil.which("trail"):
+        return fc_core.say(f"trail    not installed: `{TRAIL_INSTALL}`, then `compose trail --project <slug>`")
+    if not (wt / ".trail" / "hook.cjs").exists():
+        p = fc_core.sh(TRAIL_INIT + ["--dry-run", str(wt)], wt, timeout=120, check=False)
+        dry = p.stdout + p.stderr  # trail prints the list on stderr
         section = dry.split("this repo:", 1)[1].split("\n\n", 1)[0] if "this repo:" in dry else ""
         paths = sorted(set(re.findall(r"^\s+(\S+)", section, re.M)))
         tracked = [f for f in paths if fc_core.sh(["git", "ls-files", "--error-unmatch", f], wt, check=False).returncode == 0]
         if tracked:
-            fc_core.say(f"graft    init skipped: it would edit tracked {', '.join(tracked)}; building the graph only")
+            fc_core.say(f"trail    init skipped: it would edit tracked {', '.join(tracked)}; building the graph only")
         else:
-            fc_core.sh(GRAFT_INIT + [str(wt)], wt, timeout=300, check=False)
+            fc_core.sh(TRAIL_INIT + [str(wt)], wt, timeout=300, check=False)
             fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
-            fc_core.say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
-    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/"])  # the graph itself, also when `compose graft` runs without init
-    fc_worktree.stamp_graft_wiring(wt)
-    fc_core.sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
-    fc_core.say("graft    graph built")
+            fc_core.say(f"trail    wired for Claude Code ({len(paths)} files, kept out of git)")
+    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json"])  # the graph and wiring, also when trail runs without init
+    fc_worktree.stamp_trail_wiring(wt)
+    (wt / ".trail" / "cache").mkdir(parents=True, exist_ok=True)  # trail build puts the map in graft/ unless .trail/cache/ exists first
+    fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
+    fc_core.say("trail    graph built")
 
 def cmd_graft(a):
-    """Set graft up in the project's worktree again (after installing graft, or to rebuild the graph)."""
-    setup_graft(fc_herdr.project_worktree(fc_core.project_dir(a)))
+    """Set trail up in the project's worktree again (after installing trail, or to rebuild the graph)."""
+    setup_trail(fc_herdr.project_worktree(fc_core.project_dir(a)))
 
 HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
 TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
-GRAFT_INSTALL = "npm i -g @nanonets/graft"
+TRAIL_INSTALL = "npm i -g @trailhq/trail-code"
 DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use.
     # required is True, False, or the one role that needs it: doctor and init only warn about that one, and that role's start stops
     ("herdr", "herdr", "see https://herdr.dev", True, HERDR_MIN),
     ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
-    ("graft", "graft", GRAFT_INSTALL, False, None),
+    ("trail", "trail", TRAIL_INSTALL, False, None),
     ("gh", "gh", "brew install gh", True, None),
     ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", True, None),
     ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", True, None),
@@ -80,7 +81,7 @@ def version_of(tool):
 
 def check_deps(role=None):
     """Print one `MISSING: <name> (install: <command>)` line per tool or skill file that is absent (or below its floor), without
-    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, graft) only warn.
+    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, trail) only warn.
     With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
     bad = []
     for name, how, install, needed, floor in DEPS:
@@ -201,7 +202,7 @@ def cmd_init(a):
         fc_core.sh(["git", "add", ".gitignore"], wt)
         fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
-    setup_graft(wt)
+    setup_trail(wt)
     repo_link = here / ".compose" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
     if repo_link.exists() and not (wt / ".compose" / "linear.json").exists():
         (wt / ".compose" / "linear.json").write_text(repo_link.read_text())

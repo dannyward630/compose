@@ -125,7 +125,7 @@ def default_branch(repo):
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
-    for d in (".compose", "graft", ".trail/cache"):
+    for d in (".compose", "graft", ".trail"):
         t = Path(path) / d
         if t.is_symlink() or t.is_file():
             t.unlink()
@@ -205,14 +205,14 @@ def dep_dirs(wt):
     ignored = fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
     return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in fc_config.DEP_DIRS]
 
-def stamp_graft_wiring(wt):
-    """graft's session-start hook rewrites the wired files whenever graft/.cache/wiring-stamp.json is missing or names another
-    version, and graft/ is git-ignored, so every fresh worktree or clone would get a tracked .claude/settings.json edited.
-    A stamp at the installed version makes the hook leave tracked wiring alone."""
-    if not shutil.which("graft") or fc_core.sh(["git", "ls-files", "--error-unmatch", ".claude/helpers/graft-hooks.cjs"], wt, check=False).returncode:
+def stamp_trail_wiring(wt):
+    """trail's session-start hook rewrites the wired files whenever .trail/cache/.cache/wiring-stamp.json is missing or names
+    another version, and .trail/ is git-ignored, so every fresh worktree or clone would get a tracked .claude/settings.json
+    edited. A stamp at the installed version makes the hook leave tracked wiring alone."""
+    if not shutil.which("trail") or fc_core.sh(["git", "ls-files", "--error-unmatch", ".trail/hook.cjs"], wt, check=False).returncode:
         return
-    version = fc_core.sh(["graft", "--version"], wt, check=False).stdout.strip()
-    stamp = wt / "graft" / ".cache" / "wiring-stamp.json"
+    version = fc_core.sh(["trail", "--version"], wt, check=False).stdout.strip()
+    stamp = wt / ".trail" / "cache" / ".cache" / "wiring-stamp.json"
     if version and not (stamp.exists() and json.loads(stamp.read_text() or "{}").get("version") == version):
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.write_text(json.dumps({"version": version, "hosts": ["claude"], "opts": {"global": False, "mcp": True, "hooks": True, "statusline": True}}))
@@ -227,8 +227,8 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
     commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
     deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.trail/", "/.ignore", *("/" + d for d in deps)])
-    stamp_graft_wiring(wt)
+    exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json", "/.ignore", *("/" + d for d in deps)])
+    stamp_trail_wiring(wt)
     if install and borrow:
         stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())
         locks = "".join(l + "\n" for l in fc_core.sh(["git", "ls-tree", "-r", "HEAD"], wt, check=False).stdout.splitlines()
