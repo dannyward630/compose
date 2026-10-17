@@ -17,12 +17,16 @@ def snap(proj):
 
 _patches = [mock.patch.object(time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
             mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: []),  # no test runs the real `claude mcp list`
-            mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"})]  # every start and watch here is the team lead's unless the test clears it: the caller's own role never decides who a teammate reports to
+            mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}),  # every start and watch here is the team lead's unless the test clears it: the caller's own role never decides who a teammate reports to
+            mock.patch.dict(os.environ)]  # restores the herdr variables setUpModule drops
+HERDR_VARS = ("HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_WORKSPACE_ID")  # run inside herdr, a `done` report would start a real tab close against the live socket
 
 
 def setUpModule():
     for p in _patches:
         p.start()
+    for v in HERDR_VARS:
+        os.environ.pop(v, None)
 
 
 def tearDownModule():
