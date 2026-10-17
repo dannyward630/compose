@@ -16,7 +16,7 @@ Install each of these once per machine.
 | Claude Code | the team lead, every teammate session, model probes, `frame0` registration | [claude.com/claude-code](https://claude.com/claude-code) |
 | OpenRouter account and key | implementers, fixers, Mercury review | see [Keys](#keys) |
 | Linear account | the plan, stories, tasks, and decisions | Linear MCP connected in Claude Code; optional API key per [workspace](workspaces.md) |
-| gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true`; `gh auth login` is needed to file compose bugs as issues (`compose doctor` warns when gh is not logged in) |
+| gh CLI and gh-stack | stacks and draft PRs | `brew install gh && gh extension install github/gh-stack`, then `git config rerere.enabled true` |
 | macOS userland | `lsof`, `ps`, `pgrep`, `kill`, `open`: cleanup and launching Frame0 | ships with macOS |
 
 If you skip gh-stack, you can still use `run --no-stack`.
