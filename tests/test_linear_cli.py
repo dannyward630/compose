@@ -114,6 +114,27 @@ class LinearStates(unittest.TestCase):
         fc.fc_linear.linear_event(self.proj, {}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
 
+    def done(self, only):
+        (self.proj / "results").mkdir(exist_ok=True)
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": "003", "title": "a", "linear": "ENG-3"},
+                                                                                {"id": "004", "title": "b", "linear": "ENG-4"}]}))
+        with redirect_stdout(io.StringIO()), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
+            fc.fc_status.cmd_done(SimpleNamespace(repo=str(self.proj), only=only, note="finished by hand in the lead's tab"))
+
+    def test_done_by_hand_moves_the_task_in_review_and_rolls_up(self):
+        self.done("003")
+        self.assertEqual([self.lin.state[i] for i in ("ENG-3", "ENG-2", "ENG-1")], ["In Review", "In Progress", "In Progress"])
+        self.assertIn("finished by hand in the lead's tab", self.lin.comments[0][1])
+        self.done("004")
+        self.assertEqual([self.lin.state[i] for i in ("ENG-4", "ENG-2", "ENG-1")], ["In Review", "In Review", "In Progress"])
+
+    def test_done_by_hand_without_a_key_says_so_once(self):
+        said = []
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
+            self.done("003,004")
+        self.assertEqual(self.lin.calls, 0)
+        self.assertEqual(len(said), 1); self.assertIn("--linear", said[0])
+
 class SyncFromLinear(unittest.TestCase):
     """Feature ENG-1 > stories ENG-2, ENG-3 > tasks; ENG-2 has 3 tasks served 2 per page."""
     def setUp(self):

@@ -159,8 +159,8 @@ def linear_roll_up(proj, ident, verified=False):
         ident = (issue.get("parent") or {}).get("identifier")
 
 def linear_event(proj, meta, event, result=None):
-    """One task event through the state table: `dispatched` moves the task In Progress, `passed` In Review with a comment,
-    `failed` keeps it In Progress with the failure as a comment; then its story and the feature roll up."""
+    """One task event through the state table: `dispatched` moves the task In Progress, `passed` and `hand_done` In Review
+    with a comment, `failed` keeps it In Progress with the failure as a comment; then its story and the feature roll up."""
     if not meta.get("linear"):
         return
     if not linear_ready():
@@ -172,6 +172,9 @@ def linear_event(proj, meta, event, result=None):
         elif event == "passed":
             linear_move(issue, "In Review")
             linear_comment(issue, f"Passed: branch `{result['branch']}`, {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`.")
+        elif event == "hand_done":
+            linear_move(issue, "In Review")
+            linear_comment(issue, f"Finished by hand: {result['note']}")
         else:
             linear_move(issue, "In Progress")
             last = (result.get("log") or [{}])[-1]

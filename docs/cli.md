@@ -60,7 +60,7 @@ These commands load the tasks, dispatch them, and steer the run.
 | `sync` | Stores the feature and its task issues: `--from-linear` reads them from Linear, else JSON on stdin |
 | `tasks` | Prints the task list to review, with files, `after`, and tests. It warns on shared files |
 | `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel 3`, `--redo`, `--no-stack`, and `--trunk <branch>` |
-| `done` | Records tasks finished by hand with `--only <ids> --note <why>` |
+| `done` | Records tasks finished by hand with `--only <ids> --note <why>` and moves them In Review on Linear |
 | `triage` | Has a fast model clean or flag each passed task (`run` ends with it) |
 | `resume` | Continues a run or verify that stopped on a billing halt |
 | `reflect` | Screens the settled decisions against evidence with Jev, using `--evidence -` and `--against "<line>"`. `--dismiss "<why>"` marks the evidence so far as answered, so later screens skip it |

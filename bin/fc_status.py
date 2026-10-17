@@ -1,6 +1,6 @@
 import json, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear
 
 
 def task_state(repo, proj, meta, trunk_head):
@@ -133,7 +133,8 @@ def cmd_status(a):
             return
 
 def cmd_done(a):
-    """Record that the team lead finished tasks by hand (status hand_done) so `status` tells the truth. Requires a reason."""
+    """Record that the team lead finished tasks by hand (status hand_done) so `status` tells the truth, and move each one In
+    Review on Linear with the reason, rolling its story and feature up as a passed task does. Requires a reason."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",") if x.strip()]
     (proj / "results").mkdir(exist_ok=True)
@@ -149,6 +150,7 @@ def cmd_done(a):
                      "cost": prev.get("cost", 0.0), "branch": prev.get("branch", f"fast/{proj.name}/{tid}")})
         fc_core.atomic_write(res, json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
+        fc_linear.linear_event(proj, meta, "hand_done", prev)
 
 def cmd_top(a):
     """Check out the project's stack top in the CLI worktree and print its path, for manual testing of the whole feature
