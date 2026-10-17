@@ -68,7 +68,7 @@ class Doctor(unittest.TestCase):
         bad, lines = self.deps()
         self.assertEqual(bad, ["herdr"])
         self.assertEqual(lines, ["MISSING: herdr 0.8.0 is older than 0.9.3 (install: see https://herdr.dev)",
-                                 f"MISSING: treehouse 2.0.1 is older than 3.1.2 (install: {fc.TREEHOUSE_INSTALL}) - optional"])
+                                 f"MISSING: treehouse 2.0.1 is older than 3.1.2 (install: {fc.fc_worktree.TREEHOUSE_INSTALL}) - optional"])
 
     def test_optional_tools_only_warn(self):
         for t in ("pi", "bp", "treehouse", "graft"):

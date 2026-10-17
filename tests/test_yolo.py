@@ -30,7 +30,7 @@ class Yolo(unittest.TestCase):
         a = SimpleNamespace(repo=".", project="hw", push=push, words=list(words))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc, "watch_snapshot", return_value=snapshot or snap()), \
-                mock.patch.object(fc, "stack_order", return_value=[]), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
                 mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
             fc.cmd_yolo(a)
         return out.getvalue()
@@ -141,7 +141,7 @@ class Yolo(unittest.TestCase):
         since = json.loads(self.file.read_text())["since"]
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
-                mock.patch.object(fc, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
             lines = fc.render_status(Path("."), [self.proj]).splitlines()
             self.assertIn(f"  yolo on (push) since {since}", lines)
             self.file.write_text(json.dumps({"since": since, "push": False, "words": "", "decisions": []}))

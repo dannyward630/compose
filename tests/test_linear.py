@@ -144,8 +144,8 @@ class DesignTasks(unittest.TestCase):
                 fc.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False))
         self.assertEqual([m["id"] for m in run.call_args.args[2]], ["002"])
         self.assertIn("no tasks on Linear under this feature carry a fast-coding block", str(e.exception))
-        with mock.patch.object(fc, "task_branches", return_value={"fast/p/001": None, "fast/p/002": None}):
-            self.assertEqual(fc.stack_order(Path("."), self.proj), ["fast/p/002"])
+        with mock.patch.object(fc.fc_worktree, "task_branches", return_value={"fast/p/001": None, "fast/p/002": None}):
+            self.assertEqual(fc.fc_worktree.stack_order(Path("."), self.proj), ["fast/p/002"])
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask:
             fc.jev_acceptance({}, self.proj, "diff")

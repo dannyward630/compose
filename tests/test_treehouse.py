@@ -56,7 +56,7 @@ class Treehouse(unittest.TestCase):
         fc.collect_tests(proj)
         self.assertTrue((wt / "t_test.txt").exists())
         self.assertEqual(self.status()[slot.resolve()], "available")  # back in the pool, installs and all
-        self.assertEqual(fc.slots(proj), {})
+        self.assertEqual(fc.fc_worktree.slots(proj), {})
 
     def test_a_collected_test_slot_can_be_leased_again(self):
         # `return` resets a slot to its lease's base, and treehouse reuses a slot only when its commit is an ancestor of the next
@@ -70,7 +70,7 @@ class Treehouse(unittest.TestCase):
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
         fc.collect_tests(proj)
         self.git("checkout", "-qb", "next"); self.git("commit", "-q", "--allow-empty", "-m", "main moved on"); self.git("checkout", "-q", "main")
-        again = fc.slot_on(self.repo, "next", "fast-coding:p:tests-002")
+        again = fc.fc_worktree.slot_on(self.repo, "next", "fast-coding:p:tests-002")
         self.assertEqual(again.resolve(), slot.resolve())
 
     def cap(self, n):
@@ -100,13 +100,13 @@ class Treehouse(unittest.TestCase):
             (proj / "results" / "004.json").write_text(json.dumps({"id": "004", "status": "passed"}))
             run()
         self.assertEqual(started, ["tests-003"])
-        self.assertEqual(list(fc.slots(proj)), ["tests-003"])
+        self.assertEqual(list(fc.fc_worktree.slots(proj)), ["tests-003"])
 
     def test_a_lease_from_a_full_pool_exits_with_one_line_naming_the_holders(self):
         self.cap(1)
         wt, proj = self.init()
         with self.assertRaises(SystemExit) as e:
-            fc.slot_on(self.repo, "main", "fast-coding:p:stackroot")
+            fc.fc_worktree.slot_on(self.repo, "main", "fast-coding:p:stackroot")
         msg = str(e.exception.code)
         self.assertNotIn("\n", msg)
         for s in ("1 worktree", "0 free", "fast-coding:p:project"):
@@ -114,8 +114,8 @@ class Treehouse(unittest.TestCase):
 
     def test_stack_slot_is_reused_and_clean_hands_every_slot_back(self):
         wt, proj = self.init()
-        first = fc.stack_worktree(wt, proj, "fast-coding/p")
-        self.assertEqual(fc.stack_worktree(wt, proj, "fast-coding/p"), first)
+        first = fc.fc_worktree.stack_worktree(wt, proj, "fast-coding/p")
+        self.assertEqual(fc.fc_worktree.stack_worktree(wt, proj, "fast-coding/p"), first)
         head = self.git("rev-parse", "HEAD")
         for ref in ("refs/fast-coding/p/C1/001", f"refs/fast-coding/replaced/p/001/{head}", "refs/fast-coding/pq/C1/001"):
             self.git("update-ref", ref, head)

@@ -30,7 +30,7 @@ class StackWorktree(unittest.TestCase):
 
     def test_the_stack_worktree_sees_the_tool_dir(self):
         (self.proj / "e2e").mkdir(); (self.proj / "e2e" / "assert.sh").write_text("true\n")
-        wt = fc.stack_worktree(self.repo, self.proj, "main")
+        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "main")
         self.assertTrue((wt / ".fast-coding" / "p" / "e2e" / "assert.sh").exists())
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
@@ -42,7 +42,7 @@ class StackWorktree(unittest.TestCase):
         self.git("checkout", "-q", "-b", "top"); (self.repo / "bun.lock").write_text("top\n")
         self.git("commit", "-qam", "dep"); self.git("checkout", "-q", "main")
         cfg = {"install": "mkdir -p node_modules && cat bun.lock >> node_modules/seen"}
-        with mock.patch.object(fc, "stack_order", return_value=["top"]), mock.patch.object(fc, "linearize", return_value=["top"]):
+        with mock.patch.object(fc.fc_worktree, "stack_order", return_value=["top"]), mock.patch.object(fc, "linearize", return_value=["top"]):
             wt, _, _ = fc.verify_root(self.repo, self.proj, cfg)
         self.assertEqual((wt / "node_modules" / "seen").read_text(), "top\n")  # installed once, against the top layer's lockfile
 

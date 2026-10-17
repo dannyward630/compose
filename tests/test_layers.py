@@ -34,9 +34,9 @@ class Grouping(unittest.TestCase):
 
     def test_lockfiles_are_generated_other_files_are_not(self):
         for f in ("bun.lock", "web/package-lock.json", "yarn.lock", "go.sum", "pnpm-lock.yaml"):
-            self.assertTrue(fc.GENERATED_RE.search(f), f)
+            self.assertTrue(fc.fc_worktree.GENERATED_RE.search(f), f)
         for f in ("src/lock.ts", "locksmith.py", "docs/bun.lock.md"):
-            self.assertFalse(fc.GENERATED_RE.search(f), f)
+            self.assertFalse(fc.fc_worktree.GENERATED_RE.search(f), f)
 
     def test_a_task_branch_does_not_count_its_lockfile_toward_the_limit(self):
         r = Path(tempfile.mkdtemp())
@@ -222,7 +222,7 @@ class Layers(unittest.TestCase):
 
     def test_the_gh_stack_is_the_layers_on_the_real_base(self):
         self.stack()
-        wt = fc.stack_worktree(self.repo, self.proj, "fast-coding/p")
+        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "fast-coding/p")
         subprocess.run(["git", "checkout", "-q", "fast/p/layer-02"], cwd=wt, check=True)
         data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(data["trunk"], "main")

@@ -263,7 +263,7 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
         return {"id": meta["id"], "title": meta["title"], "status": st, "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": log}
     out = io.StringIO()
     with mock.patch.object(fc, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
-            mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+            mock.patch.object(fc.fc_worktree, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
             mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
         try:
             fc.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
@@ -573,9 +573,9 @@ class Changes(unittest.TestCase):
         synced(self.proj, MAP, dict(BEFORE, **{"ENG-4": dict(BEFORE["ENG-4"], status="Canceled")}))  # canceled, block and all
         self.assertEqual([m["id"] for m in fc.fc_tasks.load_tasks(self.proj)], ["003"])
         self.assertIn("ENG-4", fc.fc_tasks.linear_cache(self.proj)["issues"])  # still stored whole: undo can bring it back
-        self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003"])
+        self.assertEqual(fc.fc_worktree.stack_order(self.repo, self.proj), ["fast/hw/003"])
         (self.proj / "results" / "tasks.json").unlink()
-        self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003", "fast/hw/004"])  # nothing synced: every branch
+        self.assertEqual(fc.fc_worktree.stack_order(self.repo, self.proj), ["fast/hw/003", "fast/hw/004"])  # nothing synced: every branch
 
     def test_records_are_written_atomically(self):
         d = fc.changes_dir(self.proj)
@@ -696,11 +696,11 @@ class Undo(unittest.TestCase):
 
     def test_the_task_an_undo_cancels_leaves_the_stack(self):
         self.git("branch", "fast/hw/005", self.git("rev-parse", "fast/hw/003"))  # 005 was built on the re-plan
-        self.assertIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
+        self.assertIn("fast/hw/005", fc.fc_worktree.stack_order(self.repo, self.proj))
         change(self.proj, self.repo, "undo", cid="C1")
         self.sync_linear(4)
         self.assertNotIn("005", [m["id"] for m in fc.fc_tasks.load_tasks(self.proj)])
-        self.assertNotIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
+        self.assertNotIn("fast/hw/005", fc.fc_worktree.stack_order(self.repo, self.proj))
 
     def test_undoing_the_undo_puts_the_change_back(self):
         rebuilt = self.git("rev-parse", "fast/hw/003")

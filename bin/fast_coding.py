@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr  # noqa: E402
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree  # noqa: E402
 
 CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
 
@@ -186,9 +186,9 @@ def crew_workdir(cwd, wt, name, role=None):
         with exclude.open("a") as f:
             f.write("/.claude/worktrees/\n")
     branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
-    if use_treehouse():
+    if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", branch, "HEAD"], top)
-        return slot_on(top, branch, f"fast-coding:{name}"), branch
+        return fc_worktree.slot_on(top, branch, f"fast-coding:{name}"), branch
     path = top / ".claude" / "worktrees" / branch
     fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), "HEAD"], top)
     return path, branch
@@ -615,9 +615,9 @@ def cmd_testcrews(a):
         for m in metas:
             print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, fc_core.commit_convention(proj))}\n")
         return
-    if use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
-        held = slots(proj)
-        short = pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
+    if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
+        held = fc_worktree.slots(proj)
+        short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
         if short:
             sys.exit(f"testcrews: {short}")
     fc_herdr.herdr_space(proj)  # once, before the parallel starts
@@ -701,19 +701,19 @@ def test_worktree(proj, tid):
     """Each test-writing teammate writes on its own branch in its own worktree off the stubs commit: teammates sharing one
     branch raced (an amend landed on another teammate's commit). The collect step brings their commits back in task order."""
     wt = fc_herdr.project_worktree(proj)
-    branch, held = test_branch(proj, tid), slots(proj).get(f"tests-{tid}")
+    branch, held = test_branch(proj, tid), fc_worktree.slots(proj).get(f"tests-{tid}")
     if held and Path(held).exists():
         return Path(held)
-    if use_treehouse():
+    if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", "-f", branch, "HEAD"], wt)
-        path = slot_on(wt, branch, f"fast-coding:{proj.name}:tests-{tid}")
-        slots(proj, {f"tests-{tid}": str(path)})
+        path = fc_worktree.slot_on(wt, branch, f"fast-coding:{proj.name}:tests-{tid}")
+        fc_worktree.slots(proj, {f"tests-{tid}": str(path)})
     else:
         path = proj / "worktrees" / f"tests-{tid}"
         if path.exists():
             return path
         fc_core.sh(["git", "worktree", "add", "-q", "-B", branch, str(path), "HEAD"], wt)
-    ready_checkout(wt, path, install=fc_core.project_config(proj).get("install"))
+    fc_worktree.ready_checkout(wt, path, install=fc_core.project_config(proj).get("install"))
     return path
 
 def collect_tests(proj, only=None):
@@ -738,10 +738,10 @@ def collect_tests(proj, only=None):
             if p.returncode:
                 fc_core.sh(["git", "cherry-pick", "--abort"], wt, check=False)
                 sys.exit(f"tests-{tid}: {c[:7]} conflicts with the project branch; its branch {branch} is kept.\n{(p.stdout + p.stderr)[-600:]}")
-        held = slots(proj).get(f"tests-{tid}")
+        held = fc_worktree.slots(proj).get(f"tests-{tid}")
         if held:
-            release_slot(wt, held)
-            slots(proj, {f"tests-{tid}": None})
+            fc_worktree.release_slot(wt, held)
+            fc_worktree.slots(proj, {f"tests-{tid}": None})
         else:
             fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
         fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
@@ -1561,7 +1561,7 @@ def branch_budget(wt, base, allowed=None):
     lines = 0
     for row in fc_core.sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
         a, d, f = row.split("\t", 2)
-        if not GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
+        if not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
             lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
     changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     new_docs = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
@@ -1585,8 +1585,8 @@ def task_base(repo, proj, meta):
         return "HEAD", head
     # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
     trunk = fc_core.current_branch(repo)
-    with STACK_LOCK:  # read the base before another task's linearize rewrites it
-        chain = linearize(repo, proj, trunk, stack_worktree(repo, proj, trunk))
+    with fc_worktree.STACK_LOCK:  # read the base before another task's linearize rewrites it
+        chain = linearize(repo, proj, trunk, fc_worktree.stack_worktree(repo, proj, trunk))
         missing = [b for b in unmerged if b not in chain]
         if missing:
             raise RuntimeError(f"after: {', '.join(missing)} could not be chained: {STACK_STOP or 'rebase conflict'}")
@@ -1705,11 +1705,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         # `--redo` says the user wants it rebuilt.
         fc_core.say(f"{tid} keep    {why}; pass --redo to rebuild it")
         return json.loads((proj / "results" / f"{tid}.json").read_text())
-    replace_branch(repo, proj, branch)  # a re-run (or --redo) replaces the previous attempt
+    fc_worktree.replace_branch(repo, proj, branch)  # a re-run (or --redo) replaces the previous attempt
     fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(wt)], repo)
     base_name, base = task_base(repo, proj, meta)
     fc_core.sh(["git", "checkout", "-q", "-b", branch, base], wt)  # a stacked task starts from its lower layer's tip
-    ready_checkout(repo, wt, borrow=not names_lockfile(meta), install=fc_core.project_config(proj).get("install"))
+    fc_worktree.ready_checkout(repo, wt, borrow=not fc_worktree.names_lockfile(meta), install=fc_core.project_config(proj).get("install"))
     for name in ("opencode.jsonc", "opencode.json"):  # untracked local config the implementer needs
         if (repo / name).exists() and not (wt / name).exists():
             shutil.copy(repo / name, wt / name)
@@ -1902,8 +1902,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "add", "-A"], wt)
         fc_core.sh(["git", "commit", "-qm", commit_message(meta, fc_core.commit_convention(proj))], wt, check=False)
         fc_core.sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
-        if names_lockfile(meta):
-            adopt_installs(repo, wt)
+        if fc_worktree.names_lockfile(meta):
+            fc_worktree.adopt_installs(repo, wt)
     diff = fc_core.sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={len(log)}  ${cost:.4f}")
@@ -1920,302 +1920,19 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_linear.linear_event(proj, meta, "passed" if status == "passed" else "failed", result)
     return result
 
-# ---------- stacks (gh stack) ----------
-
-def replace_branch(repo, proj, branch):
-    """Delete a task branch that is about to be rebuilt. Its old tip is kept under a ref: layers stacked above still carry the
-    old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""
-    tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip()
-    if tip:
-        fc_core.sh(["git", "update-ref", f"refs/fast-coding/replaced/{proj.name}/{branch.rsplit('/', 1)[1]}/{tip}", tip], repo)
-    fc_core.sh(["git", "branch", "-D", branch], repo, check=False)
-
-def replaced_tips(repo, proj):
-    """[(branch, old tip)] for the project's replaced task branches (see replace_branch)."""
-    out = fc_core.sh(["git", "for-each-ref", "--format=%(refname) %(objectname)", f"refs/fast-coding/replaced/{proj.name}/"], repo, check=False).stdout
-    return [(f"fast/{proj.name}/{ref.split('/')[-2]}", tip) for ref, tip in (l.split() for l in out.splitlines())]
-
-def task_branches(repo, proj):
-    """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
-    head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    branches = [b for b in fc_core.sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split()
-                if re.fullmatch(rf"fast/{re.escape(proj.name)}/\d+", b)  # task branches only, not bench tags
-                and fc_core.sh(["git", "merge-base", "--is-ancestor", b, head], repo, check=False).returncode != 0]
-    out = {}
-    for b in branches:
-        tid = b.rsplit("/", 1)[1]
-        res = proj / "results" / f"{tid}.json"
-        base = json.loads(res.read_text()).get("base", "HEAD") if res.exists() else "HEAD"
-        out[b] = base if base in branches else None
-    return out
-
-def stack_order(repo, proj):
-    """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
-    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are synced, a
-    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone."""
-    bases = task_branches(repo, proj)
-    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
-    synced = (proj / "results" / "tasks.json").exists()
-    ids = sorted(t for t in (b.rsplit("/", 1)[1] for b in bases) if t in metas or not synced)
-    order, placed = [], set()
-    while len(order) < len(ids):
-        progressed = False
-        for tid in ids:
-            if tid in placed:
-                continue
-            deps = [d.strip() for d in str(metas.get(tid, {}).get("after") or "").split(",") if d.strip() in ids]
-            if all(d in placed for d in deps):
-                order.append(tid)
-                placed.add(tid)
-                progressed = True
-        if not progressed:  # a dependency cycle in `after:`; fall back to id order for the rest
-            order += [t for t in ids if t not in placed]
-            break
-    return [f"fast/{proj.name}/{t}" for t in order]
-
-TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
-
-def use_treehouse():
-    """Slots come from a treehouse pool when treehouse is installed (FAST_CODING_NO_TREEHOUSE=1 turns it off), else from plain
-    git worktrees. The pool lives inside the repository (`.treehouse/`, git-ignored): a teammate started in a slot then sits under
-    a folder Claude Code already trusts, where a slot under ~/.treehouse would stop at the trust prompt."""
-    return bool(shutil.which("treehouse")) and os.environ.get("FAST_CODING_NO_TREEHOUSE") != "1"
-
-def treehouse(repo, *args, check=True):
-    return fc_core.sh(["treehouse", "--root", ".", *args], repo, check=check)
-
-def slot_on(repo, branch, holder, detach=False):
-    """Lease a treehouse slot and check `branch` out in it (detached for a read-and-rebase worktree). The branch must exist:
-    the work lives on branches, a slot is only a place to stand, and returning it keeps the branch.
-    The lease is cut from the default branch, never from `branch`: `return` resets a slot to its lease's base, and treehouse
-    reuses a slot only when its commit is an ancestor of the next base, so a slot returned onto a task or test branch was
-    "in use or dirty" for every lease after it and the pool ran dry while `status` showed it free."""
-    exclude_paths(repo, ["/.treehouse/"])
-    p = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder, check=False)
-    if p.returncode and "in use or dirty" in p.stdout + p.stderr:
-        sys.exit(f"{holder}: " + (pool_shortfall(repo, 1) or p.stderr.strip().splitlines()[-1]))
-    if p.returncode:
-        raise RuntimeError(f"treehouse get for {holder}\n{p.stdout}\n{p.stderr}")
-    path = Path(json.loads(p.stdout)["path"])
-    fc_core.sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
-    return path
-
-def pool_shortfall(repo, need):
-    """None when the pool can lease `need` more slots, else one line: how many it needs, how many are free, who holds the rest.
-    Free is an available slot, or room under max_trees (treehouse.toml in the main checkout, else treehouse's default 16)."""
-    if need <= 0:
-        return None
-    entries = json.loads(treehouse(repo, "status", "--json", check=False).stdout or "[]")
-    cfg = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo).stdout.strip()).parent / "treehouse.toml"
-    m = re.search(r"^\s*max_trees\s*=\s*(\d+)", cfg.read_text(), re.M) if cfg.exists() else None
-    cap = int(m.group(1)) if m else 16
-    free = sum(e.get("status") == "available" for e in entries) + max(0, cap - len(entries))
-    if free >= need:
-        return None
-    holders = [e.get("lease_holder") or f"slot {e.get('name')} ({e.get('status')})" for e in entries if e.get("status") != "available"]
-    return (f"needs {need} worktree slot(s), {free} free of max_trees = {cap}; held by {', '.join(holders)}. "
-            "Free slots (fast-coding testcrews --collect, fast-coding clean, treehouse return) or raise max_trees in treehouse.toml")
-
-def is_slot(repo, path):
-    """Whether a path is a treehouse slot of this repository's pool, asked of treehouse rather than guessed from the path."""
-    if not use_treehouse():
-        return False
-    p = treehouse(repo, "status", "--json", check=False)
-    try:
-        return any(Path(e["path"]).resolve() == Path(path).resolve() for e in json.loads(p.stdout or "[]"))
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return False
-
-def default_branch(repo):
-    """The repository's default branch, as treehouse infers it: the remote's HEAD, else main, else master."""
-    p = fc_core.sh(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], repo, check=False)
-    for b in ([p.stdout.strip().split("/", 1)[-1]] if p.returncode == 0 else []) + ["main", "master"]:
-        if fc_core.sh(["git", "rev-parse", "--verify", "-q", f"refs/heads/{b}"], repo, check=False).returncode == 0:
-            return b
-    return None
-
-def release_slot(repo, path):
-    """Hand a slot back to the pool with its installs intact. fast-coding's own leftovers go first: `return` keeps ignored
-    files, so a project's `.fast-coding/` results or graph would otherwise reach the next agent that leases the slot."""
-    for d in (".fast-coding", "graft"):
-        t = Path(path) / d
-        if t.is_symlink() or t.is_file():
-            t.unlink()
-        elif t.is_dir():
-            shutil.rmtree(t, ignore_errors=True)
-    treehouse(repo, "return", "--force", str(path), check=False)
-
-def slots(proj, update=None):
-    """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them."""
-    f = Path(proj) / "results" / "slots.json"
-    have = json.loads(f.read_text()) if f.exists() else {}
-    if update is not None:
-        have = {k: v for k, v in {**have, **update}.items() if v}
-        f.parent.mkdir(parents=True, exist_ok=True)
-        fc_core.atomic_write(f, json.dumps(have, indent=2))
-    return have
-
-def stack_worktree(repo, proj, trunk):
-    """A detached worktree the CLI owns for every gh stack operation, so the user's checkout is never switched.
-    Detached because a branch checked out in the user's tree cannot be checked out again elsewhere."""
-    with STACK_LOCK:
-        held = slots(proj).get("stackroot")
-        if held and (Path(held) / ".git").exists():
-            wt = Path(held)
-            fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-        elif use_treehouse():
-            wt = slot_on(repo, trunk, f"fast-coding:{proj.name}:stackroot", detach=True)
-            slots(proj, {"stackroot": str(wt)})
-        else:
-            wt = proj / "worktrees" / ".stackroot"
-            if not (wt / ".git").exists():
-                fc_core.sh(["git", "worktree", "prune"], repo, check=False)
-                fc_core.sh(["git", "worktree", "add", "-q", "--detach", str(wt), trunk], repo)
-            else:
-                fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-        ready_checkout(repo, wt)
-        tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
-        if tools.is_dir() and not link.exists() and not link.is_symlink():
-            link.symlink_to(tools)
-            exclude_paths(wt, ["/.fast-coding"])  # the `/.fast-coding/` rule does not cover a link
-    return wt
-
-def exclude_paths(wt, rules):
-    """Add git ignore rules to the checkout's info/exclude, which no commit carries. A linked worktree shares the main
-    checkout's file, so one call covers every checkout of the repository."""
-    exclude = Path(fc_core.sh(["git", "rev-parse", "--git-path", "info/exclude"], wt).stdout.strip())
-    exclude = exclude if exclude.is_absolute() else wt / exclude
-    have = exclude.read_text().splitlines() if exclude.exists() else []
-    add = [l for l in rules if l not in have]
-    if add:
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        exclude.write_text("".join(l + "\n" for l in have + add))
-
-TOOL_DIRS = ("graft/", ".fast-coding/")
-
-def ignore_tool_files(wt):
-    """Keep fast-coding's and graft's own files out of the repository, before anything else is written: every checkout
-    ignores them through info/exclude (also graft's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
-    of the delivered branch ignores them too. Returns True when `.gitignore` changed (the caller commits it)."""
-    exclude_paths(wt, ["/" + d for d in TOOL_DIRS] + ["/.ignore"])
-    gi = wt / ".gitignore"
-    if not gi.exists():
-        return False
-    lines = gi.read_text().splitlines()
-    have = {l.strip().strip("/") for l in lines}
-    add = [d for d in TOOL_DIRS if d.strip("/") not in have]
-    if add:
-        gi.write_text("\n".join(lines + add) + "\n")
-    return bool(add)
-
-def dep_dirs(wt):
-    ignored = fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
-    return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in fc_config.DEP_DIRS]
-
-def stamp_graft_wiring(wt):
-    """graft's session-start hook rewrites the wired files whenever graft/.cache/wiring-stamp.json is missing or names another
-    version, and graft/ is git-ignored, so every fresh worktree or clone would get a tracked .claude/settings.json edited.
-    A stamp at the installed version makes the hook leave tracked wiring alone."""
-    if not shutil.which("graft") or fc_core.sh(["git", "ls-files", "--error-unmatch", ".claude/helpers/graft-hooks.cjs"], wt, check=False).returncode:
-        return
-    version = fc_core.sh(["graft", "--version"], wt, check=False).stdout.strip()
-    stamp = wt / "graft" / ".cache" / "wiring-stamp.json"
-    if version and not (stamp.exists() and json.loads(stamp.read_text() or "{}").get("version") == version):
-        stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.write_text(json.dumps({"version": version, "hosts": ["claude"], "opts": {"global": False, "mcp": True, "hooks": True, "statusline": True}}))
-
-def ready_checkout(repo, wt, borrow=True, install=None):
-    """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
-    (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
-    the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
-    `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's.
-    `install` (verify.json `install`) runs in the checkout instead of linking: bundlers write a dependency's real path into
-    unminified output, so a borrowed install builds different bytes than the project worktree's own. Links from an earlier
-    borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
-    commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
-    deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
-    stamp_graft_wiring(wt)
-    if install and borrow:
-        stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "fast-coding-install"], wt).stdout.strip())
-        locks = "".join(l + "\n" for l in fc_core.sh(["git", "ls-tree", "-r", "HEAD"], wt, check=False).stdout.splitlines()
-                        if l.rsplit("/", 1)[-1].split("\t")[-1] in LOCKFILES)
-        if stamp.exists() and stamp.read_text() == locks:
-            return
-        for d in deps:
-            if (wt / d).is_symlink():
-                (wt / d).unlink()
-        fc_core.sh(install, wt)
-        stamp.write_text(locks)
-        return
-    for d in deps if borrow else ():
-        link = wt / d
-        if link.parent.is_dir() and not link.exists() and not link.is_symlink():
-            link.symlink_to(repo / d)
-
-def names_lockfile(meta):
-    return any(GENERATED_RE.search(f) for f in meta["files"])
-
-def adopt_installs(repo, wt):
-    """A passed task that rewrote a lockfile installed fresh in its own clone. Move that install into the project worktree so
-    later tasks and verify borrow the new dependencies; each directory is swapped in with one rename."""
-    import shutil
-    for d in dep_dirs(wt):
-        new, old = wt / d, repo / d
-        if new.is_symlink() or not new.is_dir() or not old.parent.is_dir():
-            continue
-        tmp = old.with_name(old.name + ".adopt")
-        shutil.rmtree(tmp, ignore_errors=True)
-        shutil.copytree(new, tmp, symlinks=True)
-        aside = old.with_name(old.name + ".old")  # the path is never missing: old moves aside, the copy moves in, then the slow delete
-        if aside.is_symlink():
-            aside.unlink()
-        else:
-            shutil.rmtree(aside, ignore_errors=True)
-        if os.path.lexists(old):
-            old.rename(aside)
-        tmp.rename(old)
-        if aside.is_symlink():
-            aside.unlink()
-        else:
-            shutil.rmtree(aside, ignore_errors=True)
-
-def mirror_stack_state(repo, wt):
-    """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
-    file so `gh stack view` works from the user's tree too; stacks sharing a branch are replaced, others kept."""
-    src = Path(fc_core.sh(["git", "rev-parse", "--git-dir"], wt).stdout.strip()) / "gh-stack"
-    if not src.is_absolute():
-        src = wt / src
-    if not src.exists():
-        return
-    mine = json.loads(src.read_text())
-    names = {b["branch"] for st in mine.get("stacks", []) for b in st.get("branches", [])}
-    targets = set()
-    for flag in ("--git-common-dir", "--git-dir"):  # the main checkout and the project worktree both get to see the stack
-        d = Path(fc_core.sh(["git", "rev-parse", flag], repo).stdout.strip())
-        targets.add((d if d.is_absolute() else repo / d) / "gh-stack")
-    for dst in targets:
-        if dst.resolve() == src.resolve():
-            continue
-        theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
-        kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
-        theirs["stacks"] = kept + mine.get("stacks", [])
-        fc_core.atomic_write(dst, json.dumps(theirs, indent=2))
-
 def chain_order(repo, proj, trunk):
     """Branches bottom to top. Ancestry wins: a branch whose history already contains another sits above it (a rebase can never
     move a commit below history it contains). Ties, i.e. branches not on one line yet, follow stack_order (deps, then id)."""
-    order = stack_order(repo, proj)
+    order = fc_worktree.stack_order(repo, proj)
     rank = {b: i for i, b in enumerate(order)}
     def depth(b):
         return int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{b}"], repo, check=False).stdout.strip() or 0)
     return sorted(order, key=lambda b: (depth(b), rank[b]))
 
-STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
 STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
 def linearize(repo, proj, trunk, wt):
-    with STACK_LOCK:
+    with fc_worktree.STACK_LOCK:
         return _linearize(repo, proj, trunk, wt)
 
 def _linearize(repo, proj, trunk, wt):
@@ -2225,7 +1942,7 @@ def _linearize(repo, proj, trunk, wt):
     STACK_STOP = ""
     chain = chain_order(repo, proj, trunk)
     linear, prev = [], trunk
-    replaced = replaced_tips(repo, proj)
+    replaced = fc_worktree.replaced_tips(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     for b in chain:
@@ -2264,8 +1981,6 @@ def _linearize(repo, proj, trunk, wt):
     return linear
 
 REVIEW_LAYER_LINES = 300  # verify.json `review_layer_lines` changes it
-GENERATED_RE = re.compile(r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|bun\.lockb?|go\.sum|[^/]+\.lock)$")
-
 def commit_facts(repo, c):
     """(files, changed lines, {generated file: lines}) of one commit. Lockfiles are not counted: nobody reads them."""
     files, counted, generated = [], 0, {}
@@ -2273,7 +1988,7 @@ def commit_facts(repo, c):
         a, d, f = l.split("\t", 2)
         n = (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)  # a binary file shows "-"
         files.append(f)
-        if GENERATED_RE.search(f):
+        if fc_worktree.GENERATED_RE.search(f):
             generated[f] = generated.get(f, 0) + n
         else:
             counted += n
@@ -2430,15 +2145,15 @@ def register_stack(repo, proj, trunk, submit=False):
     stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
     too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True."""
-    if not stack_order(repo, proj):
+    if not fc_worktree.stack_order(repo, proj):
         return []
-    wt = stack_worktree(repo, proj, trunk)
+    wt = fc_worktree.stack_worktree(repo, proj, trunk)
     gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     linear = linearize(repo, proj, trunk, wt)
     if not linear:
         return []
     cfg = fc_core.project_config(proj)
-    base = cfg.get("review_base") or default_branch(repo) or trunk
+    base = cfg.get("review_base") or fc_worktree.default_branch(repo) or trunk
     if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
         base = trunk
     budget = int(cfg.get("review_layer_lines") or REVIEW_LAYER_LINES)
@@ -2475,7 +2190,7 @@ def register_stack(repo, proj, trunk, submit=False):
                 title, body = layer_pr(proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
-    mirror_stack_state(repo, wt)
+    fc_worktree.mirror_stack_state(repo, wt)
     return [stack]
 
 def cmd_stack(a):
@@ -2541,10 +2256,10 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
-    if stack_order(repo, proj):
+    if fc_worktree.stack_order(repo, proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
-        linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
+        linearize(repo, proj, a.trunk, fc_worktree.stack_worktree(repo, proj, a.trunk))
         if STACK_STOP:
             sys.exit(f"stack  STOP  {STACK_STOP}")
     fc_herdr.herdr_space(proj)
@@ -2694,8 +2409,6 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
 
 # TypeSafe answers HTTP 400 max_tokens_exceeded for a state of about 35k characters of dense text (30k passes, 40k fails); the old 150k cap never fit.
 JEV_CODE_CAP = 30000
-LOCKFILE_RE = re.compile(r"(^|/)(bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$")
-
 def jev_acceptance(cfg, proj, diff, repo=None):
     """Ask Jev (TypeSafe) one choice question per acceptance criterion: MET, NOT_MET, or UNCLEAR, with probabilities.
     One request per task, whose state is that task's own files plus its test, so the judge sees exactly the code the
@@ -2923,7 +2636,7 @@ def yolo_digest(repo, proj, y):
     layers = proj / "layers.json"
     if layers.exists() and layers.stat().st_mtime >= since:
         done.append("stack submitted: " + ", ".join(json.loads(layers.read_text())))
-    elif stack := stack_order(repo, proj):
+    elif stack := fc_worktree.stack_order(repo, proj):
         done.append(f"stack ok locally, not pushed: {' <- '.join(stack)}")
     t = fc_cost.total(fc_cost.rows(proj))
     task_cost = sum(v["cost"] for v in snap["tasks"].values())
@@ -3521,14 +3234,14 @@ def verify_root(repo, proj, cfg):
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
     base is the trunk. With no open layers it runs on the user's checkout against `review_base`."""
     trunk = fc_core.current_branch(repo)
-    if not stack_order(repo, proj):
+    if not fc_worktree.stack_order(repo, proj):
         return repo, cfg.get("review_base", trunk), None
-    wt = stack_worktree(repo, proj, trunk)
+    wt = fc_worktree.stack_worktree(repo, proj, trunk)
     chain = linearize(repo, proj, trunk, wt)
     if not chain:
         return repo, cfg.get("review_base", trunk), None
     fc_core.sh(["git", "checkout", "-q", chain[-1]], wt)
-    ready_checkout(repo, wt, install=cfg.get("install"))
+    fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
     fc_core.say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
     return wt, trunk, wt
 
@@ -3557,16 +3270,13 @@ def cmd_verify(a):
     finally:
         if wt is not None:
             fc_core.sh(["git", "checkout", "-q", "--detach", fc_core.current_branch(repo)], wt, check=False)  # free the top branch again
-            mirror_stack_state(repo, wt)
-
-LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
-             "Pipfile.lock", "Gemfile.lock", "composer.lock")
+            fc_worktree.mirror_stack_state(repo, wt)
 
 def fix_strays(touched, allowed, named=()):
     """Files a verify fix round may not touch. A fixer gets the same scope as the tasks: only files the stack already
     changes. With no stack diff (verify on a plain checkout) it is free except for lockfiles, which a fixer only rewrites
     when it is working around a broken environment, not fixing a finding. A lockfile a task names in `files:` is part of the work."""
-    return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in LOCKFILES and f not in named]
+    return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in fc_worktree.LOCKFILES and f not in named]
 
 def fix_message(reply, files, conv=None):
     """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed."""
@@ -3581,7 +3291,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
     rejected = []
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
-            ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
+            fc_worktree.ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
         ok, report, findings = run_stages(repo, proj, cfg, a)
         rounds.append(report)
         if ok or rnd == a.fix:
@@ -3710,7 +3420,7 @@ def render_status(repo, projects):
         trunk = fc_core.current_branch(repo)
         trunk_head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
         rows = [task_state(repo, proj, m, trunk_head) for m in tasks]
-        layers = {b: i + 1 for i, b in enumerate(stack_order(repo, proj))}
+        layers = {b: i + 1 for i, b in enumerate(fc_worktree.stack_order(repo, proj))}
         counts = {}
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
@@ -4283,7 +3993,7 @@ def cmd_top(a):
     (nothing is merged, so the user's checkout never contains it). `--detach` returns the worktree to the trunk."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = fc_core.current_branch(repo)
-    wt = stack_worktree(repo, proj, trunk)
+    wt = fc_worktree.stack_worktree(repo, proj, trunk)
     if a.detach:
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         print(f"{wt} detached at {trunk}")
@@ -4292,7 +4002,7 @@ def cmd_top(a):
     if not chain:
         sys.exit("no unmerged layers; the trunk already is the top")
     fc_core.sh(["git", "checkout", "-q", "--detach", chain[-1]], wt)
-    ready_checkout(repo, wt, install=fc_core.project_config(proj).get("install"))
+    fc_worktree.ready_checkout(repo, wt, install=fc_core.project_config(proj).get("install"))
     print(f"stack top {chain[-1]} ({len(chain)} layers on {trunk}) checked out at:\n{wt}")
 
 def cmd_resume(a):
@@ -4398,10 +4108,10 @@ def setup_graft(wt):
             fc_core.say(f"graft    init skipped: it would edit tracked {', '.join(tracked)}; building the graph only")
         else:
             fc_core.sh(GRAFT_INIT + [str(wt)], wt, timeout=300, check=False)
-            exclude_paths(wt, ["/" + f for f in paths])
+            fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
             fc_core.say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
-    exclude_paths(wt, ["/graft/"])  # the graph itself, also when `fast-coding graft` runs without init
-    stamp_graft_wiring(wt)
+    fc_worktree.exclude_paths(wt, ["/graft/"])  # the graph itself, also when `fast-coding graft` runs without init
+    fc_worktree.stamp_graft_wiring(wt)
     fc_core.sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     fc_core.say("graft    graph built")
 
@@ -4415,7 +4125,7 @@ GRAFT_INSTALL = "npm i -g @nanonets/graft"
 DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use.
     # required is True, False, or the one role that needs it: doctor and init only warn about that one, and that role's start stops
     ("herdr", "herdr", "see https://herdr.dev", True, HERDR_MIN),
-    ("treehouse", "treehouse", TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
+    ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
     ("graft", "graft", GRAFT_INSTALL, False, None),
     ("gh", "gh", "brew install gh", True, None),
     ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", True, None),
@@ -4550,18 +4260,18 @@ def cmd_init(a):
         base = after or fc_core.current_branch(here)
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
             fc_core.sh(["git", "branch", branch, after or "HEAD"], here)
-        if use_treehouse():
-            wt = slot_on(here, branch, f"fast-coding:{name}:project")
+        if fc_worktree.use_treehouse():
+            wt = fc_worktree.slot_on(here, branch, f"fast-coding:{name}:project")
         else:
             if not shutil.which("treehouse"):
-                print(f"treehouse is not installed, so the project gets a plain git worktree; for a reusable pool install it: {TREEHOUSE_INSTALL}")
+                print(f"treehouse is not installed, so the project gets a plain git worktree; for a reusable pool install it: {fc_worktree.TREEHOUSE_INSTALL}")
             wt = here.parent / f"fast-coding-{name}"
             if wt.exists():
                 sys.exit(f"{wt} exists already; remove it or pass --here")
             fc_core.sh(["git", "worktree", "add", "-q", str(wt), branch], here)
         proj = wt / ".fast-coding" / name
         print(f"worktree {wt}  branch {branch} (from {base})")
-    if ignore_tool_files(wt):
+    if fc_worktree.ignore_tool_files(wt):
         fc_core.sh(["git", "add", ".gitignore"], wt)
         fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
@@ -4636,9 +4346,9 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     if has_remote:
         fc_core.sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = fc_core.current_branch(repo)
-    for held in slots(proj).values():  # test-writing teammates' slots and stack slots go back to the pool
-        release_slot(repo, held)
-    slots(proj, {r: None for r in slots(proj)})
+    for held in fc_worktree.slots(proj).values():  # test-writing teammates' slots and stack slots go back to the pool
+        fc_worktree.release_slot(repo, held)
+    fc_worktree.slots(proj, {r: None for r in fc_worktree.slots(proj)})
     for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
         fc_core.sh(["git", "worktree", "remove", "--force", str(w)], repo, check=False)
         if w.exists():
@@ -4700,15 +4410,15 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             project_merged = bool(why)
         if why:
             stop_listeners_under(wt)
-            if is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
+            if fc_worktree.is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
                 space = fc_herdr.herdr_find_space(wt)
                 if space and fc_herdr.herdr_space_is(space, name):
                     fc_herdr.herdr("workspace", "close", space)
                 fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)
-                release_slot(main_repo, wt)
+                fc_worktree.release_slot(main_repo, wt)
             else:
                 fc_core.sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
-            if wt.exists() and not is_slot(main_repo, wt):
+            if wt.exists() and not fc_worktree.is_slot(main_repo, wt):
                 space = fc_herdr.herdr_find_space(wt)
                 if space and fc_herdr.herdr_space_is(space, name):
                     fc_herdr.herdr("workspace", "close", space)

@@ -110,8 +110,8 @@ class ReadyCheckout(unittest.TestCase):
         git(repo, "add", "-A")
         git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         git(root, "clone", "-q", "--shared", str(repo), str(wt))
-        fc.ready_checkout(repo, wt)
-        fc.ready_checkout(repo, wt)  # idempotent: a re-run neither fails nor duplicates exclude lines
+        fc.fc_worktree.ready_checkout(repo, wt)
+        fc.fc_worktree.ready_checkout(repo, wt)  # idempotent: a re-run neither fails nor duplicates exclude lines
         self.assertTrue((wt / "client" / "node_modules").is_symlink())
         self.assertTrue((wt / "client" / "node_modules" / "jest").is_dir())
         if subprocess.run(["which", "graft"], capture_output=True).returncode == 0:
@@ -131,7 +131,7 @@ class ReadyCheckout(unittest.TestCase):
         git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         git(root, "clone", "-q", "--shared", str(repo), str(wt))
         (wt / "node_modules").symlink_to(repo / "node_modules")  # a link left by an earlier borrow
-        fc.ready_checkout(repo, wt, install="mkdir -p node_modules/fresh")
+        fc.fc_worktree.ready_checkout(repo, wt, install="mkdir -p node_modules/fresh")
         self.assertFalse((wt / "node_modules").is_symlink())  # the install lives in the checkout, so build output cannot depend on the project worktree's path
         self.assertTrue((wt / "node_modules" / "fresh").is_dir())
         self.assertFalse((repo / "node_modules" / "fresh").exists())
@@ -140,7 +140,7 @@ class ReadyCheckout(unittest.TestCase):
         git(wt, "add", "-A")
         git(wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "dep")
         with self.assertRaises(RuntimeError):
-            fc.ready_checkout(repo, wt, install="exit 3")
+            fc.fc_worktree.ready_checkout(repo, wt, install="exit 3")
 
     def test_install_reruns_only_when_the_lockfile_changes(self):
         root = Path(tempfile.mkdtemp())
@@ -155,13 +155,13 @@ class ReadyCheckout(unittest.TestCase):
         git(root, "clone", "-q", "--shared", str(repo), str(wt))
         install = "mkdir -p node_modules && cat bun.lock >> node_modules/seen"
         seen = lambda: (wt / "node_modules" / "seen").read_text()
-        fc.ready_checkout(repo, wt, install=install)
-        fc.ready_checkout(repo, wt, install=install)
+        fc.fc_worktree.ready_checkout(repo, wt, install=install)
+        fc.fc_worktree.ready_checkout(repo, wt, install=install)
         self.assertEqual(seen(), "one\n")  # the same lockfile: no second install
         (wt / "bun.lock").write_text("two\n")
         git(wt, "add", "-A")
         git(wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "dep")
-        fc.ready_checkout(repo, wt, install=install)
+        fc.fc_worktree.ready_checkout(repo, wt, install=install)
         self.assertEqual(seen(), "one\ntwo\n")  # a changed lockfile installs again
 
     def test_lockfile_task_installs_on_its_own_and_hands_it_over(self):
@@ -176,9 +176,9 @@ class ReadyCheckout(unittest.TestCase):
         git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         git(root, "clone", "-q", "--shared", str(repo), str(wt))
         for f in (["bun.lock"], ["a.js", "package-lock.json"]):
-            self.assertTrue(fc.names_lockfile({"files": f}))
-        self.assertFalse(fc.names_lockfile({"files": ["a.js"]}))
-        fc.ready_checkout(repo, wt, borrow=False)
+            self.assertTrue(fc.fc_worktree.names_lockfile({"files": f}))
+        self.assertFalse(fc.fc_worktree.names_lockfile({"files": ["a.js"]}))
+        fc.fc_worktree.ready_checkout(repo, wt, borrow=False)
         self.assertFalse((wt / "node_modules").exists())
         (wt / "node_modules" / "new").mkdir(parents=True)  # the task's own install
         real, seen = shutil.rmtree, []
@@ -186,7 +186,7 @@ class ReadyCheckout(unittest.TestCase):
             real(path, *a, **k)
             seen.append((repo / "node_modules").exists())
         with mock.patch.object(shutil, "rmtree", rmtree):
-            fc.adopt_installs(repo, wt)
+            fc.fc_worktree.adopt_installs(repo, wt)
         self.assertTrue(seen and all(seen), "the install dir was missing during the swap")
         self.assertTrue((repo / "node_modules" / "new").is_dir())
         self.assertFalse((repo / "node_modules" / "old").exists())

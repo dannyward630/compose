@@ -75,7 +75,7 @@ class GraftSetup(unittest.TestCase):
         self.assertEqual(json.loads(stamp.read_text())["version"], "9.9.9")
         clone = Path(tempfile.mkdtemp()) / "clone"
         subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
-        fc.ready_checkout(repo, clone)  # a task clone or verify worktree starts without graft/ at all
+        fc.fc_worktree.ready_checkout(repo, clone)  # a task clone or verify worktree starts without graft/ at all
         self.assertEqual(json.loads((clone / "graft" / ".cache" / "wiring-stamp.json").read_text())["version"], "9.9.9")
 
     def test_a_new_repo_skips_graft(self):
