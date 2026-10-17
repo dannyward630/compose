@@ -2,6 +2,8 @@
 
 <p align="center">Talk to one agent. Let it run your product team.</p>
 
+<p align="center"><a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a></p>
+
 ![Compose](docs/images/compose.jpeg)
 
 You talk to one agent, and it runs a whole software team for you.
@@ -194,3 +196,7 @@ Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp &
 
 The way `compose` organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
 Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the engineering manager, team lead, and teammate roles here are adapted from.
+
+## License
+
+`compose` is released under the [MIT License](LICENSE).

@@ -2,6 +2,12 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "compose",
   "version": "0.1.0",
-  "description": "The fast loop: plan, fan tiny tasks out to parallel fast implementers, verify locally, stack the branches.",
+  "description": "Talk to one agent. Let it run your product team: product decisions, tickets, design, specs, tests-first code, review, and QA, shipped as stacked pull requests.",
+  "author": {
+    "name": "Reggie Escobar"
+  },
+  "homepage": "https://github.com/prodoxx/compose",
+  "repository": "https://github.com/prodoxx/compose",
+  "license": "MIT",
   "skills": ["./"]
 }
