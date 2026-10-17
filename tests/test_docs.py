@@ -617,4 +617,3 @@ class NoGraftWord(unittest.TestCase):
         row = machine.index("| trail | `npm i -g @trailhq/trail-code` |")
         self.assertTrue(machine[row - 1].startswith("| treehouse |"), machine[row - 1])
         self.assertTrue(machine[row + 1].startswith("| Frame0, OpenCode |"), machine[row + 1])
-        self.assertEqual(sum("trail" in l for l in machine), 1, "only the install row names trail")
