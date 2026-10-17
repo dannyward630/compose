@@ -164,8 +164,8 @@ class StackLock(unittest.TestCase):
             __import__('time').sleep(0.05)
             active[0] -= 1
             return []
-        with mock.patch.object(fc, "_linearize", fake):
-            ts = [th.Thread(target=fc.linearize, args=(None, None, "t", None)) for _ in range(4)]
+        with mock.patch.object(fc.fc_layers, "_linearize", fake):
+            ts = [th.Thread(target=fc.fc_layers.linearize, args=(None, None, "t", None)) for _ in range(4)]
             [t.start() for t in ts]; [t.join() for t in ts]
         self.assertEqual(overlaps, [])
 

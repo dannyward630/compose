@@ -43,7 +43,7 @@ class RedoMidChain(unittest.TestCase):
     def test_layers_above_a_rebuilt_layer_replay_onto_it_without_its_old_commit(self):
         fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/011")
         self.layer("011", "fast/p/010", "c.txt", "new\n")
-        chain = fc.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
         self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")  # one commit per layer, the old 011 is gone
@@ -53,8 +53,8 @@ class RedoMidChain(unittest.TestCase):
         # 011 rebased or reset by hand before this pass: no replaced ref records its old tip, only its reflog does
         self.git("checkout", "-q", "-B", "fast/p/011", "fast/p/010"); (self.repo / "c.txt").write_text("new\n")
         self.git("add", "-A"); self.git("commit", "-qm", "task 011 redone"); self.git("checkout", "-q", "main")
-        chain = fc.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
-        self.assertEqual(fc.STACK_STOP, "")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
         self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
         self.assertEqual([self.git("rev-list", "--count", f"main..fast/p/{t}") for t in ("012", "005")], ["3", "4"])
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
@@ -65,8 +65,8 @@ class RedoMidChain(unittest.TestCase):
         self.git("add", "-A"); self.git("commit", "-qm", "task 011 redone")
         self.git("checkout", "-q", "-B", "fast/p/012", "fast/p/011"); (self.repo / "012.txt").write_text("old\n")
         self.git("add", "-A"); self.git("commit", "-qm", "task 012"); self.git("checkout", "-q", "main")
-        chain = fc.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
-        self.assertEqual(fc.STACK_STOP, "")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
         self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
@@ -160,7 +160,7 @@ class RewrittenTrunk(unittest.TestCase):
         self.git("add", "-A"); self.git("commit", "-qm", f"task {tid}")
 
     def test_the_chain_replays_only_its_own_commits_onto_the_rewritten_trunk(self):
-        chain = fc.linearize(self.repo, self.proj, "trunk", fc.fc_worktree.stack_worktree(self.repo, self.proj, "trunk"))
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "trunk", fc.fc_worktree.stack_worktree(self.repo, self.proj, "trunk"))
         self.assertEqual(chain, ["fast/p/010", "fast/p/011"])
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/011"), "2")

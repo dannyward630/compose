@@ -646,7 +646,7 @@ class Undo(unittest.TestCase):
         self.repo, self.git = git_repo(("003", "004"))
         self.lin = LinearIssues(AFTER, MAP_AFTER)
         for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", "lin_test"), (fc.fc_linear, "linear_gql", self.lin),
-                            (fc, "register_stack", lambda *a, **k: None)):
+                            (fc.fc_layers, "register_stack", lambda *a, **k: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
         change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")

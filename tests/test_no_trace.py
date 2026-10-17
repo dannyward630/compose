@@ -57,9 +57,9 @@ class NoTrace(unittest.TestCase):
         self.assertEqual(self.git(self.wt, "status", "--porcelain"), "")
 
     def test_task_commit_message_is_the_change(self):
-        self.assertEqual(fc.commit_message({"title": "001 SQLite store: open, schema"}), "SQLite store: open, schema")
-        self.assertEqual(fc.commit_message({"title": "Add a favicon"}), "Add a favicon")
-        self.assertEqual(fc.commit_message({"title": "007", "files": ["a.go"]}), "Update a.go")
+        self.assertEqual(fc.fc_layers.commit_message({"title": "001 SQLite store: open, schema"}), "SQLite store: open, schema")
+        self.assertEqual(fc.fc_layers.commit_message({"title": "Add a favicon"}), "Add a favicon")
+        self.assertEqual(fc.fc_layers.commit_message({"title": "007", "files": ["a.go"]}), "Update a.go")
 
 
 if __name__ == "__main__":

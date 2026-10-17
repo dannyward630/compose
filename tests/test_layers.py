@@ -18,7 +18,7 @@ def unit(name, lines):
 
 class Grouping(unittest.TestCase):
     def names(self, units, budget):
-        return [[u["name"] for u in g] for g in fc.group_units(units, budget)]
+        return [[u["name"] for u in g] for g in fc.fc_layers.group_units(units, budget)]
 
     def test_consecutive_units_fill_a_layer_up_to_the_budget_in_order(self):
         us = [unit("001", 100), unit("002", 150), unit("003", 50), unit("004", 1)]
@@ -65,8 +65,8 @@ if a[:2] == ["pr", "edit"]: json.dump({"title": a[a.index("--title") + 1], "body
         return json.loads((self.dir / "pr.json").read_text())
 
     def sync(self, title, body):
-        before = fc.gh_pr_text(self.dir, "b")
-        return fc.write_pr_text(self.dir, self.dir, "b", before, title, body)
+        before = fc.fc_layers.gh_pr_text(self.dir, "b")
+        return fc.fc_layers.write_pr_text(self.dir, self.dir, "b", before, title, body)
 
     def test_text_is_written_on_a_new_pr_and_on_one_the_cli_wrote_but_never_over_an_edit(self):
         self.assertTrue(self.sync("t1", "b1"))
@@ -119,7 +119,7 @@ class Layers(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            self.assertTrue(fc.register_stack(self.repo, self.proj, "fast-coding/p"))
+            self.assertTrue(fc.fc_layers.register_stack(self.repo, self.proj, "fast-coding/p"))
         return out
 
     def changed(self, branch, below):
@@ -184,11 +184,11 @@ class Layers(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         metas = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}]
         l = {"branch": "js-2888-react-beside-vue-layer-01", "tasks": ["001", "002"], "lines": 230, "generated": {}}
-        title, body = fc.layer_pr(self.proj, l, 4, 300, metas)
+        title, body = fc.fc_layers.layer_pr(self.proj, l, 4, 300, metas)
         self.assertEqual(title, "JS-2888: Add the toggle, Add the panel (1/4)")
         self.assertEqual(body, "- Add the toggle\n- Add the panel\n\ntask 001, 002: 230 lines")
         (self.proj / "verify.json").write_text("{}")
-        self.assertEqual(fc.layer_pr(self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
+        self.assertEqual(fc.fc_layers.layer_pr(self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
 
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
@@ -198,7 +198,7 @@ class Layers(unittest.TestCase):
 
     def test_a_submitted_stack_keeps_each_task_in_its_layer_when_sizes_change(self):
         self.stack(review_layer_lines=300)
-        fc.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001", "002"]), ("fast/p/layer-03", ["003"]))])
+        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001", "002"]), ("fast/p/layer-03", ["003"]))])
         self.git("checkout", "-q", "fast/p/003")
         self.write("003.src", "c\n"); self.commit("shrink 003")  # 003 now fits with 001 and 002, so a regroup would merge layers 02 and 03
         self.git("checkout", "-q", "fast-coding/p")
@@ -208,7 +208,7 @@ class Layers(unittest.TestCase):
 
     def test_a_task_new_since_the_submit_gets_a_layer_above(self):
         self.stack()
-        fc.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001"]))])
+        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001"]))])
         self.stack()
         self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
         self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src"})

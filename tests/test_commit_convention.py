@@ -14,14 +14,14 @@ CONV = {"types": ["feat", "fix", "chore", "test", "docs", "refactor", "build", "
 
 class CommitConvention(unittest.TestCase):
     def test_task_commit_type_follows_what_the_task_changes(self):
-        msg = lambda title, files: fc.commit_message({"title": title, "files": files}, CONV)
+        msg = lambda title, files: fc.fc_layers.commit_message({"title": title, "files": files}, CONV)
         self.assertEqual(msg("001 Save resumes", ["src/store.js"]), "feat: Save resumes")
         self.assertEqual(msg("002 Fix the empty upload", ["src/store.js"]), "fix: Fix the empty upload")
         self.assertEqual(msg("003 Add lodash", ["package.json", "package-lock.json"]), "chore: Add lodash")
         self.assertEqual(msg("004 Explain setup", ["README.md"]), "docs: Explain setup")
 
     def test_no_convention_keeps_plain_messages(self):
-        self.assertEqual(fc.commit_message({"title": "001 Save resumes", "files": ["a.js"]}), "Save resumes")
+        self.assertEqual(fc.fc_layers.commit_message({"title": "001 Save resumes", "files": ["a.js"]}), "Save resumes")
         self.assertEqual(fc.fix_message("Save in one transaction", ["a.js"]), "Save in one transaction")
 
     def test_fix_loop_commit_is_a_fix_and_unlisted_types_fall_back(self):
