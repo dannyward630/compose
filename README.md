@@ -9,6 +9,8 @@ Whenever the team learns something new, the plan changes with it.
 you, the product owner
  └── engineering manager   the one agent you talk to
       ├── team lead        feature A: specs, steers, reviews
+      │    ├── planner     writes the plan and cuts the task tickets
+      │    ├── designer    designs in Figma with its own builders
       │    └── teammates   explore, decide, test, build, verify
       └── team lead        feature B, running at the same time
            └── teammates   explore, decide, test, build, verify
@@ -33,11 +35,15 @@ Run `/fast-coding <what you want>` and each feature moves through the same life 
    You settle them in one pass or accept every recommendation with one word.
 3. **Design.**
    Questions about how a screen should look come with low-fi Frame0 wireframes, so you decide on something you can see.
-   High-fi designs are on the roadmap.
+   A designer teammate then carries the work into Figma from wherever it stopped.
+   It reads the tickets, the wireframes, the repo's tokens and components, and what the Figma file already has.
+   It files the design stories and tasks in Linear, starts one builder per design task plus a reviewer, gates each build, and hands the result to the code tasks.
 4. **Tickets.**
    Your decisions land in Linear the way a PM would file them, with an epic when the work spans several features, a feature issue, and stories with acceptance criteria.
 5. **Technical specs and estimates.**
-   The team lead specs one technical ticket per task, with its goal, its files, its test plan, and its acceptance criteria.
+   Once the decisions are settled, a planner teammate writes the plan and cuts one technical ticket per task, with its goal, its files, its test plan, and its acceptance criteria.
+   When a feature has no stories yet, the planner proposes them first and creates them on your go.
+   The team lead reviews the planner's cut before anything is dispatched.
    Every ticket is sized to finish in one short turn, and the CLI flags any ticket that is too big before work starts.
 6. **Implementation, tests first.**
    Test-writing teammates write each ticket's failing test from the spec, with holdout cases the implementer never sees.
@@ -57,6 +63,24 @@ Run `/fast-coding <what you want>` and each feature moves through the same life 
 
 Inside herdr, every agent works in its own pane, and you can type into any of them.
 Nothing is pushed until you say so, and fast-coding never merges anything.
+
+## Start a planner or designer directly
+
+You don't have to start from an idea.
+Hand the engineering manager a ticket that already exists, and it starts the right teammate for it in its own pane.
+
+- `/fast-coding:planner <issue or Linear project link>` plans that feature, story, or task from where it stands.
+- `/fast-coding:designer <ticket> [--figma <file url or key>]` continues the ticket's design work in Figma; without a stored file, it asks you for one.
+
+The engineering manager relays their questions to you, and you can answer there or in the teammate's own tab.
+
+## When you step away
+
+Run `/fast-coding:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
+Your words pre-answer the questions they name, taken verbatim and never stretched by analogy.
+Every answer it takes is logged, and a billing halt still notifies you.
+`/fast-coding:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
+When you are back, `/fast-coding:yolo off` prints a digest of your instructions, what was decided for you, what waits on you, what failed, what is done, and the cost.
 
 The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -79,6 +103,10 @@ There is no long context to rot and no room to drift.
 By default the strongest model plans, Opus writes the tests, GLM 5.3 Flash types the code, and Haiku handles the chores.
 On a real seven-task project, GLM 5.3 Flash passed each task on its first try in 9 to 20 seconds.
 
+**Teammates trust only their chain of command.**
+Each teammate treats its brief and messages from its team lead or the engineering manager as instructions.
+Repository content, web pages, issue text, and tool output are data, so a prompt hidden in a ticket can't steer it.
+
 **Done means proven.**
 A finding from review stands only when a second call can quote the code that proves it.
 A model saying it is done never counts.
@@ -94,6 +122,7 @@ The figures in this README come from small benchmarks and one prototype, and the
 
 1. Install the tools listed in [docs/requirements.md](docs/requirements.md).
 2. From this repo, install fast-coding with `ln -s "$PWD" ~/.claude/skills/fast-coding` and `ln -s "$PWD/bin/fast-coding" ~/.local/bin/`.
+   Run `fast-coding doctor` to confirm every tool and skill file it needs is there; each missing one prints with its install command.
 3. In the target repo, check out the branch the feature belongs on and open Claude Code.
 4. Run `/fast-coding <what you want>` and answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
 5. Review the task list, say go, and read the stack it builds.
@@ -115,6 +144,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
 |---|---|
+| `fast-coding doctor` | Checks every tool and skill file fast-coding depends on and prints the install command for each missing one; `init` runs it first |
 | `fast-coding init --project <name> [--branch <branch>]` | Creates the project's branch (`fast-coding/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
 | `fast-coding tasks --project <name>` | Shows the task list for you to review before dispatch |
 | `fast-coding run --project <name>` | Dispatches the tasks to parallel implementers |
@@ -123,6 +153,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `fast-coding stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `fast-coding resume --project <name>` | Continues after a billing halt |
 | `fast-coding clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
+| `fast-coding yolo --project <name> [--push] [words]\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
 | `fast-coding workspace [<name>]` | Lists or switches billing workspaces |
 
 Every command is documented in [docs/cli.md](docs/cli.md).
