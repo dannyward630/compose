@@ -71,6 +71,8 @@ def detach(a):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])
+    if len(sys.argv) == 1:
+        fc_herdr.herdr_attach()
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),

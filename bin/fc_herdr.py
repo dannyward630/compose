@@ -1,4 +1,4 @@
-import shlex, json, os, re, signal, subprocess, sys, time
+import shlex, json, os, re, shutil, signal, subprocess, sys, time
 from pathlib import Path
 import fc_core
 
@@ -282,4 +282,9 @@ def herdr_space_is(space, name):
 def herdr_attach():
     """Bare `compose` on a terminal outside herdr: print the hint and exec `herdr session attach compose` in this directory.
     Returns when a condition fails (no terminal, HERDR_ENV, CI, or COMPOSE_NO_HERDR set); exits 1 when herdr is not installed."""
-    raise NotImplementedError("not implemented: task 030")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()) or any(os.environ.get(k) for k in ("HERDR_ENV", "CI", "COMPOSE_NO_HERDR")):
+        return
+    if not shutil.which("herdr"):
+        sys.exit("herdr is not installed: curl -fsSL https://herdr.dev/install.sh | sh\nor run compose setup")
+    print("opening herdr session compose: run claude in a pane and type /compose", flush=True)
+    os.execvp("herdr", ["herdr", "session", "attach", "compose"])
