@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bp: drive a Chromium with an unpacked extension over raw CDP. No dependencies. Node 22+.
 // Usage: bp <command> [args]   (bp help)
-import { writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -107,7 +107,18 @@ const cmds = {
     const envFile = `${process.env.HOME}/.compose/.env`;
     const script = 'import sys\nfrom jev_ultrafast import Agent\nwith Agent(sys.argv[1], sys.argv[2:]) as a:\n    for s in a.run(): print(f"{s[\'elapsed_ms\']:>5} ms  {len(s[\'history\'])} actions  {s[\'status\']}", flush=True)\n    print(s["page"]["url"])';
     const args = ['run', '--quiet', ...(existsSync(envFile) ? ['--env-file', envFile] : []), 'python', '-c', script, url, ...goals];
-    const env = { ...process.env, BU_CDP_URL: `http://127.0.0.1:${PORT}`, BU_NAME: `bp${PORT}` };
+    // Keys for the jev child come from the compose config dir ($COMPOSE_CONFIG's dir, else ~/.compose): the active workspace's
+    // OpenRouter key, else default's, plus the top-level TypeSafe key. Missing or unreadable config/auth: run as today, no keys.
+    const cfgDir = process.env.COMPOSE_CONFIG ? path.dirname(process.env.COMPOSE_CONFIG) : `${process.env.HOME}/.compose`;
+    const keys = {};
+    try {
+      const ws = JSON.parse(readFileSync(path.join(cfgDir, 'config.json'), 'utf8')).workspace || 'default';
+      const a = JSON.parse(readFileSync(path.join(cfgDir, 'auth.json'), 'utf8'));
+      const or = a.workspaces?.[ws]?.openrouter ?? a.workspaces?.default?.openrouter;
+      if (a.typesafe) keys.TYPESAFE_API_KEY = a.typesafe;
+      if (or) keys.OPENROUTER_API_KEY = keys.TEXT_MODEL_API_KEY = or;
+    } catch {}
+    const env = { ...process.env, ...keys, BU_CDP_URL: `http://127.0.0.1:${PORT}`, BU_NAME: `bp${PORT}` };
     console.log(`jev → ${url} on :${PORT} | goals: ${goals.join(' | ')}`);
     await new Promise((resolve) => { const c = spawn('uv', args, { cwd: jev, env, stdio: 'inherit' }); c.on('exit', (code) => { if (code) console.error('jev exited', code); resolve(); }); });
   },
