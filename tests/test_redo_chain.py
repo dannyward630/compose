@@ -119,11 +119,11 @@ class KeepFinishedLayers(unittest.TestCase):
         ran = []
         a = lambda **kw: mock.Mock(repo=str(self.repo), project="p", only=None, redo=False, **kw)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo), \
-             mock.patch.object(fc, "run_tasks", lambda repo, proj, ts, a: ran.append([m["id"] for m in ts])), mock.patch.object(fc.fc_core, "say"):
-            fc.cmd_run(a())
+             mock.patch.object(fc.fc_run, "run_tasks", lambda repo, proj, ts, a: ran.append([m["id"] for m in ts])), mock.patch.object(fc.fc_core, "say"):
+            fc.fc_run.cmd_run(a())
             (self.proj / "results" / "run.json").write_text(json.dumps({"pid": 999999, "started_at": "x", "tasks": [t["id"] for t in tasks], "args": {}}))
-            fc.cmd_resume(a())
-            fc.cmd_run(mock.Mock(repo=str(self.repo), project="p", only=None, redo=True))
+            fc.fc_run.cmd_resume(a())
+            fc.fc_run.cmd_run(mock.Mock(repo=str(self.repo), project="p", only=None, redo=True))
         os.environ.pop("FAST_CODING_REDO", None)
         self.assertEqual(ran, [["004", "005"], ["004", "005"], ["001", "003", "004", "005"]])  # Canceled stays out even on --redo
 
@@ -170,9 +170,9 @@ class RewrittenTrunk(unittest.TestCase):
         self.git("checkout", "-q", "fast/p/011"); (self.repo / "a.txt").write_text("eleven\n"); self.git("commit", "-qam", "task 011 edits a")
         self.git("checkout", "-q", "trunk")
         a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
-        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              self.assertRaises(SystemExit) as e:
-            fc.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
+            fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept
         self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
         self.assertIn("(the old base recorded in this pass)", str(e.exception))  # the hint says where the old base came from

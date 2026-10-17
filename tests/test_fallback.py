@@ -90,9 +90,9 @@ class Preflight(unittest.TestCase):
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             return "s", "OK", 0, {"cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl):
-            fc.preflight({PRIMARY, "pi:r/limited", "claude", None})  # a rate limit proves the model resolved; claude is not probed
+            fc.fc_run.preflight({PRIMARY, "pi:r/limited", "claude", None})  # a rate limit proves the model resolved; claude is not probed
             with self.assertRaises(SystemExit) as cm:
-                fc.preflight({PRIMARY, BACKUP})
+                fc.fc_run.preflight({PRIMARY, BACKUP})
         self.assertIn(BACKUP, str(cm.exception))
         self.assertIn("not a valid model ID", str(cm.exception))
 

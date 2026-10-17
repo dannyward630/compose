@@ -9,193 +9,13 @@ Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` 
   .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
-import argparse, fcntl, json, os, re, signal, sys, tempfile, threading, time
+import argparse, fcntl, json, os, re, signal, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify  # noqa: E402
-
-TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
-              "does not ask for; code far more complex than the brief needs; a UI state not placed or styled the way the brief says; "
-              "anything aimed at the test rather than the user. Everything else is clean; style nits are clean.")
-
-def triage(repo, proj, ids):
-    """One fast-model look per passed task, all at once: `clean`, or `flag: <reason quoting the code>`. It only points the
-    team lead at layers to read in full; it never rejects. Stored as `triage` in the task's result file."""
-    env = fc_models.fast_env()
-    if not env.get("TEXT_MODEL_API_KEY"):
-        return {}
-    metas = {m["id"]: m for m in fc_tasks.load_tasks(proj)}
-    trunk = fc_core.current_branch(repo)
-    def one(tid):
-        m, branch = metas.get(tid) or {}, f"fast/{proj.name}/{tid}"
-        try:
-            base = fc_core.sh(["git", "merge-base", trunk, branch], repo).stdout.strip()
-            diff = fc_core.sh(["git", "diff", base, branch, "--", *(m.get("files") or [])], repo, check=False).stdout
-            v = fc_models.fast_json(env, "You triage one finished coding task for a senior reviewer. " + TRIAGE_BAR +
-                          ' Return JSON {"verdict": "clean" | "flag", "reason": str}; a flag reason is one line quoting the code.',
-                          f"TASK BRIEF:\n{(m.get('body') or '')[:6000]}\n\nFILES IT MAY CHANGE: {', '.join(m.get('files') or [])}\n\n"
-                          f"DIFF:\n{diff[:40000]}", max_tokens=300, timeout=30)
-            verdict, reason = ("flag" if v.get("verdict") == "flag" else "clean"), str(v.get("reason") or "").strip()[:300]
-        except Exception as e:  # noqa: BLE001 - triage is advisory
-            verdict, reason = "unknown", f"triage failed: {str(e)[:150]}"
-        f = proj / "results" / f"{tid}.json"
-        if f.exists():
-            r = json.loads(f.read_text()); r["triage"] = {"verdict": verdict, "reason": reason}
-            fc_core.atomic_write(f, json.dumps(r, indent=2))
-        return tid, verdict, reason
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        out = list(ex.map(one, ids))
-    for tid, verdict, reason in out:
-        fc_core.say(f"{tid} triage  {verdict}" + (f": {reason}" if verdict != "clean" and reason else ""))
-    return {tid: (v, r) for tid, v, r in out}
-
-def cmd_triage(a):
-    proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    ids = [x.strip() for x in a.only.split(",")] if a.only else sorted(
-        f.stem for f in (proj / "results").glob("[0-9]*.json") if json.loads(f.read_text()).get("status") == "passed")
-    if not triage(repo, proj, ids):
-        sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
-
-def cmd_run(a):
-    proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    only = set(a.only.split(",")) if a.only else None
-    if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip():
-        sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
-    tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
-    if not tasks:
-        sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
-    redo = bool(getattr(a, "redo", False))
-    kept = {m["id"]: fc_tasks.task_finished(proj, m, redo) for m in tasks}
-    for tid, why in kept.items():
-        if why:
-            fc_core.say(f"{tid} keep    {why}" + ("; pass --redo to rebuild it" if why.startswith("its result") else ""))
-    tasks = [m for m in tasks if not kept[m["id"]]]
-    if not tasks:
-        return fc_core.say("nothing to run: every task is finished")
-    if redo:
-        os.environ["FAST_CODING_REDO"] = "1"
-    # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
-    wt = fc_herdr.project_worktree(proj)
-    pending = [m["id"] for m in tasks if fc_core.sh(["git", "rev-parse", "--verify", "-q", fc_briefs.test_branch(proj, m["id"])], wt, check=False).returncode == 0]
-    if pending:
-        busy = [t for t in pending if (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
-        if busy:
-            sys.exit(f"test-writing teammates still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
-        fc_briefs.collect_tests(proj, ",".join(pending))
-    run_tasks(repo, proj, tasks, a)
-
-def preflight(models):
-    """One tiny turn per model a run can call, before any clone: a wrong model id or preset slug stops the run here with the
-    provider's message, instead of failing every task (and, for a fallback, only on the first miss). A rate limit proves the
-    model resolved, so it passes."""
-    import shutil
-    def probe(model):
-        root = Path(tempfile.mkdtemp())
-        (root / "p").mkdir()
-        try:
-            fc_implement.implementer(root / "p", model, "Reply with the single word OK. Do not use tools.")
-            return None
-        except fc_models.RateLimited:
-            return None
-        except Exception as e:  # noqa: BLE001
-            return f"{model}: {str(e)[-400:]}"
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-    models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
-    fc_core.say(f"preflight  {', '.join(models)}")
-    with ThreadPoolExecutor(max_workers=max(1, len(models))) as ex:
-        bad = [b for b in ex.map(probe, models) if b]
-    if bad:
-        sys.exit("preflight failed; nothing was cloned or run. Fix the model id or preset in "
-                 f"{fc_config.CONFIG_PATH} (`models`) or the task's `model:`:\n  " + "\n  ".join(bad))
-
-def run_tasks(repo, proj, tasks, a):
-    models = {m["model"] for m in tasks}
-    preflight(models | {fc_models.fallback_for(m) for m in models})
-    a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
-    if fc_worktree.stack_order(repo, proj):
-        # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
-        # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
-        fc_layers.linearize(repo, proj, a.trunk, fc_worktree.stack_worktree(repo, proj, a.trunk))
-        if fc_layers.STACK_STOP:
-            sys.exit(f"stack  STOP  {fc_layers.STACK_STOP}")
-    fc_herdr.herdr_space(proj)
-    t0 = time.time()
-    (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}}, indent=2))
-    fc_core.say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
-    # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
-    # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
-    metas = {m["id"]: m for m in tasks}
-    ids = set(metas)
-    deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
-    results, pending, failed_ids, halt, reflecting = [], dict(deps), set(), None, []
-    from concurrent.futures import wait, FIRST_COMPLETED
-    with ThreadPoolExecutor(max_workers=a.parallel) as ex:
-        running = {}
-        while pending or running:
-            hold = fc_tasks.held(proj)  # re-read every pass: a hold or a release lands while the run goes on
-            ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
-            for p in ready[:a.parallel - len(running)]:  # only into free slots: a task queued inside the pool is out of a hold's reach
-                del pending[p]
-                running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
-            if halt and not running:
-                break  # a payment halt: leave the rest pending, do not mark them blocked
-            if not running:
-                stuck = fc_tasks.held_behind(pending, hold, failed_ids)
-                for p in pending:
-                    if p in stuck:  # left pending for the run after the re-plan, not blocked
-                        fc_core.say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after held " + ",".join(sorted(set(pending[p]) & stuck))))
-                        continue
-                    results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
-                                    "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
-                break
-            finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
-            for f in finished:
-                p = running.pop(f)
-                try:
-                    r = f.result()
-                except RuntimeError as e:  # a chain that no longer rebases: one line with the commands, not a traceback
-                    sys.exit(f"{p} STOP  {e}")
-                results.append(r)
-                if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
-                    reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
-                    reflecting[-1].start()
-                tid = metas[p]["id"]
-                if r["status"] == "payment_required":
-                    pay = next(x["payment_required"] for x in r["log"] if "payment_required" in x)
-                    halt = halt or fc_models.PaymentRequired(pay["provider"], pay["message"])
-                if r["status"] != "passed":
-                    failed_ids.add(tid)
-                for q in pending:
-                    pending[q] = [d for d in pending[q] if d != tid or d in failed_ids]
-    for t in reflecting:  # every screen is on disk before the run reports its end
-        t.join()
-    results.sort(key=lambda r: r["id"])
-    total = time.time() - t0
-    print()
-    print(f"{'task':6} {'status':18} {'attempts':8} {'time':>9} {'cost':>9}  branch")
-    for r in results:
-        print(f"{r['id']:6} {r['status']:18} {r['attempts']:<8} {fc_core.fmt(r['seconds']):>9} {'$' + format(r['cost'], '.4f'):>9}  {r['branch']}")
-    passed = sum(r["status"] == "passed" for r in results)
-    if passed:
-        triage(repo, proj, [r["id"] for r in results if r["status"] == "passed"])
-    fc_core.say(f"run done   {passed}/{len(results)} passed  wall {fc_core.fmt(total)}  sum of task time {fc_core.fmt(sum(r['seconds'] for r in results))}")
-    fc_core.say(fc_core.LEDGER.line())
-    if passed and not a.no_stack:
-        fc_layers.register_stack(repo, proj, a.trunk)
-    if halt:
-        done_ids = {r["id"] for r in results if r["status"] in (*fc_tasks.FINISHED, "already_green")}
-        remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
-        fc_models.payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
-    (proj / "results" / "resume.json").unlink(missing_ok=True)
-    (proj / "results" / "run.json").unlink(missing_ok=True)
-    fc_core.atomic_write((proj / "results" / "run-cost.json"), json.dumps(fc_core.LEDGER.snapshot(), indent=2))
-    sys.exit(0 if all(r["status"] in fc_tasks.FINISHED for r in results) else 1)
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run  # noqa: E402
 
 # ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
 YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
@@ -266,23 +86,6 @@ def cmd_yolo(a):
     print(f"push: {'yes, the verified stack is submitted' if y['push'] else 'no, the stack waits for you'}")
     print(YOLO_NEVER)
     print(f"back: `fast-coding yolo off --project {proj.name}` prints what happened")
-
-def reflect_task(proj, r):
-    """A task ended without passing: screen the settled lines against what its last attempt showed. It runs beside the run,
-    so nothing here may stop it."""
-    try:
-        last = (r.get("log") or [{}])[-1]
-        head = f"task {r['id']} {r.get('title') or ''}".strip()
-        if r["status"] == "contradiction":
-            found = last.get("contradiction", "")
-            fc_change.reflect(proj, f"task:{r['id']}", f"{head}: the implementer found its brief wrong: {found}",
-                    against=[found.split(" / ")[0].strip()])
-            return
-        why = (last.get("error") or (f"changed files outside its task: {', '.join(last['stray'])}" if last.get("stray") else "")
-               or last.get("summary") or (last.get("test_output") or "").strip()[-1500:] or "no detail")
-        fc_change.reflect(proj, f"task:{r['id']}", f"{head} ended {r['status']} after {r['attempts']} attempt(s): {why}")
-    except Exception as e:  # noqa: BLE001
-        fc_core.say(f"{r['id']} reflect failed ({str(e)[:200]}); the run goes on")
 
 def task_state(repo, proj, meta, trunk_head):
     """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk."""
@@ -896,34 +699,6 @@ def cmd_top(a):
     fc_worktree.ready_checkout(repo, wt, install=fc_core.project_config(proj).get("install"))
     print(f"stack top {chain[-1]} ({len(chain)} layers on {trunk}) checked out at:\n{wt}")
 
-def cmd_resume(a):
-    """Continue a run or verify that stopped on PAYMENT REQUIRED, from the saved state in results/resume.json."""
-    proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    path = proj / "results" / "resume.json"
-    if not path.exists():
-        m = fc_tasks.run_marker(proj)
-        if not m or fc_tasks.pid_alive(m.get("pid")):
-            sys.exit("nothing to resume: no payment halt and no interrupted run recorded for this project" + (" (a run is live)" if m else ""))
-        done = {t["id"] for t in fc_tasks.load_tasks(proj, required=True) if fc_tasks.task_finished(proj, t)}
-        state = {"command": "run", "remaining": [t for t in m["tasks"] if t not in done], "args": m["args"], "halted_at": m["started_at"], "provider": "interrupted run"}
-        (proj / "results" / "run.json").unlink(missing_ok=True)
-    else:
-        state = json.loads(path.read_text())
-    fc_core.say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
-    ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
-    if state["command"] == "run":
-        if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip():
-            sys.exit("repo has uncommitted changes; commit first")
-        tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not fc_tasks.task_finished(proj, m)]
-        if not tasks:
-            path.unlink(missing_ok=True)
-            sys.exit("nothing left to run; cleared the halt")
-        fc_core.say(f"resume {len(tasks)} task(s): {', '.join(state['remaining'])}")
-        run_tasks(repo, proj, tasks, ns)
-    else:
-        ns.fix, ns.skip_e2e, ns.skip_review = state["args"]["fix"], state["args"]["skip_e2e"], state["args"]["skip_review"]
-        fc_verify.cmd_verify(ns)
-
 # ---------- bench ----------
 
 def pct(xs, q):
@@ -1032,10 +807,10 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file fast-coding depends on; one MISSING line each, exit 1 when a required one is absent"),
                             ("init", fc_init.cmd_init, "create .fast-coding/<project>/ skeleton"),
-                            ("run", cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
+                            ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
-                            ("resume", cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
+                            ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
                             ("sync", fc_linear.cmd_sync, "store the feature and its tasks: --from-linear reads them from Linear, else JSON on stdin"),
                             ("tasks", cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
@@ -1055,7 +830,7 @@ def main():
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("designer", fc_figma.cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
-                            ("triage", cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
+                            ("triage", fc_run.cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", fc_change.cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
                             ("yolo", cmd_yolo, "the product owner is away: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, `off` prints the digest and archives"),

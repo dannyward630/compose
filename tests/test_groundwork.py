@@ -192,14 +192,14 @@ class Triage(unittest.TestCase):
                 live[0] -= 1
             return {"verdict": "flag", "reason": "adds a retry flag: `retries := 3`"} if "001 change" in user else {"verdict": "clean"}
         with mock.patch.object(fc.fc_models, "fast_json", fake), mock.patch.object(fc.fc_core, "say"):
-            out = fc.triage(self.repo, self.proj, ["001", "002"])
+            out = fc.fc_run.triage(self.repo, self.proj, ["001", "002"])
         self.assertEqual(peak[0], 2)
         self.assertEqual(out["001"][0], "flag"); self.assertEqual(out["002"][0], "clean")
         self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["triage"]["verdict"], "flag")
 
     def test_a_failed_call_is_unknown_never_a_crash(self):
         with mock.patch.object(fc.fc_models, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc.fc_core, "say"):
-            out = fc.triage(self.repo, self.proj, ["001"])
+            out = fc.fc_run.triage(self.repo, self.proj, ["001"])
         self.assertEqual(out["001"][0], "unknown")
 
 

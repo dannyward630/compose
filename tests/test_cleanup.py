@@ -57,12 +57,12 @@ class TestCrewWorktrees(unittest.TestCase):
         from types import SimpleNamespace
         self.crew_commits("001", "a_test.go", "a\n")
         a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False)
-        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "working"}]):
+        with mock.patch.object(fc.fc_run, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "working"}]):
             with self.assertRaises(SystemExit) as e:
-                fc.cmd_run(a)
+                fc.fc_run.cmd_run(a)
             self.assertIn("tests-001", str(e.exception)); rt.assert_not_called()
-        with mock.patch.object(fc, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "done"}]):
-            fc.cmd_run(a)
+        with mock.patch.object(fc.fc_run, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "done"}]):
+            fc.fc_run.cmd_run(a)
             rt.assert_called_once()
         self.assertTrue((self.repo / "a_test.go").exists())  # collected before the run
 

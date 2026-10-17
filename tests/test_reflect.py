@@ -262,11 +262,11 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
               [{"test_output": "AssertionError: expected 2, got 3"}]
         return {"id": meta["id"], "title": meta["title"], "status": st, "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": log}
     out = io.StringIO()
-    with mock.patch.object(fc.fc_implement, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
+    with mock.patch.object(fc.fc_implement, "run_task", fake), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
             mock.patch.object(fc.fc_worktree, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
-            mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc.fc_change, "reflect", reflect), redirect_stdout(out):
+            mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_change, "reflect", reflect), redirect_stdout(out):
         try:
-            fc.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
+            fc.fc_run.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
         except SystemExit:
             pass
     return calls, out.getvalue(), reflect
