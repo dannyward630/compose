@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, json, os, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -121,6 +121,65 @@ sys.exit(code)
 
 class FileCommand(unittest.TestCase):
     """cmd_tool_bug: post on the maintainer's machine or with --approved, else save a draft; search before every create."""
+    RAW, URL = "# crew start: hangs at alice9 prompt\n## Summary\n\nIt hangs. token ghp_abcdefghijklmnopqrstuvwx\n", "https://github.com/prodoxx/compose/issues/2"
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        self.drafts = self.home / ".compose" / "tool-bugs"
+        for p in (mock.patch.object(fc.fc_crew, "TOOL_BUGS", self.home / ".compose" / "tool-bugs.jsonl"),
+                  mock.patch.object(fc.fc_config, "CONFIG_PATH", self.home / ".compose" / "config.json"),
+                  mock.patch.object(fc.fc_toolbug, "environment", return_value="- OS: test")):
+            p.start(); self.addCleanup(p.stop)
+
+    def run_cmd(self, state, raw=RAW, matches=(), url=URL, **kw):
+        (self.home / "b.md").write_text(raw)
+        a = SimpleNamespace(**{**dict(repo=".", project="shop", action="file", body=str(self.home / "b.md"), comment=None, new=False, approved=False), **kw})
+        self.m = {n: mock.patch.object(fc.fc_toolbug, n, return_value=v).start() for n, v in dict(
+            gh_status=(state, None if state == "no-gh" else "alice9"), open_matches=list(matches), post=url, record_issue=True).items()}
+        self.addCleanup(mock.patch.stopall)
+        status = 0
+        with mock.patch("sys.stdout", io.StringIO()) as out:
+            try: fc.fc_toolbug.cmd_tool_bug(a)
+            except SystemExit as e: status = 1 if isinstance(e.code, str) else e.code
+        return status, out.getvalue()
+
+    def draft(self, out, login="alice9"):
+        [path] = list(self.drafts.glob("*.md"))
+        self.assertRegex(path.name, r"^\d{8}-\d{6}\.md$"); self.assertIn(str(path), out)
+        title, body = fc.fc_toolbug.issue_text(self.RAW, login)
+        self.assertEqual(path.read_text(), "# " + title + "\n\n" + body); self.assertNotIn("ghp_abc", path.read_text())
+        return path
+
+    def test_a_reporter_or_no_gh_saves_a_scrubbed_draft_and_posts_nothing(self):
+        for state, kw in (("reporter", {}), ("no-gh", {}), ("no-gh", {"approved": True})):
+            with self.subTest(state, **kw):
+                for f in self.drafts.glob("*.md"): f.unlink()
+                status, out = self.run_cmd(state, **kw)
+                self.assertEqual(status, 0); self.m["post"].assert_not_called()
+                path = self.draft(out, None if state == "no-gh" else "alice9")
+                self.assertIn(f"--body {path} --approved", out); self.assertEqual("gh auth login" in out, state == "no-gh")
+
+    def test_matches_are_listed_and_exit_2_without_posting(self):
+        status, out = self.run_cmd("maintainer", matches=[{"number": 7, "title": "crew start hangs", "url": "https://x/7"}])
+        self.assertEqual(status, 2); self.m["post"].assert_not_called()
+        self.assertIn("#7 crew start hangs https://x/7", out); self.assertIn("--comment", out); self.assertIn("--new", out)
+
+    def test_post_prints_and_records_the_url(self):
+        for state, kw, comment in (("maintainer", {}, None), ("maintainer", {"new": True}, None), ("reporter", {"approved": True, "comment": 3}, 3)):
+            with self.subTest(**kw):
+                status, out = self.run_cmd(state, matches=[{"number": 7, "title": "t", "url": "u"}] if kw else [], **kw)
+                self.assertEqual(status, 0); self.assertIn(self.URL, out)
+                title, body = fc.fc_toolbug.issue_text(self.RAW, "alice9")
+                self.assertEqual((self.m["post"].call_args.args[:2], self.m["post"].call_args.kwargs.get("comment")), ((title, body), comment))
+                self.m["record_issue"].assert_called_once_with("shop", self.URL)
+                if comment: self.m["open_matches"].assert_not_called()
+
+    def test_a_failed_post_saves_the_draft_and_exits_1(self):
+        status, out = self.run_cmd("maintainer", url=None)
+        self.assertEqual(status, 1); self.draft(out); self.m["record_issue"].assert_not_called()
+
+    def test_a_body_without_a_title_line_exits_1(self):
+        self.assertEqual(self.run_cmd("maintainer", raw="no title\n")[0], 1); self.m["post"].assert_not_called()
 
 
 class Cli(unittest.TestCase):
