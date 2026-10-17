@@ -68,29 +68,29 @@ class LinearStates(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.lin = FakeLinear()
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc, "linear_gql", self.lin), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.lin), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
-        fc._linear_warned.clear()
+        fc.fc_linear._linear_warned.clear()
 
     def result(self, status="passed", log=None):
         return {"status": status, "branch": "fast/p/001", "attempts": 2, "cost": 0.0123, "model": "pi:x/glm", "log": log or []}
 
     def test_the_state_table_runs_from_cli_events(self):
-        fc.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
+        fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
         self.assertEqual([self.lin.state[i] for i in ("ENG-3", "ENG-2", "ENG-1")], ["In Progress"] * 3)
-        fc.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
+        fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
         self.assertEqual((self.lin.state["ENG-3"], self.lin.state["ENG-2"]), ("In Review", "In Progress"))  # ENG-4 not started
-        fc.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
-        fc.linear_event(self.proj, {"linear": "ENG-4"}, "passed", self.result())
+        fc.fc_linear.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
+        fc.fc_linear.linear_event(self.proj, {"linear": "ENG-4"}, "passed", self.result())
         self.assertEqual(self.lin.state["ENG-2"], "In Review")
         self.assertEqual(self.lin.state["ENG-1"], "In Progress")  # every story In Review, but verify has not passed
-        fc.linear_verified(self.proj)
+        fc.fc_linear.linear_verified(self.proj)
         self.assertEqual(self.lin.state["ENG-1"], "In Review")
         self.assertIn("fast/p/001", self.lin.comments[0][1]); self.assertIn("2 attempt(s)", self.lin.comments[0][1])
         self.assertIn("$0.0123", self.lin.comments[0][1]); self.assertIn("pi:x/glm", self.lin.comments[0][1])
 
     def test_a_failure_stays_in_progress_with_its_cause(self):
-        fc.linear_event(self.proj, {"linear": "ENG-3"}, "failed",
+        fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "failed",
                         self.result("failed", [{"test_output": "ok a\nFAIL TestScore: got 1 want 2"}]))
         self.assertEqual(self.lin.state["ENG-3"], "In Progress")
         self.assertIn("FAIL TestScore: got 1 want 2", self.lin.comments[0][1])
@@ -98,20 +98,20 @@ class LinearStates(unittest.TestCase):
     def test_no_key_skips_once_with_how_to_set_it(self):
         said = []
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
-            fc.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
-            fc.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
+            fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
+            fc.fc_linear.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
         self.assertEqual(len(said), 1); self.assertIn("--linear", said[0])
 
     def test_a_linear_outage_never_stops_the_run(self):
         said = []
-        with mock.patch.object(fc, "linear_gql", side_effect=OSError("connection refused")), mock.patch.object(fc.fc_core, "say", said.append):
-            fc.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
-            fc.linear_verified(self.proj)
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=OSError("connection refused")), mock.patch.object(fc.fc_core, "say", said.append):
+            fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
+            fc.fc_linear.linear_verified(self.proj)
         self.assertTrue(any("update failed" in s for s in said))
 
     def test_untracked_tasks_leave_linear_alone(self):
-        fc.linear_event(self.proj, {}, "dispatched")
+        fc.fc_linear.linear_event(self.proj, {}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
 
 class SyncFromLinear(unittest.TestCase):
@@ -120,7 +120,7 @@ class SyncFromLinear(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.queries = []
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc, "linear_gql", self.gql), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def node(self, i, parent, blocked=()):
@@ -143,11 +143,11 @@ class SyncFromLinear(unittest.TestCase):
     def sync(self):
         out = io.StringIO()
         with redirect_stdout(out), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
-            fc.cmd_sync(SimpleNamespace(from_linear=True))
+            fc.fc_linear.cmd_sync(SimpleNamespace(from_linear=True))
         return out.getvalue()
 
     def test_payload_is_the_stdin_shape_with_every_page(self):
-        data = fc.linear_sync_payload(self.proj)
+        data = fc.fc_linear.linear_sync_payload(self.proj)
         self.assertEqual(data["feature"], {"id": "ENG-1", "title": "TENG-1", "description": "text ENG-1"})
         self.assertEqual([i["id"] for i in data["issues"]], ["ENG-2", "ENG-4", "ENG-5", "ENG-6", "ENG-3"])
         task = data["issues"][2]
@@ -162,11 +162,11 @@ class SyncFromLinear(unittest.TestCase):
 
     def test_stories_scope_skips_other_stories_children(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-3"]}))
-        self.assertEqual([i["id"] for i in fc.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
+        self.assertEqual([i["id"] for i in fc.fc_linear.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
 
     def test_no_key_points_to_stdin_and_prints_no_key(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
-            fc.linear_sync_payload(self.proj)
+            fc.fc_linear.linear_sync_payload(self.proj)
         self.assertIn("pipe the JSON on stdin", str(e.exception))
         self.assertNotIn(KEY, str(e.exception))
 

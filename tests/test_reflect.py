@@ -279,7 +279,7 @@ class Holds(unittest.TestCase):
         self.said, self.notes = [], []
         fc.fc_tasks._hold_warned.clear()
         for mod, name, value in ((fc.fc_core, "say", self.said.append), (fc.fc_core, "project_dir", lambda a: self.proj),
-                            (fc, "linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
+                            (fc.fc_linear, "linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def hold(self, **kw):
@@ -645,7 +645,7 @@ class Undo(unittest.TestCase):
         self.proj = project()
         self.repo, self.git = git_repo(("003", "004"))
         self.lin = LinearIssues(AFTER, MAP_AFTER)
-        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", "lin_test"), (fc, "linear_gql", self.lin),
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", "lin_test"), (fc.fc_linear, "linear_gql", self.lin),
                             (fc, "register_stack", lambda *a, **k: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
@@ -744,7 +744,7 @@ class Undo(unittest.TestCase):
 
     def test_blockers_are_set_to_exactly_the_snapshot(self):
         self.lin.issues["ENG-4"]["blockedBy"] = ["ENG-3", "ENG-5"]
-        fc.linear_blocked_by(fc.linear_issue("ENG-4"), ["ENG-3"])
+        fc.fc_linear.linear_blocked_by(fc.fc_linear.linear_issue("ENG-4"), ["ENG-3"])
         self.assertEqual(self.lin.issues["ENG-4"]["blockedBy"], ["ENG-3"])
 
 

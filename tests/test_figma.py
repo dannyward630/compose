@@ -166,7 +166,7 @@ class FigmaJudge(unittest.TestCase):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
-                mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
+                mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
             except SystemExit as e:
@@ -277,7 +277,7 @@ class FigmaJudge(unittest.TestCase):
             choice, p = answer(state["tree"])
             return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9, "NOT_MET": p}}}}
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "fast_json", return_value=confirm), \
-                mock.patch.object(fc, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
+                mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
             except SystemExit as e:
@@ -324,7 +324,7 @@ class FigmaJudge(unittest.TestCase):
             return {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         (self.proj / "results" / "001.tree.txt").write_text(big_tree())
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_linear, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
         res = json.loads((self.proj / "results" / "001.json").read_text())
         self.assertEqual(res["status"], "blocked")

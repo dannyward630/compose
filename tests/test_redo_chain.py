@@ -101,7 +101,7 @@ class KeepFinishedLayers(unittest.TestCase):
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
         task = {"id": "001", "title": "A", "files": [], "body": ""}
         with mock.patch.object(fc, "replace_branch", side_effect=AssertionError("a hand_done task was rebuilt")), \
-             mock.patch.object(fc, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc.fc_core, "say"):
+             mock.patch.object(fc.fc_linear, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc.fc_core, "say"):
             self.assertEqual(fc.run_task(self.repo, self.proj, task, 1)["status"], "hand_done")
         with mock.patch.dict(os.environ, {"FAST_CODING_REDO": "1"}), mock.patch.object(fc, "replace_branch", side_effect=RuntimeError("rebuilt")):
             with self.assertRaisesRegex(RuntimeError, "rebuilt"):

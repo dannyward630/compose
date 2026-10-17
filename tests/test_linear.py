@@ -114,7 +114,7 @@ class Sync(unittest.TestCase):
         payload = json.dumps({"feature": {"id": "ENG-1", "title": "F"}, "issues": [issue("ENG-3", "A", block(id="001", test="t"))]})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(sys, "stdin", io.StringIO(payload)), \
                 mock.patch("builtins.print"):
-            fc.cmd_sync(type("A", (), {"from_linear": False}))
+            fc.fc_linear.cmd_sync(type("A", (), {"from_linear": False}))
         self.assertEqual(fc.fc_tasks.load_tasks(self.proj)[0]["linear"], "ENG-3")
 
 
