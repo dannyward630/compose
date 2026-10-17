@@ -11,11 +11,13 @@ One or two sentences: what failed and what you were doing.
 
 ## Environment
 
-- Claude Code version:
-- herdr version:
-- graft version:
+- compose:
 - OS:
-- compose commit:
+- Python:
+- claude:
+- herdr:
+- graft:
+- gh:
 
 ## Symptom
 
