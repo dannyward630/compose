@@ -32,8 +32,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
-        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {"GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1",
-                                                                     "COMPOSE_CONFIG": fc_core.scratch_config()})
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
+                                                           "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()})
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
