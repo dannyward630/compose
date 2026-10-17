@@ -49,7 +49,7 @@ Each optional tool adds one feature.
 |---|---|---|
 | herdr | the visible fleet: teammates, panes, one space per project ([herdr.md](herdr.md)) | herdr's installer; without it everything runs headless in one session |
 | treehouse | worktrees from a pool inside the repo | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh`; plain git worktrees without it |
-| graft | `file:line` context packs for implementers | `brew install graft` |
+| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |
 | Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); the MCP server comes through `npx` |
 | OpenCode | an alternative implementer per task, a `bench` column | `curl -fsSL https://opencode.ai/install \| bash` |
 
@@ -97,6 +97,6 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 |---|---|
 | `COMPOSE_CONFIG` | path of the config file |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
-| `COMPOSE_NO_GRAFT=1` | skip graft |
+| `COMPOSE_NO_TRAIL=1` | skip trail |
 | `COMPOSE_FAKE_402=<provider>` | simulate a billing halt (tests) |
 | `HERDR_ENV=1` with `HERDR_SOCKET_PATH` | marks a session inside herdr |
