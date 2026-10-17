@@ -205,3 +205,28 @@ class RewrittenTrunk(unittest.TestCase):
         self.assertFalse(any("STOP" in l for l in said), said)
         self.assertTrue(any(l.startswith("run done   0/1 passed") for l in said))  # 012 ran: its test was already green
         self.assertEqual([self.git("rev-parse", f"fast/p/{t}") for t in ("010", "011")], tips)
+
+    def test_a_task_whose_chain_stops_mid_run_is_unchained_and_the_run_still_ends_with_its_summary(self):
+        after = {"011": "010", "012": "011", "013": "012", "014": "013"}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": t, "after": after.get(t, "")} for t in ("010", "011", "012", "013", "014", "015")]}))
+        self.git("checkout", "-q", "trunk")
+        real = fc.fc_implement.run_task
+        def run_task(repo, proj, meta, attempts):
+            if meta["id"] != "012":
+                return real(repo, proj, meta, attempts)
+            self.layer("012", "fast/p/010", "011.txt", "twelve\n"); self.git("checkout", "-q", "trunk")  # passes on 010, clashing with 011
+            return {"id": "012", "title": "012", "status": "passed", "attempts": 1, "seconds": 1.0, "cost": 0.0, "branch": "fast/p/012"}
+        tasks = [{"id": t, "title": t, "after": after.get(t, ""), "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ("012", "013", "014", "015")]
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
+             mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(self.repo, self.proj, tasks, a)
+        said = [str(c.args[0]) for c in say.call_args_list]
+        rows = {str(c.args[0]).split()[0]: str(c.args[0]).split()[1] for c in out.call_args_list if c.args and str(c.args[0])[:3].isdigit()}
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(rows, {"012": "passed", "013": "unchained", "014": "blocked_by_013", "015": "already_green"})
+        self.assertTrue(any(l.startswith("013 STOP  after: fast/p/012 could not be chained: fast/p/012 conflicts") for l in said))
+        self.assertTrue(any(l.startswith("run done   1/4 passed") for l in said))
+        self.assertEqual(json.loads((self.proj / "results" / "013.json").read_text())["status"], "unchained")
+        self.assertFalse((self.proj / "results" / "run.json").exists())  # watch sees a finished run, not a crashed one

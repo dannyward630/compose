@@ -229,6 +229,10 @@ class WatchMemory(unittest.TestCase):
         ev = fc.fc_watch.watch_events(wsnap(run=True), wsnap(halt=["2026-10-11 10:00:00", "openrouter", 2]))
         self.assertTrue(any(e.startswith("event halt=payment provider=openrouter remaining=2") for e in ev), ev)
 
+    def test_a_task_whose_chain_stopped_is_an_event(self):
+        ev = fc.fc_watch.watch_events(wsnap(run=True), wsnap("unchained", run=True))
+        self.assertTrue(any(e.startswith("event task=001 state=unchained") for e in ev), ev)
+
     def test_checking_out_the_stack_top_and_back_reports_nothing(self):
         """A task's state is measured against the project branch, not whatever the worktree has checked out: peeking at
         the stack top (where every layer is an ancestor) and coming back must not replay passed and hand_done tasks."""

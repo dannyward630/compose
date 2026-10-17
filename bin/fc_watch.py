@@ -6,7 +6,7 @@ import fc_core, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status
 YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
 
 # ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
+FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
 
 def watch_snapshot(repo, proj):
     """Everything a team lead decides on: each task's state, each herdr agent's status, run and verify markers."""

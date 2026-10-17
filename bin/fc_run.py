@@ -150,8 +150,11 @@ def run_tasks(repo, proj, tasks, a):
                 p = running.pop(f)
                 try:
                     r = f.result()
-                except RuntimeError as e:  # a chain that no longer rebases: one line with the commands, not a traceback
-                    sys.exit(f"{p} STOP  {e}")
+                except RuntimeError as e:  # a chain that no longer rebases: the task never started; one line with the commands, and the run goes on
+                    fc_core.say(f"{p} STOP  {e}")
+                    r = {"id": metas[p]["id"], "title": metas[p].get("title"), "status": "unchained", "attempts": 0, "seconds": 0.0, "cost": 0.0,
+                         "branch": "-", "log": [{"stop": str(e)}]}
+                    fc_core.atomic_write((proj / "results" / f"{p}.json"), json.dumps(r, indent=2))
                 results.append(r)
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
                     reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
