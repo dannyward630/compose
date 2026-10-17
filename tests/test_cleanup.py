@@ -146,10 +146,10 @@ class Leftovers(unittest.TestCase):
         mine_name, other_name = f"fc-test-{os.getpid()}-a", f"fc-test-{os.getpid()}-b"  # unique: suites may run at once
         shared = spawn(mine_name)  # running before the stage under its name (shared through e2e_env): kept
         time.sleep(0.2)
-        before = fc.harness_daemons(mine_name)
+        before = fc.fc_jev.harness_daemons(mine_name)
         mine, other = spawn(mine_name), spawn(other_name)  # another project's stage starts one meanwhile: kept
         time.sleep(0.2)
-        self.assertEqual(fc.end_new_daemons(mine_name, before), {str(mine.pid)})
+        self.assertEqual(fc.fc_jev.end_new_daemons(mine_name, before), {str(mine.pid)})
         self.assertIsNotNone(mine.wait(timeout=5))
         self.assertIsNone(shared.poll())
         self.assertIsNone(other.poll())

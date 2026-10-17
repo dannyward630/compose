@@ -73,7 +73,7 @@ class E2EBesideReview(unittest.TestCase):
         args = type("A", (), {"skip_e2e": False, "skip_review": False})()
         with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_space", return_value=None), \
                 mock.patch.object(fc, "review_inputs", return_value=("", "", "", [])), \
-                mock.patch.object(fc, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
+                mock.patch.object(fc.fc_jev, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
                 mock.patch.object(fc, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \
                 mock.patch.object(fc, "jev_acceptance", lambda *a, **k: {"pass": True, "criteria": [], "failed": []}):
             ok, report, _ = fc.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, args)

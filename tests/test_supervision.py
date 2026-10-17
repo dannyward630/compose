@@ -408,13 +408,13 @@ class Timed(unittest.TestCase):
 
 class JevLeash(unittest.TestCase):
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):
-        self.assertTrue(fc.tool_error("JEV_GAVE_UP: jev ended blocked after 60 steps\n"))
-        self.assertTrue(fc.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))
-        self.assertFalse(fc.tool_error("AssertionError: score was 2 of 3"))
+        self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev ended blocked after 60 steps\n"))
+        self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))
+        self.assertFalse(fc.fc_jev.tool_error("AssertionError: score was 2 of 3"))
 
     def test_a_jev_case_is_killed_at_its_limit(self):
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
              mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
-            r = fc.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
+            r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
-        self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.tool_error(r["stderr"]))
+        self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
