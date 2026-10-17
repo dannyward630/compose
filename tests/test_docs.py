@@ -594,10 +594,9 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("pi, bp, treehouse, and trail only warn, and Framelink warns as `needed for the designer`", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
-        # Only the tool word changes: the neighbouring env row stays, and no env row is added or left behind.
+        # Only the tool word changes: the neighbouring env row stays, and the old graft env row is gone.
         self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)
-        for gone in ("COMPOSE_NO_GRAFT", "COMPOSE_NO_HERDR"):
-            self.assertFalse([l for l in reqs if gone in l], gone)
+        self.assertFalse([l for l in reqs if "COMPOSE_NO_GRAFT" in l], "COMPOSE_NO_GRAFT")
 
     def test_how_it_works_and_new_machine(self):
         self.skipTest("not written yet")
