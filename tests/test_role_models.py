@@ -17,6 +17,7 @@ class RoleModels(unittest.TestCase):
     def setUp(self):
         p = mock.patch.object(fc, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}); p.start(); self.addCleanup(p.stop)  # the team lead starts every teammate here
 
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
@@ -94,7 +95,7 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
         for p in (mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json"),
-                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS)):
+                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"})):
             p.start(); self.addCleanup(p.stop)
         fc.apply_config(); fc._PROBED.clear()
         self.addCleanup(fc._PROBED.clear)

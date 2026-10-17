@@ -89,7 +89,7 @@ class WatchTimeout(unittest.TestCase):
                 "run": False, "verify": None, "run_end": 0, "last": (0, "")}
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.01, interval=0.01, stall=10_000)
         out = []
-        with mock.patch.object(fc, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), \
+        with mock.patch.object(fc, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
                 mock.patch.object(fc, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit) as e:
                 fc.cmd_watch(a)
@@ -135,7 +135,8 @@ class WatchMemory(unittest.TestCase):
         snap = wsnap(); later = wsnap()
         later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
         seen = []
-        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), \
+        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}  # the engineering manager's watch: no role
+        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
             with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
@@ -358,7 +359,7 @@ class Detach(unittest.TestCase):
         out = []
         a = SimpleNamespace(repo=".", now=True, from_=None)
         with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "watch_snapshot", return_value=wsnap("running", run=True)), \
-                mock.patch("builtins.print", out.append):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
             fc.cmd_watch(a)
         self.assertTrue(any(line.startswith("event run=live") for line in out), out)
 

@@ -14,7 +14,8 @@ def snap(proj):
 
 
 _patches = [mock.patch.object(fc.time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
-            mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: [])]  # no test runs the real `claude mcp list`
+            mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: []),  # no test runs the real `claude mcp list`
+            mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"})]  # every start and watch here is the team lead's unless the test clears it: the caller's own role never decides who a teammate reports to
 
 
 def setUpModule():

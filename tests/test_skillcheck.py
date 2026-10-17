@@ -119,7 +119,8 @@ class SkillCheck(unittest.TestCase):
         with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(fc.time, "sleep"), mock.patch("builtins.print"):
+                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(fc.time, "sleep"), mock.patch("builtins.print"), \
+                mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
             fc.cmd_crew(a)
         return json.loads((proj / "results" / "crew" / "shop-eol.json").read_text())
 

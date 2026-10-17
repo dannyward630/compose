@@ -214,7 +214,7 @@ class WatchReflect(unittest.TestCase):
         def watch(now):
             out, a = [], SimpleNamespace(repo=".", now=now, from_=None, timeout=0.05, interval=0.01, stall=10_000)
             with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", return_value={}), \
-                    mock.patch("builtins.print", out.append):
+                    mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 try:
                     fc.cmd_watch(a)
                 except SystemExit:

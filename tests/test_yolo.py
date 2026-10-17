@@ -122,7 +122,7 @@ class Yolo(unittest.TestCase):
         out = []
         a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
         with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=s), \
-                mock.patch("builtins.print", out.append):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
             fc.cmd_watch(a)
         return out
 
