@@ -1,4 +1,4 @@
-import json, subprocess, sys, tempfile, unittest
+import subprocess, sys, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -6,7 +6,7 @@ BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
 import fc_mcp  # noqa: E402
 
-P = ["claude_ai_Claude_Docs", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
+P = ["claude_ai_Claude_Docs", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma", "trail"]
 LIST = """Checking MCP server health…
 
 claude.ai Linear: https://mcp.linear.app/mcp (HTTP) - ✔ Connected
@@ -27,11 +27,11 @@ def pat(*names):
 
 class RoleMcp(unittest.TestCase):
     def test_servers_and_skills_by_role(self):
-        d = ("linear", "graft", "figma", "framelink-figma")
-        for role, servers, skills in [("toolsmith", ("graft",), False), ("implementer", ("graft",), False),
+        d = ("linear", "figma", "framelink-figma")
+        for role, servers, skills in [("toolsmith", (), False), ("implementer", (), False),
                                       ("designer", d, True), ("design-003", d, True), ("design-review", d, True),
-                                      ("planner", ("linear", "graft"), False), ("wayfinder", ("linear", "graft"), False),
-                                      ("no-such-role", ("linear", "graft"), False)]:
+                                      ("planner", ("linear",), False), ("wayfinder", ("linear",), False),
+                                      ("no-such-role", ("linear",), False)]:
             self.assertEqual((tuple(fc_mcp.servers_for(role)), fc_mcp.keeps_skills(role)), (servers, skills), role)
 
     def test_installed_servers_reads_list_in_cwd(self):
@@ -48,25 +48,18 @@ class RoleMcp(unittest.TestCase):
             self.assertEqual(fc_mcp.installed_servers("/w"), [])
 
     def test_disallowed(self):
-        self.assertEqual(set(fc_mcp.disallowed("planner", P)), pat(*P) - pat("claude_ai_Linear", "graft"))
-        for r, s in [(r, s) for r in ("designer", "design-review") for s in (P, P + ["claude_ai_Figma"])]:
-            self.assertEqual(set(fc_mcp.disallowed(r, s)), pat(*P) - pat("claude_ai_Linear", "graft", "framelink-figma"))
-        self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P) - pat("graft"))
-        self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("claude_ai_Linear", "graft", "frame0"))
+        self.assertEqual(set(fc_mcp.disallowed("planner", P)), pat(*P) - pat("claude_ai_Linear"))
+        for r, s in [(r, s) for r in ("designer", "design-review", "design-003") for s in (P, P + ["claude_ai_Figma"])]:
+            self.assertEqual(set(fc_mcp.disallowed(r, s)), pat(*P) - pat("claude_ai_Linear", "framelink-figma"))
+        for r in ("toolsmith", "implementer", "no-such-role", "orchestrator"):  # graft and trail are denied for every role
+            self.assertLessEqual(pat("graft", "trail"), set(fc_mcp.disallowed(r, P)), r)
+        self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P))
+        self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("claude_ai_Linear", "frame0"))
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), pat("LINEAR_x", "Graft2"))
 
-    def test_wired_mcpjson_approves_only_the_graft_server_graft_init_writes(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(fc_mcp.wired_mcpjson(d), [])  # no .mcp.json
-            for body, want in [({"mcpServers": {"graft": {"command": "graft", "args": ["mcp"]}}}, ["graft"]),
-                               ({"mcpServers": {"graft": {"type": "stdio", "command": "graft", "args": ["mcp"]}, "db": {"command": "pg-mcp"}}}, ["graft"]),
-                               ({"mcpServers": {"graft": {"command": "sh", "args": ["-c", "graft mcp"]}}}, []),  # the repo's own server of that name still asks
-                               ({"mcpServers": {"graft": {"command": "graft", "args": ["mcp"], "env": {"NODE_OPTIONS": "--require ./x.js"}}}}, []),
-                               ({"mcpServers": {"db": {"command": "pg-mcp"}}}, []), ([], [])]:
-                (Path(d) / ".mcp.json").write_text(json.dumps(body))
-                self.assertEqual(fc_mcp.wired_mcpjson(d), want, body)
-            (Path(d) / ".mcp.json").write_text("{not json")
-            self.assertEqual(fc_mcp.wired_mcpjson(d), [])
+    def test_no_mcpjson_approval_is_left(self):
+        self.assertFalse(hasattr(fc_mcp, "wired_mcpjson"))
+        self.assertFalse(hasattr(fc_mcp, "GRAFT_MCPJSON"))
 
 
 if __name__ == "__main__":

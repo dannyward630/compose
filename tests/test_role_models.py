@@ -11,7 +11,7 @@ _spec.loader.exec_module(fc)
 
 CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-sonnet-5-5",
         "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}
-SERVERS = ["claude_ai_Linear", "graft"]  # cmd_crew asks fc_mcp.installed_servers; no test runs the real `claude mcp list`
+SERVERS = ["claude_ai_Linear", "trail"]  # cmd_crew asks fc_mcp.installed_servers; no test runs the real `claude mcp list`
 
 
 class RoleModels(unittest.TestCase):

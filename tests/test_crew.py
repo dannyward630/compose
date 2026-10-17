@@ -301,7 +301,7 @@ class Crew(unittest.TestCase):
         self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
 
     MCP_DIALOG = ("➜  compose claude --no-chrome --permission-mode auto\n\n" + "─" * 60 + "\n"
-                  "  New MCP server found in this project: graft\n\n"
+                  "  New MCP server found in this project: db\n\n"
                   "  MCP servers may execute code or access system resources. All tool calls require approval.\n\n"
                   "    Use this MCP server\n    Use this and all future MCP servers in this project\n"
                   "  ❯ Continue without using this MCP server\n\n  Enter to confirm · Esc to cancel\n")
@@ -311,7 +311,7 @@ class Crew(unittest.TestCase):
         names it from the pane, reports it, and leaves the tab and the record in place, rather than closing it and asking for a retry."""
         code, out, calls = self.start_without_brief(prompt_fails="agent_blocked", screen=self.MCP_DIALOG)
         self.assertIsInstance(code, str)
-        self.assertIn("New MCP server found in this project: graft", code)
+        self.assertIn("New MCP server found in this project: db", code)
         self.assertIn("Continue without using this MCP server", code)
         self.assertNotIn("Enter to confirm", code)
         self.assertIn("herdr agent prompt shop-eol", code)  # how the brief goes in once the dialog is answered
@@ -320,7 +320,7 @@ class Crew(unittest.TestCase):
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
         last = fc.fc_crew.crew_reports(self.proj, "shop-eol")[-1]
         self.assertEqual(last["state"], "blocked")
-        self.assertIn("New MCP server found in this project: graft", last["message"])
+        self.assertIn("New MCP server found in this project: db", last["message"])
 
     def test_a_session_that_starts_on_the_last_look_is_kept(self):
         code, out, calls = self.start_without_brief(late=True)
@@ -805,7 +805,7 @@ class RestrictedStart(unittest.TestCase):
     """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
     SETTINGS = {"model": "opus", "enabledPlugins": {"compose@fc": True, "figma@claude-plugins-official": True, "superpowers@sp": True, "ponytail@p": False,
                                                     "compose-extra@x": True, "my-compose@x": True, "figmatic@x": True}}
-    P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
+    P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma", "trail"]
 
     def start(self, role, model="claude:claude-opus-5-5", effort=None, mcpjson=None, **kw):
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
@@ -847,22 +847,25 @@ class RestrictedStart(unittest.TestCase):
         settings = json.loads(args[args.index("--settings") + 1])
         self.assertEqual({k: settings[k] for k in ("attribution", "env")}, {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
         self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
-        self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P if p not in ("claude_ai_Linear", "graft")})
+        self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P if p != "claude_ai_Linear"})
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
         self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
         self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
 
-    def test_a_session_approves_the_graft_server_compose_wired_so_it_never_stops_at_the_mcp_dialog(self):
+    def test_a_session_approves_no_mcpjson_server_whatever_the_repo_wires(self):
         settings = lambda args: json.loads(args[args.index("--settings") + 1])
-        self.assertEqual(settings(self.start("orchestrator", mcpjson={"graft": {"command": "graft", "args": ["mcp"]}}))["enabledMcpjsonServers"], ["graft"])
-        self.assertNotIn("enabledMcpjsonServers", settings(self.start("orchestrator", mcpjson={"graft": {"command": "sh", "args": ["x"]}})))
-        self.assertNotIn("enabledMcpjsonServers", settings(self.start("orchestrator")))
+        for mcpjson in ({"graft": {"command": "graft", "args": ["mcp"]}}, {"trail": {"command": "trail", "args": ["mcp"]}}, None):
+            for role in ("orchestrator", "implementer", "designer"):
+                with self.subTest(mcpjson=mcpjson, role=role):
+                    got = settings(self.start(role, mcpjson=mcpjson))
+                    self.assertNotIn("enabledMcpjsonServers", got)
+                    self.assertLessEqual({"attribution", "env", "enabledPlugins"}, set(got))
 
-    def test_designer_keeps_linear_graft_and_claude_ai_figma(self):
+    def test_designer_keeps_linear_and_figma_but_not_graft_or_trail(self):
         dropped = self.patterns(self.start("designer"))
-        for p in ("claude_ai_Linear", "graft", "framelink-figma", "claude_ai_Figma"):
+        for p in ("claude_ai_Linear", "framelink-figma", "claude_ai_Figma"):
             self.assertNotIn(f"mcp__{p}__*", dropped)
-        self.assertLessEqual({"mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
+        self.assertLessEqual({"mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
 
     def test_only_design_roles_keep_skills(self):
         for role, off in [("orchestrator", True), ("planner", True), ("wayfinder", True), ("explore", True), ("toolsmith", True),
@@ -917,20 +920,20 @@ class RestrictedStart(unittest.TestCase):
 
     def test_no_patterns_means_no_bare_disallowed_tools(self):
         allow = ["--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"]
-        for servers, role, kw in [([], "planner", {}), (["claude_ai_Linear", "graft"], "planner", {}),
-                                  (["frame0", "graft", "claude_ai_Linear"], "planner", {"frame0": True}),
-                                  ([], "designer", {}), (["claude_ai_Linear", "graft", "claude_ai_Figma", "framelink-figma"], "designer", {})]:
+        for servers, role, kw in [([], "planner", {}), (["claude_ai_Linear"], "planner", {}),
+                                  (["frame0", "claude_ai_Linear"], "planner", {"frame0": True}),
+                                  ([], "designer", {}), (["claude_ai_Linear", "claude_ai_Figma", "framelink-figma"], "designer", {})]:
             with self.subTest(servers=servers, role=role, **kw):
                 self.P = servers
                 skills = [] if role == "designer" else ["--disable-slash-commands"]
                 self.assertEqual(self.tail(self.start(role, **kw)), skills + allow)  # a bare flag would swallow what follows
 
     def test_patterns_sit_between_settings_and_the_allow_list(self):
-        self.P = ["claude_ai_Linear", "claude_ai_Notion", "graft", "frame0"]
+        self.P = ["claude_ai_Linear", "claude_ai_Notion", "trail", "frame0"]
         tail = self.tail(self.start("planner"))
         self.assertEqual(tail[0], "--disallowedTools")
-        self.assertEqual(set(tail[1:3]), {"mcp__claude_ai_Notion__*", "mcp__frame0__*"})
-        self.assertEqual(tail[3:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
+        self.assertEqual(set(tail[1:4]), {"mcp__claude_ai_Notion__*", "mcp__trail__*", "mcp__frame0__*"})
+        self.assertEqual(tail[4:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
 
     def test_orchestrator_and_planner_autocompact_at_150k_before_settings(self):
         self.P = []  # same servers and skills switch for every role below, so their args differ only by --autocompact
