@@ -75,6 +75,26 @@ class Treehouse(unittest.TestCase):
         again = fc.fc_worktree.slot_on(self.repo, "next", "compose:p:tests-002")
         self.assertEqual(again.resolve(), slot.resolve())
 
+    def test_a_slot_leased_again_keeps_its_own_installs_but_not_an_earlier_holders_borrowed_links(self):
+        # `return` keeps ignored files and info/exclude ignores the links, so the next holder's install wrote through
+        # a test writer's link into the project worktree's install
+        self.cap(2)
+        (self.repo / "client").mkdir(); (self.repo / "client" / "x.txt").write_text("x\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "client")
+        wt, proj = self.init()
+        (wt / "client" / "node_modules").mkdir()
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
+        slot = fc.fc_briefs.test_worktree(proj, "001")
+        self.assertTrue((slot / "client" / "node_modules").is_symlink())
+        (slot / "node_modules").mkdir()  # an install of the slot's own
+        fc.fc_briefs.collect_tests(proj)
+        self.git("branch", "teammate")
+        again = fc.fc_worktree.slot_on(self.repo, "teammate", "compose:p-toolsmith")
+        self.assertEqual(again.resolve(), slot.resolve())
+        self.assertFalse((again / "client" / "node_modules").is_symlink())
+        self.assertTrue((wt / "client" / "node_modules").is_dir())
+        self.assertTrue((again / "node_modules").is_dir())
+
     def cap(self, n):
         (self.repo / "treehouse.toml").write_text(f"max_trees = {n}\n")
         self.git("add", "treehouse.toml"); self.git("commit", "-qm", "cap the pool")

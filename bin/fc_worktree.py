@@ -72,7 +72,9 @@ def slot_on(repo, branch, holder, detach=False):
     the work lives on branches, a slot is only a place to stand, and returning it keeps the branch.
     The lease is cut from the default branch, never from `branch`: `return` resets a slot to its lease's base, and treehouse
     reuses a slot only when its commit is an ancestor of the next base, so a slot returned onto a task or test branch was
-    "in use or dirty" for every lease after it and the pool ran dry while `status` showed it free."""
+    "in use or dirty" for every lease after it and the pool ran dry while `status` showed it free.
+    An earlier holder's borrowed installs (ready_checkout's links) go: `return` keeps ignored files, and an install through
+    such a link lands in another checkout's. The slot's own installs stay."""
     exclude_paths(repo, ["/.treehouse/"])
     p = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder, check=False)
     if p.returncode and "in use or dirty" in p.stdout + p.stderr:
@@ -81,6 +83,9 @@ def slot_on(repo, branch, holder, detach=False):
         raise RuntimeError(f"treehouse get for {holder}\n{p.stdout}\n{p.stderr}")
     path = Path(json.loads(p.stdout)["path"])
     fc_core.sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
+    for d in fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], path, check=False).stdout.splitlines():
+        if Path(d).name in fc_config.DEP_DIRS and (path / d).is_symlink():
+            (path / d).unlink()
     return path
 
 def pool_shortfall(repo, need):
