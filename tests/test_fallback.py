@@ -240,7 +240,7 @@ class FixScope(unittest.TestCase):
 
     def test_review_confirms_only_defects_against_the_requirements(self):
         systems = []
-        def fj(env, system, user, max_tokens=4000):
+        def fj(env, system, user, **kw):
             systems.append((system, user))
             return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
                 else {"confirmed": True, "evidence": "e"}
@@ -253,7 +253,7 @@ class FixScope(unittest.TestCase):
 
     def test_review_drops_a_confirmation_whose_quote_is_not_in_the_code(self):
         def review(evidence, cfg=None):
-            fj = lambda env, system, user, max_tokens=4000: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
+            fj = lambda env, system, user, **kw: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
                 if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
             with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
                 return fc.fc_verify.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)

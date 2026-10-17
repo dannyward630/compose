@@ -21,10 +21,11 @@ def triage(repo, proj, ids):
         try:
             base = fc_core.sh(["git", "merge-base", trunk, branch], repo).stdout.strip()
             diff = fc_core.sh(["git", "diff", base, branch, "--", *(m.get("files") or [])], repo, check=False).stdout
-            v = fc_models.fast_json(env, "You triage one finished coding task for a senior reviewer. " + TRIAGE_BAR +
-                          ' Return JSON {"verdict": "clean" | "flag", "reason": str}; a flag reason is one line quoting the code.',
+            shape = '{"verdict": "clean" | "flag", "reason": str}'
+            v = fc_models.fast_object(env, "You triage one finished coding task for a senior reviewer. " + TRIAGE_BAR +
+                          f" Return JSON {shape}; a flag reason is one line quoting the code.",
                           f"TASK BRIEF:\n{(m.get('body') or '')[:6000]}\n\nFILES IT MAY CHANGE: {', '.join(m.get('files') or [])}\n\n"
-                          f"DIFF:\n{diff[:40000]}", max_tokens=300, timeout=30)
+                          f"DIFF:\n{diff[:40000]}", shape, "verdict", max_tokens=300, timeout=30)
             verdict, reason = ("flag" if v.get("verdict") == "flag" else "clean"), str(v.get("reason") or "").strip()[:300]
         except Exception as e:  # noqa: BLE001 - triage is advisory
             verdict, reason = "unknown", f"triage failed: {str(e)[:150]}"

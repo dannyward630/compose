@@ -346,26 +346,42 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
 class EmptyReply(Exception):
     pass
 
+class BadReply(Exception):
+    pass
+
+def fast_object(env, system, user, shape, key, max_tokens=1500, timeout=90):
+    """fast_json for a caller that needs one JSON object holding `key`, described to the model as `shape`. The model sometimes
+    wraps the object in a list, so a one-element list is unwrapped; a reply that is not valid JSON or not such an object is
+    retried once with a stricter instruction, then raises BadReply saying what was wrong with it."""
+    strict = system + f" Reply with exactly one JSON object {shape} and nothing else: no list, no prose."
+    for sysmsg in (system, strict):
+        try:
+            v = fast_json(env, sysmsg, user, max_tokens=max_tokens, timeout=timeout)
+        except EmptyReply as e:
+            why = str(e)
+            continue
+        except ValueError as e:
+            why = f"reply was not valid JSON, possibly cut off ({e})"
+            continue
+        if isinstance(v, list) and len(v) == 1:
+            v = v[0]
+        if isinstance(v, dict) and key in v:
+            return v
+        why = f"reply was not a {shape} object"
+    raise BadReply(why)
+
 class ConfirmError(Exception):
     pass
 
 def confirm_call(env, system, user, max_tokens=500):
-    """The confirm step shared by figma judge, review, and jev acceptance: returns (confirmed, evidence). The model sometimes
-    wraps the object in a list, so a one-element list is unwrapped; any other shape is retried once with a stricter instruction,
-    then raises ConfirmError, which the caller records as a judge error and never as a verdict."""
-    strict = system + ' Reply with exactly one JSON object {"confirmed": bool, "evidence": str} and nothing else: no list, no prose.'
-    for attempt, sysmsg in enumerate((system, strict)):
-        try:
-            v = fast_json(env, sysmsg, user, max_tokens=max_tokens)
-        except (ValueError, EmptyReply) as e:
-            if attempt:
-                raise ConfirmError(f"confirm call failed: {e}")
-            continue
-        if isinstance(v, list) and len(v) == 1:
-            v = v[0]
-        if isinstance(v, dict) and "confirmed" in v:
-            return bool(v["confirmed"]), str(v.get("evidence", ""))[:300]
-    raise ConfirmError("confirm call failed: reply was not a {confirmed, evidence} object")
+    """The confirm step shared by figma judge, review, and jev acceptance: returns (confirmed, evidence). A reply that is still
+    not a {confirmed, evidence} object after fast_object's retry raises ConfirmError, which the caller records as a judge error
+    and never as a verdict."""
+    try:
+        v = fast_object(env, system, user, '{"confirmed": bool, "evidence": str}', "confirmed", max_tokens=max_tokens)
+    except BadReply as e:
+        raise ConfirmError(f"confirm call failed: {e}") from e
+    return bool(v["confirmed"]), str(v.get("evidence", ""))[:300]
 
 
 def jev_ask(env, cfg, state, questions, label):

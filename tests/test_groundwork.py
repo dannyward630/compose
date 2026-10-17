@@ -202,6 +202,25 @@ class Triage(unittest.TestCase):
             out = fc.fc_run.triage(self.repo, self.proj, ["001"])
         self.assertEqual(out["001"][0], "unknown")
 
+    def test_a_reply_that_is_not_a_verdict_object_is_asked_again_then_unknown_with_why(self):
+        def replies(*contents):
+            calls = []
+            def http(req, provider, timeout=90):
+                calls.append(json.loads(req.data)["messages"][0]["content"])
+                return {"choices": [{"message": {"content": contents[len(calls) - 1]}}]}
+            return http, calls
+        cut = '{"verdict": "clean", "reason": "the diff only chang'
+        for contents, want in ((('["clean"]', '{"verdict": "flag", "reason": "`x := 1`"}'), ("flag", "`x := 1`")),
+                               (('[{"verdict": "clean"}]',), ("clean", "")),
+                               (('["clean"]', '{"issues": []}'), ("unknown", "triage failed: reply was not a")),
+                               ((cut, cut), ("unknown", "triage failed: reply was not valid JSON"))):
+            http, calls = replies(*contents)
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "say"):
+                verdict, reason = fc.fc_run.triage(self.repo, self.proj, ["001"])["001"]
+            self.assertEqual((verdict, reason[:len(want[1])]), want, contents)
+            self.assertEqual(len(calls), len(contents))
+            self.assertTrue(len(calls) == 1 or "exactly one JSON object" in calls[1])
+
 
 class CondenseFailure(unittest.TestCase):
     def test_short_output_keyless_or_failing_calls_add_nothing(self):
