@@ -56,3 +56,57 @@ class PiChecks(unittest.TestCase):
             importlib.reload(pi)
         self.assertEqual(pi.PI_MODELS, self.dir / ".pi" / "agent" / "models.json")
 
+
+
+class PiWrites(unittest.TestCase):
+    """The write side: declare pi's openrouter-fast provider and append the TEXT_MODEL lines, never touching what is there."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def twice(self, fn, path):
+        """Run fn twice; the second run must change no byte. Returns the first line."""
+        line = fn(path)
+        before = path.read_bytes()
+        self.assertIsInstance(fn(path), str)
+        self.assertEqual(path.read_bytes(), before)
+        return line
+
+    def test_declare_provider(self):
+        path = self.dir / "agent" / "models.json"
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-test"}):
+            line = self.twice(pi.declare_provider, path)
+        self.assertEqual(json.loads(path.read_text()), {"providers": {"openrouter-fast": pi.PROVIDER}})
+        self.assertNotIn("sk-or-test", path.read_text() + line)
+        self.assertTrue(pi.provider_declared(path))
+        other = {"version": 2, "providers": {"anthropic": {"models": [{"id": "claude"}]}}}
+        path.write_text(json.dumps(other))
+        self.assertIn("openrouter-fast", self.twice(pi.declare_provider, path))
+        self.assertEqual(json.loads(path.read_text()), {"version": 2, "providers": {**other["providers"], "openrouter-fast": pi.PROVIDER}})
+        path.write_text(json.dumps({"version": 2}))
+        pi.declare_provider(path)
+        self.assertEqual(json.loads(path.read_text()), {"version": 2, "providers": {"openrouter-fast": pi.PROVIDER}})
+
+    def test_declare_provider_leaves_existing_and_malformed(self):
+        path = self.dir / "models.json"
+        lines = set()
+        for text in ('{"providers": {"openrouter-fast": {"models": []}}}\n', '{"providers": {"openrouter-fast": {}}}', "{not json"):
+            path.write_text(text)
+            lines.add(pi.declare_provider(path))
+            self.assertEqual(path.read_text(), text)
+        self.assertIn("by hand", pi.declare_provider(path))
+        self.assertGreaterEqual(len(lines), 2)
+
+    def test_write_text_model(self):
+        env, d = self.dir / ".env", pi.TEXT_MODEL_DEFAULTS
+        self.twice(pi.write_text_model, env)
+        self.assertEqual(env.read_text().splitlines(), [f"{k}={v}" for k, v in d.items()])
+        self.assertTrue(pi.text_model_set(env))
+        env.write_text("A=1\nTEXT_MODEL_API_KEY=sk-or-test\nTEXT_MODEL_BASE_URL=http://mine\nB=2")
+        line = self.twice(pi.write_text_model, env)
+        self.assertNotIn("sk-or-test", line)
+        self.assertEqual(env.read_text().splitlines(),
+                         ["A=1", "TEXT_MODEL_API_KEY=sk-or-test", "TEXT_MODEL_BASE_URL=http://mine", "B=2", f"TEXT_MODEL={d['TEXT_MODEL']}"])
+        mine = "TEXT_MODEL=my/model\nTEXT_MODEL_BASE_URL=http://mine\n"
+        env.write_text(mine)
+        self.twice(pi.write_text_model, env)
+        self.assertEqual(env.read_text(), mine)
