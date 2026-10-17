@@ -1,6 +1,8 @@
-![Compose](docs/images/compose.jpeg)
+<h1 align="center">Compose</h1>
 
-# Compose
+<p align="center">Talk to one agent. Let it run your product team.</p>
+
+![Compose](docs/images/compose.jpeg)
 
 You talk to one agent, and it runs a whole software team for you.
 The team ships the way real teams do.
