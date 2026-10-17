@@ -32,6 +32,15 @@ Verify needs these tools on top of the required ones.
 | Chrome and browser-harness | browser e2e cases | browser-harness comes with `jev/`; check with `cd jev && uv run browser-harness --doctor` |
 | `bp` (browser-probe) | browser exploration and extension e2e | `npm link` in a browser-probe checkout |
 
+## For the designer
+
+The designer and its crew need Framelink on top of the required tools.
+`fast-coding doctor` and `init` only warn when it is missing, and the designer's start stops.
+
+| Tool | Needed for | Install |
+|---|---|---|
+| Framelink (`framelink-figma` MCP server) | every Figma read: the designer, its builders and reviewer, `figma check`, `figma tree` | a Figma personal access token in `~/.config/figma-context-mcp/.env` as one line `FIGMA_API_KEY=<token>` (mode 600), then `claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env ~/.config/figma-context-mcp/.env --no-telemetry` |
+
 ## Optional
 
 Each optional tool adds one feature.
@@ -48,8 +57,8 @@ fast-coding also uses gofmt and the target repo's own prettier when they are pre
 They format a task's files.
 When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
-`npx` fetches two tools on every use, with no pinned version.
-They are `lavish-axi` (the wayfinder page) and `frame0-mcp-server`.
+`npx` fetches three tools on every use, with no pinned version.
+They are `lavish-axi` (the wayfinder page), `frame0-mcp-server`, and `figma-developer-mcp` (Framelink).
 
 ## Keys
 
@@ -78,7 +87,8 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.fast-coding/.env` | verify's model keys |
 | `~/.fast-coding/model-probe.json` | the day's model availability probes |
 | `~/.fast-coding/tool-bugs.jsonl` | every project's tool-bug reports |
-| `~/.claude.json` | read for folder trust; the local `frame0` MCP server for each teammate's directory is written here |
+| `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
+| `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json`, `auth.json`, and the herdr extension |
 
 ## Environment variables

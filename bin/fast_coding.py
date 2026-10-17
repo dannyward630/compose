@@ -1558,8 +1558,9 @@ FIGMA_CONNECTOR = ("Figma tools: the authenticated connector `mcp__claude_ai_Fig
                    "Framelink (REST) shows structure, names, layout, sizes, fills, text, fonts, component properties, and component keys; it has no variable bindings and no library flag, so prove a binding from the write's returned facts and library origin by component key. "
                    "Never use `plugin:*figma*` tools or their authenticate calls.")
 FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
+FRAMELINK_ADD = f"claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry"
 FRAMELINK_SETUP = (f"Framelink is not set up. Put a Figma personal access token in {FRAMELINK_ENV} as one line `FIGMA_API_KEY=<token>` (chmod 600), then run\n"
-                   f"  claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry\n"
+                   f"  {FRAMELINK_ADD}\n"
                    "The token never goes on a command line; only --env names the file.")
 
 def framelink_fetch(key, node=None, depth=None, env_file=None):
@@ -1610,6 +1611,8 @@ target Figma file is {figma}.
 
 def cmd_designer(a):
     """Print the designer teammate's brief; --figma stores the file key first, --extra adds the team lead's notes."""
+    if check_deps("designer"):  # before any brief: crew start gets none and stops too
+        sys.exit("designer stopped: install what is missing above, then run it again (`fast-coding doctor` checks again)")
     proj = project_dir(a); wt = project_worktree(proj)
     if a.figma:
         key = figma_key(a.figma)
@@ -5748,7 +5751,8 @@ def cmd_graft(a):
 HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
 TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
 GRAFT_INSTALL = "npm i -g @nanonets/graft"
-DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use
+DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use.
+    # required is True, False, or the one role that needs it: doctor and init only warn about that one, and that role's start stops
     ("herdr", "herdr", "see https://herdr.dev", True, HERDR_MIN),
     ("treehouse", "treehouse", TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
     ("graft", "graft", GRAFT_INSTALL, False, None),
@@ -5760,8 +5764,18 @@ DEPS = (  # (name, how it is found, install, required, version floor); every too
     ("bp", "bp", "npm link in the browser-probe checkout", False, None),
     ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", True, None),
     ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", True, None),
+    ("framelink-figma", lambda: "framelink-figma" in user_mcp_servers(), FRAMELINK_ADD, "designer", None),  # every Figma read (0d, figma check/tree)
+    ("framelink-figma token", ".config/figma-context-mcp/.env",
+     "put a Figma personal access token in ~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600", "designer", None),
     ("writing-plans skill", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers@claude-plugins-official", False, None),
 )
+
+def user_mcp_servers():
+    """The MCP servers Claude Code has at user scope (`claude mcp add --scope user`), read from ~/.claude.json without starting any."""
+    try:
+        return json.loads((Path.home() / ".claude.json").read_text()).get("mcpServers") or {}
+    except (OSError, ValueError):
+        return {}
 
 def version_of(tool):
     """`<tool> --version` as a tuple of ints, or None when it prints nothing that looks like one."""
@@ -5769,12 +5783,18 @@ def version_of(tool):
     m = re.search(r"\d+(?:\.\d+)+", p.stdout + p.stderr)
     return tuple(map(int, m.group().split("."))) if m else None
 
-def check_deps():
+def check_deps(role=None):
     """Print one `MISSING: <name> (install: <command>)` line per tool or skill file that is absent (or below its floor), without
-    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, graft) only warn."""
+    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, graft) only warn.
+    With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
     bad = []
-    for name, how, install, required, floor in DEPS:
-        if isinstance(how, list):
+    for name, how, install, needed, floor in DEPS:
+        if role and needed != role:
+            continue
+        required = needed is True or (role is not None and needed == role)
+        if callable(how):
+            ok = how()
+        elif isinstance(how, list):
             ok = shutil.which(how[0]) and sh(how, None, timeout=20, check=False).returncode == 0
         elif "/" in how:
             ok = any(Path.home().glob(how)) if "*" in how else (Path.home() / how).exists()
@@ -5786,7 +5806,8 @@ def check_deps():
             if v and v < tuple(map(int, floor.split("."))):
                 ok, why = False, f" {'.'.join(map(str, v))} is older than {floor}"
         if not ok:
-            print(f"MISSING: {name}{why} (install: {install}){'' if required else ' - optional'}")
+            note = "" if required else f" - needed for the {needed}" if needed else " - optional"
+            print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
                 bad.append(name)
     return bad

@@ -1,4 +1,4 @@
-import io, os, stat, subprocess, sys, tempfile, unittest
+import io, json, os, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -8,7 +8,7 @@ import fast_coding as fc
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")
 TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "graft": "0.16.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
 SKILLS = (".claude/skills/herdr/SKILL.md", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md",
-          ".claude/plugins/cache/official/superpowers/7.0.0/skills/writing-plans/SKILL.md")
+          ".claude/plugins/cache/official/superpowers/7.0.0/skills/writing-plans/SKILL.md", ".config/figma-context-mcp/.env")
 
 
 class Doctor(unittest.TestCase):
@@ -23,6 +23,7 @@ class Doctor(unittest.TestCase):
         for s in SKILLS:
             (self.home / s).parent.mkdir(parents=True)
             (self.home / s).write_text("# skill")
+        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"framelink-figma": {"command": "npx"}}}))
         self.env = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)})
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -70,6 +71,31 @@ class Doctor(unittest.TestCase):
         self.assertEqual(bad, [])
         self.assertEqual([l.split(" (")[0] for l in lines], ["MISSING: treehouse", "MISSING: graft", "MISSING: pi", "MISSING: bp"])
         self.assertTrue(all(l.endswith(" - optional") for l in lines))
+
+    def test_framelink_is_required_only_for_the_designer(self):
+        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"frame0": {}}}))
+        (self.home / SKILLS[-1]).unlink()
+        bad, lines = self.deps()
+        self.assertEqual(bad, [])  # doctor and init only warn
+        self.assertEqual(lines, [f"MISSING: framelink-figma (install: {fc.FRAMELINK_ADD}) - needed for the designer",
+                                 "MISSING: framelink-figma token (install: put a Figma personal access token in "
+                                 "~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600) - needed for the designer"])
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            self.assertEqual(fc.check_deps("designer"), ["framelink-figma", "framelink-figma token"])
+        self.assertEqual(len(out.getvalue().splitlines()), 2)  # only what the designer needs, nothing else
+        (self.home / ".claude.json").unlink()  # no Claude Code config at all counts as not registered
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertIn("framelink-figma", fc.check_deps("designer"))
+
+    def test_designer_start_stops_without_framelink(self):
+        (self.home / SKILLS[-1]).unlink()
+        repo = Path(tempfile.mkdtemp())
+        r = subprocess.run([sys.executable, CLI, "designer", "--project", "p", "--repo", str(repo)], capture_output=True, text=True,
+                           env={**os.environ})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("MISSING: framelink-figma token", r.stdout)
+        self.assertIn("designer stopped", r.stderr)
 
     def test_doctor_and_init_through_the_cli(self):
         env = {**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"}
