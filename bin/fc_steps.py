@@ -95,6 +95,7 @@ STEPS = (  # the rows, in setup order
     ("Linear key or connector", lambda co: key_ok("linear"), "get one at linear.app/settings/api, or connect claude.ai's Linear connector; compose setup stores it", "required", True, "key"),
     ("uv", "uv", "curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh", "default", False, "run"),
     ("jev", lambda co: (fc_checks.jev_synced(co), ""), f"uv sync --locked --project {fc_config.JEV_DIR}", "default", False, "run"),
+    ("trail", "trail", "npm i -g @trailhq/trail-code", "default", False, "run"),
     ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, "default", False, "run"),
     ("bp link", lambda co: owned_link("bp link", co), "compose setup", "default", False, "write"),
     ("Chromium", lambda co: (fc_checks.chromium_installed(), ""), "npx playwright install chromium", "default", False, "run"),
