@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
 import fc_cost, fc_sessions  # noqa: E402
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(BIN / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(BIN / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -175,7 +175,7 @@ class CostCommand(unittest.TestCase):
         self.repo = Path(tempfile.mkdtemp())
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], cwd=self.repo, check=True)
-        self.proj = self.repo / ".fast-coding" / "shop"
+        self.proj = self.repo / ".compose" / "shop"
         (self.proj / "results" / "crew").mkdir(parents=True)
 
     def fake(self):
@@ -199,13 +199,13 @@ class CostCommand(unittest.TestCase):
 
     def test_main_with_no_sessions_prints_cost_none(self):
         out = io.StringIO()
-        with mock.patch.object(sys, "argv", ["fast-coding", "cost", "--project", "shop", "--repo", str(self.repo)]), \
+        with mock.patch.object(sys, "argv", ["compose", "cost", "--project", "shop", "--repo", str(self.repo)]), \
                 mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
             fc.main()
         self.assertEqual(out.getvalue().strip(), "cost  none")
 
     def test_status_puts_each_projects_totals_under_its_header(self):
-        other = self.repo / ".fast-coding" / "shop22"
+        other = self.repo / ".compose" / "shop22"
         (other / "results").mkdir(parents=True)
         with self.fake():
             lines = fc.fc_status.render_status(self.repo, [self.proj, other]).splitlines()
@@ -214,7 +214,7 @@ class CostCommand(unittest.TestCase):
         self.assertEqual(sum(line.startswith("  cost  ") for line in lines), 2)
 
     def test_help_lists_cost(self):
-        out = subprocess.run([sys.executable, str(BIN / "fast_coding.py"), "--help"], capture_output=True, text=True).stdout
+        out = subprocess.run([sys.executable, str(BIN / "compose.py"), "--help"], capture_output=True, text=True).stdout
         self.assertRegex(out, r"\bcost\b")
 
 

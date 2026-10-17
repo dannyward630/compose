@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -100,7 +100,7 @@ class WatchTimeout(unittest.TestCase):
                 "run": False, "verify": None, "run_end": 0, "last": (0, "")}
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.01, interval=0.01, stall=10_000)
         out = []
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit) as e:
                 fc.fc_watch.cmd_watch(a)
@@ -108,7 +108,7 @@ class WatchTimeout(unittest.TestCase):
         self.assertIn("event timeout", out[-1])
         self.assertIn("pending tasks 1, teammates working hw-tests-001, run not live, verify not run", out[-1])
         snap["closed"] = ["hw-tests-001"]
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit):
                 fc.fc_watch.cmd_watch(a)
@@ -139,7 +139,7 @@ class WatchMemory(unittest.TestCase):
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.05, interval=0.01, stall=10_000, rewake=False)
         a.__dict__.update(kw)
         out = []
-        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role is not None else {})
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | ({"COMPOSE_ROLE": role} if role is not None else {})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
             try:
@@ -162,7 +162,7 @@ class WatchMemory(unittest.TestCase):
         snap = wsnap(); later = wsnap()
         later["crew"] = {ORCH: [{"at": at(0), "state": "needs-user", "message": "which db?"}]}
         seen = []
-        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}  # the engineering manager's watch: no role
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}  # the engineering manager's watch: no role
         with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=[snap, later, later, later]):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
@@ -181,7 +181,7 @@ class WatchMemory(unittest.TestCase):
         later["crew"] = {"hw-planner": [{"at": at(0), "state": "needs-user", "message": "3 stories; accept-all"}],
                          "hw-tests": [{"at": at(0), "state": "needs-user", "message": "which fixture?"}]}
         seen = []
-        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}
         with mock.patch.object(fc.fc_crew, "manager_attention", lambda proj, ev: seen.append(ev)), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
@@ -234,18 +234,18 @@ class WatchMemory(unittest.TestCase):
         the stack top (where every layer is an ancestor) and coming back must not replay passed and hand_done tasks."""
         repo = Path(tempfile.mkdtemp())
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
-        git("init", "-q", "-b", "fast-coding/hw"); git("commit", "-q", "--allow-empty", "-m", "init")
+        git("init", "-q", "-b", "compose/hw"); git("commit", "-q", "--allow-empty", "-m", "init")
         for tid in ("001", "002"):
             git("checkout", "-q", "-b", f"fast/hw/{tid}"); git("commit", "-q", "--allow-empty", "-m", tid)
-        git("checkout", "-q", "fast-coding/hw")
-        proj = repo / ".fast-coding" / "hw"; (proj / "results").mkdir(parents=True)
+        git("checkout", "-q", "compose/hw")
+        proj = repo / ".compose" / "hw"; (proj / "results").mkdir(parents=True)
         (proj / "verify.json").write_text("{}")
         (proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": "001", "title": "a"}, {"id": "002", "title": "b"}]}))
         (proj / "results" / "001.json").write_text(json.dumps({"status": "passed"}))
         (proj / "results" / "002.json").write_text(json.dumps({"status": "hand_done"}))
         snaps = []
         with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
-            for ref in ("fast-coding/hw", "fast/hw/002", "fast-coding/hw"):
+            for ref in ("compose/hw", "fast/hw/002", "compose/hw"):
                 git("checkout", "-q", ref)
                 snaps.append(fc.fc_watch.watch_snapshot(repo, proj))
         self.assertEqual({t: v["state"] for t, v in snaps[0]["tasks"].items()}, {"001": "passed", "002": "hand_done"})
@@ -261,7 +261,7 @@ class Rewake(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
-        self.env = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
+        self.env = {"COMPOSE_ROLE": "orchestrator", "COMPOSE_PROJECT": "hw", "COMPOSE_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
 
     def rewake(self, snaps, env=None, session="s1"):
         """The hook reads its JSON from stdin: feed it here, since the real stdin may be a pipe nobody writes to (then the hook waits forever)."""
@@ -282,7 +282,7 @@ class Rewake(unittest.TestCase):
         self.assertIn("event task=001 state=passed", err)
 
     def test_sessions_that_are_not_the_team_lead_return_at_once(self):
-        code, err, pd = self.rewake([], env={"FAST_CODING_ROLE": "crew", "FAST_CODING_PROJECT": "hw"})
+        code, err, pd = self.rewake([], env={"COMPOSE_ROLE": "crew", "COMPOSE_PROJECT": "hw"})
         self.assertEqual((code, err), (0, ""))
         pd.assert_not_called()
 
@@ -299,7 +299,7 @@ class Rewake(unittest.TestCase):
             (skill / "SKILL.md").write_text("v2\n")
             code, err, _ = self.rewake([wsnap("running"), wsnap("passed")], session="lead")
         self.assertEqual(code, 2)
-        self.assertIn(f"fast-coding's skill changed since you read it: {skill / 'SKILL.md'}", err)
+        self.assertIn(f"compose's skill changed since you read it: {skill / 'SKILL.md'}", err)
 
     def test_a_second_hook_leaves_the_parked_one_alone(self):
         held = fc.fc_watch.watch_lock(self.proj, "orchestrator", wait=False)
@@ -310,11 +310,11 @@ class Rewake(unittest.TestCase):
 
 
 class Reenter(unittest.TestCase):
-    """SessionStart hook after a compaction: point a fast-coding teammate back at its brief, the board, and Linear."""
+    """SessionStart hook after a compaction: point a compose teammate back at its brief, the board, and Linear."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
-        self.env = {"FAST_CODING_ROLE": "tests-021", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
+        self.env = {"COMPOSE_ROLE": "tests-021", "COMPOSE_PROJECT": "hw", "COMPOSE_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
 
     def reenter(self, env):
         out = io.StringIO()
@@ -328,17 +328,17 @@ class Reenter(unittest.TestCase):
         self.assertIn(str(self.proj / "results" / "crew" / f"{fc.fc_herdr.agent_name('hw', 'tests-021')}.brief.md"), out)
         self.assertIn("hw-tests-021.brief.md", out)
         self.assertIn("0r", out)
-        self.assertIn("fast-coding status --repo /r --project hw", out)
-        self.assertIn("fast-coding watch --repo /r --project hw --now", out)
+        self.assertIn("compose status --repo /r --project hw", out)
+        self.assertIn("compose watch --repo /r --project hw --now", out)
         self.assertIn("Decisions so far", out)
         self.assertIn("Plan", out)
 
     def test_the_team_lead_gets_the_same_reentry(self):
-        out, _ = self.reenter({**self.env, "FAST_CODING_ROLE": "orchestrator"})
+        out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "orchestrator"})
         self.assertIn("hw-orchestrator.brief.md", out)
 
     def test_no_role_or_a_headless_session_prints_nothing(self):
-        for env in ({k: v for k, v in self.env.items() if k != "FAST_CODING_ROLE"}, {**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
+        for env in ({k: v for k, v in self.env.items() if k != "COMPOSE_ROLE"}, {**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
             out, pd = self.reenter(env)
             self.assertEqual(out, "")
             pd.assert_not_called()
@@ -352,7 +352,7 @@ class Reenter(unittest.TestCase):
         self.assertTrue(cmds("PostToolUse", "Skill")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("UserPromptSubmit")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("Stop")[0].endswith(" rewake"))
-        help_ = subprocess.run([str(root / "bin" / "fast-coding"), "--help"], capture_output=True, text=True).stdout
+        help_ = subprocess.run([str(root / "bin" / "compose"), "--help"], capture_output=True, text=True).stdout
         self.assertRegex(help_, r"\breenter\b")
 
 
@@ -394,7 +394,7 @@ class Detach(unittest.TestCase):
         done = self.dir / "done"
         started = self.dir / "started"
         work = f"import time; open({str(started)!r}, 'w').write('1'); time.sleep(1.5); open({str(done)!r}, 'w').write('ok')"
-        cli = Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"
+        cli = Path(__file__).resolve().parents[1] / "bin" / "compose.py"
         follower = subprocess.Popen([sys.executable, "-c",
             "import importlib.machinery as m, importlib.util as u, sys; "
             f"s = u.spec_from_loader('fc', m.SourceFileLoader('fc', {str(cli)!r})); fc = u.module_from_spec(s); s.loader.exec_module(fc); "
@@ -422,7 +422,7 @@ class Detach(unittest.TestCase):
         out = []
         a = SimpleNamespace(repo=".", now=True, from_=None)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=wsnap("running", run=True)), \
-                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):
             fc.fc_watch.cmd_watch(a)
         self.assertTrue(any(line.startswith("event run=live") for line in out), out)
 
@@ -449,7 +449,7 @@ class Timed(unittest.TestCase):
         other = sp.Popen(["sleep", str(n + 1)])  # odd, so never any run's own: stands in for another suite's sleep left alive
         try:
             t0 = time.time()
-            r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding"), "timed", "1", "--", f"sh -c 'sleep {n}' & sleep {n}"],
+            r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "1", "--", f"sh -c 'sleep {n}' & sleep {n}"],
                        capture_output=True, text=True)
             self.assertEqual(r.returncode, 124)
             self.assertIn("hangs", r.stderr)

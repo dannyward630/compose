@@ -1,11 +1,11 @@
 import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
-ENV = {**os.environ, "FAST_CODING_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("fast_coding.py"))))
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+ENV = {**os.environ, "COMPOSE_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("compose.py"))))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -22,7 +22,7 @@ class NoTrace(unittest.TestCase):
             (self.repo / ".gitignore").write_text(gitignore)
         for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-qm", "init")):
             self.git(self.repo, *args)
-        self.wt = self.repo.parent / "fast-coding-p"
+        self.wt = self.repo.parent / "compose-p"
 
     def git(self, cwd, *args):
         return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, env=ENV).stdout
@@ -33,14 +33,14 @@ class NoTrace(unittest.TestCase):
 
     def test_existing_gitignore_gets_the_lines_first_and_nothing_tool_made_is_committed(self):
         self.make("node_modules\n/graft/\n")
-        (self.repo / ".fast-coding").mkdir()
-        (self.repo / ".fast-coding" / "linear.json").write_text('{"project": "x"}')  # step 0, in the user's checkout
+        (self.repo / ".compose").mkdir()
+        (self.repo / ".compose" / "linear.json").write_text('{"project": "x"}')  # step 0, in the user's checkout
         self.init()
-        self.assertEqual((self.wt / ".gitignore").read_text(), "node_modules\n/graft/\n.fast-coding/\n")  # graft already there
+        self.assertEqual((self.wt / ".gitignore").read_text(), "node_modules\n/graft/\n.compose/\n")  # graft already there
         self.assertEqual(self.git(self.wt, "log", "--format=%s", "main..HEAD").splitlines(), ["Ignore local tool directories"])
-        self.assertEqual(self.git(self.wt, "ls-files", ".fast-coding"), "")
-        self.assertTrue((self.wt / ".fast-coding" / "p" / "verify.json").exists())
-        self.assertEqual(json.loads((self.wt / ".fast-coding" / "linear.json").read_text()), {"project": "x"})  # copied, not via git
+        self.assertEqual(self.git(self.wt, "ls-files", ".compose"), "")
+        self.assertTrue((self.wt / ".compose" / "p" / "verify.json").exists())
+        self.assertEqual(json.loads((self.wt / ".compose" / "linear.json").read_text()), {"project": "x"})  # copied, not via git
         (self.wt / ".ignore").write_text("!graft\n")  # what graft writes for ripgrep
         (self.wt / "graft").mkdir(); (self.wt / "graft" / "n.md").write_text("x")
         self.assertEqual(self.git(self.wt, "status", "--porcelain"), "")

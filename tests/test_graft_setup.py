@@ -3,9 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 import shutil, sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -93,7 +93,7 @@ class GraftSetup(unittest.TestCase):
 
 class Explore(unittest.TestCase):
     def test_brief_is_graft_only_time_boxed_and_names_the_feature(self):
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "p"
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
         out = []

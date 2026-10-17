@@ -3,12 +3,12 @@ from pathlib import Path
 from unittest import mock
 import sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
 GIT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
@@ -16,7 +16,7 @@ GIT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": 
 class Treehouse(unittest.TestCase):
     """Real treehouse, in-project pools inside temp repos, so the tests never touch ~/.treehouse."""
     def setUp(self):
-        self.env = {**os.environ, **GIT, "HERDR_ENV": "", "FAST_CODING_NO_GRAFT": "1", "FAST_CODING_NO_TREEHOUSE": ""}
+        self.env = {**os.environ, **GIT, "HERDR_ENV": "", "COMPOSE_NO_GRAFT": "1", "COMPOSE_NO_TREEHOUSE": ""}
         p = mock.patch.dict(os.environ, self.env); p.start(); self.addCleanup(p.stop)
         self.repo = Path(tempfile.mkdtemp()).resolve() / "app"
         self.repo.mkdir()
@@ -41,7 +41,7 @@ class Treehouse(unittest.TestCase):
     def test_project_is_a_slot_in_the_repos_own_pool_and_the_user_checkout_stays_clean(self):
         wt, proj = self.init()
         self.assertTrue(str(wt).startswith(str(self.repo / ".treehouse")))  # under the repo, so a trusted folder covers it
-        self.assertEqual(self.git("branch", "--show-current", cwd=wt), "fast-coding/p")
+        self.assertEqual(self.git("branch", "--show-current", cwd=wt), "compose/p")
         self.assertEqual(self.status()[wt.resolve()], "leased")
         self.assertEqual(self.git("status", "--porcelain"), "")  # the pool is excluded, never shown or committed
         self.assertEqual(self.git("branch", "--show-current"), "main")
@@ -70,7 +70,7 @@ class Treehouse(unittest.TestCase):
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
         fc.fc_briefs.collect_tests(proj)
         self.git("checkout", "-qb", "next"); self.git("commit", "-q", "--allow-empty", "-m", "main moved on"); self.git("checkout", "-q", "main")
-        again = fc.fc_worktree.slot_on(self.repo, "next", "fast-coding:p:tests-002")
+        again = fc.fc_worktree.slot_on(self.repo, "next", "compose:p:tests-002")
         self.assertEqual(again.resolve(), slot.resolve())
 
     def cap(self, n):
@@ -93,7 +93,7 @@ class Treehouse(unittest.TestCase):
                 run()  # 003 and 004 need two slots, one is free
             msg = str(e.exception.code)
             self.assertNotIn("\n", msg)
-            for s in ("2 worktree", "1 free", "fast-coding:p:project"):
+            for s in ("2 worktree", "1 free", "compose:p:project"):
                 self.assertIn(s, msg)
             self.assertEqual(sorted(self.status().values()), ["leased"])  # nothing leased, nothing started
             self.assertEqual(started, [])
@@ -106,28 +106,28 @@ class Treehouse(unittest.TestCase):
         self.cap(1)
         wt, proj = self.init()
         with self.assertRaises(SystemExit) as e:
-            fc.fc_worktree.slot_on(self.repo, "main", "fast-coding:p:stackroot")
+            fc.fc_worktree.slot_on(self.repo, "main", "compose:p:stackroot")
         msg = str(e.exception.code)
         self.assertNotIn("\n", msg)
-        for s in ("1 worktree", "0 free", "fast-coding:p:project"):
+        for s in ("1 worktree", "0 free", "compose:p:project"):
             self.assertIn(s, msg)
 
     def test_stack_slot_is_reused_and_clean_hands_every_slot_back(self):
         wt, proj = self.init()
-        first = fc.fc_worktree.stack_worktree(wt, proj, "fast-coding/p")
-        self.assertEqual(fc.fc_worktree.stack_worktree(wt, proj, "fast-coding/p"), first)
+        first = fc.fc_worktree.stack_worktree(wt, proj, "compose/p")
+        self.assertEqual(fc.fc_worktree.stack_worktree(wt, proj, "compose/p"), first)
         head = self.git("rev-parse", "HEAD")
-        for ref in ("refs/fast-coding/p/C1/001", f"refs/fast-coding/replaced/p/001/{head}", "refs/fast-coding/pq/C1/001"):
+        for ref in ("refs/compose/p/C1/001", f"refs/compose/replaced/p/001/{head}", "refs/compose/pq/C1/001"):
             self.git("update-ref", ref, head)
         p = subprocess.run([CLI, "clean", "--project", "p", "--delete-unmerged", "--repo", str(self.repo)], capture_output=True, text=True, env=self.env)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         st = self.status()
         self.assertEqual(st[first.resolve()], "available")
         self.assertEqual(st[wt.resolve()], "available")
-        self.assertFalse((wt / ".fast-coding").exists())  # no stale project results for the next lease
-        self.assertEqual(self.git("branch", "--list", "fast-coding/p"), "")
-        refs = self.git("for-each-ref", "--format=%(refname)", "refs/fast-coding/").split()
-        self.assertEqual(refs, ["refs/fast-coding/pq/C1/001"])  # the project's change and replaced-tip refs go with it; another project's stay
+        self.assertFalse((wt / ".compose").exists())  # no stale project results for the next lease
+        self.assertEqual(self.git("branch", "--list", "compose/p"), "")
+        refs = self.git("for-each-ref", "--format=%(refname)", "refs/compose/").split()
+        self.assertEqual(refs, ["refs/compose/pq/C1/001"])  # the project's change and replaced-tip refs go with it; another project's stay
 
     def test_a_crew_in_another_repo_gets_a_slot_on_its_own_branch(self):
         wt, proj = self.init()

@@ -2,9 +2,9 @@ import importlib.machinery, importlib.util, io, json, os, re, subprocess, sys, t
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -39,7 +39,7 @@ class Groundwork(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
         self.repo, _ = repo_with({"server/go.mod": "module x\n", "client/package.json": "{}", "client/yarn.lock": ""})
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         tasks = [{"id": "001", "title": "Store", "files": ["server/store.go"], "protected": ["server/store_test.go"],
                   "test": "cd server && go test ./... -run TestStore", "body": "## Goal\nOpen the store."},
@@ -97,11 +97,11 @@ class Groundwork(unittest.TestCase):
     def test_planner_brief_names_the_feature_and_routes_every_gap(self):
         brief = self.planner()
         for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
-                  "fast-coding sync", "spec-check --project p", "fast-coding tasks", "change start --why", "change done",
+                  "compose sync", "spec-check --project p", "compose tasks", "change start --why", "change done",
                   "crew start --role", "explore", "groundwork", "wayfinder", "Design", "designer"):
             self.assertIn(s, brief)
-        runs = [m.start() for m in re.finditer(r"fast-coding run\b", brief)]
-        self.assertTrue(runs, "the brief must say the planner never runs `fast-coding run`")
+        runs = [m.start() for m in re.finditer(r"compose run\b", brief)]
+        self.assertTrue(runs, "the brief must say the planner never runs `compose run`")
         for i in runs:  # every mention forbids it; none tells the planner to dispatch
             self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
@@ -113,7 +113,7 @@ class Groundwork(unittest.TestCase):
         self.assertNotIn("Project notes", self.planner(extra=None))
 
     def test_planner_is_a_command_with_issue_and_extra(self):
-        cli = str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
         top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
         self.assertRegex(top, r"[{,]planner[,}]")
         sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)
@@ -172,7 +172,7 @@ class Triage(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(os.environ, {**ENV, "TEXT_MODEL_API_KEY": "k"}); self.env.start(); self.addCleanup(self.env.stop)
         self.repo, run = repo_with({"a.go": "a\n", "b.go": "b\n"})
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         tasks = []
         for tid, f in (("001", "a.go"), ("002", "b.go")):
@@ -256,7 +256,7 @@ class PlannerRules(unittest.TestCase):
     def setUp(self):
         env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
         repo, _ = repo_with({"README.md": "x"})
-        proj = repo / ".fast-coding" / "p"; proj.mkdir(parents=True)
+        proj = repo / ".compose" / "p"; proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
@@ -283,7 +283,7 @@ class PlannerRules(unittest.TestCase):
 
     def test_task_issue_format_lists_sections_and_block_keys(self):
         at = -1
-        for sec in ("## Goal", "## Acceptance criteria", "## Test plan", "## Constraints", "```fast-coding"):
+        for sec in ("## Goal", "## Acceptance criteria", "## Test plan", "## Constraints", "```compose"):
             i = self.brief.find(sec, at + 1)
             self.assertGreater(i, at, f"{sec} missing or out of order")
             at = i
@@ -295,7 +295,7 @@ class DesignerBrief(unittest.TestCase):
     """The designer's brief names the project, its Figma file, and the tools and gates the designer must use."""
     def setUp(self):
         self.wt = Path(tempfile.mkdtemp()).resolve()
-        self.proj = self.wt / ".fast-coding" / "p"
+        self.proj = self.wt / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         self.write({"feature": "ENG-1"})
 
@@ -313,7 +313,7 @@ class DesignerBrief(unittest.TestCase):
         self.write({"feature": "ENG-1", "figma": "AbCdEf123456"})
         brief = self.brief()
         for text in ("ENG-1", str(self.wt), "AbCdEf123456", "figma:figma-use", "0d", "needs-user", "design-review", "kind: design",
-                     "fast-coding frame0 up --project p", "fast-coding figma judge --project p --only NNN", "fast-coding designcrews --project p"):
+                     "compose frame0 up --project p", "compose figma judge --project p --only NNN", "compose designcrews --project p"):
             self.assertIn(text, brief)
         self.assertNotIn("not set", brief)
         self.assertNotIn("Project notes from the team lead:", brief)
@@ -344,14 +344,14 @@ class DesignerBrief(unittest.TestCase):
     def test_brief_splits_figma_writes_from_framelink_reads(self):
         brief = " ".join(self.brief().split())
         for text in ("WRITES ONLY", "never a read-only script", "returns the facts it set", "mcp__framelink-figma__get_figma_data", "download_figma_images",
-                     "never `get_screenshot`, `get_metadata`, or `get_design_context`", "Never use `plugin:*figma*`", "fast-coding figma tree --project p --only NNN"):
+                     "never `get_screenshot`, `get_metadata`, or `get_design_context`", "Never use `plugin:*figma*`", "compose figma tree --project p --only NNN"):
             self.assertIn(text, brief)
 
     def test_design_task_nodes_are_page_and_name_pairs_one_page_per_task(self):
         brief = " ".join(self.brief().split())
         step4 = brief[brief.index(" 4. "):brief.index(" 5. ")]
         self.assertIn("A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, "
-                      "as <page>/<name>, one page per task), and `test: fast-coding figma judge --project p --only NNN`.", step4)
+                      "as <page>/<name>, one page per task), and `test: compose figma judge --project p --only NNN`.", step4)
         self.assertNotIn("node id", brief)
         self.assertEqual(brief.count("<page>/<name>"), 1)
 
@@ -359,12 +359,12 @@ class DesignerBrief(unittest.TestCase):
 class DesignCrews(unittest.TestCase):
     """designcrews briefs and starts one design-NNN builder per open design task, with the stored Figma key."""
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
         def issue(n, status="Todo", **kv):
             block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": f"judge {n}", **kv}.items())
-            return {"id": f"ENG-{n}", "title": f"Task {n}", "description": f"## Goal\nDraw {n}.\n\n```fast-coding\n{block}\n```\n", "status": status, "blockedBy": []}
+            return {"id": f"ENG-{n}", "title": f"Task {n}", "description": f"## Goal\nDraw {n}.\n\n```compose\n{block}\n```\n", "status": status, "blockedBy": []}
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
             issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
@@ -385,12 +385,12 @@ class DesignCrews(unittest.TestCase):
             self.assertIn(text, out)
         self.assertEqual((out.count("====="), started, space.call_count), (2, [], 0))
         flat = " ".join(out.split())
-        for text in ("WRITES ONLY", "mcp__framelink-figma__get_figma_data", "fast-coding figma tree --project p --only 001", "never a read-only `use_figma` script", "Never use `plugin:*figma*`"):
+        for text in ("WRITES ONLY", "mcp__framelink-figma__get_figma_data", "compose figma tree --project p --only 001", "never a read-only `use_figma` script", "Never use `plugin:*figma*`"):
             self.assertIn(text, flat)
 
     def test_default_pace_is_three_builders_at_once(self):
         def issue(n):
-            return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\nid: {n}\nkind: design\ntest: t\nnodes: P{n}/A\n```\n", "status": "Todo", "blockedBy": []}
+            return {"id": f"ENG-{n}", "title": n, "description": f"```compose\nid: {n}\nkind: design\ntest: t\nnodes: P{n}/A\n```\n", "status": "Todo", "blockedBy": []}
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue(f"10{i}") for i in range(5)]})
         started, out, _ = self.run_crews()
         self.assertEqual((len(started), "queued past the cap of 3" in out), (3, True))
@@ -408,7 +408,7 @@ class DesignCrews(unittest.TestCase):
         started, out, _ = self.run_crews(max=1)
         self.assertEqual([ns.role for ns in started], ["design-001"])
         self.assertIn("queued past the cap of 1: 005", out)
-        self.assertIn("fast-coding designcrews --project p --only 005", out)
+        self.assertIn("compose designcrews --project p --only 005", out)
         (self.proj / "verify.json").write_text(json.dumps({"design_concurrency": 1}))
         self.assertEqual(len(self.run_crews()[0]), 1)
         self.assertEqual(len(self.run_crews(max=2)[0]), 2)
@@ -426,7 +426,7 @@ class DesignCrews(unittest.TestCase):
     def test_a_task_figma_line_names_its_own_file_else_the_stored_key(self):
         def issue(n, **kv):
             block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": "t", "nodes": "P/A", **kv}.items())
-            return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\n{block}\n```\n", "status": "Todo", "blockedBy": []}
+            return {"id": f"ENG-{n}", "title": n, "description": f"```compose\n{block}\n```\n", "status": "Todo", "blockedBy": []}
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("123", figma="https://www.figma.com/design/LibKey123456789/Lib?node-id=1-2"), issue("124")]})
         out = self.run_crews(print_=True)[1]
@@ -443,7 +443,7 @@ class DesignCrews(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         with self.assertRaises(SystemExit) as e:
             self.run_crews()
-        self.assertEqual(str(e.exception), "no Figma file: fast-coding figma check --figma <url or key>")
+        self.assertEqual(str(e.exception), "no Figma file: compose figma check --figma <url or key>")
 
 
 if __name__ == "__main__":

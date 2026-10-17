@@ -1,10 +1,10 @@
 import importlib.machinery, importlib.util, json, os, tempfile, unittest
 from pathlib import Path
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("fast_coding.py"))))
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("compose.py"))))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -23,6 +23,12 @@ class CommitConvention(unittest.TestCase):
     def test_no_convention_keeps_plain_messages(self):
         self.assertEqual(fc.fc_layers.commit_message({"title": "001 Save resumes", "files": ["a.js"]}), "Save resumes")
         self.assertEqual(fc.fc_verify.fix_message("Save in one transaction", ["a.js"]), "Save in one transaction")
+
+    def test_fix_message_drops_lines_about_the_tool_but_keeps_compose_files(self):
+        self.assertEqual(fc.fc_verify.fix_message("Ran compose verify", ["a.js"]), "Fix a.js")
+        self.assertEqual(fc.fc_verify.fix_message("Fix docker-compose healthcheck", ["a.yml"]), "Fix docker-compose healthcheck")
+        self.assertEqual(fc.fc_verify.fix_message("Update compose.yaml port", ["compose.yaml"]), "Update compose.yaml port")
+        self.assertEqual(fc.fc_verify.fix_message("Pin composer version", ["composer.json"]), "Pin composer version")
 
     def test_fix_loop_commit_is_a_fix_and_unlisted_types_fall_back(self):
         self.assertEqual(fc.fc_verify.fix_message("Save in one transaction", ["a.js"], CONV), "fix: Save in one transaction")

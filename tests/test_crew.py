@@ -2,9 +2,9 @@ import importlib.machinery, importlib.util, io, json, os, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import shutil, subprocess, sys, time
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -17,7 +17,7 @@ def snap(proj):
 
 _patches = [mock.patch.object(time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
             mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: []),  # no test runs the real `claude mcp list`
-            mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"})]  # every start and watch here is the team lead's unless the test clears it: the caller's own role never decides who a teammate reports to
+            mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"})]  # every start and watch here is the team lead's unless the test clears it: the caller's own role never decides who a teammate reports to
 
 
 def setUpModule():
@@ -33,7 +33,7 @@ def tearDownModule():
 class Crew(unittest.TestCase):
     def setUp(self):
         wt = Path(tempfile.mkdtemp())
-        self.proj = wt / ".fast-coding" / "shop"
+        self.proj = wt / ".compose" / "shop"
         self.proj.mkdir(parents=True)
 
     def report(self, who, state, msg):
@@ -77,13 +77,13 @@ class Crew(unittest.TestCase):
         self.assertEqual(fc.fc_watch.watch_filter(ev, "shop", [], direct), ev)  # the team lead's view is unchanged
         notified = []
         with mock.patch.object(fc.fc_crew, "desktop_notify", lambda title, body: notified.append((title, body))), mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("FAST_CODING_ROLE", None)
+            os.environ.pop("COMPOSE_ROLE", None)
             fc.fc_crew.manager_attention(self.proj, manager)
         self.assertEqual(sorted(notified), [("shop: the engineering manager is blocked", "Framelink token missing  (from shop-designer)"),
                                             ("shop: the engineering manager needs you", "3 stories NEB-4..6; recommendation accept-all  (from shop-planner)")])
 
     def test_start_records_who_the_teammate_reports_to(self):
-        """The starting process says who the teammate reports to: the engineering manager has no FAST_CODING_ROLE, the team lead's tab
+        """The starting process says who the teammate reports to: the engineering manager has no COMPOSE_ROLE, the team lead's tab
         carries `orchestrator`. The record keeps it and the brief names the same one."""
         def herdr(*args, **kw):
             if args[:2] == ("agent", "list"):
@@ -94,9 +94,9 @@ class Crew(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {}
         for role, env, up, says in (("planner", {}, "manager", "You report to the engineering manager, who relays to the product owner."),
-                                    ("designer", {"FAST_CODING_ROLE": "orchestrator"}, "orchestrator", "You report to shop-orchestrator, your team lead.")):
+                                    ("designer", {"COMPOSE_ROLE": "orchestrator"}, "orchestrator", "You report to shop-orchestrator, your team lead.")):
             a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Go."})
-            clean = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | env
+            clean = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | env
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
@@ -130,9 +130,9 @@ class Crew(unittest.TestCase):
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
                                  ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
-        self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
-        self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
-        self.assertIn(f"FAST_CODING_REPO={fc.fc_herdr.project_worktree(self.proj)}", calls[1])
+        self.assertIn("COMPOSE_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
+        self.assertIn("COMPOSE_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
+        self.assertIn(f"COMPOSE_REPO={fc.fc_herdr.project_worktree(self.proj)}", calls[1])
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
@@ -141,7 +141,7 @@ class Crew(unittest.TestCase):
         self.assertEqual(calls[4][2], "shop-q-neb-12")
         self.assertIn("brief.md", calls[4][3])  # the brief goes in once the session is idle and its box is on screen
         prompt = (self.proj / "results" / "crew" / "shop-q-neb-12.brief.md").read_text()
-        self.assertIn("fast-coding report", prompt)
+        self.assertIn("compose report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)
         self.assertTrue(prompt.endswith("Resolve NEB-12 with the product owner."))
         self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
@@ -317,7 +317,7 @@ class Crew(unittest.TestCase):
                     mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
                 fc.fc_crew.cmd_crew(a)
             self.assertEqual(calls[1][:2], ("tab", "create"))
-            self.assertIn(f"FAST_CODING_ROLE={env}", calls[1], role)
+            self.assertIn(f"COMPOSE_ROLE={env}", calls[1], role)
             self.assertEqual(calls[2][2], f"shop-{role}")
 
     def test_same_named_agent_in_another_space_neither_blocks_start_nor_shows_in_list(self):
@@ -364,7 +364,7 @@ class Crew(unittest.TestCase):
 
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
         pre = fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests")
-        self.assertIn("never mention fast-coding", pre)
+        self.assertIn("never mention compose", pre)
         self.assertIn("one test file per unit", pre)
         self.assertIn("not even a throwaway reference", pre)
         self.assertIn("Fact-check before you say it", pre)
@@ -410,7 +410,7 @@ class Crew(unittest.TestCase):
 class Attention(unittest.TestCase):
     """The CLI, not a session's memory, gets the product owner's attention."""
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         self.proj.mkdir(parents=True)
         for role, title in (("q-neb-1", "Payment provider"), ("q-neb-2", "Refund window"), ("q-neb-3", "Currency"), ("tests", "tests")):
             name = f"shop-{role}"
@@ -447,11 +447,11 @@ class Attention(unittest.TestCase):
         runs = []
         with mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)), mock.patch.object(sys, "platform", "darwin"), \
                 mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
-            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
+            with mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):
                 fc.fc_crew.manager_attention(self.proj, ev)  # the team lead watching its teammates
             self.assertEqual((self.calls, runs), ([], []))
-            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": ""}):
-                os.environ.pop("FAST_CODING_ROLE")
+            with mock.patch.dict(os.environ, {"COMPOSE_ROLE": ""}):
+                os.environ.pop("COMPOSE_ROLE")
                 fc.fc_crew.manager_attention(self.proj, ev)
         self.assertEqual(self.calls, [])  # nothing goes through herdr
         self.assertEqual(len(runs), 1)
@@ -494,18 +494,18 @@ class Guard(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         fc.fc_core.sh(["git", "init", "-q"], self.repo)
-        (self.repo / ".fast-coding" / "shop").mkdir(parents=True)
+        (self.repo / ".compose" / "shop").mkdir(parents=True)
 
     def test_team_lead_cannot_edit_repo_files(self):
-        for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".fast-coding/shop/notes.md"):
+        for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".compose/shop/notes.md"):
             self.assertIsNotNone(fc.fc_crew.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
 
     def test_team_lead_keeps_its_own_files(self):
-        for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
+        for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json"):
             self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
         for role in ("orchestrator", "planner"):
-            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch/sync.json"), role), role)
-        self.assertIsNotNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".fast-coding/shop/scratch.md"), "planner"))
+            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".compose/shop/scratch/sync.json"), role), role)
+        self.assertIsNotNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".compose/shop/scratch.md"), "planner"))
         self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
 
     def test_crew_and_unmarked_sessions_are_untouched(self):
@@ -521,7 +521,7 @@ class Guard(unittest.TestCase):
                 why = fc.fc_crew.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
                 self.assertIn("team lead", why, (tool, role))
                 self.assertIn("planner", why.lower(), (tool, role))
-        for f in (".fast-coding/shop/linear.json", ".fast-coding/shop/verify.json", ".fast-coding/linear.json"):
+        for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json"):
             self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "planner"), f)
         self.assertIsNone(fc.fc_crew.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
         self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
@@ -532,7 +532,7 @@ class Guard(unittest.TestCase):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
         for role, denied in (("orchestrator", True), ("planner", True), ("wayfinder", False)):
             out = io.StringIO()
-            with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(ev)), \
+            with mock.patch.dict(os.environ, {"COMPOSE_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(ev)), \
                     mock.patch.object(sys, "stdout", out):
                 fc.fc_crew.cmd_guard(None)
             if denied:
@@ -543,7 +543,7 @@ class Guard(unittest.TestCase):
 
 
 class ToolBug(unittest.TestCase):
-    """A failure of fast-coding itself goes to the engineering manager, who owns fixing the tool, and to a log across projects."""
+    """A failure of compose itself goes to the engineering manager, who owns fixing the tool, and to a log across projects."""
     setUp, report = Crew.setUp, Crew.report
 
     def test_tool_bug_is_recorded_logged_and_wakes_the_engineering_manager(self):
@@ -555,7 +555,7 @@ class ToolBug(unittest.TestCase):
         self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-tests")[-1]["state"], "tool-bug")
         entry = json.loads(log.read_text().splitlines()[-1])
         self.assertEqual((entry["project"], entry["reporter"]), ("shop", "shop-tests"))
-        self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "fast-coding").exists())
+        self.assertTrue(entry["cli_commit"] and Path(entry["cli_repo"], "bin", "compose").exists())
         ev = fc.fc_watch.watch_events(before, snap(self.proj))
         self.assertEqual(len(fc.fc_watch.watch_filter(ev, "shop", ["shop-orchestrator"])), 1)  # the engineering manager wakes on a teammate's tool-bug too
         self.assertEqual(len(fc.fc_watch.watch_filter(ev, "shop", [])), 1)  # and the team lead sees it
@@ -572,13 +572,13 @@ class ToolBug(unittest.TestCase):
             if args[:2] == ("tab", "create"):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             return {}
-        a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
+        a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/compose"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
-        self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
+        self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/compose")
 
 
 class ToolsmithWorktree(unittest.TestCase):
@@ -589,13 +589,13 @@ class ToolsmithWorktree(unittest.TestCase):
         git("init", "-q", "-b", "main", cwd=repo)
         git("commit", "-q", "--allow-empty", "-m", "init", cwd=repo)
         slot = repo.parent / (repo.name + "-slot")
-        git("worktree", "add", "-q", "-b", "fast-coding/shop", str(slot), cwd=repo)
+        git("worktree", "add", "-q", "-b", "compose/shop", str(slot), cwd=repo)
         with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True):
             path, branch = fc.fc_crew.crew_workdir(str(repo), slot, "shop-toolsmith", "toolsmith")
             same, none = fc.fc_crew.crew_workdir(str(repo), slot, "shop-tests", "tests")
         self.assertTrue(str(path).startswith(str(repo / ".claude" / "worktrees")) and branch)
         self.assertEqual(git("branch", "--show-current", cwd=path), branch)
-        self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "fast-coding/shop"))
+        self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "compose/shop"))
         self.assertEqual((same, none), (Path(repo), None))  # other roles still run where they were pointed
 
 
@@ -659,7 +659,7 @@ class Ready(unittest.TestCase):
         self.assertEqual(len(self.run_ready("idle", [self.SHELL] * 50, timeout=10)), 5)
 
     def test_crew_start_waits_for_the_box_before_the_brief(self):
-        wt = Path(tempfile.mkdtemp()); proj = wt / ".fast-coding" / "shop"; proj.mkdir(parents=True)
+        wt = Path(tempfile.mkdtemp()); proj = wt / ".compose" / "shop"; proj.mkdir(parents=True)
         calls = []
         def herdr(*args, **kw):
             calls.append(args)
@@ -776,12 +776,12 @@ class AtomicState(unittest.TestCase):
 
 class RestrictedStart(unittest.TestCase):
     """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
-    SETTINGS = {"model": "opus", "enabledPlugins": {"fast-coding@fc": True, "figma@claude-plugins-official": True, "superpowers@sp": True, "ponytail@p": False,
-                                                    "fast-coding-extra@x": True, "my-fast-coding@x": True, "figmatic@x": True}}
+    SETTINGS = {"model": "opus", "enabledPlugins": {"compose@fc": True, "figma@claude-plugins-official": True, "superpowers@sp": True, "ponytail@p": False,
+                                                    "compose-extra@x": True, "my-compose@x": True, "figmatic@x": True}}
     P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma"]
 
     def start(self, role, model="claude:claude-opus-5-5", effort=None, **kw):
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         proj.mkdir(parents=True)
         home = Path(tempfile.mkdtemp())
         if self.SETTINGS is not None:  # None: the user has no settings file
@@ -810,7 +810,7 @@ class RestrictedStart(unittest.TestCase):
 
     def plugins_off(self, role):
         ep = json.loads((lambda a: a[a.index("--settings") + 1])(self.start(role)))["enabledPlugins"]
-        self.assertNotIn(False, [ep.get("fast-coding@fc")])  # fast-coding stays on
+        self.assertNotIn(False, [ep.get("compose@fc")])  # compose stays on
         return {k for k, v in ep.items() if v is False}
 
     def test_planner_gets_crew_settings_and_drops_the_other_servers(self):
@@ -849,8 +849,8 @@ class RestrictedStart(unittest.TestCase):
         self.assertIn("mcp__frame0__*", self.patterns(self.start("planner", frame0=False)))
         self.frame0.assert_not_called()
 
-    def test_every_plugin_but_fast_coding_is_off(self):
-        rest = {"superpowers@sp", "ponytail@p", "fast-coding-extra@x", "my-fast-coding@x", "figmatic@x"}
+    def test_every_plugin_but_compose_is_off(self):
+        rest = {"superpowers@sp", "ponytail@p", "compose-extra@x", "my-compose@x", "figmatic@x"}
         for role in ("planner", "orchestrator", "toolsmith", "design-x"):
             with self.subTest(role=role):
                 self.assertEqual(self.plugins_off(role), rest | {"figma@claude-plugins-official"})
@@ -922,12 +922,12 @@ class RestrictedStart(unittest.TestCase):
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
-        self.assertFalse(any("invoke the fast-coding skill" in b.lower() for b in (p, d, w)))
+        self.assertFalse(any("invoke the compose skill" in b.lower() for b in (p, d, w)))
 
 
 class PiStart(unittest.TestCase):
     def test_pi_teammate_loads_mcp_but_no_extension_packages(self):
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"; proj.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
         calls = []
         def herdr(*args, **kw):
             calls.append(args)

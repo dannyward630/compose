@@ -5,28 +5,28 @@ import fc_core, fc_config
 # ---------- tasks ----------
 
 # Linear is the record humans and agents share. The team lead reads the feature and its tasks through its Linear MCP tools
-# and pipes them to `fast-coding sync` (or `sync --from-linear` reads them with the workspace key), which keeps them in the git-ignored results/tasks.json.
+# and pipes them to `compose sync` (or `sync --from-linear` reads them with the workspace key), which keeps them in the git-ignored results/tasks.json.
 # A task is any issue under the feature (directly or under a story) whose description ends with this block:
-#   ```fast-coding
+#   ```compose
 #   id: 001
 #   files: server/graph/validate.go
 #   protected: server/graph/validate_test.go
 #   test: cd server && go test ./graph/ -run TestValidateAnswers
 #   ```
 # Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks.
-TASK_BLOCK = re.compile(r"\n*```fast-coding[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
+TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
 SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "blockedBy": ["<issue id>"]}]}'
               ": every issue under the feature, its stories' children included")
 
 def task_from_issue(issue):
-    """A task meta (with its brief under "body") from a Linear issue whose description carries the fast-coding block, else None."""
+    """A task meta (with its brief under "body") from a Linear issue whose description carries the compose block, else None."""
     desc = issue.get("description") or ""
     m = TASK_BLOCK.search(desc)
     if not m:
         return None
     meta = {k.strip(): v.strip() for k, v in (l.split(":", 1) for l in m.group(1).splitlines() if ":" in l)}
     if "id" not in meta or "test" not in meta:
-        sys.exit(f"{issue['id']}: its fast-coding block needs id and test")
+        sys.exit(f"{issue['id']}: its compose block needs id and test")
     for key in ("files", "protected", "nodes"):
         meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
     if "figma" in meta:  # a design task's own file, a key or a url; else the project's stored key
@@ -87,7 +87,7 @@ def load_tasks(proj, required=False):
     """The tasks as the team lead last synced them from Linear. Commands that act on tasks require a sync."""
     if required and not (proj / "results" / "tasks.json").exists():
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
-                 f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
+                 f"`compose sync --project {proj.name}` (JSON {SYNC_SHAPE})")
     return linear_cache(proj)["tasks"]
 
 def linear_done(meta):

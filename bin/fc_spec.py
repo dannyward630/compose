@@ -31,7 +31,7 @@ def cmd_tasks(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     tasks = fc_tasks.load_tasks(proj, required=True)
     if not tasks:
-        sys.exit("no tasks on Linear under this feature carry a fast-coding block")
+        sys.exit("no tasks on Linear under this feature carry a compose block")
     print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(m['id'] for m in tasks)}")
     print(f"  {'id':4} {'title':40} {'after':10} {'linear':9} files | protected | test")
     for m in tasks:

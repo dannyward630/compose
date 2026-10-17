@@ -25,8 +25,8 @@ def linear_sync_payload(proj):
     if not link.get("feature"):
         sys.exit(f'{proj / "linear.json"}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
     if not fc_config.LINEAR_KEY:
-        sys.exit(f"sync --from-linear needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | fast-coding workspace key {fc_config.WORKSPACE} --linear; "
-                 f"or pipe the JSON on stdin to `fast-coding sync --project {proj.name}` ({fc_tasks.SYNC_SHAPE})")
+        sys.exit(f"sync --from-linear needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear; "
+                 f"or pipe the JSON on stdin to `compose sync --project {proj.name}` ({fc_tasks.SYNC_SHAPE})")
     stories = set(link.get("stories") or [])
     try:
         feature = linear_gql(LINEAR_FEATURE, {"id": link["feature"]})["issue"]
@@ -91,7 +91,7 @@ def linear_ready():
         return True
     if not _linear_warned:
         _linear_warned.append(1)
-        fc_core.say(f"linear skipped: workspace {fc_config.WORKSPACE!r} has no Linear key; set it: pbpaste | fast-coding workspace key {fc_config.WORKSPACE} --linear")
+        fc_core.say(f"linear skipped: workspace {fc_config.WORKSPACE!r} has no Linear key; set it: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear")
     return False
 
 def linear_note(meta, body):

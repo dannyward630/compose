@@ -56,8 +56,8 @@ def project_config(proj):
     return json.loads(f.read_text()) if f.exists() else {}
 
 def project_branch(proj):
-    """The project's branch: `branch` in its verify.json (`init --branch`), else `fast-coding/<name>`."""
-    return project_config(proj).get("branch") or f"fast-coding/{Path(proj).name}"
+    """The project's branch: `branch` in its verify.json (`init --branch`), else `compose/<name>`."""
+    return project_config(proj).get("branch") or f"compose/{Path(proj).name}"
 
 def commit_convention(proj):
     """A repo's commit convention, declared once as `commit_convention` in verify.json: {"types": [...], "example": "feat: ..."}.
@@ -84,10 +84,10 @@ def commit_rule(conv):
 
 def all_projects(repo):
     """{project name: (worktree path, project dir)} over every worktree. A project lives in its own worktree
-    (`fast-coding-<name>` on the project's branch, `fast-coding/<name>` unless `init --branch` chose one), created by `init`; older projects may sit in the main checkout."""
+    (`compose-<name>` on the project's branch, `compose/<name>` unless `init --branch` chose one), created by `init`; older projects may sit in the main checkout."""
     found = {}
     for wt in worktrees(repo):
-        root = wt / ".fast-coding"
+        root = wt / ".compose"
         if not root.exists():
             continue
         on_branch = sh(["git", "branch", "--show-current"], wt, check=False).stdout.strip()
@@ -106,7 +106,7 @@ def project_dir(a):
     projects = all_projects(repo)
     if a.project:
         if a.project not in projects:
-            sys.exit(f"no project {a.project!r}; `fast-coding init --project {a.project}` creates one. Known: {sorted(projects)}")
+            sys.exit(f"no project {a.project!r}; `compose init --project {a.project}` creates one. Known: {sorted(projects)}")
         wt, proj = projects[a.project]
     else:
         if len(projects) != 1:
@@ -177,4 +177,4 @@ def project_after(proj):
     """The project this one is built on (`init --after`), or None. Its branch is the review base in verify.json."""
     cfg = project_config(proj)
     base = cfg.get("review_base", "")
-    return cfg.get("after") or (base.removeprefix("fast-coding/") if base.startswith("fast-coding/") else None)
+    return cfg.get("after") or (base.removeprefix("compose/") if base.startswith("compose/") else None)

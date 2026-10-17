@@ -12,10 +12,10 @@ def claude_id(model):
 
 
 def headless_env():
-    """The environment for a Claude Code process the CLI runs headless: no FAST_CODING_* at all, above all not the herdr
+    """The environment for a Claude Code process the CLI runs headless: no COMPOSE_* at all, above all not the herdr
     tab's role, project, and worktree, so the plugin's hooks treat it as no one's session (a team lead's Stop hook would
     park a watch in it, and its guard would block an implementer's edits)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("FAST_CODING_")}
+    return {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
 
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
 def crew_settings(role):
@@ -26,12 +26,12 @@ def crew_settings(role):
         pass
     keep = fc_mcp.keeps_skills(role)
     return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
-                       "enabledPlugins": {k: False for k in enabled if not k.startswith("fast-coding@") and not (keep and k.startswith("figma@"))}})
+                       "enabledPlugins": {k: False for k in enabled if not k.startswith("compose@") and not (keep and k.startswith("figma@"))}})
 
 def claude_once(cwd, prompt, timeout=900, model=None):
     """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("FAST_CODING_CLAUDE_MODEL", "claude-sonnet-5-5"),
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("COMPOSE_CLAUDE_MODEL", "claude-sonnet-5-5"),
            "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
     try:

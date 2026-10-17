@@ -3,29 +3,29 @@
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" guard", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/compose\" guard", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Skill",
-        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" skillcheck", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/compose\" skillcheck", "timeout": 10 }]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" skillcheck", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/compose\" skillcheck", "timeout": 10 }]
       }
     ],
     "SessionStart": [
       {
         "matcher": "compact",
-        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" reenter", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/compose\" reenter", "timeout": 10 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/fast-coding\" rewake", "asyncRewake": true, "timeout": 28800 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/compose\" rewake", "asyncRewake": true, "timeout": 28800 }]
       }
     ]
   }

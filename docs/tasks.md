@@ -23,7 +23,7 @@ One paragraph. What to build, where, exact export names.
 ## Constraints
 - No new dependencies beyond what the goal names. Do not edit protected files.
 
-```fast-coding
+```compose
 id: 002
 files: extension/snapshot.js
 protected: tests/snapshot.test.js
@@ -45,15 +45,15 @@ Three more rules apply to the block and the issue around it:
 A design task is the same issue with `kind: design` and a `nodes:` line in place of the `files:` line.
 The `nodes:` line lists the page and frames the builder draws, like `Checkout/Cart, Checkout/Pay`.
 The optional `figma:` line is a file key or url for a task whose file is not the project's stored one.
-The `test:` command is `fast-coding figma judge --project <slug> --only NNN`.
+The `test:` command is `compose figma judge --project <slug> --only NNN`.
 
 ````markdown
-```fast-coding
+```compose
 id: 006
 kind: design
 nodes: Checkout/Cart, Checkout/Pay
 figma: AbCdEf123456
-test: fast-coding figma judge --project my-feature --only 006
+test: compose figma judge --project my-feature --only 006
 ```
 ````
 
@@ -75,13 +75,13 @@ If you cannot write the test, it is not a task yet.
 
 ## Sync
 
-`fast-coding sync --from-linear` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.
-Without a key, the team lead reads the feature and every issue under it with its Linear MCP tools and pipes this JSON to `fast-coding sync`.
+`compose sync --from-linear` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.
+Without a key, the team lead reads the feature and every issue under it with its Linear MCP tools and pipes this JSON to `compose sync`.
 The JSON has this shape:
 
 ```json
 {"feature": {"id": "ENG-123", "title": "...", "description": "<the feature's description, plan included>"},
- "issues": [{"id": "ENG-124", "title": "...", "description": "<brief + fast-coding block>", "status": "Todo", "blockedBy": ["ENG-125"]}]}
+ "issues": [{"id": "ENG-124", "title": "...", "description": "<brief + compose block>", "status": "Todo", "blockedBy": ["ENG-125"]}]}
 ```
 
 `sync` refuses a feature other than the one `linear.json` names, a block without `id` or `test`, and an id used twice.
@@ -90,6 +90,6 @@ The JSON has this shape:
 The CLI writes to Linear only to keep states true, and only when the active workspace has a Linear key.
 The team lead writes everything else on Linear through the Linear MCP.
 
-`.fast-coding/<project>/` holds only the CLI's files.
+`.compose/<project>/` holds only the CLI's files.
 Those are `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.
 Nothing about the work is written to a file in the repo.

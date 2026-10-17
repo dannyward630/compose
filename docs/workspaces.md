@@ -10,16 +10,16 @@ It sets which key every call bills to, plus optional models and env.
 ## Commands
 
 ```bash
-fast-coding workspace                         # list (* = active, keys as their last 4 characters) and the active models
-fast-coding workspace personal                # switch; run and verify print `workspace <name>` first
-pbpaste | fast-coding workspace add client-x  # create one with the key on the clipboard
-pbpaste | fast-coding workspace key client-x  # set or rotate its key; add --linear for its Linear key
-fast-coding workspace remove client-x         # delete; removing the active one switches to default
+compose workspace                         # list (* = active, keys as their last 4 characters) and the active models
+compose workspace personal                # switch; run and verify print `workspace <name>` first
+pbpaste | compose workspace add client-x  # create one with the key on the clipboard
+pbpaste | compose workspace key client-x  # set or rotate its key; add --linear for its Linear key
+compose workspace remove client-x         # delete; removing the active one switches to default
 ```
 
-From Claude Code, run `/fast-coding:workspace`, `/fast-coding:workspace personal`, or `/fast-coding:workspace add client-x`.
+From Claude Code, run `/compose:workspace`, `/compose:workspace personal`, or `/compose:workspace add client-x`.
 The slash command never asks for a key in chat.
-Type `! pbpaste | fast-coding workspace key <name>` instead.
+Type `! pbpaste | compose workspace key <name>` instead.
 
 - Keys come from piped stdin or a hidden prompt, and never from an argument.
 - A workspace added without a key stops every command while it is active, so nothing bills another account.
@@ -28,7 +28,7 @@ Type `! pbpaste | fast-coding workspace key <name>` instead.
 
 ## Config
 
-The commands edit `~/.fast-coding/config.json` (mode 600).
+The commands edit `~/.compose/config.json` (mode 600).
 The active workspace is merged over the top level:
 
 ```json
@@ -98,7 +98,7 @@ When one does, `run` and `verify` halt, and three things follow:
 - The banner names the provider, quotes its message, and prints the top-up link.
   The exit code is 3.
 
-After topping up, run `fast-coding resume --project <name>`.
+After topping up, run `compose resume --project <name>`.
 Passed tasks keep their branches.
 A halted verify reruns from its first stage.
-`FAST_CODING_FAKE_402=openrouter` simulates a halt for testing.
+`COMPOSE_FAKE_402=openrouter` simulates a halt for testing.

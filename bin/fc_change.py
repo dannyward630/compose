@@ -118,7 +118,7 @@ def cmd_hold(a):
             sys.exit('hold needs --only <ids> and --reason "<one line>", or --release <ids|all>')
         for tid in [x.strip() for x in a.only.split(",") if x.strip()]:
             if tid not in tasks:
-                print(f"{tid}: no such task (run `fast-coding sync` if it is new on Linear)")
+                print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
                 continue
             hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
             print(f"{tid} held  {a.reason}")
@@ -165,7 +165,7 @@ def begin_change(proj, repo, why):
     """Open change C<n>: snapshot Linear as last synced, each task's result, and every task branch tip, kept under a ref so a
     layer the re-plan rebuilds can be brought back."""
     if open_change(proj):
-        sys.exit(f"{open_change(proj)} is still open: close it with `fast-coding change done` first")
+        sys.exit(f"{open_change(proj)} is still open: close it with `compose change done` first")
     cache = fresh_sync(proj)
     ids = change_ids(proj)
     cid = f"C{int(ids[-1][1:]) + 1 if ids else 1}"
@@ -174,7 +174,7 @@ def begin_change(proj, repo, why):
         tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", f"fast/{proj.name}/{m['id']}"], repo, check=False).stdout.strip()
         if tip:
             tips[m["id"]] = tip
-            fc_core.sh(["git", "update-ref", f"refs/fast-coding/{proj.name}/{cid}/{m['id']}", tip], repo)
+            fc_core.sh(["git", "update-ref", f"refs/compose/{proj.name}/{cid}/{m['id']}", tip], repo)
         res = proj / "results" / f"{m['id']}.json"
         if res.exists():
             results[m["id"]] = json.loads(res.read_text())
@@ -198,7 +198,7 @@ def change_diff(before, after):
             "feature": before["feature"].get("description") != after["feature"].get("description")}
 
 def issue_label(ident, issue):
-    """A task's id (`004`) when the issue carries a fast-coding block, else the issue's own id."""
+    """A task's id (`004`) when the issue carries a compose block, else the issue's own id."""
     m = fc_tasks.TASK_BLOCK.search((issue or {}).get("description") or "")
     tid = re.search(r"^id:\s*(\S+)", m.group(1), re.M) if m else None
     return tid.group(1) if tid else ident
@@ -214,12 +214,12 @@ def change_start(a, proj, repo):
     if not a.why:
         sys.exit('change start needs --why "<one line>"')
     cid, rec = begin_change(proj, repo, a.why)
-    print(f"{cid} open: {rec['why']}\nEdit Linear, sync, then `fast-coding change done`.")
+    print(f"{cid} open: {rec['why']}\nEdit Linear, sync, then `compose change done`.")
 
 def change_done(a, proj, repo):
     cid = open_change(proj)
     if not cid:
-        sys.exit('no change is open; `fast-coding change start --why "<one line>"` opens one')
+        sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
     rec, cache = load_change(proj, cid), fc_tasks.linear_cache(proj)
     if (cache.get("synced_at") or "") <= rec["started_at"]:
         sys.exit(f"sync after your Linear edits: {cid} is read from a sync newer than its start ({rec['started_at']})")
@@ -257,7 +257,7 @@ def change_undo(a, proj, repo):
     if not rec:
         sys.exit(f"no change {a.id} in {changes_dir(proj)}")
     if not rec.get("done_at"):
-        sys.exit(f"{a.id} is still open: close it with `fast-coding change done`, then undo it")
+        sys.exit(f"{a.id} is still open: close it with `compose change done`, then undo it")
     cache, d, after = fresh_sync(proj), rec["diff"], rec["after"]
     now, was = cache.get("issues", {}), after["issues"]
     content = lambda x: [(x or {}).get(k) for k in CHANGE_CONTENT]  # the run moves a new or edited task's state; only content counts
@@ -307,14 +307,14 @@ def change_undo(a, proj, repo):
         print("apply these through Linear (save_issue), then sync:")
         for ident, fields in left:
             print(f"  {ident}: {json.dumps(fields)}")
-    print(f"{cid} open: undo {a.id}. Sync, then `fast-coding change done`.")
+    print(f"{cid} open: undo {a.id}. Sync, then `compose change done`.")
 
 def cmd_change(a):
     """A change of course as one recorded unit: `start` snapshots Linear as last synced, `done` records what changed and why on
     the feature, `undo C<n>` puts back what C<n> touched, as a new change."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     if a.action == "undo" and not a.id:
-        sys.exit("usage: fast-coding change undo C<n>")
+        sys.exit("usage: compose change undo C<n>")
     {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
 
 def cmd_reflect(a):

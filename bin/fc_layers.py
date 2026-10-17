@@ -85,7 +85,7 @@ def _linearize(repo, proj, trunk, wt):
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     for rb, t in replaced:  # an old tip no layer carries any more is done with
         if not any(contains(t, b) for b in chain):
-            fc_core.sh(["git", "update-ref", "-d", f"refs/fast-coding/replaced/{proj.name}/{rb.rsplit('/', 1)[1]}/{t}"], repo, check=False)
+            fc_core.sh(["git", "update-ref", "-d", f"refs/compose/replaced/{proj.name}/{rb.rsplit('/', 1)[1]}/{t}"], repo, check=False)
     return linear
 
 REVIEW_LAYER_LINES = 300  # verify.json `review_layer_lines` changes it

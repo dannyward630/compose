@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""fast-coding: a frontier model plans, parallel fast implementers build, a local pipeline verifies. Stdlib only.
+"""compose: a frontier model plans, parallel fast implementers build, a local pipeline verifies. Stdlib only.
 
-Layout inside any repo (all of .fast-coding/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
-  .fast-coding/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
-  .fast-coding/<project>/verify.json    local verification config
-  .fast-coding/<project>/results/       tasks.json (the team lead's Linear sync), one JSON per task run, verify results
-  .fast-coding/<project>/worktrees/     one git clone per task
-  .fast-coding/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
+Layout inside any repo (all of .compose/ and graft/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
+  .compose/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
+  .compose/<project>/verify.json    local verification config
+  .compose/<project>/results/       tasks.json (the team lead's Linear sync), one JSON per task run, verify results
+  .compose/<project>/worktrees/     one git clone per task
+  .compose/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
 import argparse, os, signal, sys, time
@@ -25,7 +25,7 @@ def follow(cmd, log):
     log, done = Path(log), Path(f"{log}.exit")
     log.write_bytes(b"")
     done.unlink(missing_ok=True)
-    env = os.environ | {"FAST_CODING_DETACHED": "1", "PYTHONUNBUFFERED": "1"}
+    env = os.environ | {"COMPOSE_DETACHED": "1", "PYTHONUNBUFFERED": "1"}
     group = os.fork()
     if group == 0:
         try:
@@ -71,10 +71,10 @@ def detach(a):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])
-    ap = argparse.ArgumentParser(prog="fast-coding", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file fast-coding depends on; one MISSING line each, exit 1 when a required one is absent"),
-                            ("init", fc_init.cmd_init, "create .fast-coding/<project>/ skeleton"),
+    for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
+                            ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
                             ("bench", fc_bench.cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
@@ -106,13 +106,13 @@ def main():
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
-                            ("frame0", fc_frame0.cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .fast-coding/<project>/design.f0)"),
+                            ("frame0", fc_frame0.cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0)"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", fc_crew.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", fc_watch.cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
                             ("reenter", fc_watch.cmd_reenter, "Claude Code SessionStart hook: after a compaction, point the teammate back at its brief, the board, and Linear"),
-                            ("skillcheck", fc_crew.cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a fast-coding session the skill changed since it read it"),
+                            ("skillcheck", fc_crew.cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a compose session the skill changed since it read it"),
                             ("workspace", fc_config.cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {fc_config.CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -120,8 +120,8 @@ def main():
         s.set_defaults(fn=fn)
         if name == "init":
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
-            s.add_argument("--branch", help="name the project's branch (default fast-coding/<project>); on an existing project, renames its branch to this")
-            s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (fast-coding/<PROJECT> unless it chose one): a feature that needs that feature's code")
+            s.add_argument("--branch", help="name the project's branch (default compose/<project>); on an existing project, renames its branch to this")
+            s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (compose/<PROJECT> unless it chose one): a feature that needs that feature's code")
         if name == "sync":
             s.add_argument("--from-linear", action="store_true", help="read the feature, stories, and tasks from Linear with the workspace key (read-only) instead of stdin")
         if name == "cost":
@@ -171,7 +171,7 @@ def main():
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
-            s.add_argument("--contract", help="default: .fast-coding/<project>/results/contract.md")
+            s.add_argument("--contract", help="default: .compose/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting teammates")
             s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
@@ -199,7 +199,7 @@ def main():
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
-            s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the fast-coding repo)")
+            s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the compose repo)")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "models":
@@ -233,7 +233,7 @@ def main():
         a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
     elif extra:
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
-    if a.cmd in DETACHED and not os.environ.get("FAST_CODING_DETACHED"):
+    if a.cmd in DETACHED and not os.environ.get("COMPOSE_DETACHED"):
         return detach(a)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config()  # "default" when no workspace is chosen
@@ -242,7 +242,7 @@ def main():
     try:
         a.fn(a)
     except KeyboardInterrupt:
-        print(f"\n[{fc_core.now()}] {a.cmd} stopped by Ctrl-C" + ("; `fast-coding resume` continues it" if a.cmd in ("run", "resume") else ""), file=sys.stderr)
+        print(f"\n[{fc_core.now()}] {a.cmd} stopped by Ctrl-C" + ("; `compose resume` continues it" if a.cmd in ("run", "resume") else ""), file=sys.stderr)
         sys.exit(130)
 
 if __name__ == "__main__":

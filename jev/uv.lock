@@ -63,7 +63,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fast-coding-jev"
+name = "compose-jev"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

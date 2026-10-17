@@ -9,7 +9,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   TEAM LEAD (Claude, frontier)
   explore the code ─▶ wayfinder page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
                                                                                         │
-                                                                         fast-coding run│
+                                                                             compose run│
   ┌─────────────────────────────────────────────────────────────────────────────────────▼──┐
   │ DISPATCH   one clone + one pi session per task (GLM 5.3 Flash); `after:` tasks start    │
   │            on their base task's branch                                                  │
@@ -24,7 +24,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
                                      ▼
   TEAM LEAD REVIEW of each layer's diff ─▶ accept, or re-split and re-run
   passed branches ─▶ one gh stack, built in a CLI worktree (nothing pushed)
-                                     │ fast-coding verify
+                                     │ compose verify
   ┌──────────────────────────────────▼──────────────────────────────────────────────────────┐
   │ 1 checks   lint + unit tests                                                            │
   │ then, in parallel:                                                                      │
@@ -62,12 +62,12 @@ You answer them all at once, or accept every recommendation with one word.
 Your answers go to the feature issue's "Decisions so far".
 
 A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown on its card.
-Each project has its own Frame0 app on `.fast-coding/<project>/design.f0`, so parallel sessions never draw into each other's window.
+Each project has its own Frame0 app on `.compose/<project>/design.f0`, so parallel sessions never draw into each other's window.
 Three commands manage it:
 
-1. `fast-coding frame0 up --project <name>` starts it.
-2. `fast-coding frame0 save --project <name>` writes the drawing to the file.
-3. `fast-coding frame0 down --project <name>` saves and quits.
+1. `compose frame0 up --project <name>` starts it.
+2. `compose frame0 save --project <name>` writes the drawing to the file.
+3. `compose frame0 down --project <name>` saves and quits.
    `teardown` does this too.
 
 On the first drawing after each app start, Frame0 asks you to allow "Frame0 MCP Server".
@@ -84,28 +84,28 @@ Handed a story, the planner writes that story's tasks only.
 Handed a task, it lints and re-splits it, and that task is dispatched alone.
 Like the team lead, the planner's tab is denied edits, so it plans and never writes code.
 
-You can also start it yourself from the engineering manager with `/fast-coding:planner <issue or Linear project link>`.
+You can also start it yourself from the engineering manager with `/compose:planner <issue or Linear project link>`.
 Its model is the `planner` entry under `models.crew`, as [workspaces.md](workspaces.md#crew-models) describes.
 
 ## Design in Figma
 
 The wireframes settle flow and content.
 A designer teammate carries the design into Figma from wherever it stopped, as an entry into the same loop at the design step.
-Start it with `/fast-coding:designer <ticket> [--figma <file url or key>]`.
+Start it with `/compose:designer <ticket> [--figma <file url or key>]`.
 The team lead starts it for a feature or story whose project it runs, and the engineering manager starts it for an epic or when no team lead is live.
 
 1. It reads before it writes: the ticket and its parents with their Decisions so far, the Frame0 wireframes, the repo's tokens and components through graft, `DESIGN.md`, and what the Figma file already has.
 2. Before any screen story is built, it writes a visual direction for the surface as a Linear decision, with every rule citing research, a decision, or a measured value.
 3. It files the design-system epic, design stories, and design tasks in Linear, never in the repo.
    Each design task names the Figma page and frames it may touch.
-4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `fast-coding figma tree` and `fast-coding figma judge`.
+4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `compose figma tree` and `compose figma judge`.
 5. A `design-review` teammate then checks one image per story, and the result is handed to the code tasks as Framelink data.
 
 Every open design decision reaches you as a card with a recommendation, the same way wayfinder's do.
 The designer and its crew are Claude sessions, because Figma serves writes only to its allowlisted clients.
 Writes go through the official Figma connector, and every read goes through Framelink, which keeps reads off the connector's daily cap.
 The designer requires Framelink; [requirements.md](requirements.md#for-the-designer) shows how to set it up, and the designer's start stops with the install steps when it is missing.
-`fast-coding figma check --project <name> --figma <file url or key>` stores the target file and prints the Framelink setup when it cannot read the file.
+`compose figma check --project <name> --figma <file url or key>` stores the target file and prints the Framelink setup when it cannot read the file.
 With no file stored, the designer asks you for one.
 Its model is the `designer` entry under `models.crew`, Opus 5.5 at high effort when the entry is missing.
 
@@ -117,12 +117,12 @@ Work lives at five levels in Linear:
 |---|---|
 | project | the repo |
 | epic | a wayfinder map, when the work is bigger than one feature |
-| feature | one fast-coding project and one stack; its description is the plan |
+| feature | one `compose` project and one stack; its description is the plan |
 | story | one user-visible slice of the feature |
 | task | one stack layer; see [tasks.md](tasks.md) |
 
-You can hand fast-coding a link to any of these levels, and it creates the missing ones.
-It asks for the repo's Linear project link once and keeps it in `.fast-coding/linear.json`.
+You can hand `compose` a link to any of these levels, and it creates the missing ones.
+It asks for the repo's Linear project link once and keeps it in `.compose/linear.json`.
 Each task moves to In Progress when it is dispatched, In Review when its layer passes, and Done when its PR merges.
 
 ## Changing course
@@ -131,23 +131,23 @@ When the plan turns out to be wrong, the fleet notices and changes it in the ope
 
 1. Evidence arrives when a task ends without passing, an implementer or teammate reports a contradiction with Linear, verify fails, or you say the plan changed.
 2. Jev screens every line of the feature's Decisions so far against that evidence and marks each one HOLDS, BROKEN, or UNCLEAR.
-3. The team lead holds only the tasks a flagged line touches, with `fast-coding hold`, then confirms the flags.
+3. The team lead holds only the tasks a flagged line touches, with `compose hold`, then confirms the flags.
    Everything else keeps running.
 4. Complex or subjective calls, plus anything you settled yourself, reach you through the engineering manager, as text, or on a change page in Lavish when the evidence is visual.
-5. The re-plan is one recorded change, started with `fast-coding change start` and finished with `done`.
+5. The re-plan is one recorded change, started with `compose change start` and finished with `done`.
    The old decision is struck through and tagged, the new one sits beside it, and a comment on the feature says what changed and why.
 
-To reverse a change, run `fast-coding change undo C2`.
+To reverse a change, run `compose change undo C2`.
 It puts back every issue and layer that change touched, and records the undo as a new change of its own.
 
 ## Projects
 
 A project is one feature in its own worktree.
 
-- `fast-coding init --project <name>` creates branch `fast-coding/<name>` from your current branch.
+- `compose init --project <name>` creates branch `compose/<name>` from your current branch.
 - The worktree is a [treehouse](https://github.com/kunchenguid/treehouse) slot from the repo's own git-ignored pool in `.treehouse/`.
-  Without treehouse, it is `../fast-coding-<name>`.
-- `.fast-coding/<name>/` sits beside it and holds the Linear link, the verify config, and results.
+  Without treehouse, it is `../compose-<name>`.
+- `.compose/<name>/` sits beside it and holds the Linear link, the verify config, and results.
   `init` git-ignores it and `graft/` first.
 - The stack's trunk is the project branch, and one final PR brings it to your branch.
 - `init --after <other>` branches from another project's branch when the feature needs its code.
@@ -180,7 +180,7 @@ Both passed every task.
 Reasoning has to be on.
 With reasoning `none`, the model plans but never edits, and `low` fixed that at about twice the cost.
 
-The reviewer is whichever model `~/.fast-coding/.env` names as `TEXT_MODEL`, and it defaults to Mercury 2.5.
+The reviewer is whichever model `~/.compose/.env` names as `TEXT_MODEL`, and it defaults to Mercury 2.5.
 You set the planner and teammate models per role in the config, as [workspaces.md](workspaces.md#crew-models) describes.
 
 These figures come from small benchmarks and one prototype.

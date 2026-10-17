@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -112,7 +112,7 @@ class Yolo(unittest.TestCase):
         self.yolo()
         calls = []
         ev = [f"event crew={ORCH} state=needs-user message='Stripe or Adyen? I recommend Stripe'"]
-        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}
         with mock.patch.object(fc.fc_crew, "desktop_notify", lambda *args: calls.append(args)), mock.patch.dict(os.environ, env, clear=True):
             fc.fc_crew.manager_attention(self.proj, ev)
             self.assertEqual(calls, [])
@@ -123,7 +123,7 @@ class Yolo(unittest.TestCase):
         out = []
         a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=s), \
-                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):
             fc.fc_watch.cmd_watch(a)
         return out
 
@@ -134,7 +134,7 @@ class Yolo(unittest.TestCase):
         self.assertTrue(out[0].startswith("event yolo=on push=yes since="), out)
         self.assertIn("words='ship it'", out[0])
         line = next(l for l in out if "state=needs-user" in l)
-        self.assertTrue(line.endswith("  yolo=on (answer with the recommendation; log it: fast-coding yolo decided ...)"), line)
+        self.assertTrue(line.endswith("  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"), line)
 
     def test_status_shows_the_header(self):
         self.yolo(push=True)
@@ -152,15 +152,15 @@ class Yolo(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertIn("| `yolo", (root / "docs" / "cli.md").read_text())
         cmd = (root / "commands" / "yolo.md").read_text()
-        self.assertIn("allowed-tools: Bash(fast-coding yolo:*)", cmd)
+        self.assertIn("allowed-tools: Bash(compose yolo:*)", cmd)
         out = io.StringIO()
-        with mock.patch.object(sys, "argv", ["fast-coding", "--help"]), contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+        with mock.patch.object(sys, "argv", ["compose", "--help"]), contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
             fc.main()
         self.assertIn("yolo", out.getvalue())
 
     def test_main_parses_decided_after_the_project_flag(self):
         seen = []
-        with mock.patch.object(sys, "argv", ["fast-coding", "yolo", "decided", "--project", "hw", "db?: postgres"]), \
+        with mock.patch.object(sys, "argv", ["compose", "yolo", "decided", "--project", "hw", "db?: postgres"]), \
                 mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
             fc.main()
         self.assertEqual(seen[0].words, ["decided", "db?: postgres"])

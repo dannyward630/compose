@@ -4,7 +4,7 @@ import fc_core
 
 
 # ---------- global config and workspaces ----------
-# ~/.fast-coding/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
+# ~/.compose/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
 #   {"workspace": "work",
 #    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:...",
 #               "crew": {"orchestrator": "claude:<id>", "<role>": "claude:<id>", "default": "claude:<id>", "small": "claude:<id>"}},
@@ -23,7 +23,7 @@ JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent ve
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
 PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75),
           "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast": (0.15, 0.50)}
-CONFIG_PATH = Path(os.environ.get("FAST_CODING_CONFIG", Path.home() / ".fast-coding" / "config.json"))
+CONFIG_PATH = Path(os.environ.get("COMPOSE_CONFIG", Path.home() / ".compose" / "config.json"))
 ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (Mercury review, jev's text helper) and TYPESAFE_* (jev, acceptance); the process env wins
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
@@ -41,7 +41,7 @@ CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written a
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
-PROBE_CACHE = Path.home() / ".fast-coding" / "model-probe.json"
+PROBE_CACHE = Path.home() / ".compose" / "model-probe.json"
 
 
 def read_config():
@@ -79,7 +79,7 @@ def apply_config():
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     if "fix" in models:
-        os.environ["FAST_CODING_FIX_MODEL"] = models["fix"]
+        os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
     if "openrouter_api_key" in st:
         if not st["openrouter_api_key"]:
@@ -92,7 +92,7 @@ def apply_config():
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
 def read_key(name, kind="OpenRouter"):
-    """The key from piped stdin (`pbpaste | fast-coding workspace key personal`) or a hidden prompt; never an argument,
+    """The key from piped stdin (`pbpaste | compose workspace key personal`) or a hidden prompt; never an argument,
     so it stays out of shell history, the process list, and chat."""
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
@@ -106,21 +106,21 @@ def cmd_workspace(a):
     spaces = cfg.setdefault("workspaces", {})
     action, name = (a.name, a.target) if a.name in WORKSPACE_ACTIONS else (None, a.name)
     if action and not name:
-        sys.exit(f"usage: fast-coding workspace {action} <name>")
+        sys.exit(f"usage: compose workspace {action} <name>")
     if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
         sys.exit(f"workspace names are letters, digits, - and _: {name!r}")
     if name and name != "default" and action != "add" and name not in spaces:
-        sys.exit(f"no workspace {name!r}; have: {', '.join(['default', *spaces])}. Create it: fast-coding workspace add {name}")
+        sys.exit(f"no workspace {name!r}; have: {', '.join(['default', *spaces])}. Create it: compose workspace add {name}")
     if action == "add":
         if name == "default" or name in WORKSPACE_ACTIONS or name in spaces:
             sys.exit(f"workspace {name!r} already exists" if name in spaces or name == "default" else f"{name!r} is a reserved word")
         spaces[name] = {"openrouter_api_key": read_key(name)}  # empty fails loudly on use instead of billing another account
-        print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | fast-coding workspace key {name}"))
+        print(f"added {name}" + ("" if spaces[name]["openrouter_api_key"] else f"; no key yet: pbpaste | compose workspace key {name}"))
     elif action == "key":
         linear = getattr(a, "linear", False)
         key = read_key(name, "Linear" if linear else "OpenRouter")
         if not key:
-            sys.exit("no key read; copy it, then: pbpaste | fast-coding workspace key " + name + (" --linear" if linear else ""))
+            sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + (" --linear" if linear else ""))
         (cfg if name == "default" else spaces[name])["linear_api_key" if linear else "openrouter_api_key"] = key
         print(f"{name}: {'Linear' if linear else 'OpenRouter'} key set")
     elif action == "remove":

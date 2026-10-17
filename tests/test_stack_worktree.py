@@ -3,9 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -20,10 +20,10 @@ class StackWorktree(unittest.TestCase):
         self.git("init", "-q", "-b", "main")
         (self.repo / "a.txt").write_text("base\n")
         self.git("add", "-A"); self.git("commit", "-qm", "init")
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
-        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
 
     def git(self, *a):
         return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
@@ -31,12 +31,12 @@ class StackWorktree(unittest.TestCase):
     def test_the_stack_worktree_sees_the_tool_dir(self):
         (self.proj / "e2e").mkdir(); (self.proj / "e2e" / "assert.sh").write_text("true\n")
         wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "main")
-        self.assertTrue((wt / ".fast-coding" / "p" / "e2e" / "assert.sh").exists())
+        self.assertTrue((wt / ".compose" / "p" / "e2e" / "assert.sh").exists())
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
 
     def test_verify_installs_in_the_worktree_at_the_stack_top(self):
-        (self.repo / ".gitignore").write_text("node_modules/\n.fast-coding/\n")
+        (self.repo / ".gitignore").write_text("node_modules/\n.compose/\n")
         (self.repo / "bun.lock").write_text("trunk\n")
         self.git("add", "-A"); self.git("commit", "-qm", "lock")
         self.git("checkout", "-q", "-b", "top"); (self.repo / "bun.lock").write_text("top\n")

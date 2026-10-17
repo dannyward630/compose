@@ -2,10 +2,10 @@ import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, te
 from pathlib import Path
 from unittest import mock
 import sys, time
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
-os.environ["FAST_CODING_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -300,7 +300,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(fc.fc_config.apply_config(), "work")
         self.assertEqual((fc.fc_config.OPENROUTER_KEY, os.environ["OPENROUTER_API_KEY"], os.environ["TEXT_MODEL_API_KEY"]), ("sk-work",) * 3)
         self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
-        self.assertEqual(os.environ["FAST_CODING_FIX_MODEL"], "pi:f/x")
+        self.assertEqual(os.environ["COMPOSE_FIX_MODEL"], "pi:f/x")
         self.assertIn("sk-work", os.environ["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:g/h")
 

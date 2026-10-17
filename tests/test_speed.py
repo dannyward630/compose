@@ -2,10 +2,10 @@ import importlib.machinery, importlib.util, os, shutil, subprocess, tempfile, ti
 from pathlib import Path
 from unittest import mock
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
-os.environ["FAST_CODING_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -85,7 +85,7 @@ class E2EBesideReview(unittest.TestCase):
 
 def task_issue(ident, tid, crits, **kv):
     body = "## Goal\nDo it.\n\n## Acceptance criteria\n" + "".join(f"- {c}\n" for c in crits)
-    block = "\n```fast-coding\n" + "\n".join(f"{k}: {v}" for k, v in {"id": tid, **kv, "test": "t"}.items()) + "\n```\n"
+    block = "\n```compose\n" + "\n".join(f"{k}: {v}" for k, v in {"id": tid, **kv, "test": "t"}.items()) + "\n```\n"
     return {"id": ident, "title": tid, "description": body + block, "status": "Todo", "blockedBy": []}
 
 

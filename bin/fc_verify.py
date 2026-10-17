@@ -217,9 +217,9 @@ def e2e_stage(repo, cfg, panes, report, findings):
     daemons = fc_jev.harness_daemons(env["BU_NAME"])
     try:
         if profile:
-            # A project's verify shows its browser. Only fast-coding's own test suite runs it headless (FAST_CODING_E2E_HEADLESS=1),
+            # A project's verify shows its browser. Only compose's own test suite runs it headless (COMPOSE_E2E_HEADLESS=1),
             # so testing the tool never pops a window on the product owner's screen.
-            headless = os.environ.get("FAST_CODING_E2E_HEADLESS") == "1"
+            headless = os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
             p = fc_core.sh(["bp", "launch", "about:blank", "--profile", profile, *(["--headless"] if headless else [])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
             if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
@@ -392,9 +392,10 @@ def fix_strays(touched, allowed, named=()):
     return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in fc_worktree.LOCKFILES and f not in named]
 
 def fix_message(reply, files, conv=None):
-    """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed."""
+    """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed.
+    The tool's name counts only as a word of its own, so docker-compose, compose.yaml, or composer stay a real change."""
     line = next(iter((reply or "").strip().splitlines()), "").strip(" \"'`.")
-    if line and len(line) <= 72 and not re.search(r"fast-coding|verif|finding|wave|task|linear|round", line, re.I):
+    if line and len(line) <= 72 and not re.search(r"(?<![\w-])compose(?![\w.-])|verif|finding|wave|task|linear|round", line, re.I):
         return fc_core.typed(line, "fix", conv)
     return fc_core.typed("Fix " + ", ".join(Path(f).name for f in files[:3]), "fix", conv)
 
@@ -419,7 +420,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         _, _, _, protected = review_inputs(repo, proj, cfg)
         before = fc_core.digests(repo, protected)
         t1 = time.time()
-        model = cfg.get("fix_model") or os.environ.get("FAST_CODING_FIX_MODEL") or fc_config.DEFAULT_MODEL
+        model = cfg.get("fix_model") or os.environ.get("COMPOSE_FIX_MODEL") or fc_config.DEFAULT_MODEL
         if rnd and fc_models.fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
             model = fc_models.fallback_for(model)
         fc_core.say(f"fix    start round {rnd + 1}  model={model}")

@@ -2,9 +2,9 @@ import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unit
 from pathlib import Path
 from unittest import mock
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -90,10 +90,10 @@ class Layers(unittest.TestCase):
         self.git("init", "-q", "-b", "main")
         self.git("remote", "add", "origin", "https://github.com/o/r.git")
         self.write("README.md", "hi\n"); self.commit("init")
-        self.git("checkout", "-q", "-b", "fast-coding/p")
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.git("checkout", "-q", "-b", "compose/p")
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
-        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         self.write("lock.txt", ""); self.write("bun.lock", "x\n" * 4000); self.write("setup.txt", "s\n" * 20); self.commit("groundwork one")
         self.write("stub.txt", "s\n" * 20); self.commit("groundwork two")
         tasks = [{"id": t, "protected": [f"t{t}.test"], "files": [f"{t}.src"], "after": ""} for t in ("001", "002", "003")]
@@ -101,10 +101,10 @@ class Layers(unittest.TestCase):
         for t in ("001", "002", "003"):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"test {t}")
         self.sizes = {"001": 100, "002": 120, "003": 150}
-        for t, base in (("001", "fast-coding/p"), ("002", "fast-coding/p"), ("003", "fast-coding/p")):
+        for t, base in (("001", "compose/p"), ("002", "compose/p"), ("003", "compose/p")):
             self.git("checkout", "-q", "-b", f"fast/p/{t}", base)
             self.write(f"{t}.src", "c\n" * self.sizes[t]); self.commit(f"task {t}")
-            self.git("checkout", "-q", "fast-coding/p")
+            self.git("checkout", "-q", "compose/p")
 
     def git(self, *a):
         return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
@@ -119,7 +119,7 @@ class Layers(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            self.assertTrue(fc.fc_layers.register_stack(self.repo, self.proj, "fast-coding/p"))
+            self.assertTrue(fc.fc_layers.register_stack(self.repo, self.proj, "compose/p"))
         return out
 
     def changed(self, branch, below):
@@ -157,28 +157,28 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
 
     def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
-        out = self.stack(branch="fast-coding/p")
-        self.assertEqual(self.git("branch", "--list", "fast-coding/p-layer-*", "--format=%(refname:short)").split(), ["fast-coding/p-layer-01", "fast-coding/p-layer-02", "fast-coding/p-layer-03"])
+        out = self.stack(branch="compose/p")
+        self.assertEqual(self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
         self.assertEqual(self.layers(), [])
         self.assertTrue(any(l.startswith("layer  layer-01") for l in out))
 
     def test_a_project_with_layer_branches_already_keeps_their_names(self):
         self.git("branch", "fast/p/layer-09", "main")  # an earlier stack, before the stored branch named layers
-        self.stack(branch="fast-coding/p")
+        self.stack(branch="compose/p")
         self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
         self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast/p/")
         self.git("branch", "-D", *self.layers())
-        self.stack(branch="fast-coding/p", layer_prefix="fast/p/")  # recorded, so no branch is needed to remember it
+        self.stack(branch="compose/p", layer_prefix="fast/p/")  # recorded, so no branch is needed to remember it
         self.assertEqual(len(self.layers()), 3)
 
     def test_layer_branches_on_the_remote_alone_keep_their_names(self):
         self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "main")
-        self.stack(branch="fast-coding/p")
+        self.stack(branch="compose/p")
         self.assertEqual(len(self.layers()), 3)
 
     def test_the_first_build_records_the_names_it_chose(self):
-        self.stack(branch="fast-coding/p")
-        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast-coding/p-")
+        self.stack(branch="compose/p")
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "compose/p-")
 
     def test_a_layers_pr_is_titled_from_its_tasks_and_the_jira_key(self):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
@@ -201,7 +201,7 @@ class Layers(unittest.TestCase):
         fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001", "002"]), ("fast/p/layer-03", ["003"]))])
         self.git("checkout", "-q", "fast/p/003")
         self.write("003.src", "c\n"); self.commit("shrink 003")  # 003 now fits with 001 and 002, so a regroup would merge layers 02 and 03
-        self.git("checkout", "-q", "fast-coding/p")
+        self.git("checkout", "-q", "compose/p")
         self.stack(review_layer_lines=300)
         self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
         self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src"})
@@ -222,7 +222,7 @@ class Layers(unittest.TestCase):
 
     def test_the_gh_stack_is_the_layers_on_the_real_base(self):
         self.stack()
-        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "fast-coding/p")
+        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")
         subprocess.run(["git", "checkout", "-q", "fast/p/layer-02"], cwd=wt, check=True)
         data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(data["trunk"], "main")

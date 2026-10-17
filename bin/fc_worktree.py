@@ -10,12 +10,12 @@ def replace_branch(repo, proj, branch):
     old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""
     tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip()
     if tip:
-        fc_core.sh(["git", "update-ref", f"refs/fast-coding/replaced/{proj.name}/{branch.rsplit('/', 1)[1]}/{tip}", tip], repo)
+        fc_core.sh(["git", "update-ref", f"refs/compose/replaced/{proj.name}/{branch.rsplit('/', 1)[1]}/{tip}", tip], repo)
     fc_core.sh(["git", "branch", "-D", branch], repo, check=False)
 
 def replaced_tips(repo, proj):
     """[(branch, old tip)] for the project's replaced task branches (see replace_branch)."""
-    out = fc_core.sh(["git", "for-each-ref", "--format=%(refname) %(objectname)", f"refs/fast-coding/replaced/{proj.name}/"], repo, check=False).stdout
+    out = fc_core.sh(["git", "for-each-ref", "--format=%(refname) %(objectname)", f"refs/compose/replaced/{proj.name}/"], repo, check=False).stdout
     return [(f"fast/{proj.name}/{ref.split('/')[-2]}", tip) for ref, tip in (l.split() for l in out.splitlines())]
 
 def task_branches(repo, proj):
@@ -59,10 +59,10 @@ def stack_order(repo, proj):
 TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
 
 def use_treehouse():
-    """Slots come from a treehouse pool when treehouse is installed (FAST_CODING_NO_TREEHOUSE=1 turns it off), else from plain
+    """Slots come from a treehouse pool when treehouse is installed (COMPOSE_NO_TREEHOUSE=1 turns it off), else from plain
     git worktrees. The pool lives inside the repository (`.treehouse/`, git-ignored): a teammate started in a slot then sits under
     a folder Claude Code already trusts, where a slot under ~/.treehouse would stop at the trust prompt."""
-    return bool(shutil.which("treehouse")) and os.environ.get("FAST_CODING_NO_TREEHOUSE") != "1"
+    return bool(shutil.which("treehouse")) and os.environ.get("COMPOSE_NO_TREEHOUSE") != "1"
 
 def treehouse(repo, *args, check=True):
     return fc_core.sh(["treehouse", "--root", ".", *args], repo, check=check)
@@ -97,7 +97,7 @@ def pool_shortfall(repo, need):
         return None
     holders = [e.get("lease_holder") or f"slot {e.get('name')} ({e.get('status')})" for e in entries if e.get("status") != "available"]
     return (f"needs {need} worktree slot(s), {free} free of max_trees = {cap}; held by {', '.join(holders)}. "
-            "Free slots (fast-coding testcrews --collect, fast-coding clean, treehouse return) or raise max_trees in treehouse.toml")
+            "Free slots (compose testcrews --collect, compose clean, treehouse return) or raise max_trees in treehouse.toml")
 
 def is_slot(repo, path):
     """Whether a path is a treehouse slot of this repository's pool, asked of treehouse rather than guessed from the path."""
@@ -118,9 +118,9 @@ def default_branch(repo):
     return None
 
 def release_slot(repo, path):
-    """Hand a slot back to the pool with its installs intact. fast-coding's own leftovers go first: `return` keeps ignored
-    files, so a project's `.fast-coding/` results or graph would otherwise reach the next agent that leases the slot."""
-    for d in (".fast-coding", "graft"):
+    """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
+    files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
+    for d in (".compose", "graft"):
         t = Path(path) / d
         if t.is_symlink() or t.is_file():
             t.unlink()
@@ -147,7 +147,7 @@ def stack_worktree(repo, proj, trunk):
             wt = Path(held)
             fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         elif use_treehouse():
-            wt = slot_on(repo, trunk, f"fast-coding:{proj.name}:stackroot", detach=True)
+            wt = slot_on(repo, trunk, f"compose:{proj.name}:stackroot", detach=True)
             slots(proj, {"stackroot": str(wt)})
         else:
             wt = proj / "worktrees" / ".stackroot"
@@ -157,10 +157,10 @@ def stack_worktree(repo, proj, trunk):
             else:
                 fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         ready_checkout(repo, wt)
-        tools, link = repo / ".fast-coding", wt / ".fast-coding"  # e2e scripts live there, and verify points them at this worktree
+        tools, link = repo / ".compose", wt / ".compose"  # e2e scripts live there, and verify points them at this worktree
         if tools.is_dir() and not link.exists() and not link.is_symlink():
             link.symlink_to(tools)
-            exclude_paths(wt, ["/.fast-coding"])  # the `/.fast-coding/` rule does not cover a link
+            exclude_paths(wt, ["/.compose"])  # the `/.compose/` rule does not cover a link
     return wt
 
 def exclude_paths(wt, rules):
@@ -174,10 +174,10 @@ def exclude_paths(wt, rules):
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text("".join(l + "\n" for l in have + add))
 
-TOOL_DIRS = ("graft/", ".fast-coding/")
+TOOL_DIRS = ("graft/", ".compose/")
 
 def ignore_tool_files(wt):
-    """Keep fast-coding's and graft's own files out of the repository, before anything else is written: every checkout
+    """Keep compose's and graft's own files out of the repository, before anything else is written: every checkout
     ignores them through info/exclude (also graft's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
     of the delivered branch ignores them too. Returns True when `.gitignore` changed (the caller commits it)."""
     exclude_paths(wt, ["/" + d for d in TOOL_DIRS] + ["/.ignore"])
@@ -220,7 +220,7 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     exclude_paths(wt, ["/graft/", "/.ignore", *("/" + d for d in deps)])
     stamp_graft_wiring(wt)
     if install and borrow:
-        stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "fast-coding-install"], wt).stdout.strip())
+        stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())
         locks = "".join(l + "\n" for l in fc_core.sh(["git", "ls-tree", "-r", "HEAD"], wt, check=False).stdout.splitlines()
                         if l.rsplit("/", 1)[-1].split("\t")[-1] in LOCKFILES)
         if stamp.exists() and stamp.read_text() == locks:

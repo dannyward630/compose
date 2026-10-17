@@ -20,38 +20,38 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
-The team lead's and the planner's tabs are both marked (`FAST_CODING_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`fast-coding guard`), except the CLI's JSON under `.fast-coding/`.
-The team lead starts the planner after wayfinder, or you start it with `/fast-coding:planner <ticket>` from the engineering manager.
+The team lead's and the planner's tabs are both marked (`COMPOSE_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`compose guard`), except the CLI's JSON under `.compose/`.
+The team lead starts the planner after wayfinder, or you start it with `/compose:planner <ticket>` from the engineering manager.
 
 ## Talking to the fleet
 
 You talk to the engineering manager, and you can also type into any teammate's tab directly.
-Teammates report up with `fast-coding report` and pick a state from `working`, `needs-user`, `blocked`, `done`, `tool-bug`, and `contradiction`.
+Teammates report up with `compose report` and pick a state from `working`, `needs-user`, `blocked`, `done`, `tool-bug`, and `contradiction`.
 
 A `contradiction` report always wakes the team lead as a teammate event.
 It also screens the feature's decisions with Jev, which adds a `reflect=` event when it flags a decision line.
 
 A `needs-user` or `blocked` report badges the pane `needs you`.
 The desktop notification pops only when such a report wakes the engineering manager's `watch`, so you are alerted once, for what the engineering manager brings you, and not by every teammate or the team lead.
-The CLI sends it itself (macOS `osascript`, elsewhere `notify-send`), not through herdr: herdr's own toast and sound fire for every agent that finishes or needs input, so set `[ui.toast] delivery = "off"` and `[ui.sound] enabled = false` in `~/.config/herdr/config.toml`; `fast-coding doctor` warns while either is on.
+The CLI sends it itself (macOS `osascript`, elsewhere `notify-send`), not through herdr: herdr's own toast and sound fire for every agent that finishes or needs input, so set `[ui.toast] delivery = "off"` and `[ui.sound] enabled = false` in `~/.config/herdr/config.toml`; `compose doctor` warns while either is on.
 Nothing steals focus.
-When you want to jump to a tab, `fast-coding crew focus --role <role>` takes you there.
+When you want to jump to a tab, `compose crew focus --role <role>` takes you there.
 
 ## Teammate commands
 
 These commands start, list, and stop teammates.
 
 ```bash
-fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt
-fast-coding explore --project <slug> | fast-coding crew start --project <slug> --role explore --title explore --brief -
-fast-coding wayfinder --project <slug> --extra - < notes.md | fast-coding crew start --project <slug> --role wayfinder --title wayfinder --brief -
-fast-coding crew list --project <slug>
-fast-coding crew stop --project <slug> --role wayfinder   # refused until it reported done; --force overrides
-fast-coding testcrews --project <slug>                    # one test-writing teammate per task
-fast-coding figma check --project <slug> --figma <url or key>
-fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -
-fast-coding designcrews --project <slug>   # one design-NNN builder per open design task
-fast-coding teardown --project <slug>                     # close finished tabs; the team lead's done runs it
+compose crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt
+compose explore --project <slug> | compose crew start --project <slug> --role explore --title explore --brief -
+compose wayfinder --project <slug> --extra - < notes.md | compose crew start --project <slug> --role wayfinder --title wayfinder --brief -
+compose crew list --project <slug>
+compose crew stop --project <slug> --role wayfinder   # refused until it reported done; --force overrides
+compose testcrews --project <slug>                    # one test-writing teammate per task
+compose figma check --project <slug> --figma <url or key>
+compose designer --project <slug> | compose crew start --project <slug> --role designer --title designer --brief -
+compose designcrews --project <slug>   # one design-NNN builder per open design task
+compose teardown --project <slug>                     # close finished tabs; the team lead's done runs it
 ```
 
 The config sets the model for each teammate role, as [workspaces.md](workspaces.md#crew-models) explains.
@@ -60,10 +60,10 @@ The config sets the model for each teammate role, as [workspaces.md](workspaces.
 
 Each project gets its own herdr space, laid out like this.
 
-| herdr | fast-coding | Label |
+| herdr | `compose` | Label |
 |---|---|---|
 | space | one project | `<slug>` |
-| tab | live `fast-coding status --watch` | `status` |
+| tab | live `compose status --watch` | `status` |
 | tab | every implementer, one pane per task | `implementers` |
 | pane | one task's interactive pi session | `NNN <title>`, agent `<slug>-NNN` |
 | tab | the latest verify run, one pane per stage | `verify` |
@@ -77,7 +77,7 @@ That prompt lands in the same pi session the CLI drives.
 
 ## Supervision
 
-`fast-coding watch --project <slug>` sleeps until a task finishes, an agent blocks, a teammate reports, a run ends, or verify finishes.
+`compose watch --project <slug>` sleeps until a task finishes, an agent blocks, a teammate reports, a run ends, or verify finishes.
 It prints one `event ...` line and exits, so a waiting team lead spends no tokens.
 `--from orchestrator` makes the engineering manager wake on the team lead's reports, on a tool-bug or a stall, and on any teammate it started itself.
 `crew start` records who each teammate reports to (`reports_to` in `results/crew/<agent>.json`), so a planner or designer the engineering manager started needs no second watch.
@@ -90,7 +90,7 @@ A watch started later still reports what happened while none ran, and `watch --n
 A billing halt is an event too, shown as `event halt=payment`.
 
 The team lead never starts `watch` itself.
-Its tab carries `FAST_CODING_ROLE`, `FAST_CODING_PROJECT`, and `FAST_CODING_REPO`, and the plugin's Stop hook (`fast-coding rewake`) parks a watch whenever one of its turns ends.
+Its tab carries `COMPOSE_ROLE`, `COMPOSE_PROJECT`, and `COMPOSE_REPO`, and the plugin's Stop hook (`compose rewake`) parks a watch whenever one of its turns ends.
 The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the next turn end parks the next watch.
 A lock keeps one watch per watcher.
 A second hook exits at once, and a second `watch` waits its turn.

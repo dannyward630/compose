@@ -8,7 +8,7 @@ Verify's e2e stage uses it to launch its own browser (see [docs/verify.md](../do
 ## Install
 
 ```sh
-ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp      # from the fast-coding checkout
+ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp      # from the compose checkout
 ```
 
 It needs Node 22+ and Playwright's Chromium (`npx playwright install chromium`), because Chrome 154+ ignores `--load-extension`.
@@ -27,7 +27,7 @@ bp record example-ats.com shots/flow --interval 2000 &   # a screenshot on every
 ```
 
 `bp help` lists every command.
-`bp goal <url> "<goal>"` runs fast-coding's `jev/` against the same Chromium, the same agent verify's e2e cases use.
+`bp goal <url> "<goal>"` runs compose's `jev/` against the same Chromium, the same agent verify's e2e cases use.
 Everything else is plain CDP with no model: it does only what you type.
 
 ## Rules for agents

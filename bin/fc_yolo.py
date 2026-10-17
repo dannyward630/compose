@@ -6,7 +6,7 @@ import fc_cost, fc_core, fc_tasks, fc_worktree, fc_watch
 # ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
 YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
-              "merging a toolsmith fix into fast-coding itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
+              "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
 def yolo_digest(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
@@ -17,7 +17,7 @@ def yolo_digest(repo, proj, y):
     waiting = [f"{n}: {r[-1]['state']}  {r[-1]['message']}" for n, r in snap["crew"].items()
                if r and r[-1]["state"] in ("needs-user", "blocked") and fc_core.report_time(r[-1]["at"]) >= since]
     if snap["halt"]:
-        waiting.append(f"payment halt at {snap['halt'][1]} ({snap['halt'][2]} task(s) left): top up, then `fast-coding resume`")
+        waiting.append(f"payment halt at {snap['halt'][1]} ({snap['halt'][2]} task(s) left): top up, then `compose resume`")
     verify = snap["verify"] if snap["verify"] and snap["verify"][0] >= since else None
     if verify and not verify[1]:
         waiting.append("verify FAIL: read results/verify.json")
@@ -48,7 +48,7 @@ def cmd_yolo(a):
     y = fc_tasks.yolo_state(proj)
     words = list(a.words or [])
     if words[:1] in (["off"], ["decided"]) and not y:
-        print(f"yolo is not on for {proj.name}; `fast-coding yolo --project {proj.name} [--push] [words]` turns it on")
+        print(f"yolo is not on for {proj.name}; `compose yolo --project {proj.name} [--push] [words]` turns it on")
         sys.exit(1)
     if words == ["off"]:
         print(yolo_digest(repo, proj, y))
@@ -69,4 +69,4 @@ def cmd_yolo(a):
     print(f"your words: {y['words'] or '(none)'}")
     print(f"push: {'yes, the verified stack is submitted' if y['push'] else 'no, the stack waits for you'}")
     print(YOLO_NEVER)
-    print(f"back: `fast-coding yolo off --project {proj.name}` prints what happened")
+    print(f"back: `compose yolo off --project {proj.name}` prints what happened")

@@ -6,8 +6,8 @@ import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
     is inside herdr and `task` names the project's space), anything else runs OpenCode."""
-    fake = os.environ.get("FAST_CODING_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
-    if fake and os.environ.get("FAST_CODING_FAKE_402_MATCH", "") in prompt:
+    fake = os.environ.get("COMPOSE_FAKE_402")  # test hook: behave as if the provider refused for billing (optionally only for prompts matching)
+    if fake and os.environ.get("COMPOSE_FAKE_402_MATCH", "") in prompt:
         raise fc_models.PaymentRequired(fake, "Payment required to access this resource (simulated)")
     if fc_claude.is_claude(model):
         return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
@@ -46,7 +46,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
-        fc_herdr.herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
+        fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -203,9 +203,9 @@ def run_test(meta, wt):
     return timed(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT))
 
 def cmd_timed(argv):
-    """`fast-coding timed <seconds> -- <command>`: what implementers run their test through, so a hang fails fast."""
+    """`compose timed <seconds> -- <command>`: what implementers run their test through, so a hang fails fast."""
     if len(argv) < 3 or argv[1] != "--":
-        sys.exit("usage: fast-coding timed <seconds> -- <command>")
+        sys.exit("usage: compose timed <seconds> -- <command>")
     r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]))
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
@@ -223,7 +223,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     if wt.exists():
         shutil.rmtree(wt)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
-    why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("FAST_CODING_REDO")))
+    why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))
     if why:
         # A passed layer may already have a PR, and a hand-done one carries a teammate's commit. Never replace either silently;
         # `--redo` says the user wants it rebuilt.
@@ -281,7 +281,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
-    def progress(state):  # `fast-coding status --watch` reads this while the task runs
+    def progress(state):  # `compose status --watch` reads this while the task runs
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": len(log), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),

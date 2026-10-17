@@ -1,6 +1,6 @@
 # CLI
 
-This page lists every fast-coding command and its flags.
+This page lists every `compose` command and its flags.
 The team lead runs them for you, and you run them yourself only in manual mode.
 
 Every command takes `--repo <path>` (default `.`) and `--project <name>`.
@@ -12,7 +12,7 @@ You can leave it out when the repo has one project.
 Open Claude Code in the repo and run:
 
 ```
-/fast-coding plan and build <feature> from ENG-123 and DESIGN.md
+/compose plan and build <feature> from ENG-123 and DESIGN.md
 ```
 
 The team lead runs every command below for you.
@@ -20,15 +20,15 @@ You review the plan, the task list, and the stack.
 
 ## Manual mode
 
-1. Run `fast-coding init --project my-feature`, then work in the worktree it prints.
+1. Run `compose init --project my-feature`, then work in the worktree it prints.
 2. On Linear, write the feature issue (its description is the plan) and one task issue per task.
-   End each task issue with a [fast-coding block](tasks.md).
-3. Write `{"feature": "ENG-123"}` to `.fast-coding/my-feature/linear.json`, write each task's test, and commit.
-4. Run `fast-coding sync --project my-feature < issues.json`, and run it again after any Linear edit ([shape](tasks.md#sync)).
-5. Run `fast-coding run --project my-feature`, then `fast-coding verify --project my-feature`.
+   End each task issue with a [`compose` block](tasks.md).
+3. Write `{"feature": "ENG-123"}` to `.compose/my-feature/linear.json`, write each task's test, and commit.
+4. Run `compose sync --project my-feature < issues.json`, and run it again after any Linear edit ([shape](tasks.md#sync)).
+5. Run `compose run --project my-feature`, then `compose verify --project my-feature`.
 
-When you ask, `fast-coding stack --project my-feature --submit` pushes and opens one draft PR per layer.
-After the PRs merge, `fast-coding clean --project my-feature` removes what merged, moves those tasks to Done in Linear with their story and the feature, and keeps what did not merge.
+When you ask, `compose stack --project my-feature --submit` pushes and opens one draft PR per layer.
+After the PRs merge, `compose clean --project my-feature` removes what merged, moves those tasks to Done in Linear with their story and the feature, and keeps what did not merge.
 
 Before the first run in a new repo, do these three things:
 
@@ -44,8 +44,8 @@ These commands create, list, and clean up projects.
 
 | Command | Does |
 |---|---|
-| `doctor` | Checks every tool and skill file fast-coding depends on (herdr, treehouse, graft, gh, gh stack, claude, npx, pi, bp, the `framelink-figma` MCP server and its token file, and the herdr, i-have-adhd, and writing-plans skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old one and exits 1 when a required one is missing; pi, bp, treehouse, and graft only warn, and Framelink warns as `needed for the designer`. `init` runs the same check first and stops before creating anything, and `designer` checks Framelink first and stops before printing a brief |
-| `init` | Creates branch `fast-coding/<name>`, its worktree, and `.fast-coding/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
+| `doctor` | Checks every tool and skill file `compose` depends on (herdr, treehouse, graft, gh, gh stack, claude, npx, pi, bp, the `framelink-figma` MCP server and its token file, and the herdr, i-have-adhd, and writing-plans skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old one and exits 1 when a required one is missing; pi, bp, treehouse, and graft only warn, and Framelink warns as `needed for the designer`. `init` runs the same check first and stops before creating anything, and `designer` checks Framelink first and stops before printing a brief |
+| `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s |
 | `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
@@ -99,7 +99,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 | `frame0 up\|save\|down` | Starts, saves, and stops the project's own Frame0 app |
 | `guard` | Runs as the PreToolUse hook that keeps the team lead from editing code |
 | `rewake` | Runs as the Stop hook that parks the team lead's next `watch` after each turn and wakes it on the event |
-| `skillcheck` | Runs as the UserPromptSubmit and Skill PostToolUse hook that tells a fast-coding session, once, which skill files changed since it read them |
+| `skillcheck` | Runs as the UserPromptSubmit and Skill PostToolUse hook that tells a `compose` session, once, which skill files changed since it read them |
 
 ### Workspaces
 
@@ -111,8 +111,8 @@ One command lists, switches, and manages workspaces.
 
 ## Results
 
-Everything a run produces lands in `.fast-coding/<project>/results/`.
-Each task run writes `.fast-coding/<project>/results/NNN.json` with every attempt's test output, timing, and cost.
+Everything a run produces lands in `.compose/<project>/results/`.
+Each task run writes `.compose/<project>/results/NNN.json` with every attempt's test output, timing, and cost.
 Verify writes `results/verify.json`.
 A run that dies shows as `interrupted` in `status`.
 `resume` re-runs what did not pass and keeps passed layers.

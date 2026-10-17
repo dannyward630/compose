@@ -24,7 +24,7 @@ def detect_stacks(wt):
     return "\n".join(found) or "- no manifest found: read the README for how it builds and starts"
 
 GROUNDWORK_BRIEF = """You are the groundwork teammate for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
-read them first with `fast-coding tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
+read them first with `compose tasks --repo {wt} --project {slug}`. Use `graft ask "<question>" --source` for code context.
 Commit on {trunk} in small commits with plain messages. Nothing is pushed.
 
 Phase A, toolchain (probe and report; you never change dependencies):
@@ -36,7 +36,7 @@ Phase A, toolchain (probe and report; you never change dependencies):
 Phase B, after the go (the settled choices reach the planner as tasks):
 1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: the planner splits them like any other work, and a choice the probe found is a wayfinder card the product owner settles first. Change no dependency.
 2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
-3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.fast-coding or /tmp.
+3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.compose or /tmp.
 4. Commit.
 
 Phase C, the contract (you write no tests: one teammate per task writes them in parallel from your contract):
@@ -77,7 +77,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
    first, with a card id per card; visual cards go on the page instead. Then ask once: open the page if there is one
    (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step text says, one line:
-   `fast-coding report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
+   `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
    cards open in Lavish: {page}' when the page is open>"`. The team lead forwards the line unchanged; the engineering manager
    reads the issue once and asks the product owner every card in full; answers travel by card id.
 4. Wait. Text answers come back as a prompt in this pane: the team lead forwards them with `herdr agent prompt {name} "<answers>"`.
@@ -97,8 +97,8 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
 Your ticket is {issue} on Linear; you are {name}.
 You continue specing from where it stopped: the plan, the task issues, or a re-cut. You write Linear and the CLI's JSON only, never
-code. You never run `fast-coding run`: you never dispatch. You cut only for this ticket's feature, never for the whole project.
-Every teammate you start runs in its own pane (`fast-coding crew start`); never do its job inline.
+code. You never run `compose run`: you never dispatch. You cut only for this ticket's feature, never for the whole project.
+Every teammate you start runs in its own pane (`compose crew start`); never do its job inline.
 
 1. Your level sets the job (read it from the ticket's label, else its parent chain):
    - Project link: list its epics and features with their story and task counts, and ask which one to continue (needs-user).
@@ -111,7 +111,7 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
      Linear only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only; other stories' tasks are not touched.
    - Task: lint it against the format and the cutting rules below; re-split it if it fails.
-   - A loose idea is not the planner's: say so and point at the fast-coding skill's step 0.
+   - A loose idea is not the planner's: say so and point at the compose skill's step 0.
 
 2. The spec check, per story, in the order the gaps are cheapest to close:
    1. A Feature parent with a settled map: Destination, Decisions so far, Not yet specified empty, no open questions left.
@@ -124,13 +124,13 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
       the brief that signatures come from the contract.
    Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
    recommendation) under Not yet specified on the map first, with a card id per card; then report one line per issue:
-   `fast-coding report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
+   `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
    The team lead forwards the line unchanged; the engineering manager reads the issue once and asks the product owner every
    card in full; answers travel by card id. You never answer a card.
    Lavish only when a card is visual (a wireframe, layout comparison, or diagram): the wayfinder teammate draws it;
    start it as below with `wayfinder` in place of `explore`.
    Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
-   `fast-coding explore --project {slug} --extra - | fast-coding crew start --role explore --project {slug} --brief -`
+   `compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`
    (or `groundwork` in both places).
    A story that fails: report `blocked "<story>: not specced: <gap list>"`, naming the cards. The gap list is one comment on
    the story.
@@ -160,7 +160,7 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    ## Constraints
    No new dependencies beyond what the goal names. Do not edit protected files.
    and last, the block the CLI reads:
-   ```fast-coding
+   ```compose
    id: 001
    files: <the one or two paths>
    protected: <the test path>
@@ -169,11 +169,11 @@ Every teammate you start runs in its own pane (`fast-coding crew start`); never 
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.
 
-5. After cutting: `fast-coding sync` (the feature and every issue under it, read from Linear and piped in) as sections/2.md says, then `fast-coding spec-check --project {slug}`, then `fast-coding tasks`; fix every FAIL and WARNING.
+5. After cutting: `compose sync` (the feature and every issue under it, read from Linear and piped in) as sections/2.md says, then `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
    A first cut and a re-cut are one diff: read the story's live task issues, compare them to the story and the map, then
-   cancel, edit, add; ids stay monotonic, and a canceled task loses its `fast-coding` block.
-   Once a task of the feature was dispatched, the edits go inside `fast-coding change start --why "<one line>"` (sync first)
-   and `fast-coding change done` (sync first). Before the first dispatch, no change.
+   cancel, edit, add; ids stay monotonic, and a canceled task loses its `compose` block.
+   Once a task of the feature was dispatched, the edits go inside `compose change start --why "<one line>"` (sync first)
+   and `compose change done` (sync first). Before the first dispatch, no change.
 
 6. Design stories (label Design) go to the designer role, not cut by you: report the hand-off in one line. Code stories do not
    wait: cut them now, and note on the feature the design stories still open.
@@ -198,7 +198,7 @@ The screen that raised it: {reflect}
 3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
    first, with a card id per card; visual cards go on the page instead. Then ask once: open the page if there is one
    (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step text says, one line:
-   `fast-coding report --project {slug} --as {name} needs-user "change {cid}: <issue>: <n> cards <ids>; recommendation <one
+   `compose report --project {slug} --as {name} needs-user "change {cid}: <issue>: <n> cards <ids>; recommendation <one
    line>; 'visual cards open in Lavish: {page}' when the page is open>"`. The team lead forwards the line unchanged; the
    engineering manager reads the issue once and asks the product owner every card in full; answers travel by card id.
 4. Wait. Text answers come back as a prompt in this pane. A visual page: `npx -y lavish-axi poll {page}` in the foreground of
@@ -248,7 +248,7 @@ def cmd_wayfinder(a):
     if cid:
         rec = fc_change.load_change(proj, cid)
         if not rec or rec.get("done_at"):
-            sys.exit(f"{cid} is not an open change of course; `fast-coding change start --why ...` opens one")
+            sys.exit(f"{cid} is not an open change of course; `compose change start --why ...` opens one")
         brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
                                     reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
                                     page=proj / "lavish" / f"change-{cid}.html")
@@ -296,7 +296,7 @@ def cmd_testcrews(a):
         return collect_tests(proj, a.only)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
-        sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (fast-coding groundwork, phase C)")
+        sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (compose groundwork, phase C)")
     contract, budget = contract_file.read_text(), getattr(a, "budget", None)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
@@ -329,7 +329,7 @@ def cmd_testcrews(a):
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
     if failed:
-        print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding testcrews --project {proj.name} --only {','.join(sorted(failed))}")
+        print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}")
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
@@ -343,7 +343,7 @@ def test_worktree(proj, tid):
         return Path(held)
     if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", "-f", branch, "HEAD"], wt)
-        path = fc_worktree.slot_on(wt, branch, f"fast-coding:{proj.name}:tests-{tid}")
+        path = fc_worktree.slot_on(wt, branch, f"compose:{proj.name}:tests-{tid}")
         fc_worktree.slots(proj, {f"tests-{tid}": str(path)})
     else:
         path = proj / "worktrees" / f"tests-{tid}"

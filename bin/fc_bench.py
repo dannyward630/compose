@@ -20,7 +20,7 @@ def cmd_bench(a):
         sys.exit("repo has uncommitted changes; commit first")
     tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if not only or m["id"] in only]
     if not tasks:
-        sys.exit("no tasks on Linear under this feature carry a fast-coding block")
+        sys.exit("no tasks on Linear under this feature carry a compose block")
     models = a.models.split(",")
     t0 = time.time()
     fc_core.say(f"bench start project={proj.name} tasks={len(tasks)} models={models} runs={a.runs} attempts={a.attempts}")

@@ -41,11 +41,11 @@ class CliAndTasksDocs(unittest.TestCase):
         sec = self.section(text, "Three more rules apply", "## Right-sized")
         self.assertIn("\n## Design tasks\n", sec)
         design = sec.split("## Design tasks", 1)[1]
-        self.assertIn("```fast-coding\n", design)
-        block = design.split("```fast-coding\n", 1)[1].split("```", 1)[0]
+        self.assertIn("```compose\n", design)
+        block = design.split("```compose\n", 1)[1].split("```", 1)[0]
         self.assertRegex(block, r"(?m)^kind: design$")
         self.assertRegex(block, r"(?m)^nodes: .+/.+")
-        self.assertRegex(block, r"(?m)^test: fast-coding figma judge --project \S+ --only (\d{3}|NNN)$")
+        self.assertRegex(block, r"(?m)^test: compose figma judge --project \S+ --only (\d{3}|NNN)$")
         self.assertNotRegex(block, r"(?m)^files:")
         prose = re.sub(r"(?s)````.*?````|```.*?```", "", design)
         for word in ("page", "results/", "files"):
@@ -76,11 +76,11 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
         code = self.section("docs/herdr.md", "Teammate commands").split("```bash\n", 1)[1].split("```", 1)[0]
         block = [" ".join(l.split()) for l in code.splitlines()]
         for line in (
-            "fast-coding figma check --project <slug> --figma <url or key>",
-            "fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -",
-            "fast-coding designcrews --project <slug>   # one design-NNN builder per open design task",
-            "fast-coding crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt",
-            "fast-coding crew list --project <slug>",
+            "compose figma check --project <slug> --figma <url or key>",
+            "compose designer --project <slug> | compose crew start --project <slug> --role designer --title designer --brief -",
+            "compose designcrews --project <slug>   # one design-NNN builder per open design task",
+            "compose crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt",
+            "compose crew list --project <slug>",
         ):
             self.assertIn(" ".join(line.split()), block)
 
@@ -116,7 +116,7 @@ class SkillDoc(unittest.TestCase):
     def test_0d_carries_the_designer_spec(self):
         d = self.section("### 0d. ")
         for phrase in (
-            "/fast-coding:designer <ticket>",
+            "/compose:designer <ticket>",
             "--figma",
             "designcrews",
             "figma judge --project <slug> --only",
@@ -178,21 +178,21 @@ class DesignerCommand(unittest.TestCase):
         self.assertEqual(set(meta), {"description", "argument-hint", "allowed-tools"})
         self.assertEqual(meta["description"].strip('"'), "Start the designer teammate for a ticket: continues design work in Figma from where it stopped")
         self.assertEqual(meta["argument-hint"], '"<Linear url or id> [--figma <file url or key>]"')
-        self.assertEqual(meta["allowed-tools"], "Bash(fast-coding designer:*)")
+        self.assertEqual(meta["allowed-tools"], "Bash(compose designer:*)")
 
     def test_numbered_steps_name_the_commands_in_order(self):
         _, _, body = self.parts()
         steps = [line for line in body.splitlines() if line[:1].isdigit()]
         self.assertEqual([s.split(".", 1)[0] for s in steps], ["1", "2", "3", "4", "5"])
-        self.assertIn("fast-coding skill", steps[0])
+        self.assertIn("compose skill", steps[0])
         self.assertIn("0j", steps[0])
-        self.assertIn("fast-coding projects", steps[1])
-        self.assertIn("fast-coding init --project <slug>", steps[1])
+        self.assertIn("compose projects", steps[1])
+        self.assertIn("compose init --project <slug>", steps[1])
         self.assertIn("--figma", steps[2])
-        self.assertIn("fast-coding figma check --project <slug> --figma <file>", steps[2])
-        pipe = "fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -"
-        self.assertLess(body.index("fast-coding figma check"), body.index(pipe))
-        self.assertLess(body.index(pipe), body.index("fast-coding watch --project <slug>"))
+        self.assertIn("compose figma check --project <slug> --figma <file>", steps[2])
+        pipe = "compose designer --project <slug> | compose crew start --project <slug> --role designer --title designer --brief -"
+        self.assertLess(body.index("compose figma check"), body.index(pipe))
+        self.assertLess(body.index(pipe), body.index("compose watch --project <slug>"))
         self.assertNotIn("--from designer", body)  # the engineering manager's one watch covers a designer it started: no second watch
         self.assertIn("never start a second watch", body)
         self.assertIn("whatever `--from` says", body)
@@ -219,16 +219,16 @@ class BriefsNameFiles(unittest.TestCase):
         self.assertEqual(len(lead), 1)
         self.assertIn('"read ' + self.FILES + '"', lead[0].replace("\\~", "~"))
         self.assertIn("--role orchestrator --title orchestrator --brief -", lead[0])
-        self.assertNotIn("invoke the fast-coding skill", self.text.lower())
+        self.assertNotIn("invoke the compose skill", self.text.lower())
 
     def test_toolsmith_brief_reads_only_skill_md(self):
-        block = self.text.split("**When fast-coding itself fails**", 1)[1].split("The team lead reports at every point", 1)[0]
+        block = self.text.split("**When compose itself fails**", 1)[1].split("The team lead reports at every point", 1)[0]
         lines = [l for l in block.splitlines() if "toolsmith" in l and "brief" in l and "SKILL.md" in l]
         self.assertTrue(lines, "a toolsmith brief line names SKILL.md")
         for line in lines:
             self.assertNotIn("sections/", line)
             self.assertNotIn("herdr/SKILL.md", line)
-            self.assertNotRegex(line, r"invoke the `?fast-coding`? skill")
+            self.assertNotRegex(line, r"invoke the `?compose`? skill")
 
     def test_herdr_is_read_as_a_file(self):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md; it carries the safety rules for panes and agents.", self.text.replace("\\~", "~"))
@@ -277,7 +277,7 @@ class PlannerReadsWritingPlans(unittest.TestCase):
 
 class Frame0OptIn(unittest.TestCase):
     FIRST = "The wayfinder reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
-    OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `fast-coding crew start --frame0` (the wayfinder restarted that way, or a helper), and only that session has the `frame0` tools."
+    OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `compose crew start --frame0` (the wayfinder restarted that way, or a helper), and only that session has the `frame0` tools."
     ONLY = "Only a session started with `crew start --frame0` has the `frame0` tools, pointed at that app; draw from such a session, never from an older one."
 
     def setUp(self):
@@ -353,7 +353,7 @@ class LeadRelaysOnce(unittest.TestCase):
         self.text = read("sections/0h.md").replace("\\~", "~")
         self.lines = self.text.splitlines()
         start = next(i for i, l in enumerate(self.lines) if l.startswith("The engineering manager's loop:"))
-        end = next(i for i, l in enumerate(self.lines) if l.startswith("**When fast-coding itself fails**"))
+        end = next(i for i, l in enumerate(self.lines) if l.startswith("**When compose itself fails**"))
         self.relay = self.lines[start:end]
         self.report = next(i for i, l in enumerate(self.lines) if l.startswith("The team lead reports at every point"))
 
@@ -501,7 +501,7 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
     def test_planner_command_says_the_one_watch_covers_it(self):
         body = read("commands/planner.md").split("---\n", 2)[2]
         self.assertNotIn("--from planner", body)
-        self.assertIn("fast-coding watch --project <slug>", body)
+        self.assertIn("compose watch --project <slug>", body)
         self.assertIn("Never start a second watch", body)
         self.assertIn("`--from orchestrator` watch", body)
         for line in body.splitlines():
@@ -512,6 +512,6 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
         loop = next(i for i, l in enumerate(lines) if l.startswith("The engineering manager's loop:"))
         line = lines[loop + 1]
         self.assertTrue(line.startswith("That one watch also reports every teammate the engineering manager started itself"), line)
-        for word in ("`reports_to`", "results/crew/<agent>.json", "`FAST_CODING_ROLE`", "whatever `--from` says", "`needs-user` and `blocked`", "Never start a second watch"):
+        for word in ("`reports_to`", "results/crew/<agent>.json", "`COMPOSE_ROLE`", "whatever `--from` says", "`needs-user` and `blocked`", "Never start a second watch"):
             self.assertIn(word, line)
         self.assertNotIn("—", line)

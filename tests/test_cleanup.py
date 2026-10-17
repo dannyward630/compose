@@ -2,15 +2,15 @@ import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempf
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
-ENV = {"FAST_CODING_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+ENV = {"COMPOSE_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
 def repo():
@@ -19,7 +19,7 @@ def repo():
     run = lambda *a, cwd=r: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
     run("init", "-q", "-b", "main")
     (r / "a.txt").write_text("base\n")
-    (r / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+    (r / ".git" / "info" / "exclude").write_text("/.compose/\n")
     run("add", "-A"); run("commit", "-qm", "init")
     return r, run
 
@@ -29,7 +29,7 @@ class TestCrewWorktrees(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
         self.repo, self.run = repo()
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         tasks = [{"id": "001", "title": "A", "files": ["a.go"], "protected": ["a_test.go"], "test": "true", "body": "a"},
                  {"id": "002", "title": "B", "files": ["b.go"], "protected": ["b_test.go"], "test": "true", "body": "b", "test_lines": "25"}]
@@ -120,7 +120,7 @@ class Leftovers(unittest.TestCase):
     """Servers a teammate or run leaves in the project end with teardown; anything else is left alone."""
     def test_teardown_stops_servers_in_the_project_only(self):
         proj_wt = Path(tempfile.mkdtemp()).resolve()
-        proj = proj_wt / ".fast-coding" / "p"
+        proj = proj_wt / ".compose" / "p"
         scratch = fc.fc_crew.scratch_dir(proj, "p-groundwork"); scratch.mkdir(parents=True)
         mine, other = server(scratch), server(tempfile.mkdtemp())
         self.addCleanup(lambda: [(p.kill(), p.wait()) for p in (mine, other)])
@@ -132,7 +132,7 @@ class Leftovers(unittest.TestCase):
         self.assertFalse(fc.fc_crew.scratch_dir(proj).exists())
 
     def test_preamble_points_scratch_inside_the_project(self):
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent):
             pre = fc.fc_crew.crew_preamble(proj, "shop-groundwork", "groundwork")
         self.assertIn(str(proj / "scratch" / "shop-groundwork"), pre)
@@ -160,15 +160,15 @@ class StartOver(unittest.TestCase):
         r, run = repo()
         env = {**os.environ, **ENV}
         subprocess.run([CLI, "init", "--project", "p", "--repo", str(r)], check=True, capture_output=True, env=env)
-        wt = r.parent / "fast-coding-p"
-        (wt / ".fast-coding" / "p" / "results" / "x.json").parent.mkdir(parents=True, exist_ok=True)
-        (wt / ".fast-coding" / "p" / "results" / "x.json").write_text("{}")
+        wt = r.parent / "compose-p"
+        (wt / ".compose" / "p" / "results" / "x.json").parent.mkdir(parents=True, exist_ok=True)
+        (wt / ".compose" / "p" / "results" / "x.json").write_text("{}")
         (wt / "feature.txt").write_text("f\n")
         subprocess.run(["git", "add", "feature.txt"], cwd=wt, check=True, env=env)
         subprocess.run(["git", "commit", "-qm", "feature"], cwd=wt, check=True, env=env)
         subprocess.run([CLI, "clean", "--project", "p", "--delete-unmerged", "--repo", str(r)], check=True, capture_output=True, env=env)
         self.assertFalse(wt.exists())
-        self.assertEqual(run("branch", "--list", "fast-coding/p").stdout.strip(), "")
+        self.assertEqual(run("branch", "--list", "compose/p").stdout.strip(), "")
 
 
 class CleanSafety(unittest.TestCase):
@@ -178,17 +178,17 @@ class CleanSafety(unittest.TestCase):
         self.env = {**os.environ, **ENV}
         for n in ("empty", "work"):
             subprocess.run([CLI, "init", "--project", n, "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
-        self.wt = {n: self.r.parent / f"fast-coding-{n}" for n in ("empty", "work")}
+        self.wt = {n: self.r.parent / f"compose-{n}" for n in ("empty", "work")}
         (self.wt["work"] / "f.txt").write_text("f\n")
         subprocess.run(["git", "add", "-A"], cwd=self.wt["work"], check=True, env=self.env)
         subprocess.run(["git", "commit", "-qm", "work"], cwd=self.wt["work"], check=True, env=self.env)
-        self.run("merge", "-q", "--ff-only", "fast-coding/work")
+        self.run("merge", "-q", "--ff-only", "compose/work")
 
     def clean(self, *args):
         return subprocess.run([CLI, "clean", "--repo", str(self.r), *args], capture_output=True, text=True, env=self.env)
 
     def crew(self, n, state):
-        d = self.wt[n] / ".fast-coding" / n / "results" / "crew"
+        d = self.wt[n] / ".compose" / n / "results" / "crew"
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{n}-b1.json").write_text(json.dumps({"name": f"{n}-b1", "title": "b1"}))
         (d / f"{n}-b1.status").write_text(json.dumps({"state": state, "message": "m"}) + "\n")
@@ -232,27 +232,27 @@ class ProjectBranch(unittest.TestCase):
 
     def test_custom_branch_is_created_stored_renamed_built_on_and_cleaned(self):
         self.cli("init", "--project", "p", "--branch", "js-1-p")
-        wt = self.r.parent / "fast-coding-p"
+        wt = self.r.parent / "compose-p"
         self.assertIn("js-1-p", self.branches())
-        self.assertNotIn("fast-coding/p", self.branches())
-        self.assertEqual(json.loads((wt / ".fast-coding" / "p" / "verify.json").read_text())["branch"], "js-1-p")
-        self.cli("init", "--project", "q", "--after", "p")  # resolves p's stored branch, not fast-coding/p
-        qcfg = json.loads((self.r.parent / "fast-coding-q" / ".fast-coding" / "q" / "verify.json").read_text())
+        self.assertNotIn("compose/p", self.branches())
+        self.assertEqual(json.loads((wt / ".compose" / "p" / "verify.json").read_text())["branch"], "js-1-p")
+        self.cli("init", "--project", "q", "--after", "p")  # resolves p's stored branch, not compose/p
+        qcfg = json.loads((self.r.parent / "compose-q" / ".compose" / "q" / "verify.json").read_text())
         self.assertEqual((qcfg["review_base"], qcfg["after"]), ("js-1-p", "p"))
         self.cli("init", "--project", "p", "--branch", "js-2-p")  # an existing project moves to the new name
         self.assertEqual(self.run("branch", "--show-current", cwd=wt).stdout.strip(), "js-2-p")
         self.assertNotIn("js-1-p", self.branches())
-        self.assertEqual(json.loads((self.r.parent / "fast-coding-q" / ".fast-coding" / "q" / "verify.json").read_text())["review_base"], "js-2-p")
+        self.assertEqual(json.loads((self.r.parent / "compose-q" / ".compose" / "q" / "verify.json").read_text())["review_base"], "js-2-p")
         self.cli("clean", "--project", "q", "--delete-unmerged")
         self.cli("clean", "--project", "p", "--delete-unmerged")
         self.assertEqual(self.branches(), ["main"])
 
-    def test_a_project_without_a_stored_branch_keeps_fast_coding_slash_slug(self):
+    def test_a_project_without_a_stored_branch_keeps_compose_slash_slug(self):
         self.cli("init", "--project", "old")
-        f = self.r.parent / "fast-coding-old" / ".fast-coding" / "old" / "verify.json"
+        f = self.r.parent / "compose-old" / ".compose" / "old" / "verify.json"
         f.write_text(json.dumps({k: v for k, v in json.loads(f.read_text()).items() if k != "branch"}))
-        self.assertEqual(fc.fc_core.project_branch(f.parent), "fast-coding/old")
-        self.assertIn("fast-coding/old", self.branches())
+        self.assertEqual(fc.fc_core.project_branch(f.parent), "compose/old")
+        self.assertIn("compose/old", self.branches())
 
 
 class FakeLinear:
@@ -296,7 +296,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
         self.run("remote", "add", "origin", str(remote)); self.run("push", "-q", "origin", "main")
         subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
-        self.proj = self.r.parent / "fast-coding-p" / ".fast-coding" / "p"
+        self.proj = self.r.parent / "compose-p" / ".compose" / "p"
         tip = self.run("rev-parse", "main").stdout.strip()
         for b in ("fast/p/001", "fast/p/002", "fast/p/layer-01", "fast/p/layer-02"):  # commits on top of main: never ancestors of it
             c = self.run("commit-tree", "main^{tree}", "-p", tip, "-m", b).stdout.strip()
@@ -316,11 +316,11 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")  # the last layer merges: everything goes
         subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r)], capture_output=True, text=True, env=self.env)
         self.assertEqual(self.run("branch", "--format=%(refname:short)").stdout.split(), ["main"])
-        self.assertFalse((self.r.parent / "fast-coding-p").exists())
+        self.assertFalse((self.r.parent / "compose-p").exists())
         self.assertEqual(self.run("ls-remote", "--heads", "origin").stdout.count("fast/p/"), 0)
 
     def test_clean_removes_the_project_branch_once_every_layer_built_from_it_is_merged(self):
-        wt = self.r.parent / "fast-coding-p"
+        wt = self.r.parent / "compose-p"
         (wt / "stub.txt").write_text("groundwork\n")  # the project branch's own commit: layers squash it, so ancestry never sees it
         self.run("add", "stub.txt", cwd=wt); self.run("commit", "-qm", "groundwork", cwd=wt)
         clean = lambda *a: subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r), *a], capture_output=True, text=True, env=self.env).stdout
@@ -331,7 +331,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         out = clean()
         self.assertIn("every layer built from it is merged", out)
         self.assertFalse(wt.exists())
-        self.assertNotIn("fast-coding/p", self.run("branch", "--format=%(refname:short)").stdout.split())
+        self.assertNotIn("compose/p", self.run("branch", "--format=%(refname:short)").stdout.split())
 
     def linear_project(self):
         """Tasks 001 and 002 with issues under story ENG-2 of feature ENG-1, and 003, canceled and re-split, whose branch sits on main."""
@@ -344,7 +344,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
     def clean_here(self):
         out = io.StringIO()
         with mock.patch.dict(os.environ, self.env), mock.patch("sys.stdout", out):
-            fc.fc_init.clean_project(self.r, "p", self.r.parent / "fast-coding-p", self.proj, explicit=True)
+            fc.fc_init.clean_project(self.r, "p", self.r.parent / "compose-p", self.proj, explicit=True)
         return out.getvalue()
 
     def test_clean_moves_the_tasks_it_proves_merged_to_done_and_rolls_the_story_and_the_feature_up(self):
@@ -357,7 +357,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
             (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
             self.clean_here()  # every layer and the project branch merged: the story and the feature are Done too
             self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "Done", "Canceled", "Done", "Done"])
-        self.assertFalse((self.r.parent / "fast-coding-p").exists())
+        self.assertFalse((self.r.parent / "compose-p").exists())
 
     def test_clean_without_a_linear_key_says_so_in_one_line_and_calls_nothing(self):
         self.linear_project()

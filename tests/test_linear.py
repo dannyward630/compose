@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 import sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -15,11 +15,11 @@ def issue(ident, title, desc="", blocked_by=()):
 
 
 def block(**kv):
-    return "## Goal\nDo it.\n\n## Acceptance criteria\n- works\n\n```fast-coding\n" + "\n".join(f"{k}: {v}" for k, v in kv.items()) + "\n```\n"
+    return "## Goal\nDo it.\n\n## Acceptance criteria\n- works\n\n```compose\n" + "\n".join(f"{k}: {v}" for k, v in kv.items()) + "\n```\n"
 
 
 class Sync(unittest.TestCase):
-    """The team lead reads Linear through MCP and pipes the feature and its issues to `fast-coding sync`."""
+    """The team lead reads Linear through MCP and pipes the feature and its issues to `compose sync`."""
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / "feat"
         self.proj.mkdir()
@@ -91,7 +91,7 @@ class Sync(unittest.TestCase):
         self.assertTrue(self.clash_warning(("001", "002"), ("002", ""), ("003", "002")))  # 001 and 003 are siblings
 
     def test_criteria_in_linear_bullets(self):
-        desc = "## Goal\n\nDo it.\n\n## Acceptance criteria\n\n* one\n* two\n\n## Test plan\n\n* run\n\n```fast-coding\nid: 001\ntest: t\n```"
+        desc = "## Goal\n\nDo it.\n\n## Acceptance criteria\n\n* one\n* two\n\n## Test plan\n\n* run\n\n```compose\nid: 001\ntest: t\n```"
         self.sync([issue("ENG-3", "A", desc)])
         self.assertEqual(fc.fc_tasks.criteria_from_tasks(self.proj), [("001", "one"), ("001", "two")])
 
@@ -107,7 +107,7 @@ class Sync(unittest.TestCase):
     def test_unsynced_project_says_how(self):
         with self.assertRaises(SystemExit) as e:
             fc.fc_tasks.load_tasks(self.proj, required=True)
-        self.assertIn("fast-coding sync", str(e.exception))
+        self.assertIn("compose sync", str(e.exception))
         self.assertEqual(fc.fc_tasks.load_tasks(self.proj), [])  # status and watch still work before a sync
 
     def test_cli_reads_stdin(self):
@@ -121,7 +121,7 @@ class Sync(unittest.TestCase):
 class DesignTasks(unittest.TestCase):
     """A `kind: design` task is built in Figma: it never clones, stacks, or is judged from files."""
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
         self.proj.mkdir(parents=True)
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         design = lambda i, nodes: issue(f"ENG-{i}", f"Page {i}", block(id=f"00{i}", kind="design", nodes=nodes, test="t"))
@@ -143,7 +143,7 @@ class DesignTasks(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False))
         self.assertEqual([m["id"] for m in run.call_args.args[2]], ["002"])
-        self.assertIn("no tasks on Linear under this feature carry a fast-coding block", str(e.exception))
+        self.assertIn("no tasks on Linear under this feature carry a compose block", str(e.exception))
         with mock.patch.object(fc.fc_worktree, "task_branches", return_value={"fast/p/001": None, "fast/p/002": None}):
             self.assertEqual(fc.fc_worktree.stack_order(Path("."), self.proj), ["fast/p/002"])
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
@@ -193,7 +193,7 @@ class DesignTasks(unittest.TestCase):
         self.assertIn("400", str(e.exception))
 
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
-        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```compose\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask") as ask:
             res = fc.fc_verify.jev_acceptance({}, self.proj, "diff")
         self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))

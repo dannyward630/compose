@@ -6,7 +6,7 @@ import fc_core, fc_herdr
 # ---------- frame0: one wireframing app per project ----------
 
 # Frame0 sends every API command to its newest window, so sessions sharing one app draw over each other. Each project gets
-# its own app process instead: its own user-data dir (which holds the API port), one window on .fast-coding/<project>/design.f0,
+# its own app process instead: its own user-data dir (which holds the API port), one window on .compose/<project>/design.f0,
 # and a local-scope `frame0` MCP server pointed at that port in every directory the project's sessions run in. The MCP server
 # only reaches the app when a tool is called, so registering costs nothing until something draws.
 FRAME0_APP = Path("/Applications/Frame0.app")

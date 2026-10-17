@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest import mock
 import sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -13,7 +13,7 @@ class Frame0(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         self.wt = Path(tempfile.mkdtemp()).resolve()
-        self.proj = self.wt / ".fast-coding" / "shop"
+        self.proj = self.wt / ".compose" / "shop"
         self.proj.mkdir(parents=True)
 
     def register(self, existing):
@@ -23,7 +23,7 @@ class Frame0(unittest.TestCase):
         return [c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"]
 
     def test_port_is_stable_per_project_and_in_range(self):
-        other = self.wt / ".fast-coding" / "cart"
+        other = self.wt / ".compose" / "cart"
         self.assertEqual(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.frame0_port(self.proj))
         self.assertIn(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.FRAME0_PORTS)
         self.assertNotEqual(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.frame0_port(other))

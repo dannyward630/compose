@@ -16,12 +16,12 @@ def existing_repo(wt):
 def setup_graft(wt):
     """An existing repo gets graft before anyone reads its code: wired for Claude Code (unless that would touch a tracked
     file) and built. graft's files stay out of git through info/exclude. Safe to run again."""
-    if os.environ.get("FAST_CODING_NO_GRAFT"):
-        return fc_core.say("graft    skipped: FAST_CODING_NO_GRAFT is set")
+    if os.environ.get("COMPOSE_NO_GRAFT"):
+        return fc_core.say("graft    skipped: COMPOSE_NO_GRAFT is set")
     if not existing_repo(wt):
         return fc_core.say("graft    skipped: a new repository has no code to map yet")
     if not shutil.which("graft"):
-        return fc_core.say(f"graft    not installed: `{GRAFT_INSTALL}`, then `fast-coding graft --project <slug>`")
+        return fc_core.say(f"graft    not installed: `{GRAFT_INSTALL}`, then `compose graft --project <slug>`")
     if not (wt / ".claude" / "helpers" / "graft-hooks.cjs").exists():
         p = fc_core.sh(GRAFT_INIT + ["--dry-run", str(wt)], wt, timeout=120, check=False)
         dry = p.stdout + p.stderr  # graft prints the list on stderr
@@ -34,7 +34,7 @@ def setup_graft(wt):
             fc_core.sh(GRAFT_INIT + [str(wt)], wt, timeout=300, check=False)
             fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
             fc_core.say(f"graft    wired for Claude Code ({len(paths)} files, kept out of git)")
-    fc_worktree.exclude_paths(wt, ["/graft/"])  # the graph itself, also when `fast-coding graft` runs without init
+    fc_worktree.exclude_paths(wt, ["/graft/"])  # the graph itself, also when `compose graft` runs without init
     fc_worktree.stamp_graft_wiring(wt)
     fc_core.sh(["graft", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     fc_core.say("graft    graph built")
@@ -56,7 +56,7 @@ DEPS = (  # (name, how it is found, install, required, version floor); every too
     ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", True, None),
     ("npx", "npx", "brew install node", True, None),  # lavish-axi and figma-developer-mcp run through it
     ("pi", "pi", "npm i -g @earendil-works/pi-coding-agent", False, None),
-    ("bp", "bp", "ln -s <fast-coding checkout>/bp/bin/bp.mjs ~/.local/bin/bp", False, None),
+    ("bp", "bp", "ln -s <compose checkout>/bp/bin/bp.mjs ~/.local/bin/bp", False, None),
     ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", True, None),
     ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", True, None),
     ("framelink-figma", lambda: "framelink-figma" in user_mcp_servers(), FRAMELINK_ADD, "designer", None),  # every Figma read (0d, figma check/tree)
@@ -109,7 +109,7 @@ def check_deps(role=None):
 
 def herdr_toml(path):
     """The `[section] key = value` pairs of herdr's config.toml as {"section.key": "value"}, quotes stripped: the few flat keys
-    fast-coding reads, without tomllib (the Python 3.9 macOS ships has none). Unreadable is empty."""
+    compose reads, without tomllib (the Python 3.9 macOS ships has none). Unreadable is empty."""
     vals, section = {}, ""
     try:
         lines = path.read_text().splitlines()
@@ -125,7 +125,7 @@ def herdr_toml(path):
 
 def herdr_toast_warning():
     """One line when herdr's own toasts or sounds are on, for the product owner to read: herdr then alerts them for every agent
-    that finishes or needs input, in every pane, while fast-coding already sends the engineering manager's one alert itself
+    that finishes or needs input, in every pane, while compose already sends the engineering manager's one alert itself
     (desktop_notify). None when `[ui.toast] delivery` is off (herdr's default) and `[ui.sound] enabled` is false (not the default)."""
     cfg = herdr_toml(Path.home() / ".config" / "herdr" / "config.toml")
     loud = [(key, cfg.get(key, default)) for key, quiet, default in (("ui.toast.delivery", "off", "off"), ("ui.sound.enabled", "false", "true"))
@@ -134,36 +134,36 @@ def herdr_toast_warning():
         return None
     return ("WARNING: herdr alerts the product owner for every agent, not only the engineering manager ("
             + ", ".join(f"{k}={v}" for k, v in loud) + '): set [ui.toast] delivery = "off" and [ui.sound] enabled = false in '
-            "~/.config/herdr/config.toml; fast-coding sends the engineering manager's alert itself")
+            "~/.config/herdr/config.toml; compose sends the engineering manager's alert itself")
 
 def cmd_doctor(a):
-    """Check every tool and skill file fast-coding depends on; exit 1 when a required one is missing. Warns, never stops, when
+    """Check every tool and skill file compose depends on; exit 1 when a required one is missing. Warns, never stops, when
     herdr's own agent toasts or sounds would reach the product owner from every agent."""
     if check_deps():
         sys.exit(1)
     if warning := herdr_toast_warning():
         print(warning)
-    print("every tool fast-coding needs is installed")
+    print("every tool compose needs is installed")
 
 def cmd_init(a):
-    """Create the project's worktree `../fast-coding-<name>` on its branch (`fast-coding/<name>`, or --branch; from the branch the user is on,
+    """Create the project's worktree `../compose-<name>` on its branch (`compose/<name>`, or --branch; from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
-    `.fast-coding/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
+    `.compose/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
     if check_deps():  # before anything is created: a missing required tool stops here
-        sys.exit("init stopped: install what is missing above, then run it again (`fast-coding doctor` checks again)")
+        sys.exit("init stopped: install what is missing above, then run it again (`compose doctor` checks again)")
     here = Path(a.repo).resolve()
     name = a.project
-    branch = a.branch or f"fast-coding/{name}"
+    branch = a.branch or f"compose/{name}"
     if a.branch and fc_core.sh(["git", "check-ref-format", "--branch", a.branch], here, check=False).returncode != 0:
         sys.exit(f"{a.branch!r} is not a valid branch name")
     if a.branch and a.here:
         sys.exit("--branch names the project's own worktree branch; it does not combine with --here")
     other = fc_core.all_projects(here).get(a.after) if a.after else None
-    after = fc_core.project_branch(other[1]) if other else (f"fast-coding/{a.after}" if a.after else None)
+    after = fc_core.project_branch(other[1]) if other else (f"compose/{a.after}" if a.after else None)
     if after and a.here:
         sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
-        sys.exit(f"no branch {after}: `fast-coding init --project {a.after}` that project first")
+        sys.exit(f"no branch {after}: `compose init --project {a.after}` that project first")
     existing = fc_core.all_projects(here).get(name)
     if existing:
         wt, proj = existing
@@ -179,30 +179,30 @@ def cmd_init(a):
                     fc_core.atomic_write((p / "verify.json"), json.dumps({**cfg, **({"branch": a.branch} if p == proj else {"review_base": a.branch, "after": fc_core.project_after(p)})}, indent=2))
             print(f"branch {old} renamed to {a.branch}")
     elif a.here:
-        wt, proj = here, here / ".fast-coding" / name
+        wt, proj = here, here / ".compose" / name
     else:
         base = after or fc_core.current_branch(here)
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
             fc_core.sh(["git", "branch", branch, after or "HEAD"], here)
         if fc_worktree.use_treehouse():
-            wt = fc_worktree.slot_on(here, branch, f"fast-coding:{name}:project")
+            wt = fc_worktree.slot_on(here, branch, f"compose:{name}:project")
         else:
             if not shutil.which("treehouse"):
                 print(f"treehouse is not installed, so the project gets a plain git worktree; for a reusable pool install it: {fc_worktree.TREEHOUSE_INSTALL}")
-            wt = here.parent / f"fast-coding-{name}"
+            wt = here.parent / f"compose-{name}"
             if wt.exists():
                 sys.exit(f"{wt} exists already; remove it or pass --here")
             fc_core.sh(["git", "worktree", "add", "-q", str(wt), branch], here)
-        proj = wt / ".fast-coding" / name
+        proj = wt / ".compose" / name
         print(f"worktree {wt}  branch {branch} (from {base})")
     if fc_worktree.ignore_tool_files(wt):
         fc_core.sh(["git", "add", ".gitignore"], wt)
         fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
     setup_graft(wt)
-    repo_link = here / ".fast-coding" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
-    if repo_link.exists() and not (wt / ".fast-coding" / "linear.json").exists():
-        (wt / ".fast-coding" / "linear.json").write_text(repo_link.read_text())
+    repo_link = here / ".compose" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
+    if repo_link.exists() and not (wt / ".compose" / "linear.json").exists():
+        (wt / ".compose" / "linear.json").write_text(repo_link.read_text())
     if not (proj / "verify.json").exists():
         fc_core.atomic_write((proj / "verify.json"), json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
@@ -349,7 +349,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 shutil.rmtree(wt, ignore_errors=True)
             fc_core.sh(["git", "worktree", "prune"], main_repo, check=False)
             fc_core.sh(["git", "branch", "-D", pbranch], main_repo, check=False)
-            refs = fc_core.sh(["git", "for-each-ref", "--format=delete %(refname)", f"refs/fast-coding/{name}/", f"refs/fast-coding/replaced/{name}/"],
+            refs = fc_core.sh(["git", "for-each-ref", "--format=delete %(refname)", f"refs/compose/{name}/", f"refs/compose/replaced/{name}/"],
                       main_repo, check=False).stdout  # its change-of-course and replaced-tip records: nothing left to undo or replay
             if refs.strip():
                 subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)

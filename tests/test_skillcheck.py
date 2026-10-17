@@ -4,14 +4,14 @@ from types import SimpleNamespace
 from unittest import mock
 import sys, time
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
 class SkillCheck(unittest.TestCase):
-    """The UserPromptSubmit and PostToolUse hook: tell a fast-coding session once when the skill's files changed under it."""
+    """The UserPromptSubmit and PostToolUse hook: tell a compose session once when the skill's files changed under it."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         self.skill, self.state = d / "skill", d / "state"
@@ -31,7 +31,7 @@ class SkillCheck(unittest.TestCase):
 
     def hook(self, ev, role="crew"):
         out = io.StringIO()
-        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role else {})
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | ({"COMPOSE_ROLE": role} if role else {})
         stdin = io.StringIO(ev if isinstance(ev, str) else json.dumps(ev))
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, "stdin", stdin), mock.patch.object(sys, "stdout", out):
             fc.fc_crew.cmd_skillcheck(None)
@@ -53,7 +53,7 @@ class SkillCheck(unittest.TestCase):
         self.prompt()
         (self.skill / "SKILL.md").write_text("v2\n")
         note = self.context(self.prompt())
-        self.assertIn("fast-coding's skill changed since you read it:", note)
+        self.assertIn("compose's skill changed since you read it:", note)
         self.assertIn(str(self.skill / "SKILL.md"), note)  # absolute: a teammate's worktree holds an older SKILL.md of its own
         self.assertNotIn("lead.md", note)
         self.assertIn("Re-read the ones your role uses before acting.", note)
@@ -85,16 +85,16 @@ class SkillCheck(unittest.TestCase):
         self.assertFalse(self.state.exists() and any(self.state.iterdir()))
 
     def test_loading_the_skill_with_the_skill_tool_enrolls_the_session(self):
-        for name in ("other-skill", "fast-codingx"):
+        for name in ("other-skill", "composex"):
             self.hook({"hook_event_name": "PostToolUse", "session_id": "m", "tool_name": "Skill", "tool_input": {"skill": name}}, None)
         self.assertFalse(self.state.exists() and any(self.state.iterdir()))
-        self.hook({"hook_event_name": "PostToolUse", "session_id": "m", "tool_name": "Skill", "tool_input": {"skill": "fast-coding"}}, None)
+        self.hook({"hook_event_name": "PostToolUse", "session_id": "m", "tool_name": "Skill", "tool_input": {"skill": "compose"}}, None)
         self.assertEqual(self.prompt("m", role=None), "")
         (self.skill / "SKILL.md").write_text("v2\n")
         self.assertIn(str(self.skill / "SKILL.md"), self.context(self.prompt("m", role=None)))
 
     def test_a_typed_slash_command_enrolls_the_session(self):
-        self.assertEqual(self.prompt("m", "/fast-coding:planner NEB-1", role=None), "")
+        self.assertEqual(self.prompt("m", "/compose:planner NEB-1", role=None), "")
         (self.skill / "commands" / "planner.md").write_text("planner v2\n")
         self.assertIn("planner.md", self.context(self.prompt("m", role=None)))
 
@@ -122,7 +122,7 @@ class SkillCheck(unittest.TestCase):
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(time, "sleep"), mock.patch("builtins.print"), \
-                mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
+                mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
             fc.fc_crew.cmd_crew(a)
         return json.loads((proj / "results" / "crew" / "shop-eol.json").read_text())
 
@@ -132,7 +132,7 @@ class SkillCheck(unittest.TestCase):
             return fc.fc_watch.watch_snapshot(Path("."), proj)
 
     def test_a_live_pi_teammate_hears_once_through_watch(self):  # pi runs no Claude hooks: watch tells the team lead, who relays it
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         proj.mkdir(parents=True)
         self.assertEqual(self.crew_start(proj, "pi:a/b")["skill"], fc.fc_crew.skill_hashes())
         before = self.snapshot(proj, live=True)
@@ -146,7 +146,7 @@ class SkillCheck(unittest.TestCase):
         self.assertEqual(fc.fc_watch.watch_events(before, self.snapshot(proj, live=False)), [])  # a closed teammate needs nothing
 
     def test_a_claude_teammate_is_left_to_its_hooks(self):
-        proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         proj.mkdir(parents=True)
         self.assertNotIn("skill", self.crew_start(proj, "claude"))
         before = self.snapshot(proj, live=True)

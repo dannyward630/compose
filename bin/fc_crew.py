@@ -6,9 +6,9 @@ import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
 # The product owner talks to the engineering manager (the session they started), which stays where it was launched. Each project gets a
 # team lead in its own space (`crew start --role orchestrator`), and the team lead starts teammates of its own (a wayfinder
-# question, a researcher). Every teammate session reports with `fast-coding report`; `watch` turns new reports into wake events.
+# question, a researcher). Every teammate session reports with `compose report`; `watch` turns new reports into wake events.
 CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction", "fallback")
-CLI_REPO = Path(__file__).resolve().parent.parent  # the fast-coding repo itself: where a toolsmith fixes the tool
+CLI_REPO = Path(__file__).resolve().parent.parent  # the compose repo itself: where a toolsmith fixes the tool
 TOOL_BUGS = fc_config.CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the engineering manager
 
 def crew_dir(proj):
@@ -55,20 +55,20 @@ def crew_preamble(proj, name, title, reports_to=None):
     reports to it, not to a team lead that may not exist."""
     direct = name == fc_herdr.agent_name(proj.name, "orchestrator") or reports_to == "manager"
     up = "the engineering manager, who relays to the product owner" if direct else f"{fc_herdr.agent_name(proj.name, 'orchestrator')}, your team lead"
-    report = f"fast-coding report --repo {fc_herdr.project_worktree(proj)} --project {proj.name} --as {name}"
-    return (f"You are {name}, a teammate on fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
+    report = f"compose report --repo {fc_herdr.project_worktree(proj)} --project {proj.name} --as {name}"
+    return (f"You are {name}, a teammate on compose project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
             f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the product owner (they may answer here in "
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
-            f"When fast-coding itself fails (the CLI crashes, behaves wrongly, or lacks something you need), as opposed to the project's code: "
-            f"work around it to keep going, never edit the fast-coding repo, and report `{report} tool-bug \"<symptom, evidence, workaround used>\"`.\n"
+            f"When compose itself fails (the CLI crashes, behaves wrongly, or lacks something you need), as opposed to the project's code: "
+            f"work around it to keep going, never edit the compose repo, and report `{report} tool-bug \"<symptom, evidence, workaround used>\"`.\n"
             f"When something you find contradicts what Linear says (a decision, a brief, a criterion), report it at once: "
             f"`{report} contradiction \"<what you found>; Linear says: <quoted line> (<issue>); evidence: <file:line or command output>\"`, "
             f"then keep working on what it does not touch, and never re-scope your brief.\n"
             f"Linear is the record: write what you learn and decide there, never to files.\n"
-            f"Commit messages describe the change itself in plain words; never mention fast-coding, waves, task ids, teammates, or Linear. "
+            f"Commit messages describe the change itself in plain words; never mention compose, waves, task ids, teammates, or Linear. "
             f"{fc_core.commit_rule(fc_core.commit_convention(proj))}"
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
             f"Fact-check before you say it: every claim about the code, a tool, or a result comes from evidence you gathered (graft "
@@ -114,7 +114,7 @@ def crew_pick_full(role, explicit=None):
         skipped.append(f"{model} unavailable ({ok[1]})")
     else:
         sys.exit(f"{label}: no model in its chain can run: {', '.join(skipped)}. Fix the entry in {fc_config.CONFIG_PATH} or pass --model; "
-                 f"`fast-coding models --probe` re-asks after a transient failure")
+                 f"`compose models --probe` re-asks after a transient failure")
     return model, effort, label + (": " + ", ".join(skipped) + ", using its fallback" if skipped else ""), skipped
 
 def crew_fallback(proj, name, role, skipped, used):
@@ -152,7 +152,7 @@ def crew_workdir(cwd, wt, name, role=None):
     branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", branch, "HEAD"], top)
-        return fc_worktree.slot_on(top, branch, f"fast-coding:{name}"), branch
+        return fc_worktree.slot_on(top, branch, f"compose:{name}"), branch
     path = top / ".claude" / "worktrees" / branch
     fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), "HEAD"], top)
     return path, branch
@@ -174,7 +174,7 @@ def cmd_crew(a):
             print(f"  {c['name']:32} {state:10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
-        sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
+        sys.exit(f"usage: compose crew {a.action} --project {slug} --role <role>")
     name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":
@@ -227,11 +227,11 @@ def cmd_crew(a):
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
-    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
-    reports_to = os.environ.get("FAST_CODING_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
+    reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
     brief_file.write_text(crew_preamble(proj, name, title, reports_to) + brief)
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
@@ -266,7 +266,7 @@ def cmd_crew(a):
     except RuntimeError as e:
         crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
         sys.exit(f"teammate {name} came up but did not take its brief ({e}); its tab is closed and nothing is left registered: run the same crew start again")
-    fc_herdr.herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
+    fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", f"{name}: {title}")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
     if len(crew_reports(proj, name)) <= seen:  # one that has reported has started, and may be gone already
@@ -277,11 +277,11 @@ def cmd_crew(a):
                 crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
                 sys.exit(f"teammate {name} did not start on its brief: Enter and sending it again did nothing; its tab is closed and nothing is left registered: run the same crew start again")
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
-          f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
+          f"{f' from {why_model}' if why_model else ''}; it reports with `compose report`, `watch` wakes on it")
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 GUARDED_ROLES = ("orchestrator", "planner")
-CLI_FILE = re.compile(r"/\.fast-coding/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+)$")  # the team lead's own: the CLI's config
+CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+)$")  # the team lead's own: the CLI's config
 
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
@@ -294,7 +294,7 @@ def guard_decision(tool, path, role):
     if fc_core.sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
     return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "
-            f"`fast-coding crew start --role <job> --brief -`, or put it in a task issue for `run`.")
+            f"`compose crew start --role <job> --brief -`, or put it in a task issue for `run`.")
 
 def cmd_guard(a):
     """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository."""
@@ -303,12 +303,12 @@ def cmd_guard(a):
     except json.JSONDecodeError:
         return
     ti = ev.get("tool_input") or {}
-    why = guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), os.environ.get("FAST_CODING_ROLE"))
+    why = guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), os.environ.get("COMPOSE_ROLE"))
     if why:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 
-SKILL_DIR = Path.home() / ".claude" / "skills" / "fast-coding"  # the main checkout every live session reads: a merge changes it
-SKILL_SEEN = Path.home() / ".fast-coding" / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
+SKILL_DIR = Path.home() / ".claude" / "skills" / "compose"  # the main checkout every live session reads: a merge changes it
+SKILL_SEEN = Path.home() / ".compose" / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
 # ponytail: never pruned, a few hundred bytes per session; prune by mtime if the directory grows
 SKILL_FILES = ("SKILL.md", "sections/*.md", "commands/*.md")
 
@@ -335,20 +335,20 @@ def skill_notice(session):
     changed = skill_changed(seen or {}, cur)
     if seen is None or not changed:
         return None
-    return f"fast-coding's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
+    return f"compose's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
 
 def cmd_skillcheck(a):
-    """Claude Code UserPromptSubmit and PostToolUse(Skill) hook: a session with a role, or one that loaded the fast-coding skill
-    (the Skill tool, or a typed /fast-coding command), hears once when the skill's files changed. Any error prints nothing."""
+    """Claude Code UserPromptSubmit and PostToolUse(Skill) hook: a session with a role, or one that loaded the compose skill
+    (the Skill tool, or a typed /compose command), hears once when the skill's files changed. Any error prints nothing."""
     try:
         ev = json.load(sys.stdin)
         session = re.sub(r"[^\w-]", "", ev.get("session_id") or "")
         if not session:
             return
         loads = "/" + (ev.get("tool_input") or {}).get("skill", "") if ev.get("hook_event_name") == "PostToolUse" else ev.get("prompt", "")
-        if re.match(r"/fast-coding(:|\s|$)", loads):
+        if re.match(r"/compose(:|\s|$)", loads):
             skill_notice(session)  # the version it loads now is the one it read
-        elif os.environ.get("FAST_CODING_ROLE") or (SKILL_SEEN / f"{session}.json").exists():
+        elif os.environ.get("COMPOSE_ROLE") or (SKILL_SEEN / f"{session}.json").exists():
             if ev.get("hook_event_name") == "UserPromptSubmit" and (note := skill_notice(session)):
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}}))
     except Exception:
@@ -372,7 +372,7 @@ def crew_record(proj, name):
 
 def crew_reporting_to(proj, key):
     """The teammates whose records say they report to this watcher: `manager` for the engineering manager (started with no
-    FAST_CODING_ROLE), else the starting session's role. A record from before `reports_to` existed names nobody."""
+    COMPOSE_ROLE), else the starting session's role. A record from before `reports_to` existed names nobody."""
     out = []
     for f in sorted(crew_dir(proj).glob("*.json")):
         try:
@@ -398,7 +398,7 @@ def crew_attention(proj, name, state, message):
     if not c:
         return
     label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
-    fc_herdr.herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
+    fc_herdr.herdr("pane", "report-metadata", c["pane"], "--source", "compose", "--state-label", label)
 
 def desktop_notify(title, body):
     """The product owner's desktop alert, sent by the CLI itself and never through `herdr notification show`: that command follows
@@ -425,7 +425,7 @@ def manager_attention(proj, events):
     pop a desktop notification (desktop_notify). That is the team lead's reports, and those of a teammate the engineering manager
     started itself (a planner or designer with no team lead to go through: crew_reporting_to). Other teammates and the team lead
     only badge their panes; their questions reach the product owner through the engineering manager, which relays them."""
-    if os.environ.get("FAST_CODING_ROLE"):
+    if os.environ.get("COMPOSE_ROLE"):
         return
     for e in events:
         m = re.match(r"event crew=(\S+) state=(needs-user|blocked) message=(.*)$", e)

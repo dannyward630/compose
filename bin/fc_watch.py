@@ -3,7 +3,7 @@ from pathlib import Path
 import fc_core, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status
 
 
-YOLO_HINT = "  yolo=on (answer with the recommendation; log it: fast-coding yolo decided ...)"
+YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
 
 # ---------- watch ----------
 FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done")
@@ -68,7 +68,7 @@ def watch_snapshot(repo, proj):
 STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
 
 def watch_mem(proj, key):
-    """What one role's watcher (key: FAST_CODING_ROLE, else `manager`) last reported and which stalls it fired, in results/watch-<role>.json."""
+    """What one role's watcher (key: COMPOSE_ROLE, else `manager`) last reported and which stalls it fired, in results/watch-<role>.json."""
     try:
         return json.loads((proj / "results" / f"watch-{key}.json").read_text())
     except (OSError, json.JSONDecodeError):
@@ -155,11 +155,11 @@ def watch_events(before, after):
     if before["run"] and not after["run"]:
         passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
         ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
-                  + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `fast-coding resume`" if after.get("crashed") else ""))
+                  + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `compose resume`" if after.get("crashed") else ""))
     if after.get("halt") and after["halt"] != before.get("halt"):
         at_, provider, left = after["halt"]
         ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
-                  f"their word, then `fast-coding resume`)")
+                  f"their word, then `compose resume`)")
     if after["verify"] and after["verify"] != before["verify"]:
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
     for n, reports in after.get("crew", {}).items():
@@ -200,12 +200,12 @@ WATCH_INTERVAL = 2.0
 def cmd_watch(a, rewake=False):
     """Sleep on the project until something a team lead must act on happens, print it, exit. Zero tokens while waiting:
     run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
-    Each role's watcher (FAST_CODING_ROLE, else manager; --from only filters what is printed) remembers what it last
+    Each role's watcher (COMPOSE_ROLE, else manager; --from only filters what is printed) remembers what it last
     reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     sources = [fc_herdr.agent_name(proj.name, x.strip()) if not x.strip().startswith(fc_herdr.agent_name(proj.name, "")) else x.strip()
                for x in (a.from_ or "").split(",") if x.strip()]
-    key = os.environ.get("FAST_CODING_ROLE") or "manager"
+    key = os.environ.get("COMPOSE_ROLE") or "manager"
     direct = lambda: fc_crew.crew_reporting_to(proj, key) if key == "manager" else ()  # the engineering manager's own teammates pass whatever --from says
     if a.now:
         cur = watch_snapshot(repo, proj)
@@ -243,7 +243,7 @@ def cmd_watch(a, rewake=False):
             if ev:
                 fc_crew.manager_attention(proj, ev)
                 if rewake:
-                    emit("fast-coding watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
+                    emit("compose watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
                     try:
                         if note := fc_crew.skill_notice(a.session):  # a wake is a prompt the UserPromptSubmit hook never sees
                             emit(note)
@@ -269,26 +269,26 @@ def cmd_rewake(a):
     """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
     wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once,
     a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too. A wake names skill files changed since the last one."""
-    project = os.environ.get("FAST_CODING_PROJECT")
-    if os.environ.get("FAST_CODING_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
+    project = os.environ.get("COMPOSE_PROJECT")
+    if os.environ.get("COMPOSE_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
     try:
         session = re.sub(r"[^\w-]", "", json.load(sys.stdin).get("session_id") or "")
     except Exception:
         session = ""
-    cmd_watch(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project, now=False, from_=None,
+    cmd_watch(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
 
 def cmd_reenter(a):
     """Claude Code SessionStart hook (matcher compact): after a compaction the session continues by re-entering through 0r, not from scratch.
     Its herdr tab carries the role, project, and worktree. Every other session returns at once, a headless one (`claude -p`,
     which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
-    project, role = os.environ.get("FAST_CODING_PROJECT"), os.environ.get("FAST_CODING_ROLE")
+    project, role = os.environ.get("COMPOSE_PROJECT"), os.environ.get("COMPOSE_ROLE")
     if not role or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
-    proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project))
+    proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project))
     print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
     print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{fc_herdr.agent_name(project, role)}.brief.md'} now.")
-    print(f"Run `fast-coding status --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project}` and "
-          f"`fast-coding watch --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project} --now` to see the board.")
+    print(f"Run `compose status --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project}` and "
+          f"`compose watch --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project} --now` to see the board.")
     print("Re-read the feature's Decisions so far and Plan on Linear before acting.")

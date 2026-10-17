@@ -37,7 +37,7 @@ MODULES = {
 HELPERS = {"fc_cost", "fc_mcp", "fc_sessions"}
 SETDEFAULTS = ["os.environ.setdefault('GRAFT_NO_GITIGNORE', '1')", "os.environ.setdefault('GRAFT_NO_IGNORE', '1')"]
 CONFIG_ONLY = ("DEFAULT_MODEL", "FALLBACK_MODEL", "OPENROUTER_KEY", "LINEAR_KEY", "WORKSPACE", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")
-LAUNCHER_SHA = "d44b3c09f228a368816f9b2ea6e6cecc7fd944ec28924e2fc9afbf1215438049"
+LAUNCHER_SHA = "6da43b058089b473dce7bba234756d8af893868a06c45fa7cc8a0280ae40f676"
 SUBCOMMANDS = "doctor, init, run, verify, bench, resume, done, sync, tasks, spec-check, projects, cost, status, watch, top, stack, clean, groundwork, explore, graft, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
 
 
@@ -107,7 +107,7 @@ class ModuleChecks:
                 self.assertFalse((n.module or "").startswith("fc_"), f"from {n.module} import ...")
             if isinstance(n, (ast.Import, ast.ImportFrom)):
                 mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module]
-                self.assertNotIn("fast_coding", mods)
+                self.assertNotIn("compose", mods)
 
     def test_collaborators_resolve(self):
         self.assertEqual(bad_refs(self.tree()), [])
@@ -116,11 +116,11 @@ class ModuleChecks:
         self.tree()
         self.assertLessEqual(len((BIN / f"{self.module}.py").read_text().splitlines()), 600)
 
-    def test_gone_from_fast_coding(self):
+    def test_gone_from_compose(self):
         self.tree()
-        fast = parse("fast_coding.py")
-        self.assertEqual(set(names(self.module)) & set(defined(fast)), set())
-        self.assertEqual(bad_refs(fast), [])
+        entry = parse("compose.py")
+        self.assertEqual(set(names(self.module)) & set(defined(entry)), set())
+        self.assertEqual(bad_refs(entry), [])
 
 
 class FcCore(ModuleChecks, unittest.TestCase): module = "fc_core"
@@ -129,7 +129,7 @@ class FcConfig(ModuleChecks, unittest.TestCase):
 
     def test_setdefaults_moved(self):
         self.assertEqual(expressions(self.tree()), SETDEFAULTS)
-        self.assertEqual(set(expressions(parse("fast_coding.py"))) & set(SETDEFAULTS), set())
+        self.assertEqual(set(expressions(parse("compose.py"))) & set(SETDEFAULTS), set())
 
 
 class FcTasks(ModuleChecks, unittest.TestCase): module = "fc_tasks"
@@ -157,8 +157,8 @@ class FcBench(ModuleChecks, unittest.TestCase): module = "fc_bench"
 
 
 class Residue(unittest.TestCase):
-    def test_fast_coding_keeps_only_the_entry_point(self):
-        tree = parse("fast_coding.py")
+    def test_compose_keeps_only_the_entry_point(self):
+        tree = parse("compose.py")
         self.assertEqual(set(defined(tree)), {"DETACHED", "detach", "follow", "main"})
         self.assertEqual(expressions(tree), ["sys.path.insert(0, str(Path(__file__).resolve().parent))"])
         rest = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.Assign, ast.Expr, ast.If))]
@@ -173,16 +173,16 @@ class Residue(unittest.TestCase):
 
     def test_settings_have_one_owner(self):
         owners = {m: set(defined(parse(f"{m}.py"))) for m in RANK}
-        owners["fast_coding"] = set(defined(parse("fast_coding.py")))
+        owners["compose"] = set(defined(parse("compose.py")))
         for name, owner in [(n, "fc_config") for n in CONFIG_ONLY] + [("STACK_STOP", "fc_layers")]:
             with self.subTest(name):
                 self.assertEqual([m for m, d in owners.items() if name in d], [owner])
 
     def test_launcher_unchanged(self):
-        self.assertEqual(hashlib.sha256((BIN / "fast-coding").read_bytes()).hexdigest(), LAUNCHER_SHA)
+        self.assertEqual(hashlib.sha256((BIN / "compose").read_bytes()).hexdigest(), LAUNCHER_SHA)
 
     def test_help_lists_the_same_subcommands(self):
-        out = subprocess.run(["/usr/bin/python3", str(BIN / "fast-coding"), "--help"], capture_output=True, text=True, check=True).stdout
+        out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True).stdout
         group = out[out.index("{") + 1 : out.index("}")]
         self.assertEqual(group.split(","), SUBCOMMANDS)
 

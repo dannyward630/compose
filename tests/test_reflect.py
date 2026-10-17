@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 import sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -216,7 +216,7 @@ class WatchReflect(unittest.TestCase):
         def watch(now):
             out, a = [], SimpleNamespace(repo=".", now=now, from_=None, timeout=0.05, interval=0.01, stall=10_000)
             with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", return_value={}), \
-                    mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
+                    mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):
                 try:
                     fc.fc_watch.cmd_watch(a)
                 except SystemExit:
@@ -462,7 +462,7 @@ class AutoReflect(unittest.TestCase):
             reflect.assert_not_called()
 
 
-BLOCK = "\n\n```fast-coding\nid: {tid}\nfiles: {tid}.txt\ntest: true\n```\n"
+BLOCK = "\n\n```compose\nid: {tid}\nfiles: {tid}.txt\ntest: true\n```\n"
 
 
 def issue(tid, goal, status="Todo", blocked=()):
@@ -524,7 +524,7 @@ class Changes(unittest.TestCase):
         self.assertEqual(rec["before"]["issues"]["ENG-4"]["blockedBy"], ["ENG-3"])
         tip = self.git("rev-parse", "fast/hw/003")
         self.assertEqual(rec["tips"]["003"], tip)
-        self.assertEqual(self.git("rev-parse", "refs/fast-coding/hw/C1/003"), tip)
+        self.assertEqual(self.git("rev-parse", "refs/compose/hw/C1/003"), tip)
         self.assertEqual(fc.fc_change.open_change(self.proj), "C1")
         self.assertEqual(fc.fc_change.change_line(self.proj), "  CHANGE C1 open: localStorage is wiped")
 
@@ -657,7 +657,7 @@ class Undo(unittest.TestCase):
         synced(self.proj, MAP_AFTER, AFTER, ahead=3)
 
     def test_undo_puts_back_every_issue_and_layer(self):
-        old = self.git("rev-parse", "refs/fast-coding/hw/C1/003")
+        old = self.git("rev-parse", "refs/compose/hw/C1/003")
         out = change(self.proj, self.repo, "undo", cid="C1")
         self.assertEqual(self.lin.issues["ENG-3"]["description"], BEFORE["ENG-3"]["description"])
         self.assertEqual((self.lin.issues["ENG-4"]["status"], self.lin.issues["ENG-4"]["blockedBy"]), ("Todo", ["ENG-3"]))
@@ -733,7 +733,7 @@ class Undo(unittest.TestCase):
         self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
 
     def test_a_branch_git_refuses_to_move_is_listed_and_the_undo_still_finishes(self):
-        tip = self.git("rev-parse", "refs/fast-coding/hw/C1/003")
+        tip = self.git("rev-parse", "refs/compose/hw/C1/003")
         self.git("worktree", "add", str(Path(tempfile.mkdtemp()) / "wt"), "fast/hw/003")  # checked out elsewhere: `branch -f` refuses
         out = change(self.proj, self.repo, "undo", cid="C1")
         self.assertIn("reset these branches by hand, then sync:", out)

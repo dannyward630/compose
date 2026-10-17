@@ -40,15 +40,15 @@ DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: 
 target Figma file is {figma}.
 1. Read SKILL.md and sections/0d.md, then follow 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `list_issues` search for "design system", "tokens", "Figma"; the
-   Frame0 pages (`fast-coding frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
+   Frame0 pages (`compose frame0 up --project {slug}`, then `export_page_as_image`); the repo's tokens through graft
    (`graft ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
    (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
 3. Load the `figma:figma-use` skill before every `use_figma` call.
    """ + FIGMA_CONNECTOR.replace("\n", "\n   ") + """ Tell every builder and the `design-review` teammate the same.
 4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
-   one page per task), and `test: fast-coding figma judge --project {slug} --only NNN`.
-5. Start builders with `fast-coding designcrews --project {slug}`; gate each with
-   `fast-coding figma tree --project {slug} --only NNN --node <ids>` then `fast-coding figma judge --project {slug} --only NNN`;
+   one page per task), and `test: compose figma judge --project {slug} --only NNN`.
+5. Start builders with `compose designcrews --project {slug}`; gate each with
+   `compose figma tree --project {slug} --only NNN --node <ids>` then `compose figma judge --project {slug} --only NNN`;
    then run a `design-review` teammate that reads trees and images through Framelink, one image per story, never `get_screenshot`.
    Hand-off to code pastes Framelink JSON (never `get_design_context`) into the code task.
 6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
@@ -62,7 +62,7 @@ target Figma file is {figma}.
 def cmd_designer(a):
     """Print the designer teammate's brief; --figma stores the file key first, --extra adds the team lead's notes."""
     if fc_init.check_deps("designer"):  # before any brief: crew start gets none and stops too
-        sys.exit("designer stopped: install what is missing above, then run it again (`fast-coding doctor` checks again)")
+        sys.exit("designer stopped: install what is missing above, then run it again (`compose doctor` checks again)")
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     if a.figma:
         key = fc_core.figma_key(a.figma)
@@ -89,7 +89,7 @@ def design_brief(meta, figma, results):
             "Load the `figma:figma-use` skill before every `use_figma` call.\n"
             f"{FIGMA_CONNECTOR}\n"
             "Work in one retry-safe write script that returns every created and mutated node id and every variable binding and component key it set; at most one component set of 30 variants.\n"
-            f"When it is built, save the write script's returned facts to a file and run `fast-coding figma tree --project {Path(results).parent.name} --only {meta['id']} --node <ids> --bindings <that file>`, "
+            f"When it is built, save the write script's returned facts to a file and run `compose figma tree --project {Path(results).parent.name} --only {meta['id']} --node <ids> --bindings <that file>`, "
             f"which fetches the tree through Framelink into {tree}; never a read-only `use_figma` script. Then run `{meta.get('test')}`.\n"
             "Report `working \"design ready: <node ids>\"`, and `done` only when the designer says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}")
@@ -108,7 +108,7 @@ def cmd_designcrews(a):
                                        else f"its state is {m.get('linear_state')}"))
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not figma and not all(m.get("figma") for m in metas):
-        sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+        sys.exit("no Figma file: compose figma check --figma <url or key>")
     if a.print_:
         for m in metas:
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
@@ -129,11 +129,11 @@ def cmd_designcrews(a):
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
     if failed:
-        print(f"not started: {','.join(sorted(failed))}; start them again: fast-coding designcrews --project {proj.name} --only {','.join(sorted(failed))}")
+        print(f"not started: {','.join(sorted(failed))}; start them again: compose designcrews --project {proj.name} --only {','.join(sorted(failed))}")
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} design builder(s) queued past the cap of {cap}: {ids}\nstart them as earlier ones report done or design ready: "
-              f"fast-coding designcrews --project {proj.name} --only {ids}")
+              f"compose designcrews --project {proj.name} --only {ids}")
 
 
 TREE_CHUNK_CHARS = 30000  # one judge request's share of a tree; the whole tree is judged in as many requests as it takes
@@ -257,7 +257,7 @@ def figma_tree(a, proj):
         sys.exit(f"{a.only} is not a design task")
     key = meta.get("figma") or (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not key:
-        sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+        sys.exit("no Figma file: compose figma check --figma <url or key>")
     parts = []
     for node in (n.strip() for n in a.node.split(",") if n.strip()):
         try:
@@ -286,7 +286,7 @@ def cmd_figma(a):
         else:
             key = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
             if not key:
-                sys.exit("no Figma file: fast-coding figma check --figma <url or key>")
+                sys.exit("no Figma file: compose figma check --figma <url or key>")
         print(f"figma file {key} stored in {proj / 'linear.json'}; confirm the write connector with whoami through the Figma MCP")
         try:
             framelink_fetch(key, depth=1)
@@ -317,7 +317,7 @@ def cmd_figma(a):
             sys.exit(f"{tid} is not a design task")
         tree_path = proj / "results" / f"{tid}.tree.txt"
         if not tree_path.exists():
-            sys.exit(f"no node tree at {tree_path}: `fast-coding figma tree --project {proj.name} --only {tid} --node <ids>` saves it")
+            sys.exit(f"no node tree at {tree_path}: `compose figma tree --project {proj.name} --only {tid} --node <ids>` saves it")
         text = tree_path.read_text()
         crits_id = crits.get(tid, [])
         if not crits_id:

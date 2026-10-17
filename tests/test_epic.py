@@ -1,9 +1,9 @@
 import json, os, subprocess, tempfile, unittest
 from pathlib import Path
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
-ENV = {**os.environ, "FAST_CODING_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+ENV = {**os.environ, "COMPOSE_NO_GRAFT": "1", "HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
 class InitAfter(unittest.TestCase):
@@ -24,37 +24,37 @@ class InitAfter(unittest.TestCase):
 
     def test_dependent_project_starts_from_the_other_projects_branch(self):
         self.fc("init", "--project", "a")
-        a_wt = self.repo.parent / "fast-coding-a"
+        a_wt = self.repo.parent / "compose-a"
         (a_wt / "feature_a.txt").write_text("a\n")
         subprocess.run(["git", "add", "-A"], cwd=a_wt, check=True, env=ENV)
         subprocess.run(["git", "commit", "-qm", "a"], cwd=a_wt, check=True, env=ENV)
         self.fc("init", "--project", "b", "--after", "a")
-        b_wt = self.repo.parent / "fast-coding-b"
+        b_wt = self.repo.parent / "compose-b"
         self.assertTrue((b_wt / "feature_a.txt").exists())  # b sits on a's code
-        self.assertEqual(json.loads((b_wt / ".fast-coding" / "b" / "verify.json").read_text())["review_base"], "fast-coding/a")
-        self.assertEqual(json.loads((a_wt / ".fast-coding" / "a" / "verify.json").read_text())["review_base"], "main")
+        self.assertEqual(json.loads((b_wt / ".compose" / "b" / "verify.json").read_text())["review_base"], "compose/a")
+        self.assertEqual(json.loads((a_wt / ".compose" / "a" / "verify.json").read_text())["review_base"], "main")
         listing = self.fc("projects").stdout
         self.assertIn("(after a)", [l for l in listing.splitlines() if l.startswith("b ")][0])
         self.assertNotIn("(after", [l for l in listing.splitlines() if l.startswith("a ")][0])
-        self.assertIn("trunk fast-coding/b (after a)", self.fc("status", "--project", "b").stdout)
+        self.assertIn("trunk compose/b (after a)", self.fc("status", "--project", "b").stdout)
 
     def test_clean_counts_a_merge_into_the_base_project(self):
         self.fc("init", "--project", "a")
         self.fc("init", "--project", "b", "--after", "a")
-        a_wt, b_wt = self.repo.parent / "fast-coding-a", self.repo.parent / "fast-coding-b"
+        a_wt, b_wt = self.repo.parent / "compose-a", self.repo.parent / "compose-b"
         (b_wt / "feature_b.txt").write_text("b\n")
         subprocess.run(["git", "add", "-A"], cwd=b_wt, check=True, env=ENV)
         subprocess.run(["git", "commit", "-qm", "b"], cwd=b_wt, check=True, env=ENV)
         self.assertIn("not merged yet", self.fc("clean", "--project", "b").stdout)
-        subprocess.run(["git", "merge", "-q", "--no-edit", "fast-coding/b"], cwd=a_wt, check=True, capture_output=True, env=ENV)
-        self.assertIn("contained in fast-coding/a", self.fc("clean", "--project", "b").stdout)
+        subprocess.run(["git", "merge", "-q", "--no-edit", "compose/b"], cwd=a_wt, check=True, capture_output=True, env=ENV)
+        self.assertIn("contained in compose/a", self.fc("clean", "--project", "b").stdout)
         self.assertFalse(b_wt.exists())
 
     def test_after_an_unknown_project_refuses(self):
         p = self.fc("init", "--project", "b", "--after", "nope", check=False)
         self.assertNotEqual(p.returncode, 0)
-        self.assertIn("no branch fast-coding/nope", p.stderr)
-        self.assertFalse((self.repo.parent / "fast-coding-b").exists())
+        self.assertIn("no branch compose/nope", p.stderr)
+        self.assertFalse((self.repo.parent / "compose-b").exists())
 
 
 if __name__ == "__main__":

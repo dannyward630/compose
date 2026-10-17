@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 import sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -145,7 +145,7 @@ class SyncFromLinear(unittest.TestCase):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def node(self, i, parent, blocked=()):
-        desc = f"brief {i}\n\n```fast-coding\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
+        desc = f"brief {i}\n\n```compose\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
         return {"identifier": i, "title": f"T{i}", "description": desc, "state": {"name": "Todo"}, "parent": {"identifier": parent} if parent else None,
                 "inverseRelations": {"nodes": [{"type": "blocks", "issue": {"identifier": b}} for b in blocked] + [{"type": "related", "issue": {"identifier": "ENG-99"}}]}}
 
@@ -173,7 +173,7 @@ class SyncFromLinear(unittest.TestCase):
         self.assertEqual([i["id"] for i in data["issues"]], ["ENG-2", "ENG-4", "ENG-5", "ENG-6", "ENG-3"])
         task = data["issues"][2]
         self.assertEqual((task["parentId"], task["status"], task["blockedBy"]), ("ENG-2", "Todo", ["ENG-4"]))
-        self.assertIn("```fast-coding", task["description"])
+        self.assertIn("```compose", task["description"])
         self.assertFalse(any(w in q for q in self.queries for w in ("mutation", KEY)))  # read-only
 
     def test_sync_stores_the_tasks_with_their_blockers(self):

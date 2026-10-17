@@ -2,9 +2,9 @@ import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unit
 from pathlib import Path
 from unittest import mock
 import sys
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -20,9 +20,9 @@ class RedoMidChain(unittest.TestCase):
         self.git("init", "-q", "-b", "main")
         (self.repo / "a.txt").write_text("base\n")
         self.git("add", "-A"); self.git("commit", "-qm", "init")
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
-        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         after = {"011": "010", "012": "011", "005": "012"}
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": t, "after": after.get(t, "")} for t in ("010", "011", "012", "005")]}))
         for t, base in (("010", "main"), ("011", "fast/p/010"), ("012", "fast/p/011"), ("005", "fast/p/012")):
@@ -47,7 +47,7 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")  # one commit per layer, the old 011 is gone
-        self.assertEqual(self.git("for-each-ref", "refs/fast-coding/replaced/"), "")  # nothing carries the old tip any more
+        self.assertEqual(self.git("for-each-ref", "refs/compose/replaced/"), "")  # nothing carries the old tip any more
 
     def test_every_layer_above_a_layer_rewritten_by_hand_replays_only_its_own_commits(self):
         # 011 rebased or reset by hand before this pass: no replaced ref records its old tip, only its reflog does
@@ -77,7 +77,7 @@ class KeepFinishedLayers(unittest.TestCase):
     branch. Rebuilding a hand-done layer threw away the teammate's commit, so the team lead could not record it."""
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
-        os.environ.pop("FAST_CODING_REDO", None)
+        os.environ.pop("COMPOSE_REDO", None)
         self.repo = Path(tempfile.mkdtemp()).resolve()
         git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
         git("init", "-q", "-b", "main"); (self.repo / "a.txt").write_text("base\n"); git("add", "-A"); git("commit", "-qm", "init")
@@ -85,7 +85,7 @@ class KeepFinishedLayers(unittest.TestCase):
         git("checkout", "-q", "main")
         self.tip = git("rev-parse", "fast/p/001")
         self.git = git
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
 
     def test_a_passed_or_hand_done_layer_keeps_its_branch(self):
@@ -103,12 +103,12 @@ class KeepFinishedLayers(unittest.TestCase):
         with mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=AssertionError("a hand_done task was rebuilt")), \
              mock.patch.object(fc.fc_linear, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc.fc_core, "say"):
             self.assertEqual(fc.fc_implement.run_task(self.repo, self.proj, task, 1)["status"], "hand_done")
-        with mock.patch.dict(os.environ, {"FAST_CODING_REDO": "1"}), mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=RuntimeError("rebuilt")):
+        with mock.patch.dict(os.environ, {"COMPOSE_REDO": "1"}), mock.patch.object(fc.fc_worktree, "replace_branch", side_effect=RuntimeError("rebuilt")):
             with self.assertRaisesRegex(RuntimeError, "rebuilt"):
                 fc.fc_implement.run_task(self.repo, self.proj, task, 1)
 
     def test_run_and_resume_schedule_only_the_tasks_that_need_work(self):
-        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         self.git("branch", "-D", "fast/p/001")
         states = {"001": "hand_done", "003": "passed", "005": "failed"}
         tasks = [{"id": t, "title": t, "files": [], "protected": [], "test": "true", "body": "", "model": "m",
@@ -124,7 +124,7 @@ class KeepFinishedLayers(unittest.TestCase):
             (self.proj / "results" / "run.json").write_text(json.dumps({"pid": 999999, "started_at": "x", "tasks": [t["id"] for t in tasks], "args": {}}))
             fc.fc_run.cmd_resume(a())
             fc.fc_run.cmd_run(mock.Mock(repo=str(self.repo), project="p", only=None, redo=True))
-        os.environ.pop("FAST_CODING_REDO", None)
+        os.environ.pop("COMPOSE_REDO", None)
         self.assertEqual(ran, [["004", "005"], ["004", "005"], ["001", "003", "004", "005"]])  # Canceled stays out even on --redo
 
 
@@ -136,9 +136,9 @@ class RewrittenTrunk(unittest.TestCase):
         self.git("init", "-q", "-b", "main")
         (self.repo / "a.txt").write_text("five\n")
         self.git("add", "-A"); self.git("commit", "-qm", "init")
-        self.proj = self.repo / ".fast-coding" / "p"
+        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
-        (self.repo / ".git" / "info" / "exclude").write_text("/.fast-coding/\n")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "010", "after": ""}, {"id": "011", "after": "010"}]}))
         self.git("checkout", "-q", "-b", "trunk")
         (self.repo / "a.txt").write_text("FIVE\n"); self.git("commit", "-qam", "trunk work")

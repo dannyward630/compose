@@ -101,10 +101,10 @@ const cmds = {
   async record([sel, dir], flags) { mkdirSync(dir, { recursive: true }); const b = await connect(); let last = ''; let n = 0; const skip = flags.exclude ? new RegExp(flags.exclude) : null; console.log('recording', sel, '→', dir, '(Ctrl-C to stop)'); for (;;) { try { const { targetInfos } = await b.send('Target.getTargets'); const cands = targetInfos.filter((x) => x.type === 'page' && x.url.includes(sel) && !(skip && skip.test(x.url))).sort((a, c) => c.url.length - a.url.length); const t = cands[0]; if (t) { const { sessionId } = await b.send('Target.attachToTarget', { targetId: t.targetId, flatten: true }); const { data } = await b.send('Page.captureScreenshot', { format: 'png' }, sessionId); const h = createHash('md5').update(data).digest('hex').slice(0, 10); if (h !== last) { last = h; n++; const f = path.join(dir, String(n).padStart(3, '0') + '.png'); writeFileSync(f, Buffer.from(data, 'base64')); const line = `${new Date().toISOString().slice(11, 19)} ${path.basename(f)} ${t.url.slice(0, 100)} | ${(t.title || '').slice(0, 60)}`; console.log(line); appendFileSync(path.join(dir, 'index.md'), line + '\n'); } await b.send('Target.detachFromTarget', { sessionId }); } } catch {} await sleep(Number(flags.interval || 2000)); } },
   async close([sel]) { const b = await connect(); const { t } = await target(b, sel); await b.send('Target.closeTarget', { targetId: t.targetId }); console.log('closed', t.url.slice(0, 80)); b.close(); },
   async goal([url, ...goals], flags) {
-    // Run fast-coding's jev (../../jev) against THIS bp Chromium: browser-harness attaches via BU_CDP_URL, jev picks actions with TypeSafe.
+    // Run compose's jev (../../jev) against THIS bp Chromium: browser-harness attaches via BU_CDP_URL, jev picks actions with TypeSafe.
     const jev = process.env.JEV_DIR || path.resolve(import.meta.dirname, '../../jev');
     if (!goals.length) throw new Error('usage: bp goal <url> "<goal>" ["<goal 2>" ...]');
-    const envFile = `${process.env.HOME}/.fast-coding/.env`;
+    const envFile = `${process.env.HOME}/.compose/.env`;
     const script = 'import sys\nfrom jev_ultrafast import Agent\nwith Agent(sys.argv[1], sys.argv[2:]) as a:\n    for s in a.run(): print(f"{s[\'elapsed_ms\']:>5} ms  {len(s[\'history\'])} actions  {s[\'status\']}", flush=True)\n    print(s["page"]["url"])';
     const args = ['run', '--quiet', ...(existsSync(envFile) ? ['--env-file', envFile] : []), 'python', '-c', script, url, ...goals];
     const env = { ...process.env, BU_CDP_URL: `http://127.0.0.1:${PORT}`, BU_NAME: `bp${PORT}` };
@@ -126,7 +126,7 @@ const cmds = {
   shot <sel> <out.png> | reload <sel> [--wait ms] | close <sel>
   cookies <sel> [clear] [--urls a,b]           list or clear cookies (logs the user out of that site)
   record <url-substr> <dir> [--interval ms] [--exclude regex]   screenshot on every change + index.md
-  goal <url> "<goal>" ["<goal 2>"...]            run fast-coding's jev against this Chromium toward a goal; say where to stop in the goal
+  goal <url> "<goal>" ["<goal 2>"...]            run compose's jev against this Chromium toward a goal; say where to stop in the goal
   kill                                         stop the Chromium on this port
 <sel> is a target id prefix or a URL substring.`); },
 };

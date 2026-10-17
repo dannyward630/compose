@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -11,7 +11,7 @@ _spec.loader.exec_module(fc)
 
 class FigmaCheck(unittest.TestCase):
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
 
@@ -88,16 +88,16 @@ class FigmaCheck(unittest.TestCase):
         self.assertEqual(self.stored(), {"feature": "ENG-1"})
         with self.assertRaises(SystemExit) as e:
             self.check()
-        self.assertEqual(str(e.exception), "no Figma file: fast-coding figma check --figma <url or key>")
+        self.assertEqual(str(e.exception), "no Figma file: compose figma check --figma <url or key>")
 
     def test_help_lists_check_and_judge(self):
-        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"), "figma", "--help"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "figma", "--help"], capture_output=True, text=True)
         self.assertIn("{check,tree,judge}", r.stdout)
 
 
 class FigmaTree(unittest.TestCase):
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
@@ -132,7 +132,7 @@ class FigmaTree(unittest.TestCase):
 
 
 def judge_task(ident, tid, title, crits, kind="design"):
-    desc = "## Acceptance criteria\n" + "".join(f"- {c}\n" for c in crits) + f"\n```fast-coding\nid: {tid}\nkind: {kind}\ntest: t\n```\n"
+    desc = "## Acceptance criteria\n" + "".join(f"- {c}\n" for c in crits) + f"\n```compose\nid: {tid}\nkind: {kind}\ntest: t\n```\n"
     return {"id": ident, "title": title, "description": desc, "status": "Todo", "blockedBy": []}
 
 
@@ -150,7 +150,7 @@ def big_tree(variants=15, pad=10000):
 
 class FigmaJudge(unittest.TestCase):
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
         (self.proj / "verify.json").write_text(json.dumps({"acceptance_threshold": 0.7}))

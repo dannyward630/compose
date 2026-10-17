@@ -4,9 +4,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fast_coding as fc
+import compose as fc
 
-CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")
+CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
 TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "graft": "0.16.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
 SKILLS = (".claude/skills/herdr/SKILL.md", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md",
           ".claude/plugins/cache/official/superpowers/7.0.0/skills/writing-plans/SKILL.md", ".config/figma-context-mcp/.env")
@@ -118,9 +118,9 @@ class Doctor(unittest.TestCase):
         self.assertIn("(ui.sound.enabled=true)", fc.fc_init.herdr_toast_warning())
 
     def test_doctor_and_init_through_the_cli(self):
-        env = {**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"}
+        env = {**os.environ, "COMPOSE_NO_TREEHOUSE": "1"}
         r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, "every tool fast-coding needs is installed"))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "every tool compose needs is installed"))
         self.herdr_config('[ui.toast]\ndelivery = "system"\n')
         r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)  # a warning, never a stop
         self.assertEqual(r.returncode, 0)
@@ -135,7 +135,7 @@ class Doctor(unittest.TestCase):
         self.assertIn("MISSING: claude", r.stdout)
         self.assertIn("init stopped", r.stderr)
         self.assertEqual(list(repo.iterdir()), [])
-        self.assertFalse((repo.parent / "fast-coding-p").exists())
+        self.assertFalse((repo.parent / "compose-p").exists())
 
 
 if __name__ == "__main__":

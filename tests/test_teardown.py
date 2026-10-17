@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest import mock
 import subprocess, sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -12,7 +12,7 @@ _spec.loader.exec_module(fc)
 class Teardown(unittest.TestCase):
     """Nothing a project started stays open: done teammates close themselves, the team lead's done tears down the rest."""
     def setUp(self):
-        self.proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         self.proj.mkdir(parents=True)
         for name, tab in (("shop-orchestrator", "t3"), ("shop-tests", "t9"), ("shop-e2e", "t10")):
             (fc.fc_crew.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps({"name": name, "title": name, "tab": tab, "pane": "p"}))

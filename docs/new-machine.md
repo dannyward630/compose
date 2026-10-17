@@ -1,6 +1,6 @@
 # Set up a new machine
 
-This page takes a fresh Mac to a working fast-coding install.
+This page takes a fresh Mac to a working `compose` install.
 It follows [requirements.md](requirements.md), which explains what each tool is for.
 
 ## 1. Install the tools
@@ -24,19 +24,20 @@ Each optional tool turns on one feature:
 | graft | `npm i -g @nanonets/graft` |
 | Frame0, OpenCode | see [requirements.md](requirements.md#optional) |
 
-## 2. Clone and link fast-coding
+## 2. Clone and link `compose`
 
 ```sh
-git clone https://github.com/prodoxx/fast-coding ~/code/fast-coding
-cd ~/code/fast-coding
-ln -s "$PWD" ~/.claude/skills/fast-coding
-mkdir -p ~/.local/bin && ln -s "$PWD/bin/fast-coding" ~/.local/bin/
+git clone https://github.com/prodoxx/fast-coding ~/code/compose
+cd ~/code/compose
+ln -s "$PWD" ~/.claude/skills/compose
+mkdir -p ~/.local/bin && ln -s "$PWD/bin/compose" ~/.local/bin/
 ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp     # the browser driver, optional
 ```
 
+The repository keeps its GitHub name, `fast-coding`, but the checkout lives at `~/code/compose`.
 `bp` also needs Playwright's Chromium: `npx playwright install chromium`.
-The skill link is how Claude Code finds the skill, the `/fast-coding:*` commands, and the hooks.
-Open Claude Code once and check that `/fast-coding` and its commands appear.
+The skill link is how Claude Code finds the skill, the `/compose:*` commands, and the hooks.
+Open Claude Code once and check that `/compose` and its commands appear.
 
 ## 3. Install the skills doctor requires
 
@@ -51,7 +52,7 @@ claude plugin install superpowers@claude-plugins-official   # optional, for writ
 Keys never go in git or on Linear issues.
 
 - OpenRouter for pi: put the key in `~/.pi/agent/auth.json` under `openrouter` and `openrouter-fast`, declare the `openrouter-fast` provider in `~/.pi/agent/models.json`, and create the `glm-5-3-flash-fast` preset on OpenRouter, as [requirements.md](requirements.md#keys) describes.
-- Write `~/.fast-coding/.env` with mode 600, holding `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`, `TEXT_MODEL_REASONING`, `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
+- Write `~/.compose/.env` with mode 600, holding `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`, `TEXT_MODEL_REASONING`, `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
 - Connect the Linear MCP in Claude Code.
 - For the designer only, put a Figma token in `~/.config/figma-context-mcp/.env` and add the `framelink-figma` MCP server as [requirements.md](requirements.md#for-the-designer) shows.
 
@@ -61,10 +62,10 @@ Copy these files privately, for example with AirDrop or scp, because they can ho
 
 | File | Holds |
 |---|---|
-| `~/.fast-coding/config.json` | model choices per role and the [workspaces](workspaces.md) |
+| `~/.compose/config.json` | model choices per role and the [workspaces](workspaces.md) |
 | `~/.config/herdr/config.toml` | herdr settings, including the notification setup below |
 
-Keep herdr's own popups and sounds off, so the only desktop alert is the engineering manager's, which fast-coding sends itself:
+Keep herdr's own popups and sounds off, so the only desktop alert is the engineering manager's, which `compose` sends itself:
 
 ```toml
 [ui.toast]
@@ -74,22 +75,22 @@ delivery = "off"
 enabled = false
 ```
 
-`fast-coding doctor` warns when either one is still on.
+`compose doctor` warns when either one is still on.
 
 ## 6. Check the install
 
 ```sh
-fast-coding doctor                        # one MISSING line per gap, with its install command
-uv sync --project ~/code/fast-coding/jev  # the browser agent verify drives
-cd ~/code/fast-coding/jev && uv run browser-harness --doctor
+compose doctor                        # one MISSING line per gap, with its install command
+uv sync --project ~/code/compose/jev  # the browser agent verify drives
+cd ~/code/compose/jev && uv run browser-harness --doctor
 ```
 
 ## Each repo
 
 A repo needs no setup ahead of time.
-The first run in a repo asks for its Linear project and writes `.fast-coding/linear.json`, which stays out of git.
+The first run in a repo asks for its Linear project and writes `.compose/linear.json`, which stays out of git.
 
 ## Keep machines in sync
 
-Run `git pull` in `~/code/fast-coding` to update, since both links point into that checkout.
-After a pull, restart any long-running `fast-coding watch` or `status --watch`, because it keeps running the code it started with.
+Run `git pull` in `~/code/compose` to update, since both links point into that checkout.
+After a pull, restart any long-running `compose watch` or `status --watch`, because it keeps running the code it started with.

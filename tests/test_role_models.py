@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 import subprocess, sys
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
@@ -19,7 +19,7 @@ class RoleModels(unittest.TestCase):
     def setUp(self):
         p = mock.patch.object(fc.fc_models, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS); p.start(); self.addCleanup(p.stop)
-        p = mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}); p.start(); self.addCleanup(p.stop)  # the team lead starts every teammate here
+        p = mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}); p.start(); self.addCleanup(p.stop)  # the team lead starts every teammate here
 
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
@@ -97,7 +97,7 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"),
-                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"})):
+                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"})):
             p.start(); self.addCleanup(p.stop)
         fc.fc_config.apply_config(); fc.fc_models._PROBED.clear()
         self.addCleanup(fc.fc_models._PROBED.clear)
@@ -172,14 +172,14 @@ class PlannerChain(unittest.TestCase):
             fc.fc_crew.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (cached for the day now)
         self.assertIn("--model", str(e.exception))
 
-    def test_headless_claude_runs_carry_no_fast_coding_env(self):
-        lead = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "p", "FAST_CODING_REPO": "/r"}  # the team lead's tab
+    def test_headless_claude_runs_carry_no_compose_env(self):
+        lead = {"COMPOSE_ROLE": "orchestrator", "COMPOSE_PROJECT": "p", "COMPOSE_REPO": "/r"}  # the team lead's tab
         done = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
         with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run:
             fc.fc_models.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
             fc.fc_claude.claude_once(".", "hi")
         for call in run.call_args_list:
-            self.assertEqual([k for k in call.kwargs.get("env") or os.environ if k.startswith("FAST_CODING_")], [])
+            self.assertEqual([k for k in call.kwargs.get("env") or os.environ if k.startswith("COMPOSE_")], [])
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:

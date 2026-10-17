@@ -234,7 +234,7 @@ def probe_result(model, p):
 
 def model_available(model):
     """Whether the harness named by `model` (a claude:<id> or pi:<provider/model>) can run it on this account: one tiny
-    non-interactive turn, cached for the day in ~/.fast-coding/model-probe.json. Returns (ok, why)."""
+    non-interactive turn, cached for the day in ~/.compose/model-probe.json. Returns (ok, why)."""
     mid, today = model.split(":", 1)[1] if ":" in model else "", time.strftime("%Y-%m-%d")
     if not mid:
         return True, "Claude Code's default model"
@@ -294,7 +294,7 @@ def turn_timeout(meta):
 
 
 def payment_halt(repo, proj, command, remaining, args, err):
-    """Save what is left to do, tell the user where to top up, exit 3. `fast-coding resume` picks it up."""
+    """Save what is left to do, tell the user where to top up, exit 3. `compose resume` picks it up."""
     state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
              "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     (proj / "results").mkdir(exist_ok=True)
@@ -310,7 +310,7 @@ def payment_halt(repo, proj, command, remaining, args, err):
         print(f"  stopped with {len(remaining)} task(s) left: {', '.join(remaining)}. Passed tasks keep their branches.")
     else:
         print("  stopped during verify; task branches are untouched.")
-    print(f"  then continue where it stopped:  fast-coding resume --repo {repo} --project {proj.name}")
+    print(f"  then continue where it stopped:  compose resume --repo {repo} --project {proj.name}")
     sys.exit(3)
 
 
@@ -324,11 +324,11 @@ def lenient_json(content):
         return json.JSONDecoder().raw_decode(re.sub(r"(?<![\\\\])'", '"', content))[0]
 
 def fast_env():
-    """The env a fast-model call reads: ~/.fast-coding/.env, overridden by the process env (the workspace key)."""
+    """The env a fast-model call reads: ~/.compose/.env, overridden by the process env (the workspace key)."""
     return {**fc_core.load_env(fc_config.ENV_FILE), **os.environ}
 
 def fast_json(env, system, user, max_tokens=1500, timeout=90):
-    """One call to the fast text model in ~/.fast-coding/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact."""
+    """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact."""
     body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}

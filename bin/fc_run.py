@@ -53,7 +53,7 @@ def cmd_run(a):
         sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
     tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
-        sys.exit("no tasks on Linear under this feature carry a fast-coding block" + (f" with ids {a.only}" if only else ""))
+        sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
     redo = bool(getattr(a, "redo", False))
     kept = {m["id"]: fc_tasks.task_finished(proj, m, redo) for m in tasks}
     for tid, why in kept.items():
@@ -63,7 +63,7 @@ def cmd_run(a):
     if not tasks:
         return fc_core.say("nothing to run: every task is finished")
     if redo:
-        os.environ["FAST_CODING_REDO"] = "1"
+        os.environ["COMPOSE_REDO"] = "1"
     # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
     wt = fc_herdr.project_worktree(proj)
     pending = [m["id"] for m in tasks if fc_core.sh(["git", "rev-parse", "--verify", "-q", fc_briefs.test_branch(proj, m["id"])], wt, check=False).returncode == 0]

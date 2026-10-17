@@ -24,7 +24,7 @@ def task_state(repo, proj, meta, trunk_head):
     if state == "pending" and fc_tasks.linear_done(meta):
         state = "merged"  # done on Linear (another story's task, or finished earlier): never run again, never a stall
     elif state == "running" and not fc_tasks.run_alive(proj):
-        state = "interrupted"  # the run died without writing a final state; `fast-coding resume` re-runs it
+        state = "interrupted"  # the run died without writing a final state; `compose resume` re-runs it
     elif state in ("passed", "already_green") and (merged or not has_branch) and meta.get("kind") != "design":
         state = "merged"
     elif state == "hand_done":
@@ -59,10 +59,10 @@ def render_status(repo, projects):
         htxt = ""
         if halt.exists():
             hd = json.loads(halt.read_text())
-            htxt = f"  HALTED {hd['halted_at'][11:16]} payment required at {hd['provider']} ({len(hd.get('remaining', []))} task(s) left) -> fast-coding resume"
+            htxt = f"  HALTED {hd['halted_at'][11:16]} payment required at {hd['provider']} ({len(hd.get('remaining', []))} task(s) left) -> compose resume"
         m = fc_tasks.run_marker(proj)
         rtxt = f"  run live since {m['started_at'][11:16]} (pid {m['pid']})" if m and fc_tasks.pid_alive(m.get("pid")) else \
-               (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> fast-coding resume" if m else "")
+               (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> compose resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {fc_core.project_after(proj)})" if fc_core.project_after(proj) else ""
         out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{fc_change.change_line(proj)}")
@@ -101,12 +101,12 @@ def cmd_projects(a):
     repo = Path(a.repo).resolve()
     projects = fc_core.all_projects(repo)
     if not projects:
-        sys.exit("no fast-coding projects in this repository; `fast-coding init --project <name>` creates one")
+        sys.exit("no compose projects in this repository; `compose init --project <name>` creates one")
     print(f"{'project':24} {'done':>9}  {'last activity':17} {'worktree':34} title / states")
     for name, (wt, proj) in projects.items():
         ps = project_summary(wt, proj)
         states = ", ".join(f"{n} {k}" for k, n in sorted(ps["counts"].items(), key=lambda kv: -kv[1]))
-        flag = "  HALTED (payment) -> fast-coding resume" if ps["halted"] else ""
+        flag = "  HALTED (payment) -> compose resume" if ps["halted"] else ""
         after = f"  (after {ps['after']})" if ps["after"] else ""
         print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{after}{flag}")
 
@@ -126,11 +126,11 @@ def cmd_status(a):
     if a.project:
         projects = {a.project: projects[a.project]} if a.project in projects else {}
     if not projects:
-        sys.exit("no fast-coding projects in this repository")
+        sys.exit("no compose projects in this repository")
     while True:
         text = "\n".join(render_status(wt, [proj]) for wt, proj in projects.values())
         if a.watch:
-            sys.stdout.write("\x1b[2J\x1b[H" + f"fast-coding status  {fc_core.now()}  (ctrl-c to stop)\n\n" + text)
+            sys.stdout.write("\x1b[2J\x1b[H" + f"compose status  {fc_core.now()}  (ctrl-c to stop)\n\n" + text)
             sys.stdout.flush()
             try:
                 time.sleep(2)
@@ -150,7 +150,7 @@ def cmd_done(a):
     for tid in ids:
         meta = next((m for m in fc_tasks.load_tasks(proj) if m["id"] == tid), None)
         if not meta:
-            print(f"{tid}: no such task (run `fast-coding sync` if it is new on Linear)")
+            print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
             continue
         res = proj / "results" / f"{tid}.json"
         prev = json.loads(res.read_text()) if res.exists() else {}

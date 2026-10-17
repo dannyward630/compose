@@ -2,16 +2,16 @@ import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempf
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 
-_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 SETTLED = "## Not yet specified\n\nNone\n\n### Codebase brief\n\nWhere things live.\n\n## Plan\n\nThe plan."
 STORY = {"id": "ENG-2", "title": "Story", "description": "## Acceptance criteria\n\n* it works", "status": "Todo", "blockedBy": []}
-# What `fast-coding tasks` printed before file_clashes was pulled out of it.
+# What `compose tasks` printed before file_clashes was pulled out of it.
 TASKS_OUT = """project p   3 tasks   stack order (bottom first): 001 <- 002 <- 003
   id   title                                    after      linear    files | protected | test
   001  T                                        -          ENG-3     a.go | 001_test.go | t
@@ -29,7 +29,7 @@ TASKS_OUT = """project p   3 tasks   stack order (bottom first): 001 <- 002 <- 0
 
 def task(ident, tid, blocked_by=(), crit="- works", **kv):
     kv = {"id": tid, "files": f"{tid}.go", "protected": f"{tid}_test.go", "test": "t", **kv}
-    desc = f"## Acceptance criteria\n{crit}\n\n```fast-coding\n" + "\n".join(f"{k}: {v}" for k, v in kv.items()) + "\n```\n"
+    desc = f"## Acceptance criteria\n{crit}\n\n```compose\n" + "\n".join(f"{k}: {v}" for k, v in kv.items()) + "\n```\n"
     return {"id": ident, "title": "T", "description": desc, "status": "Todo", "blockedBy": list(blocked_by), "parentId": "ENG-2"}
 
 
@@ -70,8 +70,8 @@ class SpecCheck(unittest.TestCase):
 
     def test_command_line_registers_spec_check(self):
         def cli(desc):
-            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py"), "spec-check", "--stdin"],
-                                  input=json.dumps(data([task("ENG-3", "001")], desc)), capture_output=True, text=True, env={**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"})
+            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "spec-check", "--stdin"],
+                                  input=json.dumps(data([task("ENG-3", "001")], desc)), capture_output=True, text=True, env={**os.environ, "COMPOSE_NO_TREEHOUSE": "1"})
         ok, bad = cli(SETTLED), cli("## Not yet specified\n\n- which color?")
         self.assertEqual((ok.returncode, ok.stdout.partition("\n")[0]), (0, "PASS ENG-1 feature"), ok.stderr)
         self.assertEqual(bad.returncode, 1, bad.stderr)
@@ -134,7 +134,7 @@ class SpecCheck(unittest.TestCase):
         repo = Path(tempfile.mkdtemp())
         for a in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
             subprocess.run(["git", *a], cwd=repo, check=True)
-        proj = repo / ".fast-coding" / "p"
+        proj = repo / ".compose" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.fc_tasks.sync_tasks(proj, data(clash, ""))
@@ -147,18 +147,18 @@ class SpecCheck(unittest.TestCase):
 
     def test_unsynced_project_stops_with_the_sync_message(self):
         repo = Path(tempfile.mkdtemp())
-        proj = repo / ".fast-coding" / "p"
+        proj = repo / ".compose" / "p"
         proj.mkdir(parents=True)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         self.assertIn("no tasks synced for p", str(e))
-        self.assertIn("fast-coding sync", str(e))
+        self.assertIn("compose sync", str(e))
 
     def test_synced_cache_prints_what_stdin_prints(self):
         d = data([task("ENG-3", "001"), {**STORY, "id": "ENG-11", "description": "TBD"}])
         repo = Path(tempfile.mkdtemp())
         (repo / "001_test.go").write_text("")
-        proj = repo / ".fast-coding" / "p"
+        proj = repo / ".compose" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.fc_tasks.sync_tasks(proj, d)

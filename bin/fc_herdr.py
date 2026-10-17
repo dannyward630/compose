@@ -152,7 +152,7 @@ def herdr_find_space(wt):
     return None
 
 def project_worktree(proj):
-    """The project's own checkout: proj is `<worktree>/.fast-coding/<name>`."""
+    """The project's own checkout: proj is `<worktree>/.compose/<name>`."""
     return Path(proj).resolve().parents[1]
 
 def live_agents():
@@ -187,7 +187,7 @@ def herdr_tabs(space):
     return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
 
 def herdr_status_tab(space, wt, slug):
-    """A `status` tab running `fast-coding status --watch`, so the product owner sees every task's state without asking."""
+    """A `status` tab running `compose status --watch`, so the product owner sees every task's state without asking."""
     if "status" in herdr_tabs(space):
         return
     r = herdr("tab", "create", "--workspace", space, "--label", "status", "--cwd", str(wt), "--no-focus") or {}
@@ -199,7 +199,7 @@ def herdr_status_tab(space, wt, slug):
 def herdr_label(session, label, cost, state="working"):
     """Display-only pane metadata: the state label the product owner reads next to the agent, and the running cost."""
     if session and session.get("pane"):
-        herdr("pane", "report-metadata", session["pane"], "--source", "fast-coding", "--state-label", f"{state}={label}",
+        herdr("pane", "report-metadata", session["pane"], "--source", "compose", "--state-label", f"{state}={label}",
               "--state-label", f"done={label}", "--token", f"cost=${cost:.4f}")
 
 IMPLEMENTERS_TAB = "implementers"
@@ -253,7 +253,7 @@ def herdr_verify_panes(space, wt, names):
 
 def herdr_stage(panes, name, state, message=""):
     if panes.get(name):
-        herdr("pane", "report-agent", panes[name], "--source", "fast-coding", "--agent", name, "--state", state, "--message", message, "--seq", str(time.time_ns()))
+        herdr("pane", "report-agent", panes[name], "--source", "compose", "--agent", name, "--state", state, "--message", message, "--seq", str(time.time_ns()))
 
 
 def herdr_space_is(space, name):

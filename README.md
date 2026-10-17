@@ -1,4 +1,4 @@
-# fast-coding
+# compose
 
 You talk to one agent, and it runs a whole software team for you.
 The team ships the way real teams do.
@@ -17,9 +17,9 @@ you, the product owner
       │    └── teammates         explore, test, build, verify
       ├── team lead              feature B, running at the same time
       │    └── ...
-      ├── planner                started on a ticket with /fast-coding:planner
-      ├── designer               started on a ticket with /fast-coding:designer
-      └── toolsmith              fixes fast-coding itself on its own branch
+      ├── planner                started on a ticket with /compose:planner
+      ├── designer               started on a ticket with /compose:designer
+      └── toolsmith              fixes compose itself on its own branch
 ```
 
 The engineering manager takes your request and hands each feature to its own team lead, so the features of one epic move forward at the same time.
@@ -32,7 +32,7 @@ The team leads steer their teammates while they work, and the engineering manage
 
 ## It ships software the way a real team does
 
-Run `/fast-coding <what you want>` and each feature moves through the same life cycle a good software team follows.
+Run `/compose <what you want>` and each feature moves through the same life cycle a good software team follows.
 
 1. **Discovery.**
    An explore teammate maps your codebase through graft, so no question, ticket, or plan rests on a guess about the code.
@@ -70,25 +70,25 @@ Run `/fast-coding <what you want>` and each feature moves through the same life 
     Passed tickets become one gh stack, and when you say so, each layer becomes a draft pull request for your reviewers to read and merge.
 
 Inside herdr, every agent works in its own pane, and you can type into any of them.
-Nothing is pushed until you say so, and fast-coding never merges anything.
+Nothing is pushed until you say so, and `compose` never merges anything.
 
 ## Start a planner or designer directly
 
 You don't have to start from an idea.
 Hand the engineering manager a ticket that already exists, and it starts the right teammate for it in its own pane.
 
-- `/fast-coding:planner <issue or Linear project link>` plans that feature, story, or task from where it stands.
-- `/fast-coding:designer <ticket> [--figma <file url or key>]` continues the ticket's design work in Figma; without a stored file, it asks you for one.
+- `/compose:planner <issue or Linear project link>` plans that feature, story, or task from where it stands.
+- `/compose:designer <ticket> [--figma <file url or key>]` continues the ticket's design work in Figma; without a stored file, it asks you for one.
 
 The engineering manager relays their questions to you, and you can answer there or in the teammate's own tab.
 
 ## When you step away
 
-Run `/fast-coding:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
+Run `/compose:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
 Your words pre-answer the questions they name, taken exactly as written and never stretched by analogy.
 Every answer it takes is logged, and a billing halt still notifies you.
-`/fast-coding:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
-When you are back, `/fast-coding:yolo off` prints a digest of your instructions, what was decided for you, what waits on you, what failed, what is done, and the cost.
+`/compose:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
+When you are back, `/compose:yolo off` prints a digest of your instructions, what was decided for you, what waits on you, what failed, what is done, and the cost.
 
 The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -96,7 +96,7 @@ The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 
 Code was never the bottleneck.
 The hard parts are deciding what to build and proving that it works.
-fast-coding puts its strongest model on exactly those two jobs and hands the typing to fast models that cost about a cent a task.
+`compose` puts its strongest model on exactly those two jobs and hands the typing to fast models that cost about a cent a task.
 You stay the one who decides.
 
 **Tests come from your intent.**
@@ -129,15 +129,15 @@ The figures in this README come from small benchmarks and one prototype, and the
 ## Quick start
 
 1. Install the tools listed in [docs/requirements.md](docs/requirements.md), or follow [docs/new-machine.md](docs/new-machine.md) step by step on a fresh machine.
-2. From this repo, install fast-coding with `ln -s "$PWD" ~/.claude/skills/fast-coding` and `ln -s "$PWD/bin/fast-coding" ~/.local/bin/`.
-   Run `fast-coding doctor` to confirm every tool and skill file it needs is there; each missing one prints with its install command.
+2. From this repo, install `compose` with `ln -s "$PWD" ~/.claude/skills/compose` and `ln -s "$PWD/bin/compose" ~/.local/bin/`.
+   Run `compose doctor` to confirm every tool and skill file it needs is there; each missing one prints with its install command.
 3. In the target repo, check out the branch the feature belongs on and open Claude Code.
-4. Run `/fast-coding <what you want>` and answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
+4. Run `/compose <what you want>` and answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
 5. Review the task list, say go, and read the stack it builds.
 
 ## When to use it
 
-Use fast-coding for features that split into small, independent pieces with clear tests.
+Use `compose` for features that split into small, independent pieces with clear tests.
 Endpoints, a module and its callers, a fixture and the code that handles it, a batch of related fixes, and throwaway prototypes are all good fits.
 Use it for anything you would rather review as a stack of small layers than as one big diff.
 
@@ -152,17 +152,17 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
 |---|---|
-| `fast-coding doctor` | Checks every tool and skill file fast-coding depends on and prints the install command for each missing one; `init` runs it first |
-| `fast-coding init --project <name> [--branch <branch>]` | Creates the project's branch (`fast-coding/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
-| `fast-coding tasks --project <name>` | Shows the task list for you to review before dispatch |
-| `fast-coding run --project <name>` | Dispatches the tasks to parallel implementers |
-| `fast-coding verify --project <name>` | Runs the local verify pipeline |
-| `fast-coding status [--project <name>] [--watch]` | Shows every project and every task |
-| `fast-coding stack --project <name> --submit` | Pushes the stack and opens draft PRs |
-| `fast-coding resume --project <name>` | Continues after a billing halt |
-| `fast-coding clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
-| `fast-coding yolo --project <name> [--push] [words]\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
-| `fast-coding workspace [<name>]` | Lists or switches billing workspaces |
+| `compose doctor` | Checks every tool and skill file `compose` depends on and prints the install command for each missing one; `init` runs it first |
+| `compose init --project <name> [--branch <branch>]` | Creates the project's branch (`compose/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
+| `compose tasks --project <name>` | Shows the task list for you to review before dispatch |
+| `compose run --project <name>` | Dispatches the tasks to parallel implementers |
+| `compose verify --project <name>` | Runs the local verify pipeline |
+| `compose status [--project <name>] [--watch]` | Shows every project and every task |
+| `compose stack --project <name> --submit` | Pushes the stack and opens draft PRs |
+| `compose resume --project <name>` | Continues after a billing halt |
+| `compose clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
+| `compose yolo --project <name> [--push] [words]\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
+| `compose workspace [<name>]` | Lists or switches billing workspaces |
 
 Every command is documented in [docs/cli.md](docs/cli.md).
 
@@ -171,7 +171,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | Page | Read it for |
 |---|---|
 | [requirements.md](docs/requirements.md) | Tools, accounts, keys, and files outside the repo |
-| [new-machine.md](docs/new-machine.md) | Setting fast-coding up on a new machine, step by step |
+| [new-machine.md](docs/new-machine.md) | Setting `compose` up on a new machine, step by step |
 | [how-it-works.md](docs/how-it-works.md) | The loop, changing course, projects, Linear levels, and model choices |
 | [cli.md](docs/cli.md) | Every command, manual mode, and flags |
 | [herdr.md](docs/herdr.md) | Watching and steering every agent inside herdr |
@@ -184,9 +184,9 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 Run the CLI tests with `python3 -m unittest discover -s tests`.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
 Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
-`bin/fast-coding` uses only the Python standard library, `jev/` is its own uv project, and `bp/` is one Node file with no dependencies.
+`bin/compose` uses only the Python standard library, `jev/` is its own uv project, and `bp/` is one Node file with no dependencies.
 
 ## Credits
 
-The way fast-coding organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
+The way `compose` organizes its agents comes from [firstmate](https://github.com/kunchenguid/firstmate).
 Its idea of one session that stays your single point of contact, with a crew that reports up to it, is what the engineering manager, team lead, and teammate roles here are adapted from.

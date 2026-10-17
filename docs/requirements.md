@@ -1,7 +1,7 @@
 # Requirements
 
 Setup is one install pass per machine, then four steps to wire up your keys.
-When you finish, fast-coding can run implementers on OpenRouter.
+When you finish, `compose` can run implementers on OpenRouter.
 
 ## Required
 
@@ -9,7 +9,7 @@ Install each of these once per machine.
 
 | Tool | Needed for | Install |
 |---|---|---|
-| Python 3.9+ | `bin/fast-coding` itself (standard library only) | ships with macOS |
+| Python 3.9+ | `bin/compose` itself (standard library only) | ships with macOS |
 | git 2.30+ | task clones, branches, diffs | Xcode Command Line Tools or Homebrew |
 | Node 22.19+ | pi, Lavish, the Frame0 MCP server, `node --test` repos | `brew install node` |
 | pi | the default implementer harness | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` |
@@ -28,14 +28,14 @@ Verify needs these tools on top of the required ones.
 | Tool | Needed for | Install |
 |---|---|---|
 | uv | runs `jev/` (Python 3.12+, fetched on first use) and Python test commands | `brew install uv`; `uv sync --project jev` once |
-| TypeSafe account | Jev acceptance checks, every jev e2e step, and the decision screen (`reflect`) | key in `~/.fast-coding/.env` |
+| TypeSafe account | Jev acceptance checks, every jev e2e step, and the decision screen (`reflect`) | key in `~/.compose/.env` |
 | Chrome and browser-harness | browser e2e cases | browser-harness comes with `jev/`; check with `cd jev && uv run browser-harness --doctor` |
 | `bp` | browser exploration and extension e2e | `ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp` from this repo ([bp/README.md](../bp/README.md)) |
 
 ## For the designer
 
 The designer and its crew need Framelink on top of the required tools.
-`fast-coding doctor` and `init` only warn when it is missing, and the designer's start stops.
+`compose doctor` and `init` only warn when it is missing, and the designer's start stops.
 
 | Tool | Needed for | Install |
 |---|---|---|
@@ -53,7 +53,7 @@ Each optional tool adds one feature.
 | Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); the MCP server comes through `npx` |
 | OpenCode | an alternative implementer per task, a `bench` column | `curl -fsSL https://opencode.ai/install \| bash` |
 
-fast-coding also uses gofmt and the target repo's own prettier when they are present.
+`compose` also uses gofmt and the target repo's own prettier when they are present.
 They format a task's files.
 When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
@@ -69,11 +69,11 @@ The implementers run on OpenRouter.
    Use base `https://openrouter.ai/api/v1`, api `openai-completions`, and model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per million tokens.
 3. Create the OpenRouter preset `glm-5-3-flash-fast` under Settings > Presets.
    Use model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, and fallbacks off.
-4. Write `~/.fast-coding/.env` (mode 600) with `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`, `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
+4. Write `~/.compose/.env` (mode 600) with `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, `TEXT_MODEL_API_KEY`, `TYPESAFE_API_KEY`, and `TYPESAFE_MODEL`.
    `TEXT_MODEL_API_KEY` takes the same OpenRouter key.
 
 The active [workspace](workspaces.md) key overrides all of these.
-The process environment wins over `~/.fast-coding/.env`.
+The process environment wins over `~/.compose/.env`.
 Secrets never live in this repo or on Linear issues.
 
 For OpenCode, keep the key in `~/.local/share/opencode/auth.json` and pin `options.provider.order: ["cerebras", "groq"]` in `~/.config/opencode/opencode.jsonc`.
@@ -83,10 +83,10 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 
 | Path | What |
 |---|---|
-| `~/.fast-coding/config.json` | workspaces, their keys, model choices (`FAST_CODING_CONFIG` moves it) |
-| `~/.fast-coding/.env` | verify's model keys |
-| `~/.fast-coding/model-probe.json` | the day's model availability probes |
-| `~/.fast-coding/tool-bugs.jsonl` | every project's tool-bug reports |
+| `~/.compose/config.json` | workspaces, their keys, model choices (`COMPOSE_CONFIG` moves it) |
+| `~/.compose/.env` | verify's model keys |
+| `~/.compose/model-probe.json` | the day's model availability probes |
+| `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports |
 | `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json`, `auth.json`, and the herdr extension |
@@ -95,8 +95,8 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 
 | Variable | Effect |
 |---|---|
-| `FAST_CODING_CONFIG` | path of the config file |
-| `FAST_CODING_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
-| `FAST_CODING_NO_GRAFT=1` | skip graft |
-| `FAST_CODING_FAKE_402=<provider>` | simulate a billing halt (tests) |
+| `COMPOSE_CONFIG` | path of the config file |
+| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
+| `COMPOSE_NO_GRAFT=1` | skip graft |
+| `COMPOSE_FAKE_402=<provider>` | simulate a billing halt (tests) |
 | `HERDR_ENV=1` with `HERDR_SOCKET_PATH` | marks a session inside herdr |
