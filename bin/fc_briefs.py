@@ -290,8 +290,8 @@ def cmd_toolsmith(a):
     if state == "maintainer":
         variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch, with a test that
    fails without the fix and passes with it, and run the full suite, not only your test.
-5. You never merge or push, and never write `Fixes #` in a commit message (a merge would close the issue before the product
-   owner's go): the `gh issue comment` with your branch and the fix's commit is what tells them.
+5. Commit the fix with a plain message and no `Fixes #` in it, then run `gh issue comment <n> --repo {repo}` with your branch
+   and the fix's commit. You never merge or push: the product owner's merge step closes the issue itself with `gh issue close <n> --comment`.
 6. Report `done` with the branch and the issue's URL.
 """
     else:
