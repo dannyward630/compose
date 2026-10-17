@@ -12,34 +12,6 @@ _spec.loader.exec_module(fc)
 
 ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
-# A stand-in graft: logs every call, lists what init would write, and writes it (or the graph) like the real one.
-FAKE_GRAFT = """#!/bin/sh
-echo "$*" >> "$GRAFT_LOG"
-case "$1 $2" in
-  "--version "*) echo 9.9.9;;
-  "init --no-agents")
-    case "$*" in *--dry-run*)
-      printf 'would write \\342\\200\\224 this repo:\\n  .claude/settings.json   graft statusline\\n  .claude/helpers/graft-hooks.cjs   hooks shim\\n  .mcp.json   mcpServers.graft\\n\\nnothing was written (--dry-run)\\n' >&2
-      exit 0;; esac
-    d="${@: -1}"; mkdir -p "$d/.claude/helpers"; echo x > "$d/.claude/helpers/graft-hooks.cjs"; echo '{}' > "$d/.claude/settings.json"; echo '{}' > "$d/.mcp.json";;
-  "build --no-gitignore") d="${@: -1}"; g="$d/graft"  # graft 0.23 keeps the graph in .trail/cache once the repo is on trail
-    if [ -d "$d/.trail/cache" ] || [ -d "$d/.trail/learnings" ]; then g="$d/.trail/cache"; fi
-    mkdir -p "$g"; echo index > "$g/INDEX.md";;
-  "ask "*) d="${@: -1}"; [ -f "$d/graft/INDEX.md" ] || [ -f "$d/.trail/cache/INDEX.md" ] || exit 1
-    printf '[graft] tokens saved ≈ 7,434 (95%%) — this pack ≈ 384 tok vs reading the 1 source file(s) whole ≈ 7,818 tok.\n\n'
-    printf 'graft ask — "%s"  (lexical)\n\n' "$2"
-    if [ "$2" = main ]; then cat <<'OUT'
-from Reggie's learning · Oct 17 · Use @trailhq/trail-code and call `trail`, not `graft`
-  decided     graft's npm package was renamed to `@trailhq/trail-code`.
-  .trail/learnings/2026-10-17-use-trailhq-trail-code.md
-
-[trail] starting from this learning gets you to a PR 3x faster.
-
-OUT
-    else printf '· no learnings about this yet\n\n'; fi
-    printf '1. main · function  [symbol]\n   server/main.go:L1-L1\n';;
-esac
-"""
 # A stand-in trail: logs every call, lists what init would write and writes it, and builds the map where trail 0.23 would.
 FAKE_TRAIL = r"""#!/bin/bash
 echo "$*" >> "$TRAIL_LOG"
@@ -81,19 +53,6 @@ def repo_with(files):
         (r / name).write_text(text)
     run("add", "-A"); run("commit", "-qm", "init")
     return r, run
-
-
-class FakeGraft(unittest.TestCase):
-    def setUp(self):
-        bindir = Path(tempfile.mkdtemp())
-        (bindir / "graft").write_text(FAKE_GRAFT.replace("#!/bin/sh", "#!/bin/bash"))
-        (bindir / "graft").chmod(stat.S_IRWXU)
-        self.log = bindir / "calls.log"
-        env = {**ENV, "PATH": f"{bindir}:{os.environ['PATH']}", "GRAFT_LOG": str(self.log)}
-        self.env = mock.patch.dict(os.environ, env); self.env.start(); self.addCleanup(self.env.stop)
-
-    def calls(self):
-        return self.log.read_text().splitlines() if self.log.exists() else []
 
 
 class FakeTrail(unittest.TestCase):
