@@ -6,6 +6,7 @@ os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
+sys.modules.pop("compose", None)  # another test file may have imported it against the fc_ modules just dropped
 import compose as fc
 import fc_steps, fc_auth
 
@@ -136,7 +137,7 @@ class Doctor(unittest.TestCase):
         checks = "".join(f'[ "$1 $2" = "{f}" ] && {{ echo "not logged in to github.com"; echo "token invalid" >&2; exit 1; }}\n' for f in fails)
         self.fake("gh", "gh version 2.94.0", body=f'echo "$*" >> {log}\n{checks}')
         out, status = io.StringIO(), 0
-        with mock.patch("sys.stdout", out):
+        with mock.patch("sys.stdout", out), self.rows("gh", "gh stack", "claude"):  # the rows these fakes stand for
             try:
                 fc.fc_init.cmd_doctor(None)
             except SystemExit as e:

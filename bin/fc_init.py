@@ -1,10 +1,7 @@
 import json, os, re, shutil, subprocess, sys
 from pathlib import Path
-import fc_core, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
+import fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
 
-
-FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
-FRAMELINK_ADD = f"claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry"
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
 
@@ -44,66 +41,28 @@ def cmd_trail(a):
     """Set trail up in the project's worktree again (after installing trail, or to rebuild the graph)."""
     setup_trail(fc_herdr.project_worktree(fc_core.project_dir(a)))
 
-HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
-TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
 TRAIL_INSTALL = "npm i -g @trailhq/trail-code"
-DEPS = (  # (name, how it is found, install, required, version floor); every tool and skill file the CLI and the skill text use.
-    # required is True, False, or the one role that needs it: doctor and init only warn about that one, and that role's start stops
-    ("herdr", "herdr", "see https://herdr.dev", True, HERDR_MIN),
-    ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, False, TREEHOUSE_MIN),
-    ("trail", "trail", TRAIL_INSTALL, False, None),
-    ("gh", "gh", "brew install gh", True, None),
-    ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", True, None),
-    ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", True, None),
-    ("npx", "npx", "brew install node", True, None),  # lavish-axi and figma-developer-mcp run through it
-    ("pi", "pi", "npm i -g @earendil-works/pi-coding-agent", False, None),
-    ("bp", "bp", "ln -s <compose checkout>/bp/bin/bp.mjs ~/.local/bin/bp", False, None),
-    ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", True, None),
-    ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", True, None),
-    ("framelink-figma", lambda: "framelink-figma" in user_mcp_servers(), FRAMELINK_ADD, "designer", None),  # every Figma read (0d, figma check/tree)
-    ("framelink-figma token", ".config/figma-context-mcp/.env",
-     "put a Figma personal access token in ~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600", "designer", None),
-    ("writing-plans skill", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers@claude-plugins-official", False, None),
-)
-
-def user_mcp_servers():
-    """The MCP servers Claude Code has at user scope (`claude mcp add --scope user`), read from ~/.claude.json without starting any."""
-    try:
-        return json.loads((Path.home() / ".claude.json").read_text()).get("mcpServers") or {}
-    except (OSError, ValueError):
-        return {}
-
-def version_of(tool):
-    """`<tool> --version` as a tuple of ints, or None when it prints nothing that looks like one."""
-    p = fc_core.sh([tool, "--version"], None, timeout=20, check=False)
-    m = re.search(r"\d+(?:\.\d+)+", p.stdout + p.stderr)
-    return tuple(map(int, m.group().split("."))) if m else None
 
 def check_deps(role=None):
-    """Print one `MISSING: <name> (install: <command>)` line per tool or skill file that is absent (or below its floor), without
-    any network call. Returns the required ones among them: those stop `init`; the optional ones (pi, bp, treehouse, trail) only warn.
-    With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
+    """Print one `MISSING: <name>[ <detail>] (install: <command>)` line per setup step that is not ok, without any network call;
+    a dangling owned link puts its detail inside the parens, and a key row names the key and its fix, never a value. Returns the
+    required steps that are missing: those stop `init`; the optional ones only warn. With a role, only what that role needs is
+    checked, and it is required (Framelink stops the designer's start)."""
     bad = []
-    for name, how, install, needed, floor in DEPS:
+    checkout = Path(__file__).resolve().parents[1]
+    for row in fc_steps.STEPS:
+        name, _, install, needed, _, mode = row
         if role and needed != role:
             continue
-        required = needed is True or (role is not None and needed == role)
-        if callable(how):
-            ok = how()
-        elif isinstance(how, list):
-            ok = shutil.which(how[0]) and fc_core.sh(how, None, timeout=20, check=False).returncode == 0
-        elif "/" in how:
-            ok = any(Path.home().glob(how)) if "*" in how else (Path.home() / how).exists()
-        else:
-            ok = shutil.which(how)
-        why = ""
-        if ok and floor:
-            v = version_of(how)
-            if v and v < tuple(map(int, floor.split("."))):
-                ok, why = False, f" {'.'.join(map(str, v))} is older than {floor}"
+        required = needed == "required" or (role is not None and needed == role)
+        ok, detail = fc_steps.check(row, checkout)
         if not ok:
-            note = "" if required else f" - needed for the {needed}" if needed else " - optional"
-            print(f"MISSING: {name}{why} (install: {install}){note}")
+            note = "" if required else f" - needed for the {needed}" if needed == "designer" else " - optional"
+            why = "" if mode == "key" else f" {detail}" if detail else ""
+            if detail.startswith("dangling link "):
+                print(f"MISSING: {name} ({detail}; install: {install}){note}")
+            else:
+                print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
                 bad.append(name)
     return bad
