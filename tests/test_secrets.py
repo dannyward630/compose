@@ -12,12 +12,12 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 _spec.loader.exec_module(fc)
 
 KEY = "sk-or-v1-test" + "0" * 52  # the workspace's OpenRouter key
-TYPESAFE = "ts-test-" + "1" * 32  # set under `env` in the config
+TYPESAFE = "ts-test-" + "1" * 32  # TypeSafe's key in auth.json
 OTHER = "other-test-" + "2" * 32  # any *_API_KEY under `env`
-DOTENV = "dotenv-test-" + "3" * 32  # TEXT_MODEL_API_KEY in ~/.compose/.env
+LINEAR = "lin-test-" + "3" * 32  # the Linear key in auth.json
 SECRET_NAMES = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "TYPESAFE_API_KEY", "OPENCODE_CONFIG_CONTENT", "OTHER_API_KEY")
 GIT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-USER_CONFIG = json.dumps({"openrouter_api_key": "sk-or-v1-user" + "4" * 52})  # the user's own ~/.compose/config.json, under the test's HOME
+USER_AUTH = json.dumps({"workspaces": {"default": {"openrouter": "sk-or-v1-user" + "4" * 52}}})  # the user's own ~/.compose/auth.json, under the test's HOME
 
 
 class Secrets(unittest.TestCase):
@@ -26,11 +26,12 @@ class Secrets(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
         cfg = self.root / "home" / "config.json"
         cfg.parent.mkdir()
-        cfg.write_text(json.dumps({"openrouter_api_key": KEY, "env": {"TYPESAFE_API_KEY": TYPESAFE, "OTHER_API_KEY": OTHER, "PLAIN": "x"}}))
-        (cfg.parent / ".env").write_text(f"TEXT_MODEL_API_KEY={DOTENV}\n")
+        cfg.write_text(json.dumps({"env": {"OTHER_API_KEY": OTHER, "PLAIN": "x"}}))
+        (cfg.parent / "auth.json").write_text(json.dumps({"workspaces": {"default": {"openrouter": KEY, "linear": LINEAR}}, "typesafe": TYPESAFE}))
         (self.root / "user" / ".compose").mkdir(parents=True)
-        (self.root / "user" / ".compose" / "config.json").write_text(USER_CONFIG)
+        (self.root / "user" / ".compose" / "auth.json").write_text(USER_AUTH)
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc.fc_config, "ENV_FILE", cfg.parent / ".env"),
+                  mock.patch.object(fc.fc_config, "AUTH_PATH", cfg.parent / "auth.json"),
                   mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None),
                   mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS)), mock.patch.object(fc.fc_core, "SECRET_VALUES", set()),
                   mock.patch.dict(os.environ, {**GIT, "OPENCODE_CONFIG_CONTENT": "{}", "HOME": str(self.root / "user")})):
@@ -45,7 +46,7 @@ class Secrets(unittest.TestCase):
         self.assertEqual(Path(config).name, "config.json")
 
     def assertClean(self, text, names=True):
-        for v in (KEY, TYPESAFE, OTHER, DOTENV):
+        for v in (KEY, TYPESAFE, OTHER, LINEAR):
             self.assertNotIn(v, text)
         for n in SECRET_NAMES if names else ():
             self.assertNotIn(n, text)
@@ -134,12 +135,13 @@ class Secrets(unittest.TestCase):
         self.assertIn("WARNING: ~/.compose changed while", out.getvalue())
         self.assertIn("auth.json", out.getvalue())
 
-    def test_harnesses_get_the_key_but_not_in_the_env_their_tools_inherit(self):
+    def test_harnesses_get_the_key_but_no_other_secret(self):
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
         with mock.patch.object(subprocess, "run", run):
             fc.fc_models.pi_turn(str(self.root), "openrouter-fast/x/y", "hi")
         cmd, env = run.call_args[0][0], run.call_args[1]["env"]
-        self.assertEqual(cmd[cmd.index("--api-key") + 1], KEY)
+        self.assertClean(json.dumps(cmd))  # pi's key is in its own env only, never in argv
+        self.assertTrue(env.pop("OPENROUTER_API_KEY") == KEY, "pi's env lacks the workspace key")
         self.assertIn("PLAIN", env)
         self.assertClean(json.dumps(env))
         self.assertScratch(env["COMPOSE_CONFIG"])
@@ -157,7 +159,7 @@ class Secrets(unittest.TestCase):
         self.assertClean(json.dumps(fc.fc_claude.headless_env()))
         self.assertScratch(fc.fc_claude.headless_env()["COMPOSE_CONFIG"])
 
-    def test_the_herdr_pi_pane_gets_no_key_in_its_env(self):
+    def test_the_herdr_pi_pane_gets_only_the_openrouter_key_in_its_env(self):
         panes, starts = [], []
         with mock.patch.object(fc.fc_herdr, "herdr", return_value=None), \
                 mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env: panes.append(env) or "p1"), \
@@ -166,14 +168,15 @@ class Secrets(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter-fast/x/y", "hi", None,
                                          {"meta": {"id": "001"}, "proj": self.root / "proj", "space": "s"}, timeout=1)
+        self.assertTrue(panes[0].pop("OPENROUTER_API_KEY") == KEY, "the pane's env lacks the workspace key")
         self.assertClean(json.dumps(panes[0]))
         self.assertScratch(panes[0]["COMPOSE_CONFIG"])
-        self.assertEqual(starts[0][starts[0].index("--api-key") + 1], KEY)
+        self.assertClean(json.dumps(starts[0]))
 
     # ---------- the scrub half ----------
 
     def test_test_output_that_prints_a_key_is_scrubbed_everywhere_it_goes(self):
-        (self.root / "leak").write_text(f"{KEY} {TYPESAFE} {OTHER} {DOTENV}")
+        (self.root / "leak").write_text(f"{KEY} {TYPESAFE} {OTHER} {LINEAR}")
         proj, prompts = self.run_task(f"python3 -c \"print(open('{self.root / 'leak'}').read()); assert open('a.txt').read().strip()=='yes'\"")
         self.assertIn(fc.fc_core.REDACTED, (proj / "results" / "001.test.log").read_text())
         self.assertClean(self.results_text(proj), names=False)
@@ -187,9 +190,9 @@ class Secrets(unittest.TestCase):
             body = {"choices": [{"message": {"content": '{"summary": "x"}'}}], "usage": {}}
             return mock.MagicMock(__enter__=lambda s: io.StringIO(json.dumps(body)), __exit__=lambda *a: False)
         with mock.patch("urllib.request.urlopen", urlopen):
-            fc.fc_models.fast_json({"TEXT_MODEL_API_KEY": DOTENV}, f"system {KEY}", f"user {TYPESAFE}")
+            fc.fc_models.fast_json({"TEXT_MODEL_API_KEY": KEY}, f"system {KEY}", f"user {TYPESAFE}")
             fc.fc_models.jev_ask({"TYPESAFE_API_KEY": TYPESAFE}, {}, {"evidence": f"saw {OTHER}"}, {"q": {"instructions": KEY}}, "t")
-        self.assertEqual([r.get_header("Authorization") for r in sent], [f"Bearer {DOTENV}", f"Bearer {TYPESAFE}"])
+        self.assertEqual([r.get_header("Authorization") for r in sent], [f"Bearer {KEY}", f"Bearer {TYPESAFE}"])
         for r in sent:
             self.assertClean(r.data.decode(), names=False)
             self.assertIn(fc.fc_core.REDACTED, r.data.decode())
@@ -198,7 +201,7 @@ class Secrets(unittest.TestCase):
             fc.fc_implement.implementer(str(self.root), "pi:x/y", f"fix this: {KEY}")
         self.assertEqual(seen, [f"fix this: {fc.fc_core.REDACTED}"])
 
-    def test_results_files_and_the_cli_output_are_scrubbed_but_the_config_keeps_its_keys(self):
+    def test_results_files_and_the_cli_output_are_scrubbed_but_auth_json_keeps_its_keys(self):
         proj = self.root / "proj"
         (proj / "results").mkdir(parents=True)
         fc.fc_core.atomic_write(proj / "results" / "001.json", json.dumps({"log": [{"test_output": KEY}]}))
@@ -207,10 +210,10 @@ class Secrets(unittest.TestCase):
         self.assertClean(self.results_text(proj), names=False)
         self.assertIn(fc.fc_core.REDACTED, (proj / "results" / "changes" / "C1.json").read_text())
         out = io.StringIO()
-        fc.fc_core.Scrubbed(out).write(f"error {DOTENV}\n")
+        fc.fc_core.Scrubbed(out).write(f"error {LINEAR}\n")
         self.assertEqual(out.getvalue(), f"error {fc.fc_core.REDACTED}\n")
-        fc.fc_config.write_config(fc.fc_config.read_config())
-        self.assertIn(KEY, fc.fc_config.CONFIG_PATH.read_text())
+        fc.fc_config.fc_auth.set_key(fc.fc_config.AUTH_PATH, "w", "openrouter", OTHER)
+        self.assertEqual(fc.fc_config.fc_auth.read_auth(fc.fc_config.AUTH_PATH)["workspaces"], {"default": {"openrouter": KEY, "linear": LINEAR}, "w": {"openrouter": OTHER}})
 
 
 if __name__ == "__main__":

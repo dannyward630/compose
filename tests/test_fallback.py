@@ -422,6 +422,61 @@ class Workspaces(unittest.TestCase):
                 ws(*bad)
 
 
+class PiKeyFromEnv(unittest.TestCase):
+    """pi gets the OpenRouter key from its environment only: never in argv, never from .env."""
+    KEY, MODELS = "sk-or-test", ("pi:openrouter-fast/z-ai/glm@preset/p", "pi:openrouter/x/y", "pi:x/y")
+
+    def setUp(self):
+        env = Path(tempfile.mkdtemp()) / ".env"
+        env.write_text('TEXT_MODEL_API_KEY="sk-or-dotenv"\n')
+        for p in (mock.patch.object(fc.fc_config, "ENV_FILE", env), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", self.KEY)):
+            p.start(); self.addCleanup(p.stop)
+
+    def keyless(self, argv):
+        self.assertFalse([x for x in argv if x == "--api-key" or "sk-or" in str(x)], argv)
+
+    def pi_turn(self, environ):
+        run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
+        with mock.patch.object(subprocess, "run", run), mock.patch.dict(os.environ, environ, clear=True):
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "openrouter/x/y", "hi")
+        return run.call_args[0][0], run.call_args[1]["env"]
+
+    def test_pi_turn_passes_the_process_key_unchanged_and_none_in_argv(self):
+        for workspace_key in (self.KEY, None):
+            with self.subTest(workspace_key=workspace_key), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", workspace_key):
+                argv, env = self.pi_turn({"PATH": os.environ["PATH"], "OPENROUTER_API_KEY": "sk-or-env"})
+                self.assertEqual(env["OPENROUTER_API_KEY"], "sk-or-env")
+                self.keyless(argv)
+
+    def test_pi_turn_never_reads_dotenv_for_the_key(self):
+        argv, env = self.pi_turn({"PATH": os.environ["PATH"]})
+        self.assertNotIn("OPENROUTER_API_KEY", env)
+        self.keyless(argv)
+
+    def test_probe_carries_no_key_and_pi_key_args_is_gone(self):
+        for model in self.MODELS:
+            self.keyless(fc.fc_models.probe_command(model))
+        self.assertFalse(hasattr(fc.fc_models, "pi_key_args"))
+
+    def test_pi_teammate_start_carries_no_key(self):
+        for model in self.MODELS:
+            proj, calls = Path(tempfile.mkdtemp()) / ".compose" / "shop", []
+            proj.mkdir(parents=True)
+            replies = {("agent", "list"): {"agents": []}, ("tab", "create"): {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}},
+                       ("agent", "get"): {"agent": {"agent_status": "working"}}}
+            herdr = lambda *args, **kw: calls.append(args) or replies.get(args[:2], {})
+            a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": model})
+            with self.subTest(model=model), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                    mock.patch.object(time, "sleep"), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                    mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
+                    mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
+                    mock.patch("builtins.print"):
+                fc.fc_crew.cmd_crew(a)
+                start = next(c for c in calls if c[:2] == ("agent", "start"))
+                self.assertEqual(start[start.index("--model") + 1], model[3:])
+                self.keyless(start)
+
+
 class RetryMessage(unittest.TestCase):
     def run_three(self, summary="", backup=None, session="s", reader_cost=0.0):
         """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path);
