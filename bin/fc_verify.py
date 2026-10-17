@@ -423,9 +423,9 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         if rnd and fc_models.fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
             model = fc_models.fallback_for(model)
         fc_core.say(f"fix    start round {rnd + 1}  model={model}")
-        pack = fc_implement.graft_pack(repo, findings[:400])
+        pack = fc_implement.trail_pack(repo, findings[:400])
         prompt = (f"REPOSITORY ROOT: {repo}\nEvery edit must be under that root.\n\n" +
-                  (f"CONTEXT PACK from graft (exact file:line). Use it instead of exploring.\n{pack}\n\n" if pack else "") +
+                  (f"CONTEXT PACK from trail (exact file:line). Use it instead of exploring.\n{pack}\n\n" if pack else "") +
                   "Verification of this repository failed. Fix ONLY the findings below with the smallest change. "
                   f"Do not edit these files: {', '.join(protected) or 'none'}. Do not weaken or delete tests. "
                   "Keep behavior the tests already cover. Keep the code simple; do not restructure; " + SIMPLICITY_BAR.replace("no hardening.", "no hardening beyond the findings.") + " "
