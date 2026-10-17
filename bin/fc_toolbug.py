@@ -60,19 +60,66 @@ def issue_text(raw, login=None):
 def gh_status():
     """(state, login): "maintainer" when the login has push on REPO, "reporter" when it does not, ("no-gh", None) when gh is
     absent or not logged in."""
-    raise NotImplementedError("gh_status")
+    import subprocess
+    def gh(*args):
+        try:
+            return subprocess.run(["gh", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            return None
+    p = gh("api", "user", "--jq", ".login")
+    if p is None or p.returncode:
+        return "no-gh", None
+    login = p.stdout.strip()
+    q = gh("api", f"repos/{REPO}", "--jq", ".permissions.push")
+    return ("maintainer" if q is not None and q.returncode == 0 and q.stdout.strip() == "true" else "reporter", login)
 
 def open_matches(title):
     """The open issues on REPO a search for the title's key terms finds: [{"number", "title", "url"}], [] when gh fails."""
-    raise NotImplementedError("open_matches")
+    import json, subprocess
+    symptom = title.partition(": ")[2] or title
+    try:
+        p = subprocess.run(["gh", "issue", "list", "--repo", REPO, "--state", "open", "--search", symptom,
+                            "--json", "number,title,url", "--limit", "5"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return []
+    return json.loads(p.stdout) if p.returncode == 0 else []
 
 def post(title, body, comment=None):
     """Open a `bug` issue on REPO, or comment on issue number `comment`; the URL gh prints, None when gh fails."""
-    raise NotImplementedError("post")
+    import subprocess
+    args = (["issue", "comment", str(comment), "--repo", REPO, "--body", body] if comment is not None
+            else ["issue", "create", "--repo", REPO, "--label", "bug", "--title", title, "--body", body])
+    try:
+        p = subprocess.run(["gh", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return None
+    if p.returncode:
+        return None
+    out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
+    return out[-1] if out else None
 
 def record_issue(project, url):
     """Set `issue` on the project's newest tool-bugs.jsonl entry; False when the project has none."""
-    raise NotImplementedError("record_issue")
+    import json
+    from pathlib import Path
+    path = Path(fc_crew.TOOL_BUGS)
+    if not path.exists():
+        return False
+    lines = path.read_text().splitlines(keepends=True)
+    def project_of(line):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            return None
+        return d.get("project") if isinstance(d, dict) else None
+    hits = [i for i, l in enumerate(lines) if project_of(l) == project]
+    if not hits:
+        return False
+    entry = json.loads(lines[hits[-1]])
+    entry["issue"] = url
+    lines[hits[-1]] = json.dumps(entry) + "\n"
+    path.write_text("".join(lines))
+    return True
 
 def cmd_tool_bug(a):
     """`tool-bug file --body <file> [--comment N | --new] [--approved]`: scrub, then post on the maintainer's machine or with
