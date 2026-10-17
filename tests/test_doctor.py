@@ -138,5 +138,48 @@ class Doctor(unittest.TestCase):
         self.assertFalse((repo.parent / "compose-p").exists())
 
 
+    GH_WARNING = "WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)"
+
+    def doctor(self, fails=()):
+        """cmd_doctor in process with a gh that logs its calls and exits 1 (chattering on both streams) for each `fails` first
+        word pair, such as "auth status"; returns (exit status, stdout lines, gh calls)."""
+        log = self.bin.parent / "gh-calls"
+        checks = "".join(f'[ "$1 $2" = "{f}" ] && {{ echo "not logged in to github.com"; echo "token invalid" >&2; exit 1; }}\n' for f in fails)
+        self.fake("gh", "gh version 2.94.0", body=f'echo "$*" >> {log}\n{checks}')
+        out, status = io.StringIO(), 0
+        with mock.patch("sys.stdout", out):
+            try:
+                fc.fc_init.cmd_doctor(None)
+            except SystemExit as e:
+                status = 1 if isinstance(e.code, str) else e.code
+        return status, out.getvalue().splitlines(), log.read_text().splitlines() if log.exists() else []
+
+    def test_doctor_warns_when_gh_is_logged_out(self):
+        status, lines, calls = self.doctor(fails=["auth status"])
+        self.assertEqual((status, lines), (0, [self.GH_WARNING, "every tool compose needs is installed"]))  # gh's own text stays out
+        self.assertIn("auth status", calls)
+
+    def test_doctor_is_quiet_when_gh_is_logged_in(self):
+        status, lines, calls = self.doctor()
+        self.assertEqual((status, lines), (0, ["every tool compose needs is installed"]))
+        self.assertIn("auth status", calls)
+
+    def test_doctor_shows_both_warnings_and_still_passes(self):
+        self.herdr_config('[ui.toast]\ndelivery = "system"\n')
+        status, lines, _ = self.doctor(fails=["auth status"])
+        self.assertEqual(status, 0)
+        self.assertEqual(sorted(l.split(":")[0] for l in lines[:-1]), ["WARNING", "WARNING"])
+        self.assertIn(self.GH_WARNING, lines)
+        self.assertEqual(lines[-1], "every tool compose needs is installed")
+
+    def test_a_missing_tool_stops_doctor_before_the_gh_auth_check(self):
+        (self.bin / "claude").unlink()
+        self.assertEqual(self.doctor(fails=["auth status"]), (1, ["MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"],
+                                                              ["stack --version"]))
+        self.fake("claude", TOOLS["claude"])  # gh itself on PATH without its stack extension stops it the same way
+        status, lines, calls = self.doctor(fails=["auth status", "stack --version"])
+        self.assertEqual((status, lines), (1, ["MISSING: gh stack (install: gh extension install github/gh-stack)"]))
+        self.assertNotIn("auth status", calls)
+
 if __name__ == "__main__":
     unittest.main()
