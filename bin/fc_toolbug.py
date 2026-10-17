@@ -124,4 +124,43 @@ def record_issue(project, url):
 def cmd_tool_bug(a):
     """`tool-bug file --body <file> [--comment N | --new] [--approved]`: scrub, then post on the maintainer's machine or with
     --approved, else save a draft under fc_config.CONFIG_PATH.parent / "tool-bugs"; search before every create, and record the URL."""
-    raise NotImplementedError("cmd_tool_bug")
+    import sys, time
+    from pathlib import Path
+
+    raw = Path(a.body).read_text()
+    state, login = gh_status()
+    try:
+        title, body = issue_text(raw, login)
+    except ValueError as e:
+        sys.exit(str(e))
+
+    def save_draft():
+        d = fc_config.CONFIG_PATH.parent / "tool-bugs"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / (time.strftime("%Y%m%d-%H%M%S") + ".md")
+        p.write_text(f"# {title}\n\n{body}")
+        return p
+
+    if state == "no-gh" or (state == "reporter" and not a.approved):
+        p = save_draft()
+        print(f"saved {p}\nto post it: compose tool-bug file --project {a.project} --body {p} --approved"
+              + (", after `gh auth login`" if state == "no-gh" else ""))
+        return
+    if a.comment is not None:
+        url = post(title, body, comment=a.comment)
+    elif a.new:
+        url = post(title, body)
+    else:
+        matches = open_matches(title)
+        if matches:
+            for m in matches:
+                print(f"#{m['number']} {m['title']} {m['url']}")
+            print("an open issue may already cover this: comment on it with --comment <n>, or file a new one with --new")
+            sys.exit(2)
+        url = post(title, body)
+    if url is None:
+        p = save_draft()
+        print(f"saved {p}\ngh could not post it; retry with: compose tool-bug file --project {a.project} --body {p} --approved")
+        sys.exit(1)
+    print(url)
+    record_issue(a.project, url)
