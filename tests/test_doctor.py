@@ -6,7 +6,7 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import compose as fc
-import fc_steps
+import fc_steps, fc_auth
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
 TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "trail": "0.23.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
@@ -168,6 +168,64 @@ class Doctor(unittest.TestCase):
         status, lines, calls = self.doctor(fails=["auth status", "stack --version"])
         self.assertEqual((status, lines), (1, ["MISSING: gh stack (install: gh extension install github/gh-stack)"]))
         self.assertNotIn("auth status", calls)
+
+class DoctorNotes(unittest.TestCase):
+    """Without claude, doctor names the rows that need it on one line under the Claude Code install line; keys still in
+    config.json or .env get one WARNING naming each key and file, never a value."""
+    setUp, fake, herdr_config = Doctor.setUp, Doctor.fake, Doctor.herdr_config
+    CURL = "curl -fsSL https://claude.ai/install.sh | bash"
+    ROWS = (("claude", "claude", CURL, "required", False, "manual"), ("gh", "gh", "brew install gh", "required", False, "run"),
+            ("i-have-adhd skill", lambda c: (False, ""), "claude plugin install a", "required", True, "run"),
+            ("superpowers", lambda c: (False, ""), "claude plugin install b", "default", True, "run"),
+            ("herdr claude integration", lambda c: (True, ""), "herdr integration install claude", "default", True, "run"),
+            ("uv", lambda c: (False, ""), "brew install uv", "default", False, "run"))
+
+    def doctor(self, rows=ROWS, keys=()):
+        out, code = io.StringIO(), 0
+        with mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_auth, "old_keys", return_value=list(keys)) as self.old:
+            with mock.patch("sys.stdout", out):
+                try:
+                    fc.fc_init.cmd_doctor(None)
+                except SystemExit as e:
+                    code = e.code
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.bad = fc.fc_init.check_deps()
+        return code, out.getvalue().splitlines()
+
+    def test_rows_waiting_on_claude_share_one_line(self):
+        (self.bin / "claude").unlink()
+        code, lines = self.doctor()
+        missing = [l for l in lines if l.startswith("MISSING")]
+        self.assertEqual((code, self.bad, len(missing)), (1, ["claude", "i-have-adhd skill"], 2))
+        self.assertTrue(re.match(r"MISSING: claude\b", missing[0]) and self.CURL in missing[0] and missing[1].startswith("MISSING: uv"), missing)
+        wait = [l for l in lines if l.startswith("waiting on Claude Code: ")]
+        self.assertEqual(len(wait), 1, lines)
+        self.assertGreater(lines.index(wait[0]), lines.index(missing[0]))
+        self.assertEqual([n in wait[0] for n in ("i-have-adhd skill", "superpowers", "herdr claude integration", "uv", "gh")], [True, True, False, False, False])
+
+    def test_with_claude_rows_report_like_any_other(self):
+        code, lines = self.doctor()
+        self.assertEqual((code, self.bad), (1, ["i-have-adhd skill"]))
+        self.assertEqual([l.split(" (")[0] for l in lines if l.startswith(("MISSING", "waiting"))],
+                         ["MISSING: i-have-adhd skill", "MISSING: superpowers", "MISSING: uv"])
+
+    def test_old_keys_warn_once_by_name_and_file(self):
+        cfg, env = self.home / "config.json", self.home / ".env"
+        cfg.write_text(json.dumps({"openrouter_api_key": "sk-or-test", "workspaces": {"w": {"linear_api_key": "lin-test"}}}))
+        env.write_text("TYPESAFE_API_KEY=ts-test\n")
+        keys = [("openrouter_api_key", cfg), ("workspaces.w.linear_api_key", cfg), ("TYPESAFE_API_KEY", env)]
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc.fc_config, "ENV_FILE", env):
+            self.assertEqual(self.doctor(self.ROWS[:2]), (0, ["every tool compose needs is installed"]))
+            code, lines = self.doctor(self.ROWS[:2], keys)
+            self.assertEqual((self.old.call_args, lines[-1]), (mock.call(cfg, env), "every tool compose needs is installed"))
+            warn = [l for l in lines if l.startswith("WARNING:")]
+            self.assertEqual((code, len(warn)), (0, 1), lines)
+            self.assertTrue(all(str(x) in warn[0] for k in keys for x in k) and "auth.json" in warn[0], warn)
+            self.assertFalse({"sk-or-test", "lin-test", "ts-test"} & set(re.findall(r"[\w-]+", "\n".join(lines))))
+            self.herdr_config('[ui.toast]\ndelivery = "system"\n')
+            code, lines = self.doctor(self.ROWS[:2], keys)
+            self.assertEqual(sorted(l.startswith("WARNING: herdr") for l in lines if l.startswith("WARNING:")), [False, True])
+
 
 if __name__ == "__main__":
     unittest.main()
