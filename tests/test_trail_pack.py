@@ -1,4 +1,4 @@
-import stat, subprocess, tempfile
+import os, stat, subprocess, tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -53,7 +53,8 @@ class TrailPack(FakeTrail):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt); (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value="PACK"):
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value="PACK"), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.fc_implement.run_task(repo, Path(tempfile.mkdtemp()), task, 3)
         self.assertIn('CONTEXT PACK from the repo\'s trail graph (exact file:line, with source). Use it instead of exploring. '
                       'If you need more, run `trail ask "<question>"` or `trail callers <symbol>`; do not open unrelated files.\nPACK', prompts[0])
