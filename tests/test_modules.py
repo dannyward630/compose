@@ -1,8 +1,12 @@
 import ast
 import hashlib
+import os
+import re
 import subprocess
+import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
@@ -16,16 +20,16 @@ MODULES = {
     "fc_claude": ("is_claude", "claude_id", "headless_env", "NO_ATTRIBUTION", "crew_settings", "claude_once", "claude_trusted", "untrusted"),
     "fc_models": ("opencode", "RATE_LIMIT_MARK", "pi_error", "pi_turn", "fallback_for", "PaymentRequired", "PAY_RE", "TOP_UP", "payment_check", "http_json", "RateLimited", "parse_pi_session", "_PROBED", "pi_id", "pi_key_args", "pi_turn_key_args", "probe_command", "probe_result", "model_available", "TRANSIENT", "probe_once", "probe_clear", "cmd_models", "TEST_TIMEOUT", "TURN_TIMEOUT", "turn_timeout", "payment_halt", "lenient_json", "fast_env", "fast_json", "EmptyReply", "BadReply", "fast_object", "ConfirmError", "confirm_call", "jev_ask", "reask_criterion"),
     "fc_herdr": ("HERDR_SPACES", "PI_HERDR_EXT", "herdr_env", "herdr", "herdr_error", "herdr_text", "herdr_ready", "herdr_dialog", "herdr_await_start", "herdr_start_crew", "pane_processes", "pane_launching", "pane_kill", "agent_name", "herdr_main_repo", "herdr_find_space", "project_worktree", "live_agents", "herdr_space", "herdr_tabs", "herdr_status_tab", "herdr_label", "IMPLEMENTERS_TAB", "herdr_implementer_pane", "herdr_agent_start", "herdr_verify_panes", "herdr_stage", "herdr_space_is"),
-    "fc_worktree": ("replace_branch", "replaced_tips", "task_branches", "stack_order", "TREEHOUSE_INSTALL", "use_treehouse", "treehouse", "slot_on", "pool_shortfall", "is_slot", "default_branch", "release_slot", "slots", "stack_worktree", "exclude_paths", "TOOL_DIRS", "graph_dir", "ignore_tool_files", "dep_dirs", "stamp_graft_wiring", "ready_checkout", "names_lockfile", "adopt_installs", "STACK_LOCK", "GENERATED_RE", "LOCKFILE_RE", "LOCKFILES"),
+    "fc_worktree": ("replace_branch", "replaced_tips", "task_branches", "stack_order", "TREEHOUSE_INSTALL", "use_treehouse", "treehouse", "slot_on", "pool_shortfall", "is_slot", "default_branch", "release_slot", "slots", "stack_worktree", "exclude_paths", "TOOL_DIRS", "graph_dir", "ignore_tool_files", "dep_dirs", "stamp_trail_wiring", "ready_checkout", "names_lockfile", "adopt_installs", "STACK_LOCK", "GENERATED_RE", "LOCKFILE_RE", "LOCKFILES"),
     "fc_layers": ("CONFIG_FILE_RE", "layer_prefix", "commit_message", "chain_order", "STACK_STOP", "linearize", "_linearize", "REVIEW_LAYER_LINES", "commit_facts", "group_units", "review_units", "cherry_pick_same", "record_layers", "group_by_record", "build_layers", "layer_note", "layer_pr", "gh_pr_text", "write_pr_text", "register_stack", "cmd_stack"),
     "fc_change": ("REFLECT_THRESHOLD", "REFLECT_EVIDENCE_CAP", "REFLECT_LOCK", "REFLECT_CHOICES", "REFLECT_RULES", "map_section", "LIST_ITEM", "decision_lines", "changes_dir", "last_change_done", "evidence_cut", "evidence_since", "reflect", "cmd_hold", "CHANGE_SYNC_MAX", "CHANGE_CONTENT", "load_change", "write_change", "change_ids", "open_change", "change_line", "fresh_sync", "begin_change", "change_diff", "issue_label", "change_comment", "change_start", "change_done", "undo_edits", "change_undo", "cmd_change", "cmd_reflect", "reflect_counts", "REFLECT_ON"),
     "fc_frame0": ("FRAME0_APP", "FRAME0_PORTS", "FRAME0_CLIENT", "frame0_port", "frame0_pid", "frame0_register", "frame0_command", "frame0_empty_doc", "frame0_up", "frame0_save", "frame0_down", "cmd_frame0"),
     "fc_crew": ("CREW_STATES", "CLI_REPO", "TOOL_BUGS", "crew_dir", "crew_reports", "tab_closed", "scratch_dir", "listeners_under", "stop_listeners_under", "TRUST_PROMPT", "crew_preamble", "crew_pick", "crew_pick_full", "crew_fallback", "crew_model", "crew_effort", "crew_workdir", "cmd_crew", "GUARDED_TOOLS", "GUARDED_ROLES", "CLI_FILE", "guard_decision", "cmd_guard", "SKILL_DIR", "SKILL_SEEN", "SKILL_FILES", "skill_hashes", "skill_changed", "skill_notice", "cmd_skillcheck", "write_report", "crew_unstart", "crew_record", "crew_reporting_to", "crew_reregister", "crew_attention", "desktop_notify", "manager_attention", "cmd_report", "log_tool_bug", "close_after_turn", "crew_closed", "TASK_TAB", "VERIFY_TAB", "teardown", "cmd_teardown"),
     "fc_toolbug": ("REPO", "SECTIONS", "TOKEN_RE", "scrub", "environment", "issue_text", "gh_status", "open_matches", "post", "record_issue", "cmd_tool_bug"),
-    "fc_init": ("FRAMELINK_ENV", "FRAMELINK_ADD", "GRAFT_INIT", "existing_repo", "setup_graft", "cmd_graft", "HERDR_MIN", "TREEHOUSE_MIN", "GRAFT_INSTALL", "DEPS", "user_mcp_servers", "version_of", "check_deps", "herdr_toml", "herdr_toast_warning", "cmd_doctor", "cmd_init", "merge_evidence", "merged_into", "own_commits", "live_crew", "clean_project", "cmd_clean"),
+    "fc_init": ("FRAMELINK_ENV", "FRAMELINK_ADD", "TRAIL_INIT", "existing_repo", "setup_trail", "cmd_trail", "HERDR_MIN", "TREEHOUSE_MIN", "TRAIL_INSTALL", "DEPS", "user_mcp_servers", "version_of", "check_deps", "herdr_toml", "herdr_toast_warning", "cmd_doctor", "cmd_init", "merge_evidence", "merged_into", "own_commits", "live_crew", "clean_project", "cmd_clean"),
     "fc_figma": ("FIGMA_CONNECTOR", "FRAMELINK_SETUP", "framelink_fetch", "DESIGNER_BRIEF", "cmd_designer", "DESIGN_CONCURRENCY", "design_brief", "cmd_designcrews", "TREE_CHUNK_CHARS", "hard_split", "split_node", "tree_chunks", "combine_choices", "figma_judge_chunks", "figma_reask", "store_figma", "figma_tree", "cmd_figma"),
     "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "cmd_toolsmith", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_open", "waiting_writers", "test_blockers", "test_ready", "test_worktree", "collect_tests"),
-    "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "graft_pack", "branch_budget", "task_base", "PRETTIER_EXT", "format_files", "condense_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
+    "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "trail_pack", "branch_budget", "task_base", "PRETTIER_EXT", "format_files", "condense_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
     "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "driver_e2e", "jev_e2e"),
     "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "run_stages", "verify_root", "cmd_verify", "fix_strays", "fix_message", "verify_rounds"),
     "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "cmd_run", "preflight", "run_tasks", "reflect_task", "cmd_resume"),
@@ -39,7 +43,7 @@ HELPERS = {"fc_cost", "fc_mcp", "fc_sessions"}
 SETDEFAULTS = ["os.environ.setdefault('GRAFT_NO_GITIGNORE', '1')", "os.environ.setdefault('GRAFT_NO_IGNORE', '1')"]
 CONFIG_ONLY = ("DEFAULT_MODEL", "FALLBACK_MODEL", "OPENROUTER_KEY", "LINEAR_KEY", "WORKSPACE", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")
 LAUNCHER_SHA = "6da43b058089b473dce7bba234756d8af893868a06c45fa7cc8a0280ae40f676"
-SUBCOMMANDS = "doctor, init, run, verify, bench, resume, done, sync, tasks, spec-check, projects, cost, status, watch, top, stack, clean, groundwork, explore, graft, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, tool-bug, toolsmith, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
+SUBCOMMANDS = "doctor, init, run, verify, bench, resume, done, sync, tasks, spec-check, projects, cost, status, watch, top, stack, clean, groundwork, explore, trail, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, tool-bug, toolsmith, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
 
 
 def parse(name):
@@ -144,7 +148,21 @@ class FcChange(ModuleChecks, unittest.TestCase): module = "fc_change"
 class FcFrame0(ModuleChecks, unittest.TestCase): module = "fc_frame0"
 class FcCrew(ModuleChecks, unittest.TestCase): module = "fc_crew"
 class FcToolbug(ModuleChecks, unittest.TestCase): module = "fc_toolbug"
-class FcInit(ModuleChecks, unittest.TestCase): module = "fc_init"
+class FcInit(ModuleChecks, unittest.TestCase):
+    module = "fc_init"
+
+    def test_cmd_trail_sets_trail_up_in_the_project_worktree(self):
+        sys.path.insert(0, str(BIN))
+        import fc_core, fc_herdr, fc_init
+
+        a = object()
+        with mock.patch.object(fc_core, "project_dir", return_value=Path("/p")) as pd, \
+             mock.patch.object(fc_herdr, "project_worktree", return_value=Path("/wt")) as pw, \
+             mock.patch.object(fc_init, "setup_trail") as st:
+            fc_init.cmd_trail(a)
+        pd.assert_called_once_with(a)
+        pw.assert_called_once_with(Path("/p"))
+        st.assert_called_once_with(Path("/wt"))
 class FcFigma(ModuleChecks, unittest.TestCase): module = "fc_figma"
 class FcBriefs(ModuleChecks, unittest.TestCase): module = "fc_briefs"
 class FcImplement(ModuleChecks, unittest.TestCase): module = "fc_implement"
@@ -187,6 +205,21 @@ class Residue(unittest.TestCase):
         out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True).stdout
         group = out[out.index("{") + 1 : out.index("}")]
         self.assertEqual(group.split(","), SUBCOMMANDS)
+
+    def test_help_names_trail_not_graft(self):
+        env = {**os.environ, "COLUMNS": "400"}
+        out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True, env=env).stdout
+        lines = [" ".join(line.split()) for line in out.splitlines()]
+        self.assertIn("trail set trail up in the project's worktree again: wire it for Claude Code and build the graph", lines)
+        self.assertIn("explore print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes", lines)
+        self.assertEqual(re.findall(r"(?<![\w/.@-])graft(?![\w/-])", out), [])
+        self.assertIn("graft/", out)
+
+    def test_old_graft_subcommand_is_rejected(self):
+        env = {**os.environ, "COMPOSE_NO_GRAFT": "1", "COMPOSE_NO_TRAIL": "1"}
+        p = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "graft", "--project", "no-such-project"], capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("invalid choice: 'graft'", p.stderr)
 
 
 MODULE_CLASSES = {"fc_core": FcCore, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_linear": FcLinear, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_layers": FcLayers, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_verify": FcVerify, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
