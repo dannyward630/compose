@@ -52,7 +52,7 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 
 ## Finding the way
 
-In a repo that already has code, an explore teammate maps it through graft first and adds a short codebase brief to the feature.
+In a repo that already has code, an explore teammate maps it through trail first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
 Next, one wayfinder teammate writes every open decision as a card, each with its options and a recommendation.
@@ -94,7 +94,7 @@ A designer teammate carries the design into Figma from wherever it stopped, as a
 Start it with `/compose:designer <ticket> [--figma <file url or key>]`.
 The team lead starts it for a feature or story whose project it runs, and the engineering manager starts it for an epic or when no team lead is live.
 
-1. It reads before it writes: the ticket and its parents with their Decisions so far, the Frame0 wireframes, the repo's tokens and components through graft, `DESIGN.md`, and what the Figma file already has.
+1. It reads before it writes: the ticket and its parents with their Decisions so far, the Frame0 wireframes, the repo's tokens and components through trail, `DESIGN.md`, and what the Figma file already has.
 2. Before any screen story is built, it writes a visual direction for the surface as a Linear decision, with every rule citing research, a decision, or a measured value.
 3. It files the design-system epic, design stories, and design tasks in Linear, never in the repo.
    Each design task names the Figma page and frames it may touch.

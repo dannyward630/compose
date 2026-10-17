@@ -21,7 +21,7 @@ Each optional tool turns on one feature:
 |---|---|
 | herdr | its installer from [herdr.dev](https://herdr.dev) |
 | treehouse | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh` |
-| graft | `npm i -g @nanonets/graft` |
+| trail | `npm i -g @trailhq/trail-code` |
 | Frame0, OpenCode | see [requirements.md](requirements.md#optional) |
 
 ## 2. Clone and link `compose`
