@@ -41,8 +41,44 @@ def pi_auth_overrides(path):
 
 def declare_provider(path):
     """Add providers.openrouter-fast = PROVIDER to the models.json at path, keeping the rest; one line saying what it did."""
-    raise NotImplementedError("not implemented: task 016")
+    path = Path(path)
+    try:
+        models = json.loads(path.read_text())
+    except FileNotFoundError:
+        models = {}
+    except ValueError:
+        return f"{path} is not valid JSON; fix it by hand"
+    if not isinstance(models, dict):
+        return f"{path} is not a JSON object; fix it by hand"
+    providers = models.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return f"{path} has no providers object; fix it by hand"
+    if "openrouter-fast" in providers:
+        return f"openrouter-fast already declared in {path}; left as is"
+    providers["openrouter-fast"] = PROVIDER
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(models, indent=2) + "\n")
+    return f"declared openrouter-fast in {path}"
 
 def write_text_model(env_path):
     """Append the TEXT_MODEL_DEFAULTS lines the .env lacks, never changing existing ones; one line saying what it did."""
-    raise NotImplementedError("not implemented: task 016")
+    path = Path(env_path)
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        text = ""
+    have = set()
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and value.strip():
+            have.add(key.strip())
+    missing = [(k, v) for k, v in TEXT_MODEL_DEFAULTS.items() if k not in have]
+    if not missing:
+        return f"{', '.join(TEXT_MODEL_DEFAULTS)} already set in {path}; left as is"
+    add = "".join(f"{k}={v}\n" for k, v in missing)
+    if text and not text.endswith("\n"):
+        add = "\n" + add
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(add)
+    return f"appended {', '.join(k for k, _ in missing)} to {path}"
