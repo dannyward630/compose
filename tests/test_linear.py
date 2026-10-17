@@ -186,6 +186,7 @@ class DesignTasks(unittest.TestCase):
 
     def test_a_rejected_request_reports_the_providers_error_body(self):
         err = urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"detail":{"error_type":"max_tokens_exceeded"}}'))
+        self.addCleanup(err.close)
         with mock.patch.object(urllib.request, "urlopen", side_effect=err):
             with self.assertRaises(RuntimeError) as e:
                 fc.fc_models.http_json(mock.Mock(), "typesafe (Jev acceptance)")
