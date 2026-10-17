@@ -107,10 +107,11 @@ class KeySave(unittest.TestCase):
 
     def test_skipped_lines(self):
         fix = "pbpaste | compose workspace key acme"
-        for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change"]),
+        for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change", "compose setup"]),
                             ("linear", ["linear", "sync --from-linear", fix + " --linear", "claude.ai", "connector"]),
-                            ("figma", ["designer"])]:
+                            ("figma", ["designer", "compose setup"])]:
             line = fc_keys.skipped_line(kind, "acme")
             for word in words: self.assertIn(word, line if " " in word else line.lower())
         self.assertNotIn("--linear", fc_keys.skipped_line("openrouter", "acme"))
         self.assertNotIn("connector", fc_keys.skipped_line("openrouter", "acme").lower())
+        for kind in ("typesafe", "figma"): self.assertNotIn("workspace key", fc_keys.skipped_line(kind, "acme"))
