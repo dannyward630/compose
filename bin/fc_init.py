@@ -40,7 +40,7 @@ def setup_trail(wt):
     fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
     fc_core.say("trail    graph built")
 
-def cmd_graft(a):
+def cmd_trail(a):
     """Set trail up in the project's worktree again (after installing trail, or to rebuild the graph)."""
     setup_trail(fc_herdr.project_worktree(fc_core.project_dir(a)))
 
