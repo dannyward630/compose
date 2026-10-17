@@ -141,6 +141,8 @@ def cmd_doctor(a):
     herdr's own agent toasts or sounds would reach the product owner from every agent."""
     if check_deps():
         sys.exit(1)
+    if shutil.which("gh") and fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode != 0:
+        print("WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)")
     if warning := herdr_toast_warning():
         print(warning)
     print("every tool compose needs is installed")
