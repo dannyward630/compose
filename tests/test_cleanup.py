@@ -37,10 +37,58 @@ class TestCrewWorktrees(unittest.TestCase):
         for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo)):
             p.start(); self.addCleanup(p.stop)
 
-    def crew_commits(self, tid, name, text):
+    def crew_commits(self, tid, name, text, state="working"):
         wt = fc.fc_briefs.test_worktree(self.proj, tid)
         (wt / name).write_text(text)
         self.run("add", name, cwd=wt); self.run("commit", "-qm", f"Test {name}", cwd=wt)
+        if state:
+            fc.fc_crew.write_report(self.proj, f"p-tests-{tid}", state, "test ready: x")
+        return wt
+
+    def add_task(self, tid, protected, after=""):
+        f = self.proj / "results" / "tasks.json"
+        task = {"id": tid, "title": tid, "files": [], "protected": [protected], "test": "true", "body": tid, "after": after}
+        f.write_text(json.dumps({"feature": {}, "tasks": json.loads(f.read_text())["tasks"] + [task]}))
+
+    def start_writers(self, started):
+        (self.proj / "results" / "contract.md").write_text("c")
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), \
+             mock.patch("sys.stdout", out):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
+        return out.getvalue()
+
+    def test_writers_of_one_test_file_start_one_after_another(self):
+        self.add_task("003", "a_test.go", after="001")
+        started = []
+        out = self.start_writers(started)
+        self.assertEqual(sorted(started), ["tests-001", "tests-002"])  # 003 shares a_test.go with 001: both creating it conflicted
+        self.assertIn("tests-003 waits for tests-001", out)
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        self.crew_commits("002", "b_test.go", "b\n", state="done")
+        with mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), \
+             mock.patch.object(fc.fc_run, "run_tasks") as rt, self.assertRaises(SystemExit) as e:
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False))
+        self.assertIn("tests-003", str(e.exception)); rt.assert_not_called()  # its test is still to be written
+        self.assertEqual(started[-1], "tests-003")  # started by the collect, off the branch that now holds 001's test
+        wt = self.crew_commits("003", "a_test.go", "a\nc\n")
+        self.assertEqual(self.run("log", "--format=%s", "-3", cwd=wt).stdout.split("\n")[:3], ["Test a_test.go", "Test b_test.go", "Test a_test.go"])
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
+        self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
+
+    def test_collect_skips_a_writer_that_has_not_reported_test_ready(self):
+        fc.fc_crew.write_report(self.proj, "p-tests-001", "working", "started")
+        wt = fc.fc_briefs.test_worktree(self.proj, "001")  # started, nothing committed yet
+        self.crew_commits("002", "b_test.go", "b\n", state=None)
+        fc.fc_crew.write_report(self.proj, "p-tests-002", "done", "d")
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            fc.fc_briefs.collect_tests(self.proj)
+        self.assertIn("tests-001 skipped", out.getvalue())
+        self.assertTrue(wt.exists())  # its worktree and branch stay for the writer still in it
+        self.assertEqual(self.run("branch", "--list", "--format=%(refname:short)", "fast/p/tests-*").stdout.strip(), "fast/p/tests-001")
+        self.assertTrue((self.repo / "b_test.go").exists())
 
     def test_each_crew_has_its_own_branch_and_collect_lands_them_in_order(self):
         self.crew_commits("002", "b_test.go", "b\n")
@@ -68,11 +116,13 @@ class TestCrewWorktrees(unittest.TestCase):
 
     def test_a_conflict_names_the_task_and_keeps_its_branch(self):
         self.crew_commits("001", "a.txt", "teammate\n")
+        self.crew_commits("002", "b_test.go", "b\n")
         (self.repo / "a.txt").write_text("main\n"); self.run("commit", "-qam", "main moved")
         with self.assertRaises(SystemExit) as e:
             fc.fc_briefs.collect_tests(self.proj)
         self.assertIn("tests-001", str(e.exception))
-        self.assertIn("fast/p/tests-001", self.run("branch", "--list", "fast/p/tests-001").stdout)
+        self.assertEqual(self.run("branch", "--list", "--format=%(refname:short)", "fast/p/tests-*").stdout.strip(), "fast/p/tests-001")
+        self.assertTrue((self.repo / "b_test.go").exists())  # the writers after it are still collected, their worktrees freed
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")  # the cherry-pick was aborted cleanly
 
     def main_commits(self, name, text, msg):

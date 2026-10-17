@@ -66,13 +66,15 @@ def cmd_run(a):
     if redo:
         os.environ["COMPOSE_REDO"] = "1"
     # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
-    wt = fc_herdr.project_worktree(proj)
-    pending = [m["id"] for m in tasks if fc_core.sh(["git", "rev-parse", "--verify", "-q", fc_briefs.test_branch(proj, m["id"])], wt, check=False).returncode == 0]
+    pending = [m["id"] for m in tasks if fc_briefs.test_open(proj, m["id"])]
     if pending:
         busy = [t for t in pending if (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
         if busy:
             sys.exit(f"test-writing teammates still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
         fc_briefs.collect_tests(proj, ",".join(pending))
+    unwritten = [m["id"] for m in tasks if fc_briefs.test_open(proj, m["id"]) or m["id"] in fc_briefs.waiting_writers(proj)]
+    if unwritten:  # the collect starts the writers that waited for another writer of the same test file
+        sys.exit(f"test-writing teammates still to write: {', '.join('tests-' + t for t in unwritten)}; wait for their done reports, then run again")
     run_tasks(repo, proj, tasks, a)
 
 def preflight(models):

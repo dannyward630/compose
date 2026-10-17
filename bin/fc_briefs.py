@@ -351,11 +351,19 @@ def cmd_testcrews(a):
         for m in metas:
             print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, fc_core.commit_convention(proj))}\n")
         return
+    blocked = test_blockers(proj, tasks, metas)
+    metas = [m for m in metas if m["id"] not in blocked]
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
         short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
         if short:
             sys.exit(f"testcrews: {short}")
+    asked = only or {m["id"] for m in tasks}
+    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget} for t in blocked}})
+    for tid, by in blocked.items():
+        print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
+    if not metas:
+        return
     fc_herdr.herdr_space(proj)  # once, before the parallel starts
     model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
     wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
@@ -374,6 +382,37 @@ def cmd_testcrews(a):
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
+
+def test_open(proj, tid):
+    """Whether a test writer's branch is still to be collected."""
+    return fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, tid)], fc_herdr.project_worktree(proj), check=False).returncode == 0
+
+def waiting_writers(proj, update=None):
+    """The test writers waiting for another writer of the same test file, by task id, with the contract and budget to start them with."""
+    f = proj / "results" / "tests-waiting.json"
+    have = json.loads(f.read_text()) if f.exists() else {}
+    if update is not None:
+        have = {k: v for k, v in {**have, **update}.items() if v}
+        fc_core.atomic_write(f, json.dumps(have, indent=2))
+    return have
+
+def test_blockers(proj, tasks, starting):
+    """The writers each task in `starting` waits for: of the tasks sharing one of its protected files, those whose branch is not
+    collected yet, and earlier ones that start now or wait. Started together off one commit, two writers of one file each created
+    it and the second collect conflicted; one after another, each starts off the project branch that holds the test before it.
+    A task whose own branch is open started long ago and waits for nothing."""
+    queued = {m["id"] for m in starting} | set(waiting_writers(proj))
+    out = {}
+    for m in starting:
+        mine = set(m.get("protected") or [])
+        by = [o["id"] for o in tasks if o["id"] != m["id"] and mine & set(o.get("protected") or [])
+              and ((o["id"] < m["id"] and o["id"] in queued) or test_open(proj, o["id"]))]
+        if by and not test_open(proj, m["id"]):
+            out[m["id"]] = by
+    return out
+
+def test_ready(report):
+    return report.get("state") == "done" or (report.get("state") == "working" and "test ready" in report.get("message", "").lower())
 
 def test_worktree(proj, tid):
     """Each test-writing teammate writes on its own branch in its own worktree off the stubs commit: teammates sharing one
@@ -395,14 +434,21 @@ def test_worktree(proj, tid):
     return path
 
 def collect_tests(proj, only=None):
-    """Cherry-pick every test-writing teammate's own commits onto the project branch in task order, then remove their worktrees and
-    branches. A conflict stops with the task named and leaves that teammate's branch for a look."""
+    """Cherry-pick the own commits of every test-writing teammate that reported its test ready onto the project branch in task order,
+    remove their worktrees and branches, then start the writers that waited for them. A writer not yet ready is skipped: returning
+    its slot ends the session still in it. A conflict keeps that writer's branch and worktree for a look, the rest are still
+    collected, and the collect exits naming every conflict."""
     wt = fc_herdr.project_worktree(proj)
     want = {x.strip() for x in only.split(",")} if only else None
     ids = sorted(m["id"] for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want)
+    conflicts = []
     for tid in ids:
         branch = test_branch(proj, tid)
-        if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], wt, check=False).returncode:
+        if not test_open(proj, tid):
+            continue
+        last = (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{tid}")) or [{}])[-1]
+        if not test_ready(last):
+            fc_core.say(f"tests-{tid} skipped: it has not reported test ready (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); its branch and worktree are kept")
             continue
         # a commit already on the branch is skipped: the same patch, or picked by hand (a cherry-pick keeps the author, the author
         # date, and the subject through a conflict resolution and any later edit, where no patch or content check would match)
@@ -415,13 +461,22 @@ def collect_tests(proj, only=None):
             p = fc_core.sh(["git", "cherry-pick", "--allow-empty", c], wt, check=False)
             if p.returncode:
                 fc_core.sh(["git", "cherry-pick", "--abort"], wt, check=False)
-                sys.exit(f"tests-{tid}: {c[:7]} conflicts with the project branch; its branch {branch} is kept.\n{(p.stdout + p.stderr)[-600:]}")
-        held = fc_worktree.slots(proj).get(f"tests-{tid}")
-        if held:
-            fc_worktree.release_slot(wt, held)
-            fc_worktree.slots(proj, {f"tests-{tid}": None})
+                conflicts.append(f"tests-{tid}: {c[:7]} conflicts with the project branch; its branch {branch} is kept.\n{(p.stdout + p.stderr)[-600:]}")
+                break
         else:
-            fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
-        fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
-        fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
+            held = fc_worktree.slots(proj).get(f"tests-{tid}")
+            if held:
+                fc_worktree.release_slot(wt, held)
+                fc_worktree.slots(proj, {f"tests-{tid}": None})
+            else:
+                fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
+            fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
+            fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
+    groups = {}
+    for tid, how in waiting_writers(proj).items():
+        groups.setdefault((how["contract"], how["budget"]), []).append(tid)
+    for (contract, budget), tids in groups.items():
+        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False))
+    if conflicts:
+        sys.exit("\n".join(conflicts))

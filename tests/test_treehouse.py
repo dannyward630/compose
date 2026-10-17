@@ -53,6 +53,7 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.git("branch", "--show-current", cwd=slot), "fast/p/tests-001")
         (slot / "t_test.txt").write_text("t\n")
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
         fc.fc_briefs.collect_tests(proj)
         self.assertTrue((wt / "t_test.txt").exists())
         self.assertEqual(self.status()[slot.resolve()], "available")  # back in the pool, installs and all
@@ -68,6 +69,7 @@ class Treehouse(unittest.TestCase):
         slot = fc.fc_briefs.test_worktree(proj, "001")
         (slot / "t_test.txt").write_text("t\n")
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
         fc.fc_briefs.collect_tests(proj)
         self.git("checkout", "-qb", "next"); self.git("commit", "-q", "--allow-empty", "-m", "main moved on"); self.git("checkout", "-q", "main")
         again = fc.fc_worktree.slot_on(self.repo, "next", "compose:p:tests-002")
