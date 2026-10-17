@@ -11,7 +11,9 @@ The ticket and options are `$ARGUMENTS`.
 4. The owner of the ticket's level starts the designer in its own pane.
    For a feature or story whose project has a live team lead (`fast-coding crew list --project <slug>` shows `<slug>-orchestrator`), hand the start to it: `herdr agent prompt <slug>-orchestrator "start the designer for <ticket>: fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -"`.
    For an epic, or when no team lead is live, start it yourself with that same pipeline: `fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -`.
-5. Relay its reports with `fast-coding watch --project <slug> --from designer`, or `--from orchestrator` when the team lead started it.
+5. Relay its reports through your one `fast-coding watch --project <slug>` on this project, and never start a second watch for it.
+   A designer you started reports to you, so that watch reports it whatever `--from` says, the `--from orchestrator` watch for a live team lead included.
+   A designer the team lead started reports through the team lead, which the `--from orchestrator` watch already covers.
    Forward the product owner's answers with `herdr agent prompt <slug>-designer "<answer>"`.
 
 Never design in this session: no Figma write and no design issue here.

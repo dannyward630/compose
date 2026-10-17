@@ -12,11 +12,12 @@ When no project exists for it, run `fast-coding init --repo <path> --project <sl
 Record the feature in `.fast-coding/<slug>/linear.json` as `{"feature": "<id>"}`.
 Start the planner:
 `fast-coding planner --project <slug> --issue <id> | fast-coding crew start --project <slug> --role planner --title planner --brief -`
-Then supervise it in the background:
-`fast-coding watch --project <slug> --from planner`
+The planner reports to you, since you started it, so your one `fast-coding watch --project <slug>` on this project reports it, the `--from orchestrator` watch for a live team lead included.
+Never start a second watch for it: a second one waits on the first one's lock, and the planner's reports would wait with it.
+When no watch of yours runs on this project, start `fast-coding watch --project <slug>` in the background.
 Relay every report to the product owner as 0h describes, in one or two sentences each.
 For `needs-user`, give the question and its recommendation, and say they may answer here or in the planner's tab.
-Forward their answer with `herdr agent prompt <slug>-planner "<answer>"`, then start `watch` again.
+Forward their answer with `herdr agent prompt <slug>-planner "<answer>"`, then start your one `watch` again.
 Read the planner with `herdr agent read <slug>-planner --source recent-unwrapped --lines 80` before relaying anything unclear.
 In this session, never plan, write stories, or cut tasks.
 Also never run `fast-coding run`.

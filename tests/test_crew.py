@@ -51,6 +51,57 @@ class Crew(unittest.TestCase):
         self.assertEqual(engineering_manager_view, ["event crew=shop-orchestrator state=needs-user message='Tasks are ready for your go'"])
         self.assertEqual(fc.watch_events(snap(self.proj), snap(self.proj)), [])  # nothing new, no event
 
+    def test_a_teammate_the_engineering_manager_started_wakes_its_watch_whatever_from_says(self):
+        """A planner or designer the engineering manager started itself (no team lead, or an epic) reports to it, so its watch
+        (`--from orchestrator` when the project has a team lead) passes their events too, and the product owner is alerted;
+        a teammate the team lead started still goes up through the team lead only."""
+        for who, up in (("shop-planner", "manager"), ("shop-designer", "manager"), ("shop-tests", "orchestrator"), ("shop-old", None)):
+            rec = {"name": who, "role": who[5:], "title": who[5:], "space": "w9", "tab": "t", "pane": "p"} | ({"reports_to": up} if up else {})
+            (fc.crew_dir(self.proj) / f"{who}.json").write_text(json.dumps(rec))  # shop-old: a record from before reports_to existed
+            fc.write_report(self.proj, who, "working", "started")
+        self.assertEqual(fc.crew_reporting_to(self.proj, "manager"), ["shop-designer", "shop-planner"])
+        self.assertEqual(fc.crew_reporting_to(self.proj, "orchestrator"), ["shop-tests"])
+        before = snap(self.proj)
+        self.report("shop-planner", "needs-user", "3 stories NEB-4..6; recommendation accept-all")
+        self.report("shop-designer", "blocked", "Framelink token missing")
+        self.report("shop-tests", "needs-user", "which fixture?")
+        self.report("shop-old", "needs-user", "legacy")
+        ev = fc.watch_events(before, snap(self.proj)) + ["event agent=shop-designer status=blocked  (read: ...)"]
+        direct = fc.crew_reporting_to(self.proj, "manager")
+        manager = fc.watch_filter(ev, "shop", ["shop-orchestrator"], direct)
+        self.assertEqual(manager, [e for e in ev if "shop-planner" in e or "shop-designer" in e])
+        self.assertEqual(fc.watch_filter(ev, "shop", ["shop-orchestrator"]), [])  # the record decides, never --from alone
+        self.assertEqual(fc.watch_filter(ev, "shop", [], direct), ev)  # the team lead's view is unchanged
+        notified = []
+        with mock.patch.object(fc, "desktop_notify", lambda title, body: notified.append((title, body))), mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FAST_CODING_ROLE", None)
+            fc.manager_attention(self.proj, manager)
+        self.assertEqual(sorted(notified), [("shop: the engineering manager is blocked", "Framelink token missing  (from shop-designer)"),
+                                            ("shop: the engineering manager needs you", "3 stories NEB-4..6; recommendation accept-all  (from shop-planner)")])
+
+    def test_start_records_who_the_teammate_reports_to(self):
+        """The starting process says who the teammate reports to: the engineering manager has no FAST_CODING_ROLE, the team lead's tab
+        carries `orchestrator`. The record keeps it and the brief names the same one."""
+        def herdr(*args, **kw):
+            if args[:2] == ("agent", "list"):
+                return {"agents": []}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            return {}
+        for role, env, up, says in (("planner", {}, "manager", "You report to the engineering manager, who relays to the product owner."),
+                                    ("designer", {"FAST_CODING_ROLE": "orchestrator"}, "orchestrator", "You report to shop-orchestrator, your team lead.")):
+            a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Go."})
+            clean = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | env
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
+                    mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+                    mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
+                    mock.patch.object(fc, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
+                fc.cmd_crew(a)
+            self.assertEqual(fc.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
+            self.assertIn(says, (self.proj / "results" / "crew" / f"shop-{role}.brief.md").read_text())
+
     def test_bad_state_refused(self):
         with self.assertRaises(SystemExit):
             self.report("shop-q-1", "finished", "x")

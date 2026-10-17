@@ -1,4 +1,4 @@
-import contextlib, importlib.machinery, importlib.util, io, os, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -143,6 +143,25 @@ class WatchMemory(unittest.TestCase):
                     fc.cmd_watch(a)
         self.assertEqual(seen, [[f"event crew={ORCH} state=needs-user message='which db?'"]])
 
+    def test_the_engineering_managers_watch_passes_teammates_it_started_whatever_from_says(self):
+        """The one watch (key `manager`, `--from orchestrator` while a team lead is live) also wakes on a planner or designer the
+        engineering manager started itself: `crew start` recorded that they report to it. A teammate the team lead started does not."""
+        (self.proj / "results" / "crew").mkdir(parents=True)
+        for who, up in (("hw-planner", "manager"), ("hw-tests", "orchestrator")):
+            (self.proj / "results" / "crew" / f"{who}.json").write_text(json.dumps({"name": who, "role": who[3:], "title": who[3:], "reports_to": up}))
+        snap = wsnap(); later = wsnap()
+        later["crew"] = {"hw-planner": [{"at": at(0), "state": "needs-user", "message": "3 stories; accept-all"}],
+                         "hw-tests": [{"at": at(0), "state": "needs-user", "message": "which fixture?"}]}
+        seen = []
+        env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
+        with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), \
+                mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
+            a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
+            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
+                with contextlib.suppress(SystemExit):
+                    fc.cmd_watch(a)
+        self.assertEqual(seen, [["event crew=hw-planner state=needs-user message='3 stories; accept-all'"]])
+
     def later(self):
         snap = wsnap("passed")
         snap["crew"] = {"hw-x": [{"at": at(0), "state": "tool-bug", "message": "crash"}],
@@ -194,11 +213,12 @@ class Rewake(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         self.env = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "hw", "FAST_CODING_REPO": "/r", "CLAUDE_CODE_ENTRYPOINT": "cli"}
 
-    def rewake(self, snaps, env=None):
+    def rewake(self, snaps, env=None, session="s1"):
+        """The hook reads its JSON from stdin: feed it here, since the real stdin may be a pipe nobody writes to (then the hook waits forever)."""
         err = io.StringIO()
         with mock.patch.dict(fc.os.environ, env or self.env), mock.patch.object(fc, "project_dir", return_value=self.proj) as pd, \
                 mock.patch.object(fc, "watch_snapshot", side_effect=snaps), mock.patch.object(fc, "WATCH_INTERVAL", 0.01), \
-                contextlib.redirect_stderr(err):
+                mock.patch.object(fc.sys, "stdin", io.StringIO(json.dumps({"session_id": session}))), contextlib.redirect_stderr(err):
             try:
                 fc.cmd_rewake(SimpleNamespace())
                 code = 0
@@ -224,11 +244,10 @@ class Rewake(unittest.TestCase):
     def test_a_wake_carries_the_skill_change_notice(self):
         skill = Path(tempfile.mkdtemp()).resolve()
         (skill / "SKILL.md").write_text("v1\n")
-        with mock.patch.object(fc, "SKILL_DIR", skill), mock.patch.object(fc, "SKILL_SEEN", skill / "seen"), \
-                mock.patch.object(fc.sys, "stdin", io.StringIO('{"session_id": "lead"}')):
+        with mock.patch.object(fc, "SKILL_DIR", skill), mock.patch.object(fc, "SKILL_SEEN", skill / "seen"):
             fc.skill_notice("lead")  # the version the team lead read
             (skill / "SKILL.md").write_text("v2\n")
-            code, err, _ = self.rewake([wsnap("running"), wsnap("passed")])
+            code, err, _ = self.rewake([wsnap("running"), wsnap("passed")], session="lead")
         self.assertEqual(code, 2)
         self.assertIn(f"fast-coding's skill changed since you read it: {skill / 'SKILL.md'}", err)
 

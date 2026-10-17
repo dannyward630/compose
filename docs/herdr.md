@@ -79,7 +79,8 @@ That prompt lands in the same pi session the CLI drives.
 
 `fast-coding watch --project <slug>` sleeps until a task finishes, an agent blocks, a teammate reports, a run ends, or verify finishes.
 It prints one `event ...` line and exits, so a waiting team lead spends no tokens.
-`--from orchestrator` makes the engineering manager wake only on the team lead's reports.
+`--from orchestrator` makes the engineering manager wake on the team lead's reports, on a tool-bug or a stall, and on any teammate it started itself.
+`crew start` records who each teammate reports to (`reports_to` in `results/crew/<agent>.json`), so a planner or designer the engineering manager started needs no second watch.
 A run left silent with work pending raises a stall event after 240 s.
 You can change that limit with `stall_seconds` in `verify.json` or with `watch --stall`.
 

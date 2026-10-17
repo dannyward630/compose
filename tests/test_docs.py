@@ -192,7 +192,10 @@ class DesignerCommand(unittest.TestCase):
         self.assertIn("fast-coding figma check --project <slug> --figma <file>", steps[2])
         pipe = "fast-coding designer --project <slug> | fast-coding crew start --project <slug> --role designer --title designer --brief -"
         self.assertLess(body.index("fast-coding figma check"), body.index(pipe))
-        self.assertLess(body.index(pipe), body.index("fast-coding watch --project <slug> --from designer"))
+        self.assertLess(body.index(pipe), body.index("fast-coding watch --project <slug>"))
+        self.assertNotIn("--from designer", body)  # the engineering manager's one watch covers a designer it started: no second watch
+        self.assertIn("never start a second watch", body)
+        self.assertIn("whatever `--from` says", body)
         self.assertIn('herdr agent prompt <slug>-designer "<answer>"', body)
         self.assertIn("never design in this session", body.lower())
 
@@ -490,3 +493,25 @@ class PlannerSavesInPatches(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
+    """A planner or designer the engineering manager starts itself reports to it, and its one watch reports them: no second watch."""
+
+    def test_planner_command_says_the_one_watch_covers_it(self):
+        body = read("commands/planner.md").split("---\n", 2)[2]
+        self.assertNotIn("--from planner", body)
+        self.assertIn("fast-coding watch --project <slug>", body)
+        self.assertIn("Never start a second watch", body)
+        self.assertIn("`--from orchestrator` watch", body)
+        for line in body.splitlines():
+            self.assertNotRegex(line, r"\. [A-Z]", line)
+
+    def test_0h_says_the_watch_passes_teammates_the_manager_started(self):
+        lines = read("sections/0h.md").splitlines()
+        loop = next(i for i, l in enumerate(lines) if l.startswith("The engineering manager's loop:"))
+        line = lines[loop + 1]
+        self.assertTrue(line.startswith("That one watch also reports every teammate the engineering manager started itself"), line)
+        for word in ("`reports_to`", "results/crew/<agent>.json", "`FAST_CODING_ROLE`", "whatever `--from` says", "`needs-user` and `blocked`", "Never start a second watch"):
+            self.assertIn(word, line)
+        self.assertNotIn("—", line)
