@@ -87,6 +87,7 @@ class Treehouse(unittest.TestCase):
         slot = fc.fc_briefs.test_worktree(proj, "001")
         self.assertTrue((slot / "client" / "node_modules").is_symlink())
         (slot / "node_modules").mkdir()  # an install of the slot's own
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
         fc.fc_briefs.collect_tests(proj)
         self.git("branch", "teammate")
         again = fc.fc_worktree.slot_on(self.repo, "teammate", "compose:p-toolsmith")
