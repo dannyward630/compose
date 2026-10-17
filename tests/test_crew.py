@@ -244,6 +244,63 @@ class Crew(unittest.TestCase):
         self.assertIn(("tab", "close", "w9:t3"), calls)
         self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
 
+    def start_without_brief(self, prompt_fails=False, late=False):
+        """crew start where the session comes up but never takes its brief: herdr answers idle on every look and the wait for the start
+        gives up (`late`: the look after it gives up finds it working), or herdr rejects the prompt itself (`prompt_fails`)."""
+        calls, out = [], []
+        fc.fc_crew.write_report(self.proj, "shop-eol", "done", "an earlier session of the same name")
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                return {"agents": []}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            if args[:2] == ("agent", "prompt") and prompt_fails:
+                raise RuntimeError("herdr agent prompt: agent_blocked")
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working" if late and gave_up else "idle"}}
+            return {}
+        gave_up = False
+        def await_start(agent, first=None):
+            nonlocal gave_up
+            gave_up = True
+            raise RuntimeError(f"{agent} did not start on its brief after 3 retries")
+        a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_text", return_value="❯ \n"), mock.patch.object(fc.fc_herdr, "herdr_await_start", side_effect=await_start), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
+            try:
+                fc.fc_crew.cmd_crew(a)
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, out, calls
+
+    def test_a_session_that_never_takes_its_brief_is_closed_so_a_retry_starts_fresh(self):
+        """The session came up, the brief never landed (Enter and the resend did nothing): the start closes the tab it opened and
+        removes the record, so `crew start` run again is not refused as already running."""
+        code, out, calls = self.start_without_brief()
+        self.assertIsInstance(code, str)  # a plain message, not a traceback
+        self.assertIn("shop-eol did not start on its brief", code)
+        self.assertIn("run the same crew start again", code)
+        self.assertIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
+
+    def test_a_session_that_rejects_its_brief_is_closed_too(self):
+        code, out, calls = self.start_without_brief(prompt_fails=True)
+        self.assertIsInstance(code, str)
+        self.assertIn("agent_blocked", code)
+        self.assertIn(("tab", "close", "w9:t3"), calls)
+        self.assertEqual(list((self.proj / "results" / "crew").glob("shop-eol.*")), [])
+
+    def test_a_session_that_starts_on_the_last_look_is_kept(self):
+        code, out, calls = self.start_without_brief(late=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn(("tab", "close", "w9:t3"), calls)
+        self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
+
     def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
         for role, env in (("planner", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
             calls = []

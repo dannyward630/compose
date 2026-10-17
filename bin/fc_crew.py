@@ -1,4 +1,4 @@
-import ast, hashlib, shlex, json, os, re, shutil, subprocess, sys, time
+import ast, hashlib, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0
 
@@ -257,22 +257,25 @@ def cmd_crew(a):
         if len(crew_reports(proj, name)) > seen or fc_herdr.pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")
         else:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
-            fc_herdr.pane_kill(pane)
-            fc_herdr.herdr("tab", "close", tab["tab"]["tab_id"])
-            for f in crew_dir(proj).glob(f"{name}.*"):
-                f.unlink()
+            crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
             sys.exit(f"teammate {name} did not start: {e}")
     if not model.startswith("pi:"):
         fc_herdr.herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
         fc_herdr.herdr("agent", "prompt", agent, first, check=True)
     except RuntimeError as e:
-        sys.exit(f"teammate {name} came up but did not take its brief ({e}); send it with: herdr agent prompt {agent} {shlex.quote(first)}")
+        crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
+        sys.exit(f"teammate {name} came up but did not take its brief ({e}); its tab is closed and nothing is left registered: run the same crew start again")
     fc_herdr.herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
     if len(crew_reports(proj, name)) <= seen:  # one that has reported has started, and may be gone already
-        fc_herdr.herdr_await_start(agent, first)
+        try:
+            fc_herdr.herdr_await_start(agent, first)
+        except RuntimeError:  # a session left idle without its brief would block every retry as already running
+            if len(crew_reports(proj, name)) <= seen and ((fc_herdr.herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") not in ("working", "blocked", "done"):
+                crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
+                sys.exit(f"teammate {name} did not start on its brief: Enter and sending it again did nothing; its tab is closed and nothing is left registered: run the same crew start again")
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
@@ -354,6 +357,14 @@ def cmd_skillcheck(a):
 def write_report(proj, name, state, message):
     with open(crew_dir(proj) / f"{name}.status", "a") as f:
         f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "state": state, "message": message}) + "\n")
+
+def crew_unstart(proj, name, pane, tab):
+    """Undo a crew start that did not take: stop what runs in its pane, close its tab, and remove its record, brief, and reports,
+    so nothing is left registered and the same start can run again."""
+    fc_herdr.pane_kill(pane)
+    fc_herdr.herdr("tab", "close", tab)
+    for f in crew_dir(proj).glob(f"{name}.*"):
+        f.unlink()
 
 def crew_record(proj, name):
     f = crew_dir(proj) / f"{name}.json"
