@@ -85,7 +85,7 @@ The engineering manager relays their questions to you, and you can answer there 
 ## When you step away
 
 Run `/fast-coding:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
-Your words pre-answer the questions they name, taken verbatim and never stretched by analogy.
+Your words pre-answer the questions they name, taken exactly as written and never stretched by analogy.
 Every answer it takes is logged, and a billing halt still notifies you.
 `/fast-coding:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
 When you are back, `/fast-coding:yolo off` prints a digest of your instructions, what was decided for you, what waits on you, what failed, what is done, and the cost.
