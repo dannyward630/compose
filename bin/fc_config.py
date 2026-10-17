@@ -31,6 +31,7 @@ PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/opena
           "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast": (0.15, 0.50)}
 CONFIG_PATH = Path(os.environ.get("COMPOSE_CONFIG", Path.home() / ".compose" / "config.json"))
 ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (Mercury review, jev's text helper) and TYPESAFE_* (jev, acceptance); the process env wins
+AUTH_PATH = CONFIG_PATH.parent / "auth.json"  # every key: see fc_auth; mode 600 in a 700 directory
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
 DOC_RE = re.compile(r"(^|/)(docs?|documentation)/|\.(md|mdx|rst|txt|adoc)$", re.I)  # implementers never add documents

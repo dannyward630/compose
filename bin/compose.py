@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench  # noqa: E402
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_frame0, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -74,6 +74,8 @@ def main():
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
+                            ("setup", fc_setup.cmd_setup, "install and configure everything compose needs: the guided setup on a terminal; --yes takes every default and never prompts"),
+                            ("update", fc_update.cmd_update, "pull this checkout --ff-only, relink the links compose owns, run doctor"),
                             ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
@@ -124,6 +126,8 @@ def main():
             s.add_argument("--here", action="store_true", help="create the project in this checkout instead of its own worktree")
             s.add_argument("--branch", help="name the project's branch (default compose/<project>); on an existing project, renames its branch to this")
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (compose/<PROJECT> unless it chose one): a feature that needs that feature's code")
+        if name == "setup":
+            s.add_argument("--yes", action="store_true", help="take every default, skip every key, never prompt")
         if name == "sync":
             s.add_argument("--from-linear", action="store_true", help="read the feature, stories, and tasks from Linear with the workspace key (read-only) instead of stdin")
         if name == "cost":
