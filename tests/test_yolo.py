@@ -32,7 +32,7 @@ class Yolo(unittest.TestCase):
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snapshot or snap()), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
                 mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
-            fc.cmd_yolo(a)
+            fc.fc_yolo.cmd_yolo(a)
         return out.getvalue()
 
     def test_entry_writes_the_file_and_reads_the_words_back(self):
@@ -161,7 +161,7 @@ class Yolo(unittest.TestCase):
     def test_main_parses_decided_after_the_project_flag(self):
         seen = []
         with mock.patch.object(sys, "argv", ["fast-coding", "yolo", "decided", "--project", "hw", "db?: postgres"]), \
-                mock.patch.object(fc, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
+                mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
             fc.main()
         self.assertEqual(seen[0].words, ["decided", "db?: postgres"])
 
