@@ -120,7 +120,7 @@ The figures in this README come from small benchmarks and one prototype, and the
 
 ## Quick start
 
-1. Install the tools listed in [docs/requirements.md](docs/requirements.md).
+1. Install the tools listed in [docs/requirements.md](docs/requirements.md), or follow [docs/new-machine.md](docs/new-machine.md) step by step on a fresh machine.
 2. From this repo, install fast-coding with `ln -s "$PWD" ~/.claude/skills/fast-coding` and `ln -s "$PWD/bin/fast-coding" ~/.local/bin/`.
    Run `fast-coding doctor` to confirm every tool and skill file it needs is there; each missing one prints with its install command.
 3. In the target repo, check out the branch the feature belongs on and open Claude Code.
@@ -163,6 +163,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | Page | Read it for |
 |---|---|
 | [requirements.md](docs/requirements.md) | Tools, accounts, keys, and files outside the repo |
+| [new-machine.md](docs/new-machine.md) | Setting fast-coding up on a new machine, step by step |
 | [how-it-works.md](docs/how-it-works.md) | The loop, changing course, projects, Linear levels, and model choices |
 | [cli.md](docs/cli.md) | Every command, manual mode, and flags |
 | [herdr.md](docs/herdr.md) | Watching and steering every agent inside herdr |
