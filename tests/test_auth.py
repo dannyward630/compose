@@ -59,3 +59,55 @@ class AuthStore(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text()), {
             "workspaces": {"default": {"openrouter": "sk-or-new", "linear": "lin-test"}, "acme": {"openrouter": "sk-or-acme"}},
             "typesafe": "ts-test"})
+
+
+VALUES = ("sk-or-top", "lin-top", "sk-or-work", "ts-cfg", "sk-or-env", "sk-or-auth", "ts-env")
+MODELS = {"implementer": "pi:x/y"}
+ENV = "# keys\nTYPESAFE_API_KEY=ts-env\nTEXT_MODEL=pi:x/y\nTEXT_MODEL_API_KEY=sk-or-env\nTAIL=1\n"
+
+
+class KeyMove(unittest.TestCase):
+    def setUp(self):
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        d = Path(t.name)
+        self.cfg, self.env, self.auth = d / "config.json", d / ".env", d / "auth.json"
+
+    def write(self, cfg=None, env=None, auth=None):
+        for path, data in ((self.cfg, cfg), (self.auth, auth)):
+            if data is not None: path.write_text(json.dumps(data))
+        if env is not None: self.env.write_text(env)
+
+    def test_moves_every_old_place_once(self):
+        self.write({"workspace": "work", "openrouter_api_key": "sk-or-top", "linear_api_key": "lin-top", "models": MODELS,
+                    "env": {"TYPESAFE_API_KEY": "ts-cfg", "OTHER": "x"},
+                    "workspaces": {"work": {"openrouter_api_key": "sk-or-work", "linear_api_key": "", "models": MODELS}}},
+                   ENV.replace("TYPESAFE_API_KEY=ts-env\n", ""), {"workspaces": {"work": {"openrouter": "sk-or-auth"}}})
+        before = fc_auth.old_keys(self.cfg, self.env)
+        self.assertEqual(sorted(before), sorted([(n, self.cfg) for n in ("openrouter_api_key", "linear_api_key", "env.TYPESAFE_API_KEY",
+                         "workspaces.work.openrouter_api_key", "workspaces.work.linear_api_key")] + [("TEXT_MODEL_API_KEY", self.env)]))
+        lines = fc_auth.move_keys(self.cfg, self.env, self.auth)
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(sum("config.json" in l for l in lines), 5)
+        self.assertEqual(sum(".env" in l for l in lines), 1)
+        self.assertFalse([v for v in VALUES for l in lines if v in l])
+        self.assertEqual(json.loads(self.auth.read_text()), {"typesafe": "ts-cfg", "workspaces": {
+            "default": {"openrouter": "sk-or-top", "linear": "lin-top"}, "work": {"openrouter": "sk-or-auth", "linear": ""}}})
+        self.assertEqual(json.loads(self.cfg.read_text()), {"workspace": "work", "models": MODELS, "env": {"OTHER": "x"},
+                                                            "workspaces": {"work": {"models": MODELS}}})
+        self.assertEqual(self.cfg.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.env.read_text(), "# keys\nTEXT_MODEL=pi:x/y\nTAIL=1\n")
+        self.assertEqual(fc_auth.old_keys(self.cfg, self.env), [])
+        snap = [p.read_bytes() for p in (self.cfg, self.env, self.auth)]
+        self.assertEqual(fc_auth.move_keys(self.cfg, self.env, self.auth), [])
+        self.assertEqual([p.read_bytes() for p in (self.cfg, self.env, self.auth)], snap)
+
+    def test_env_file_alone_and_missing_files(self):
+        self.assertEqual(fc_auth.old_keys(self.cfg, self.env), [])
+        self.assertEqual(fc_auth.move_keys(self.cfg, self.env, self.auth), [])
+        self.write(env=ENV)
+        lines = fc_auth.move_keys(self.cfg, self.env, self.auth)
+        self.assertEqual(len(lines), 2)
+        self.assertFalse([v for v in VALUES for l in lines if v in l])
+        self.assertEqual(json.loads(self.auth.read_text()), {"typesafe": "ts-env", "workspaces": {"default": {"openrouter": "sk-or-env"}}})
+        self.assertEqual(self.env.read_text(), "# keys\nTEXT_MODEL=pi:x/y\nTAIL=1\n")
+        self.assertFalse(self.cfg.exists())
