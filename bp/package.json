@@ -1,0 +1,1 @@
+{ "name": "bp", "private": true, "type": "module", "scripts": { "test": "node --test" }, "bin": { "bp": "bin/bp.mjs" }, "engines": { "node": ">=22" } }

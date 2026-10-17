@@ -107,7 +107,7 @@ Everything is on disk, so a restart is a non-event. At the start of a session on
 
 ### 6. Verify: read sections/6.md
 
-### 6a. Browser work goes through `bp` (browser-probe): read sections/6a.md
+### 6a. Browser work goes through `bp`: read sections/6a.md
 
 ### 7. Escalate and clean: read sections/7.md
 

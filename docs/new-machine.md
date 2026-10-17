@@ -22,7 +22,6 @@ Each optional tool turns on one feature:
 | herdr | its installer from [herdr.dev](https://herdr.dev) |
 | treehouse | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh` |
 | graft | `npm i -g @nanonets/graft` |
-| bp (browser-probe) | `npm link` in a browser-probe checkout |
 | Frame0, OpenCode | see [requirements.md](requirements.md#optional) |
 
 ## 2. Clone and link fast-coding
@@ -32,8 +31,10 @@ git clone https://github.com/prodoxx/fast-coding ~/code/fast-coding
 cd ~/code/fast-coding
 ln -s "$PWD" ~/.claude/skills/fast-coding
 mkdir -p ~/.local/bin && ln -s "$PWD/bin/fast-coding" ~/.local/bin/
+ln -s "$PWD/bp/bin/bp.mjs" ~/.local/bin/bp     # the browser driver, optional
 ```
 
+`bp` also needs Playwright's Chromium: `npx playwright install chromium`.
 The skill link is how Claude Code finds the skill, the `/fast-coding:*` commands, and the hooks.
 Open Claude Code once and check that `/fast-coding` and its commands appear.
 

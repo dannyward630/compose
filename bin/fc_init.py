@@ -56,7 +56,7 @@ DEPS = (  # (name, how it is found, install, required, version floor); every too
     ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", True, None),
     ("npx", "npx", "brew install node", True, None),  # lavish-axi and figma-developer-mcp run through it
     ("pi", "pi", "npm i -g @earendil-works/pi-coding-agent", False, None),
-    ("bp", "bp", "npm link in the browser-probe checkout", False, None),
+    ("bp", "bp", "ln -s <fast-coding checkout>/bp/bin/bp.mjs ~/.local/bin/bp", False, None),
     ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", True, None),
     ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", True, None),
     ("framelink-figma", lambda: "framelink-figma" in user_mcp_servers(), FRAMELINK_ADD, "designer", None),  # every Figma read (0d, figma check/tree)

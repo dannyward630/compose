@@ -183,8 +183,8 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 
 Run the CLI tests with `python3 -m unittest discover -s tests`.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
-Run the jev tests with `cd jev && uv run pytest`.
-`bin/fast-coding` uses only the Python standard library, and `jev/` is its own uv project.
+Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
+`bin/fast-coding` uses only the Python standard library, `jev/` is its own uv project, and `bp/` is one Node file with no dependencies.
 
 ## Credits
 
