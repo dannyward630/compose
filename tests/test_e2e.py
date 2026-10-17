@@ -1,6 +1,10 @@
-import importlib.machinery, importlib.util, os, tempfile, time, unittest
+import importlib.machinery, importlib.util, os, shutil, tempfile, time, unittest
 from pathlib import Path
+from unittest import mock
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import checkout_bp
+CHECKOUT_BP = checkout_bp.use_checkout_bp()
 os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 os.environ["HERDR_ENV"] = ""
 
@@ -105,6 +109,45 @@ class ToolErrors(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(len(findings), 1)
         self.assertFalse(report["e2e"][0]["tool_error"])
+
+
+class CheckoutBp(unittest.TestCase):
+    """The suite runs the checkout's bp, whatever bp sits on PATH."""
+    target = os.path.realpath(Path(__file__).resolve().parents[1] / "bp" / "bin" / "bp.mjs")
+
+    def stale(self, dangling):
+        d = Path(tempfile.mkdtemp())
+        if dangling:
+            (d / "bp").symlink_to(d / "gone.mjs")
+        else:
+            (d / "bp").write_text("#!/bin/sh\necho other\n")
+            (d / "bp").chmod(0o755)
+        return str(d)
+
+    def test_the_import_put_the_checkout_bp_first(self):
+        self.assertEqual(os.environ["PATH"].split(os.pathsep)[0], CHECKOUT_BP)
+        self.assertEqual(os.path.realpath(shutil.which("bp")), self.target)
+
+    def test_it_wins_over_a_dangling_or_different_bp_ahead_and_keeps_the_rest_in_order(self):
+        for dangling in (True, False):
+            rest = [self.stale(dangling), "/usr/bin", "/bin"]
+            with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(rest)}):
+                d = checkout_bp.use_checkout_bp()
+                self.assertEqual(d, CHECKOUT_BP)
+                self.assertEqual(os.environ["PATH"].split(os.pathsep), [d] + rest)
+                self.assertEqual(os.path.realpath(shutil.which("bp")), self.target)
+
+    def test_a_second_call_returns_the_same_dir_and_path_holds_it_once(self):
+        rest = ["/usr/bin", "/bin"]
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([rest[0], CHECKOUT_BP, rest[1]])}):
+            first, second = checkout_bp.use_checkout_bp(), checkout_bp.use_checkout_bp()
+            self.assertEqual(first, second)
+            self.assertEqual(os.environ["PATH"].split(os.pathsep), [first] + rest)
+
+    def test_the_dir_is_outside_the_checkout_and_holds_only_bp(self):
+        self.assertFalse(Path(CHECKOUT_BP).resolve().is_relative_to(Path(__file__).resolve().parents[1]))
+        self.assertEqual(os.listdir(CHECKOUT_BP), ["bp"])
+        self.assertTrue(os.access(Path(CHECKOUT_BP) / "bp", os.X_OK))
 
 
 if __name__ == "__main__":
