@@ -59,3 +59,58 @@ class KeyStatus(unittest.TestCase):
         for linear, connected, want in [(True, False, "key"), (True, None, "key"), (False, True, "connector"),
                                         (False, None, "unknown"), (False, False, "missing")]:
             self.assertEqual(fc_keys.linear_state({"openrouter": True, "typesafe": True, "linear": linear, "figma": False}, connected), want)
+
+
+class KeySave(unittest.TestCase):
+    """Saving an entered key to auth.json or the Framelink env file, and the line for a skipped key; never a value."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp, self.calls = Path(tmp.name), []
+        self.auth, self.env = self.tmp / "auth.json", self.tmp / "framelink" / "deep" / ".env"
+        def set_key(path, workspace, kind, value): self.calls.append((Path(path), workspace, kind, value))
+        for p in (mock.patch.object(fc_keys.fc_config, "AUTH_PATH", self.auth), mock.patch.object(fc_auth, "set_key", set_key)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def save(self, kind, value):
+        out = io.StringIO()
+        with redirect_stdout(out): line = fc_keys.save_key(kind, value, "acme", self.env)
+        if value: self.assertNotIn(value, line + out.getvalue())
+        return line
+
+    def test_auth_kinds(self):
+        for kind, value in [("openrouter", "sk-or-test"), ("linear", "lin-test"), ("typesafe", "ts-test")]:
+            self.calls.clear()
+            self.assertIn(kind, self.save(kind, value).lower())
+            self.assertEqual(self.calls, [(self.auth, "acme", kind, value)])
+        self.assertFalse(self.env.parent.exists())
+
+    def test_figma(self):
+        self.assertIn("figma", self.save("figma", "fig-test").lower())
+        self.assertEqual(self.env.read_text().splitlines(), ["FIGMA_API_KEY=fig-test"])
+        self.assertEqual(stat.S_IMODE(self.env.stat().st_mode), 0o600)
+        self.env.write_text("# framelink\nOTHER=1\nFIGMA_API_KEY=fig-old\n")
+        self.env.chmod(0o644)
+        self.save("figma", "fig-new")
+        self.assertEqual(sorted(self.env.read_text().splitlines()), ["# framelink", "FIGMA_API_KEY=fig-new", "OTHER=1"])
+        self.assertEqual(stat.S_IMODE(self.env.stat().st_mode), 0o600)
+        self.assertEqual(self.calls, [])
+
+    def test_empty_saves_nothing(self):
+        self.env.parent.mkdir(parents=True)
+        self.env.write_text("FIGMA_API_KEY=fig-old\n")
+        for kind in ("openrouter", "linear", "typesafe", "figma"):
+            self.assertEqual(self.save(kind, ""), fc_keys.skipped_line(kind, "acme"))
+        self.assertEqual((self.calls, self.env.read_text()), ([], "FIGMA_API_KEY=fig-old\n"))
+        self.assertFalse(self.auth.exists())
+
+    def test_skipped_lines(self):
+        fix = "pbpaste | compose workspace key acme"
+        for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change"]),
+                            ("linear", ["linear", "sync --from-linear", fix + " --linear", "claude.ai", "connector"]),
+                            ("figma", ["designer"])]:
+            line = fc_keys.skipped_line(kind, "acme")
+            for word in words: self.assertIn(word, line if " " in word else line.lower())
+        self.assertNotIn("--linear", fc_keys.skipped_line("openrouter", "acme"))
+        self.assertNotIn("connector", fc_keys.skipped_line("openrouter", "acme").lower())
