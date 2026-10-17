@@ -99,7 +99,7 @@ class Crew(unittest.TestCase):
             clean = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | env
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                    mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                    mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                     mock.patch.object(fc, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
                 fc.cmd_crew(a)
             self.assertEqual(fc.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
@@ -123,7 +123,7 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_frame0, "frame0_register") as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
@@ -158,7 +158,7 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
 
@@ -191,7 +191,7 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
             try:
                 fc.cmd_crew(a)
@@ -257,7 +257,7 @@ class Crew(unittest.TestCase):
             a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Plan the feature."})
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                    mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+                    mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
                 fc.cmd_crew(a)
             self.assertEqual(calls[1][:2], ("tab", "create"))
             self.assertIn(f"FAST_CODING_ROLE={env}", calls[1], role)
@@ -279,7 +279,7 @@ class Crew(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc, "frame0_register"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("sys.stdout", out):
             fc.cmd_crew(start)
         self.assertIn("starting this one as shop-explore-2", out.getvalue())
@@ -511,7 +511,7 @@ class ToolBug(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/fast-coding")
@@ -608,7 +608,7 @@ class Ready(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_ready", lambda agent, **k: calls.append(("ready", agent))), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         heads = [c[:2] for c in calls]
         self.assertLess(heads.index(("agent", "start")), heads.index(("ready", "shop-tests")))
@@ -731,7 +731,7 @@ class RestrictedStart(unittest.TestCase):
         a = type("A", (), dict(action="start", role=role, title="t", brief="b", **kw))  # no `frame0` unless given: internal callers build it so
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register") as self.frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_frame0, "frame0_register") as self.frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
                 mock.patch("pathlib.Path.home", return_value=home):
@@ -877,7 +877,7 @@ class PiStart(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": "pi:x/y"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing.ts"), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):

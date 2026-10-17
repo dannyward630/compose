@@ -69,7 +69,7 @@ class RoleModels(unittest.TestCase):
         a = SimpleNamespace(action="start", role="groundwork", title="groundwork", brief="do it", force=False, cwd=None, model=None)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
-                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc.fc_frame0, "frame0_register"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
@@ -204,7 +204,7 @@ class PlannerChain(unittest.TestCase):
         with self.probe(False), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
-                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
+                mock.patch.object(fc, "write_report"), mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
         self.assertIn("WARNING: wayfinder wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())
