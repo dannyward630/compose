@@ -46,19 +46,19 @@ class Reflect(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); p.start(); self.addCleanup(p.stop)
 
     def test_decision_lines_are_the_live_items_of_their_section(self):
-        self.assertEqual(fc.decision_lines(MAP), ["Store drafts in localStorage",
+        self.assertEqual(fc.fc_change.decision_lines(MAP), ["Store drafts in localStorage",
                                                  "Autosave every 5 seconds (C1: keystrokes flooded the API, see ENG-9)",
                                                  "Show a toast on save"])
-        self.assertEqual(fc.decision_lines("## Destination\nx\n"), [])
-        self.assertEqual(fc.map_section(MAP, "Destination"), "Drafts survive a reload.")
-        self.assertEqual(fc.decision_lines("## Decisions so far:\n- a\n"), ["a"])
-        self.assertEqual(fc.decision_lines("## Decisions so far (C1)\n- b\n## Next\n- c\n"), ["b"])
+        self.assertEqual(fc.fc_change.decision_lines("## Destination\nx\n"), [])
+        self.assertEqual(fc.fc_change.map_section(MAP, "Destination"), "Drafts survive a reload.")
+        self.assertEqual(fc.fc_change.decision_lines("## Decisions so far:\n- a\n"), ["a"])
+        self.assertEqual(fc.fc_change.decision_lines("## Decisions so far (C1)\n- b\n## Next\n- c\n"), ["b"])
 
     def test_one_question_per_line_and_flags_at_the_threshold(self):
         proj = project()
         reply = answers(d0=("BROKEN", 0.82), d1=("HOLDS", 0.9), d2=("UNCLEAR", 0.6), d3=("UNCLEAR", 0.59))
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask:
-            path, rec = fc.reflect(proj, "task:003", "localStorage is wiped by the sandbox",
+            path, rec = fc.fc_change.reflect(proj, "task:003", "localStorage is wiped by the sandbox",
                                    against=["Task 003 brief: use localStorage.setItem"])
         state, questions = ask.call_args.args[2], ask.call_args.args[3]
         self.assertEqual(len(questions), 4)  # three live decisions plus the quoted line
@@ -71,7 +71,7 @@ class Reflect(unittest.TestCase):
     def test_no_decisions_and_nothing_against_asks_nothing(self):
         proj = project("## Destination\nx\n")
         with mock.patch.object(fc.fc_models, "jev_ask") as ask:
-            path, rec = fc.reflect(proj, "verify", "a finding")
+            path, rec = fc.fc_change.reflect(proj, "verify", "a finding")
         ask.assert_not_called()
         self.assertEqual((rec["verdicts"], rec["flagged"], rec.get("error")), ([], [], None))
         self.assertTrue(path.exists())
@@ -79,13 +79,13 @@ class Reflect(unittest.TestCase):
     def test_a_screen_that_cannot_run_records_why_and_never_raises(self):
         proj = project()
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
-            _, rec = fc.reflect(proj, "verify", "x")
+            _, rec = fc.fc_change.reflect(proj, "verify", "x")
         self.assertIn("TYPESAFE_API_KEY", rec["error"])
         with mock.patch.object(fc.fc_models, "jev_ask", side_effect=fc.fc_models.PaymentRequired("typesafe", "out of credits")):
-            _, rec = fc.reflect(proj, "verify", "x")
+            _, rec = fc.fc_change.reflect(proj, "verify", "x")
         self.assertIn("out of credits", rec["error"])
         (proj / "results" / "tasks.json").write_text("{not json")
-        path, rec = fc.reflect(proj, "verify", "x")
+        path, rec = fc.fc_change.reflect(proj, "verify", "x")
         self.assertTrue(rec["error"])
         self.assertTrue(path.exists())
 
@@ -96,7 +96,7 @@ class Reflect(unittest.TestCase):
             meet.wait()
             return answers()
         with mock.patch.object(fc.fc_models, "jev_ask", ask):
-            threads = [threading.Thread(target=lambda i=i: recs.append(fc.reflect(proj, f"task:00{i}", "x")[1])) for i in range(6)]
+            threads = [threading.Thread(target=lambda i=i: recs.append(fc.fc_change.reflect(proj, f"task:00{i}", "x")[1])) for i in range(6)]
             for t in threads:
                 t.start()
             for t in threads:
@@ -110,14 +110,14 @@ class Reflect(unittest.TestCase):
                 {"at": "2026-10-11 10:05:00", "trigger": "task:002", "text": "second failure"}]
         (proj / "results" / "evidence.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
-            fc.reflect(proj, "task:003", "third failure")
+            fc.fc_change.reflect(proj, "task:003", "third failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertLess(ev.index("third"), ev.index("second"))  # newest first
         self.assertIn("first failure", ev)
-        fc.changes_dir(proj).mkdir(parents=True)
-        (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2026-10-11 10:03:00"}))
+        fc.fc_change.changes_dir(proj).mkdir(parents=True)
+        (fc.fc_change.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2026-10-11 10:03:00"}))
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
-            fc.reflect(proj, "task:004", "fourth failure")
+            fc.fc_change.reflect(proj, "task:004", "fourth failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertNotIn("first failure", ev)  # a closed change already acted on it
         self.assertIn("second failure", ev)
@@ -127,12 +127,12 @@ class Reflect(unittest.TestCase):
         (proj / "results" / "evidence.jsonl").write_text(json.dumps({"at": "2026-10-11 10:00:00", "trigger": "task:001", "text": "first failure"}) + "\n")
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
-            fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="the sandbox flake, not the plan", against=None))
+            fc.fc_change.cmd_reflect(SimpleNamespace(evidence=None, dismiss="the sandbox flake, not the plan", against=None))
         self.assertIn("dismissed", out.getvalue())
         self.assertEqual(json.loads((proj / "results" / "evidence.jsonl").read_text().splitlines()[-1])["cut"], True)
         time.sleep(1)  # the next screen is a second later than the dismissal
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
-            fc.reflect(proj, "task:002", "second failure")
+            fc.fc_change.reflect(proj, "task:002", "second failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertNotIn("first failure", ev)
         self.assertNotIn("the sandbox flake", ev)
@@ -143,7 +143,7 @@ class Reflect(unittest.TestCase):
         (proj / "results" / "tasks.json").unlink()  # a contradiction reported during groundwork, before any task exists
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
-            fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="a false alarm", against=None))
+            fc.fc_change.cmd_reflect(SimpleNamespace(evidence=None, dismiss="a false alarm", against=None))
         self.assertIn("dismissed", out.getvalue())
 
     def test_the_command_takes_evidence_or_a_dismissal(self):
@@ -151,12 +151,12 @@ class Reflect(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(io.StringIO()):
             for kw in ({"evidence": None, "dismiss": None}, {"evidence": "x", "dismiss": "y"}):
                 with self.assertRaises(SystemExit):
-                    fc.cmd_reflect(SimpleNamespace(against=None, **kw))
+                    fc.fc_change.cmd_reflect(SimpleNamespace(against=None, **kw))
 
     def test_reflects_in_the_same_second_get_their_own_files(self):
         proj = project()
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()):
-            paths = {fc.reflect(proj, f"task:00{i}", "x")[0] for i in range(3)}
+            paths = {fc.fc_change.reflect(proj, f"task:00{i}", "x")[0] for i in range(3)}
         self.assertEqual(len(paths), 3)
 
     def test_the_command_prints_each_verdict(self):
@@ -165,7 +165,7 @@ class Reflect(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), \
                 mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
                 mock.patch("sys.stdin", io.StringIO("product owner: drafts must sync across devices\n")), redirect_stdout(out):
-            fc.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
+            fc.fc_change.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
         self.assertIn("BROKEN", out.getvalue())
         self.assertIn("Store drafts in localStorage", out.getvalue())
         self.assertIn("flagged 1 of 3", out.getvalue())
@@ -194,18 +194,18 @@ class WatchReflect(unittest.TestCase):
         proj = project()
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
-            path, _ = fc.reflect(proj, "task:001", "x")
+            path, _ = fc.fc_change.reflect(proj, "task:001", "x")
         with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"][str(path)]["counts"], (1, 0))
-            fc.changes_dir(proj).mkdir(parents=True)
-            (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
+            fc.fc_change.changes_dir(proj).mkdir(parents=True)
+            (fc.fc_change.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
 
     def test_the_snapshot_drops_screens_a_dismissal_answered(self):
         proj = project()
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
-            fc.reflect(proj, "task:001", "x")
+            fc.fc_change.reflect(proj, "task:001", "x")
         with open(proj / "results" / "evidence.jsonl", "a") as f:
             f.write(json.dumps({"at": "2999-01-01 00:00:00", "trigger": "dismissed", "text": "a false alarm", "cut": True}) + "\n")
         with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
@@ -225,17 +225,17 @@ class WatchReflect(unittest.TestCase):
         watch(now=True)
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
-            path, _ = fc.reflect(proj, "task:001", "x")  # while no watch runs
+            path, _ = fc.fc_change.reflect(proj, "task:001", "x")  # while no watch runs
         out = watch(now=False)
         self.assertTrue(any(f"event reflect={path} broken=1" in line for line in out), out)
         self.assertIn("event timeout", watch(now=False)[-1])  # reported once
 
     def test_an_unreadable_change_file_does_not_hide_the_closed_ones(self):
         proj = project()
-        fc.changes_dir(proj).mkdir(parents=True)
-        (fc.changes_dir(proj) / "C1.json").write_text("{not json")
-        (fc.changes_dir(proj) / "C2.json").write_text(json.dumps({"id": "C2", "done_at": "2026-10-11 10:03:00"}))
-        self.assertEqual(fc.last_change_done(proj), "2026-10-11 10:03:00")
+        fc.fc_change.changes_dir(proj).mkdir(parents=True)
+        (fc.fc_change.changes_dir(proj) / "C1.json").write_text("{not json")
+        (fc.fc_change.changes_dir(proj) / "C2.json").write_text(json.dumps({"id": "C2", "done_at": "2026-10-11 10:03:00"}))
+        self.assertEqual(fc.fc_change.last_change_done(proj), "2026-10-11 10:03:00")
 
 
 def task(tid, after=""):
@@ -264,7 +264,7 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
     out = io.StringIO()
     with mock.patch.object(fc, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
             mock.patch.object(fc.fc_worktree, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
-            mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
+            mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc.fc_change, "reflect", reflect), redirect_stdout(out):
         try:
             fc.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
         except SystemExit:
@@ -285,7 +285,7 @@ class Holds(unittest.TestCase):
     def hold(self, **kw):
         out = io.StringIO()
         with redirect_stdout(out):
-            fc.cmd_hold(SimpleNamespace(**{"only": None, "reason": None, "release": None, **kw}))
+            fc.fc_change.cmd_hold(SimpleNamespace(**{"only": None, "reason": None, "release": None, **kw}))
         return out.getvalue()
 
     def test_hold_and_release_write_the_file_and_comment_on_linear(self):
@@ -430,7 +430,7 @@ class AutoReflect(unittest.TestCase):
     def test_a_crew_contradiction_is_screened(self):
         reflect = mock.MagicMock(return_value=(Path("/p/reflect.json"), {"flagged": []}))
         msg = "the API returns a list; Linear says: returns a dict (ENG-7); evidence: api.py:40".split()
-        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
+        with mock.patch.object(fc.fc_change, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
                 mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(io.StringIO()):
             fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=msg))
         self.assertEqual(reflect.call_args.args[1], "contradiction:hw-tests-003")
@@ -438,7 +438,7 @@ class AutoReflect(unittest.TestCase):
 
     def test_a_screen_that_crashes_never_stops_a_report_or_a_verify(self):
         reflect, out = mock.MagicMock(side_effect=RuntimeError("disk full")), io.StringIO()
-        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
+        with mock.patch.object(fc.fc_change, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
                 mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(out):
             fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
             fc.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
@@ -452,7 +452,7 @@ class AutoReflect(unittest.TestCase):
 
     def test_a_failed_verify_is_screened_with_its_findings(self):
         reflect = mock.MagicMock(return_value=(Path("/p/reflect-1.json"), {}))
-        with mock.patch.object(fc, "reflect", reflect):
+        with mock.patch.object(fc.fc_change, "reflect", reflect):
             fc.verify_failed(self.proj, [{}, {}], "confirmed [high] s.go: a query per answer")
             self.assertEqual(reflect.call_args.args[1], "verify")
             self.assertIn("after 2 round(s)", reflect.call_args.args[2])
@@ -500,7 +500,7 @@ def git_repo(branches):
 def change(proj, repo, action, cid=None, why=None):
     out = io.StringIO()
     with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
-        fc.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why))
+        fc.fc_change.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why))
     return out.getvalue()
 
 
@@ -520,13 +520,13 @@ class Changes(unittest.TestCase):
 
     def test_start_snapshots_linear_and_saves_each_branch_tip(self):
         self.assertIn("C1 open: localStorage is wiped", change(self.proj, self.repo, "start", why="localStorage is wiped"))
-        rec = fc.load_change(self.proj, "C1")
+        rec = fc.fc_change.load_change(self.proj, "C1")
         self.assertEqual(rec["before"]["issues"]["ENG-4"]["blockedBy"], ["ENG-3"])
         tip = self.git("rev-parse", "fast/hw/003")
         self.assertEqual(rec["tips"]["003"], tip)
         self.assertEqual(self.git("rev-parse", "refs/fast-coding/hw/C1/003"), tip)
-        self.assertEqual(fc.open_change(self.proj), "C1")
-        self.assertEqual(fc.change_line(self.proj), "  CHANGE C1 open: localStorage is wiped")
+        self.assertEqual(fc.fc_change.open_change(self.proj), "C1")
+        self.assertEqual(fc.fc_change.change_line(self.proj), "  CHANGE C1 open: localStorage is wiped")
 
     def test_start_needs_a_fresh_sync_and_no_open_change(self):
         synced(self.proj, MAP, BEFORE, ahead=-600)
@@ -546,8 +546,8 @@ class Changes(unittest.TestCase):
         self.assertIn("C1: localStorage is wiped by the sandbox. Superseded: Store drafts in localStorage. "
                       "Canceled 004. New 005. Edited 003. Evidence: none recorded.", out)
         self.assertIn("post the comment above on ENG-1 through Linear", out)
-        self.assertIsNone(fc.open_change(self.proj))
-        self.assertTrue(fc.load_change(self.proj, "C1")["diff"]["feature"])
+        self.assertIsNone(fc.fc_change.open_change(self.proj))
+        self.assertTrue(fc.fc_change.load_change(self.proj, "C1")["diff"]["feature"])
 
     def test_keeping_the_plan_is_recorded_too(self):
         change(self.proj, self.repo, "start", why="the product owner keeps localStorage")
@@ -565,7 +565,7 @@ class Changes(unittest.TestCase):
         change(self.proj, self.repo, "start", why="x")
         synced(self.proj, MAP, {"ENG-3": BEFORE["ENG-3"]}, ahead=2)
         change(self.proj, self.repo, "done")
-        self.assertEqual(fc.load_change(self.proj, "C1")["diff"]["canceled"], ["ENG-4"])
+        self.assertEqual(fc.fc_change.load_change(self.proj, "C1")["diff"]["canceled"], ["ENG-4"])
 
     def test_a_canceled_task_is_no_task_and_no_layer(self):
         for t in ("003", "004"):  # both layers were built
@@ -578,27 +578,27 @@ class Changes(unittest.TestCase):
         self.assertEqual(fc.fc_worktree.stack_order(self.repo, self.proj), ["fast/hw/003", "fast/hw/004"])  # nothing synced: every branch
 
     def test_records_are_written_atomically(self):
-        d = fc.changes_dir(self.proj)
+        d = fc.fc_change.changes_dir(self.proj)
         change(self.proj, self.repo, "start", why="x")
         self.assertEqual([f.name for f in d.iterdir()], ["C1.json"])
         synced(self.proj, MAP_AFTER, AFTER, ahead=2)
         change(self.proj, self.repo, "done")
         self.assertEqual([f.name for f in d.iterdir()], ["C1.json"])
-        self.assertTrue(fc.load_change(self.proj, "C1")["done_at"])
+        self.assertTrue(fc.fc_change.load_change(self.proj, "C1")["done_at"])
 
     def test_stray_files_do_not_break_numbering(self):
-        d = fc.changes_dir(self.proj)
+        d = fc.fc_change.changes_dir(self.proj)
         d.mkdir(parents=True, exist_ok=True)
         (d / "C1.json.tmp").write_text('{"id": "C1", "wh')
         (d / "Cx.json").write_text("{}")
         self.assertIn("C1 open", change(self.proj, self.repo, "start", why="x"))
-        self.assertEqual(fc.change_ids(self.proj), ["C1"])
+        self.assertEqual(fc.fc_change.change_ids(self.proj), ["C1"])
 
     def test_status_survives_an_unreadable_change_record(self):
-        d = fc.changes_dir(self.proj)
+        d = fc.fc_change.changes_dir(self.proj)
         d.mkdir(parents=True, exist_ok=True)
         (d / "C1.json").write_text('{"id": "C1", "wh')
-        self.assertTrue(fc.change_line(self.proj).startswith("  CHANGE records unreadable"))
+        self.assertTrue(fc.fc_change.change_line(self.proj).startswith("  CHANGE records unreadable"))
 
 
 STATE_TYPES = {"Todo": "unstarted", "In Progress": "started", "In Review": "started", "Done": "completed", "Canceled": "canceled"}
@@ -664,7 +664,7 @@ class Undo(unittest.TestCase):
         self.assertEqual(self.lin.issues["ENG-5"]["status"], "Canceled")
         self.assertEqual(self.lin.issues["ENG-1"]["description"], MAP)
         self.assertEqual(self.git("rev-parse", "fast/hw/003"), old)
-        self.assertEqual(fc.load_change(self.proj, "C2")["why"], "undo C1")
+        self.assertEqual(fc.fc_change.load_change(self.proj, "C2")["why"], "undo C1")
         self.assertIn("C2 open: undo C1", out)
 
     def test_undo_refuses_when_something_it_touched_moved_since(self):
@@ -672,7 +672,7 @@ class Undo(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             change(self.proj, self.repo, "undo", cid="C1")
         self.assertIn("003", str(e.exception))
-        self.assertIsNone(fc.open_change(self.proj))
+        self.assertIsNone(fc.fc_change.open_change(self.proj))
 
     def test_the_runs_own_state_moves_do_not_block_the_undo(self):
         for i in ("ENG-3", "ENG-5"):  # the run dispatched them after `change done`
@@ -707,7 +707,7 @@ class Undo(unittest.TestCase):
         change(self.proj, self.repo, "undo", cid="C1")
         self.sync_linear(4)
         change(self.proj, self.repo, "done")
-        self.assertEqual(fc.load_change(self.proj, "C2")["diff"]["new"], ["ENG-4"])  # back from Canceled: new to the plan again
+        self.assertEqual(fc.fc_change.load_change(self.proj, "C2")["diff"]["new"], ["ENG-4"])  # back from Canceled: new to the plan again
         self.sync_linear(5)
         change(self.proj, self.repo, "undo", cid="C2")
         self.assertEqual({i: self.lin.issues[i]["status"] for i in AFTER}, {"ENG-3": "Todo", "ENG-4": "Canceled", "ENG-5": "Todo"})
@@ -721,7 +721,7 @@ class Undo(unittest.TestCase):
         self.assertIn("apply these through Linear (save_issue), then sync:", out)
         self.assertIn('ENG-4: {"status": "Todo", "blockedBy": ["ENG-3"]}', out)
         self.assertEqual(self.lin.issues["ENG-4"]["status"], "Canceled")  # nothing was written
-        self.assertEqual(fc.open_change(self.proj), "C2")
+        self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
 
     def test_linear_failing_midway_lists_what_is_left_and_leaves_the_undo_open(self):
         self.lin.fail_on = "ENG-3"
@@ -730,7 +730,7 @@ class Undo(unittest.TestCase):
         self.assertIn("  ENG-3: ", out)
         self.assertIn("  ENG-1: ", out)
         self.assertNotIn("  ENG-5: ", out)
-        self.assertEqual(fc.open_change(self.proj), "C2")
+        self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
 
     def test_a_branch_git_refuses_to_move_is_listed_and_the_undo_still_finishes(self):
         tip = self.git("rev-parse", "refs/fast-coding/hw/C1/003")
@@ -740,7 +740,7 @@ class Undo(unittest.TestCase):
         self.assertIn(f"  git branch -f fast/hw/003 {tip}", out)
         self.assertEqual(self.lin.issues["ENG-4"]["status"], "Todo")  # the Linear step still ran
         self.assertIn("C2 open: undo C1", out)
-        self.assertEqual(fc.open_change(self.proj), "C2")
+        self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
 
     def test_blockers_are_set_to_exactly_the_snapshot(self):
         self.lin.issues["ENG-4"]["blockedBy"] = ["ENG-3", "ENG-5"]
