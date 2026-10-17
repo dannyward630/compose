@@ -188,7 +188,7 @@ def graph_dir(root):
 
 def ignore_tool_files(wt):
     """Keep compose's and trail's own files out of the repository, before anything else is written: every checkout
-    ignores them through info/exclude (also trail's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
+    ignores them through info/exclude (and `/.ignore`), and an existing `.gitignore` gets the two lines, so a clone
     of the delivered branch ignores them too. Returns True when `.gitignore` changed (the caller commits it)."""
     exclude_paths(wt, ["/" + d for d in TOOL_DIRS] + ["/.ignore"])
     gi = wt / ".gitignore"
