@@ -2,10 +2,12 @@ import importlib.machinery, importlib.util, json, os, stat, subprocess, tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import shutil, sys
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -83,7 +85,7 @@ class GraftSetup(unittest.TestCase):
 
     def test_missing_graft_says_how_to_install(self):
         repo, _ = repo_with({"main.go": "package main\n"})
-        with mock.patch.object(fc.shutil, "which", return_value=None), mock.patch.object(fc, "say") as say:
+        with mock.patch.object(shutil, "which", return_value=None), mock.patch.object(fc.fc_core, "say") as say:
             fc.setup_graft(repo)
         self.assertIn("npm i -g @nanonets/graft", say.call_args[0][0])
         self.assertEqual(self.calls(), [])
@@ -95,7 +97,7 @@ class Explore(unittest.TestCase):
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
         out = []
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj.parent.parent), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj.parent.parent), \
                 mock.patch("builtins.print", side_effect=lambda s: out.append(s)):
             fc.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
         brief = out[0]

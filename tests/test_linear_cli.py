@@ -3,9 +3,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 KEY = "lin_api_SECRET_do_not_print"
@@ -66,8 +68,8 @@ class LinearStates(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.lin = FakeLinear()
-        for name, value in (("LINEAR_KEY", KEY), ("linear_gql", self.lin), ("say", lambda m: None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc, "LINEAR_KEY", KEY), (fc, "linear_gql", self.lin), (fc.fc_core, "say", lambda m: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         fc._linear_warned.clear()
 
     def result(self, status="passed", log=None):
@@ -95,7 +97,7 @@ class LinearStates(unittest.TestCase):
 
     def test_no_key_skips_once_with_how_to_set_it(self):
         said = []
-        with mock.patch.object(fc, "LINEAR_KEY", None), mock.patch.object(fc, "say", said.append):
+        with mock.patch.object(fc, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
             fc.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
             fc.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
@@ -103,7 +105,7 @@ class LinearStates(unittest.TestCase):
 
     def test_a_linear_outage_never_stops_the_run(self):
         said = []
-        with mock.patch.object(fc, "linear_gql", side_effect=OSError("connection refused")), mock.patch.object(fc, "say", said.append):
+        with mock.patch.object(fc, "linear_gql", side_effect=OSError("connection refused")), mock.patch.object(fc.fc_core, "say", said.append):
             fc.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
             fc.linear_verified(self.proj)
         self.assertTrue(any("update failed" in s for s in said))
@@ -118,8 +120,8 @@ class SyncFromLinear(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.queries = []
-        for name, value in (("LINEAR_KEY", KEY), ("linear_gql", self.gql), ("say", lambda m: None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc, "LINEAR_KEY", KEY), (fc, "linear_gql", self.gql), (fc.fc_core, "say", lambda m: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def node(self, i, parent, blocked=()):
         desc = f"brief {i}\n\n```fast-coding\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
@@ -140,7 +142,7 @@ class SyncFromLinear(unittest.TestCase):
 
     def sync(self):
         out = io.StringIO()
-        with redirect_stdout(out), mock.patch.object(fc, "project_dir", return_value=self.proj):
+        with redirect_stdout(out), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
             fc.cmd_sync(SimpleNamespace(from_linear=True))
         return out.getvalue()
 

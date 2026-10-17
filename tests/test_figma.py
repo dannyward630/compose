@@ -5,6 +5,7 @@ from unittest import mock
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -16,7 +17,7 @@ class FigmaCheck(unittest.TestCase):
 
     def check(self, figma=None):
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
             fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="check", figma=figma, only=None))
         return out.getvalue()
 
@@ -31,7 +32,7 @@ class FigmaCheck(unittest.TestCase):
                           ("AbCdEf123456", "AbCdEf123456"),
                           ("junk", None), ("abc123456", None), ("a" * 41, None), ("AbCdEf-123456", None),
                           ("https://example.com/design/AbCdEf123456/Shop", None)):
-            self.assertEqual(fc.figma_key(text), key, text)
+            self.assertEqual(fc.fc_core.figma_key(text), key, text)
 
     def test_store_figma_keeps_other_keys_and_creates_missing_file(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "OldKey123456", "x": 1}))
@@ -66,7 +67,7 @@ class FigmaCheck(unittest.TestCase):
         self.assertIn("claude mcp add framelink-figma", str(e.exception))
         env.write_text("FIGMA_API_KEY=figd_secret_token\n")
         ok = SimpleNamespace(returncode=0, stdout='{"nodes": []}', stderr="")
-        with mock.patch.object(fc.subprocess, "run", return_value=ok) as run:
+        with mock.patch.object(subprocess, "run", return_value=ok) as run:
             self.assertEqual(fc.framelink_fetch("K", node="1:2", depth=1, env_file=env), '{"nodes": []}')
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[:4], ["npx", "-y", "figma-developer-mcp", "fetch"])
@@ -75,7 +76,7 @@ class FigmaCheck(unittest.TestCase):
             self.assertEqual(cmd[cmd.index(flag) + 1], val)
         self.assertNotIn("figd_secret_token", " ".join(cmd))
         bad = SimpleNamespace(returncode=1, stdout="", stderr="403 token figd_secret_token rejected")
-        with mock.patch.object(fc.subprocess, "run", return_value=bad), self.assertRaises(RuntimeError) as e:
+        with mock.patch.object(subprocess, "run", return_value=bad), self.assertRaises(RuntimeError) as e:
             fc.framelink_fetch("K", env_file=env)
         self.assertIn("403 token *** rejected", str(e.exception))
         self.assertNotIn("figd_secret_token", str(e.exception))
@@ -105,7 +106,7 @@ class FigmaTree(unittest.TestCase):
     def tree(self, **kw):
         ns = dict(repo=".", project="p", action="tree", figma=None, only="001", node="1:2,3-4", depth=None, bindings=None)
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
             fc.cmd_figma(SimpleNamespace(**{**ns, **kw}))
         return out.getvalue()
 
@@ -158,13 +159,13 @@ class FigmaJudge(unittest.TestCase):
             judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"]), judge_task("ENG-7", "005", "Bare", [])]})
         for tid in ("001", "002", "004", "005", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
             (self.proj / "results" / f"{tid}.tree.txt").write_text(f"FRAME {tid}\n  TEXT Total: $10\n")
-        for name, value in (("ENV_FILE", self.proj / "none.env"), ("say", lambda m: None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc, "ENV_FILE", self.proj / "none.env"), (fc.fc_core, "say", lambda m: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
                 mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
@@ -275,7 +276,7 @@ class FigmaJudge(unittest.TestCase):
             self.states.append(state)
             choice, p = answer(state["tree"])
             return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9, "NOT_MET": p}}}}
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "fast_json", return_value=confirm), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "fast_json", return_value=confirm), \
                 mock.patch.object(fc, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
@@ -323,7 +324,7 @@ class FigmaJudge(unittest.TestCase):
             return {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         (self.proj / "results" / "001.tree.txt").write_text(big_tree())
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
         res = json.loads((self.proj / "results" / "001.json").read_text())
         self.assertEqual(res["status"], "blocked")

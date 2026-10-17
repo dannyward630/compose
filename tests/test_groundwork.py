@@ -6,6 +6,7 @@ os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree p
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -47,7 +48,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
 
     def patched(self):
-        return (mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo))
+        return (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo))
 
     def test_brief_covers_the_detected_toolchains_and_appends_the_notes(self):
         out = io.StringIO()
@@ -190,14 +191,14 @@ class Triage(unittest.TestCase):
             with lock:
                 live[0] -= 1
             return {"verdict": "flag", "reason": "adds a retry flag: `retries := 3`"} if "001 change" in user else {"verdict": "clean"}
-        with mock.patch.object(fc, "fast_json", fake), mock.patch.object(fc, "say"):
+        with mock.patch.object(fc, "fast_json", fake), mock.patch.object(fc.fc_core, "say"):
             out = fc.triage(self.repo, self.proj, ["001", "002"])
         self.assertEqual(peak[0], 2)
         self.assertEqual(out["001"][0], "flag"); self.assertEqual(out["002"][0], "clean")
         self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["triage"]["verdict"], "flag")
 
     def test_a_failed_call_is_unknown_never_a_crash(self):
-        with mock.patch.object(fc, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc, "say"):
+        with mock.patch.object(fc, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc.fc_core, "say"):
             out = fc.triage(self.repo, self.proj, ["001"])
         self.assertEqual(out["001"][0], "unknown")
 
@@ -258,7 +259,7 @@ class PlannerRules(unittest.TestCase):
         proj = repo / ".fast-coding" / "p"; proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
             fc.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
         self.brief = out.getvalue()
 
@@ -303,8 +304,8 @@ class DesignerBrief(unittest.TestCase):
 
     def brief(self, extra=None, figma=None, stdin=""):
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.wt), \
-                mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch.object(fc, "say"), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.wt), \
+                mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch.object(fc.fc_core, "say"), mock.patch("sys.stdout", out):
             fc.cmd_designer(SimpleNamespace(repo=str(self.wt), project="p", extra=extra, figma=figma))
         return out.getvalue()
 
@@ -328,7 +329,7 @@ class DesignerBrief(unittest.TestCase):
         self.assertNotIn("OldKey000000", brief)
 
     def test_an_unreadable_figma_link_exits_without_storing_or_printing(self):
-        with mock.patch.object(fc, "figma_key", return_value=None), mock.patch.object(fc, "store_figma") as store, \
+        with mock.patch.object(fc.fc_core, "figma_key", return_value=None), mock.patch.object(fc, "store_figma") as store, \
                 self.assertRaises(SystemExit) as e:
             self.brief(figma="https://example.com/nope")
         self.assertNotIn(e.exception.code, (0, None))
@@ -373,7 +374,7 @@ class DesignCrews(unittest.TestCase):
         def crew(ns):
             started.append(ns)
             if ns.role in busy: raise SystemExit("busy")
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr_space") as space, \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr_space") as space, \
                 mock.patch.object(fc, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
             fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space

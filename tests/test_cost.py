@@ -11,6 +11,7 @@ import fc_cost, fc_sessions  # noqa: E402
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(BIN / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 START = "2026-10-17 09:05:00"
@@ -186,7 +187,7 @@ class CostCommand(unittest.TestCase):
 
     def cost(self, as_json):
         out = io.StringIO()
-        with self.fake(), mock.patch.object(fc, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
+        with self.fake(), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
             fc.cmd_cost(SimpleNamespace(repo=str(self.repo), project="shop", json=as_json))
         return out.getvalue()
 
@@ -199,7 +200,7 @@ class CostCommand(unittest.TestCase):
     def test_main_with_no_sessions_prints_cost_none(self):
         out = io.StringIO()
         with mock.patch.object(sys, "argv", ["fast-coding", "cost", "--project", "shop", "--repo", str(self.repo)]), \
-                mock.patch.object(fc, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
+                mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
             fc.main()
         self.assertEqual(out.getvalue().strip(), "cost  none")
 

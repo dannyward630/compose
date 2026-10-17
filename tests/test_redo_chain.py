@@ -1,10 +1,12 @@
 import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import sys
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -89,7 +91,7 @@ class KeepFinishedLayers(unittest.TestCase):
     def test_a_passed_or_hand_done_layer_keeps_its_branch(self):
         for status in ("passed", "hand_done"):
             (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": status, "branch": "fast/p/001"}))
-            with mock.patch.object(fc, "replace_branch", side_effect=AssertionError(f"a {status} layer was rebuilt")), mock.patch.object(fc, "say"):
+            with mock.patch.object(fc, "replace_branch", side_effect=AssertionError(f"a {status} layer was rebuilt")), mock.patch.object(fc.fc_core, "say"):
                 r = fc.run_task(self.repo, self.proj, {"id": "001", "title": "A", "files": [], "body": ""}, 1)
             self.assertEqual(r["status"], status)
             self.assertEqual(self.git("rev-parse", "fast/p/001"), self.tip)
@@ -99,7 +101,7 @@ class KeepFinishedLayers(unittest.TestCase):
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
         task = {"id": "001", "title": "A", "files": [], "body": ""}
         with mock.patch.object(fc, "replace_branch", side_effect=AssertionError("a hand_done task was rebuilt")), \
-             mock.patch.object(fc, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc, "say"):
+             mock.patch.object(fc, "linear_event", side_effect=AssertionError("a hand_done task moved Linear")), mock.patch.object(fc.fc_core, "say"):
             self.assertEqual(fc.run_task(self.repo, self.proj, task, 1)["status"], "hand_done")
         with mock.patch.dict(os.environ, {"FAST_CODING_REDO": "1"}), mock.patch.object(fc, "replace_branch", side_effect=RuntimeError("rebuilt")):
             with self.assertRaisesRegex(RuntimeError, "rebuilt"):
@@ -116,8 +118,8 @@ class KeepFinishedLayers(unittest.TestCase):
             (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": st}))
         ran = []
         a = lambda **kw: mock.Mock(repo=str(self.repo), project="p", only=None, redo=False, **kw)
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo), \
-             mock.patch.object(fc, "run_tasks", lambda repo, proj, ts, a: ran.append([m["id"] for m in ts])), mock.patch.object(fc, "say"):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo), \
+             mock.patch.object(fc, "run_tasks", lambda repo, proj, ts, a: ran.append([m["id"] for m in ts])), mock.patch.object(fc.fc_core, "say"):
             fc.cmd_run(a())
             (self.proj / "results" / "run.json").write_text(json.dumps({"pid": 999999, "started_at": "x", "tasks": [t["id"] for t in tasks], "args": {}}))
             fc.cmd_resume(a())
@@ -168,7 +170,7 @@ class RewrittenTrunk(unittest.TestCase):
         self.git("checkout", "-q", "fast/p/011"); (self.repo / "a.txt").write_text("eleven\n"); self.git("commit", "-qam", "task 011 edits a")
         self.git("checkout", "-q", "trunk")
         a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True)
-        with mock.patch.object(fc, "say") as say, mock.patch.object(fc, "preflight", lambda m: None), mock.patch.object(fc, "herdr_space", lambda p: None), \
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc, "preflight", lambda m: None), mock.patch.object(fc, "herdr_space", lambda p: None), \
              self.assertRaises(SystemExit) as e:
             fc.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept

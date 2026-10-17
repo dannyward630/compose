@@ -2,9 +2,11 @@ import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, 
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import subprocess, sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-sonnet-5-5",
@@ -65,7 +67,7 @@ class RoleModels(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t1"}, "root_pane": {"pane_id": "w9:p1"}}
             return None
         a = SimpleNamespace(action="start", role="groundwork", title="groundwork", brief="do it", force=False, cwd=None, model=None)
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
                 mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
@@ -108,8 +110,8 @@ class PlannerChain(unittest.TestCase):
         def run(cmd, **kw):
             bad = not ok and cmd[cmd.index("--model") + 1] in down
             out = json.dumps({"is_error": bad, "result": "model not found" if bad else "ok"})
-            return fc.subprocess.CompletedProcess(cmd, 1 if bad else 0, out, "")
-        return mock.patch.object(fc.subprocess, "run", side_effect=run)
+            return subprocess.CompletedProcess(cmd, 1 if bad else 0, out, "")
+        return mock.patch.object(subprocess, "run", side_effect=run)
 
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
@@ -146,8 +148,8 @@ class PlannerChain(unittest.TestCase):
             self.assertEqual(fc.crew_pick("helper", "planner")[0], astra)
 
     def test_a_pi_model_is_probed_with_pi_and_judged_by_its_events(self):
-        ok = fc.subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}), "")
-        bad = fc.subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": "Model not found: x"}}), "")
+        ok = subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}), "")
+        bad = subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": "Model not found: x"}}), "")
         self.assertEqual(fc.probe_result("pi:openai/gpt-6-astra", ok), (True, "answered"))
         self.assertEqual(fc.probe_result("pi:openai/x", bad)[0], False)
         self.assertIn("Model not found", fc.probe_result("pi:openai/x", bad)[1])
@@ -160,7 +162,7 @@ class PlannerChain(unittest.TestCase):
         a = SimpleNamespace(action="start", role="explore", repo=str(proj), project="p", model=None, title=None,
                             brief="look", cwd=None, force=False)
         with self.probe(False, down=("claude-sonnet-5-5",)), mock.patch.object(fc, "herdr", lambda *x, **k: calls.append(x)), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "project_dir", return_value=proj), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
                 mock.patch.object(fc, "project_worktree", return_value=proj), self.assertRaises(SystemExit) as e:
             fc.cmd_crew(a)  # models.crew.default is one entry with no fallback
         self.assertIn("claude:claude-sonnet-5-5 unavailable (model not found)", str(e.exception))
@@ -172,12 +174,12 @@ class PlannerChain(unittest.TestCase):
 
     def test_headless_claude_runs_carry_no_fast_coding_env(self):
         lead = {"FAST_CODING_ROLE": "orchestrator", "FAST_CODING_PROJECT": "p", "FAST_CODING_REPO": "/r"}  # the team lead's tab
-        done = fc.subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
-        with mock.patch.dict(fc.os.environ, lead), mock.patch.object(fc.subprocess, "run", return_value=done) as run:
+        done = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
+        with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run:
             fc.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
             fc.claude_once(".", "hi")
         for call in run.call_args_list:
-            self.assertEqual([k for k in call.kwargs.get("env") or fc.os.environ if k.startswith("FAST_CODING_")], [])
+            self.assertEqual([k for k in call.kwargs.get("env") or os.environ if k.startswith("FAST_CODING_")], [])
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
@@ -200,7 +202,7 @@ class PlannerChain(unittest.TestCase):
         a = SimpleNamespace(action="start", role="wayfinder", repo=str(proj), project="p", model=None, title=None,
                             brief="plan it", cwd=None, force=False)
         with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
+                mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
                 mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:

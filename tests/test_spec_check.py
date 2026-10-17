@@ -6,6 +6,7 @@ os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 SETTLED = "## Not yet specified\n\nNone\n\n### Codebase brief\n\nWhere things live.\n\n## Plan\n\nThe plan."
@@ -47,7 +48,7 @@ def has(gaps, *kws):
 class SpecCheck(unittest.TestCase):
     def run_cli(self, stdin=None, **kw):
         """The printed lines and the SystemExit (SystemExit(0) when it returns normally); no stdin reads the synced cache."""
-        with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin or "")), mock.patch("sys.stdout", io.StringIO()) as out:
+        with mock.patch.object(sys, "stdin", io.StringIO(stdin or "")), mock.patch("sys.stdout", io.StringIO()) as out:
             try:
                 fc.cmd_spec_check(SimpleNamespace(**{"repo": ".", "project": None, **kw}, stdin=stdin is not None))
             except SystemExit as e:
@@ -138,7 +139,7 @@ class SpecCheck(unittest.TestCase):
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.sync_tasks(proj, data(clash, ""))
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
             fc.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
         self.assertEqual(out.getvalue(), TASKS_OUT)
         self.assertEqual(fc.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
@@ -148,7 +149,7 @@ class SpecCheck(unittest.TestCase):
         repo = Path(tempfile.mkdtemp())
         proj = repo / ".fast-coding" / "p"
         proj.mkdir(parents=True)
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         self.assertIn("no tasks synced for p", str(e))
         self.assertIn("fast-coding sync", str(e))
@@ -161,7 +162,7 @@ class SpecCheck(unittest.TestCase):
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.sync_tasks(proj, d)
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         want, we = self.run_cli(json.dumps(d))
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)

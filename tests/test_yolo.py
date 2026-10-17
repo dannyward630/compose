@@ -5,6 +5,7 @@ from unittest import mock
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 ORCH = "hw-orchestrator"
@@ -27,7 +28,7 @@ class Yolo(unittest.TestCase):
     def yolo(self, *words, push=False, snapshot=None):
         out = io.StringIO()
         a = SimpleNamespace(repo=".", project="hw", push=push, words=list(words))
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc, "watch_snapshot", return_value=snapshot or snap()), \
                 mock.patch.object(fc, "stack_order", return_value=[]), \
                 mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
@@ -121,7 +122,7 @@ class Yolo(unittest.TestCase):
     def watch_now(self, s):
         out = []
         a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=s), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=s), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
             fc.cmd_watch(a)
         return out
@@ -138,8 +139,8 @@ class Yolo(unittest.TestCase):
     def test_status_shows_the_header(self):
         self.yolo(push=True)
         since = json.loads(self.file.read_text())["since"]
-        with mock.patch.object(fc, "load_tasks", return_value=[]), mock.patch.object(fc, "current_branch", return_value="main"), \
-                mock.patch.object(fc, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
+        with mock.patch.object(fc, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
                 mock.patch.object(fc, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
             lines = fc.render_status(Path("."), [self.proj]).splitlines()
             self.assertIn(f"  yolo on (push) since {since}", lines)

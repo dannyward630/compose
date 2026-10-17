@@ -2,9 +2,11 @@ import importlib.machinery, importlib.util, io, json, tempfile, unittest, urllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -77,8 +79,8 @@ class Sync(unittest.TestCase):
         """What `tasks` prints about a shared file for (id, after) tasks that all own x.go."""
         tasks = [{"id": i, "title": i, "files": ["x.go"], "protected": [], "test": "t", "after": a, "linear": "", "body": ""} for i, a in specs]
         out = io.StringIO()
-        with mock.patch.object(fc, "load_tasks", return_value=tasks), mock.patch.object(fc, "project_dir", return_value=self.proj), \
-                mock.patch.object(fc, "task_state", return_value={"state": "pending"}), mock.patch.object(fc, "sh"), \
+        with mock.patch.object(fc, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+                mock.patch.object(fc, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
                 mock.patch("sys.stdout", out):
             fc.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
         return "own the same file" in out.getvalue()
@@ -110,7 +112,7 @@ class Sync(unittest.TestCase):
 
     def test_cli_reads_stdin(self):
         payload = json.dumps({"feature": {"id": "ENG-1", "title": "F"}, "issues": [issue("ENG-3", "A", block(id="001", test="t"))]})
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc.sys, "stdin", io.StringIO(payload)), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(sys, "stdin", io.StringIO(payload)), \
                 mock.patch("builtins.print"):
             fc.cmd_sync(type("A", (), {"from_linear": False}))
         self.assertEqual(fc.load_tasks(self.proj)[0]["linear"], "ENG-3")
@@ -135,8 +137,8 @@ class DesignTasks(unittest.TestCase):
         self.assertEqual([m["id"] for m in fc.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
 
     def test_run_stack_and_acceptance_never_see_a_design_task(self):
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "run_tasks") as run, \
-                mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "run_tasks") as run, \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
             fc.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False))
             with self.assertRaises(SystemExit) as e:
                 fc.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False))
@@ -184,7 +186,7 @@ class DesignTasks(unittest.TestCase):
 
     def test_a_rejected_request_reports_the_providers_error_body(self):
         err = urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"detail":{"error_type":"max_tokens_exceeded"}}'))
-        with mock.patch.object(fc.urllib.request, "urlopen", side_effect=err):
+        with mock.patch.object(urllib.request, "urlopen", side_effect=err):
             with self.assertRaises(RuntimeError) as e:
                 fc.http_json(mock.Mock(), "typesafe (Jev acceptance)")
         self.assertIn("max_tokens_exceeded", str(e.exception))
@@ -207,8 +209,8 @@ class DesignTasks(unittest.TestCase):
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
         state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "task_state", side_effect=state), \
-                mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "task_state", side_effect=state), \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
             fc.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
         text = out.getvalue()
         self.assertIn("Checkout/Cart, Checkout/Pay", text)
@@ -219,6 +221,6 @@ class DesignTasks(unittest.TestCase):
     def test_a_passed_design_task_stays_passed(self):
         for tid in ("001", "002"):
             (self.proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
-        with mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+        with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
             rows = [fc.task_state(Path("."), self.proj, self.by[t], "HEAD")["state"] for t in ("001", "002")]
         self.assertEqual(rows, ["passed", "merged"])

@@ -1,10 +1,12 @@
 import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import sys
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -116,7 +118,7 @@ class Layers(unittest.TestCase):
     def stack(self, **cfg):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
         out = []
-        with mock.patch.object(fc, "say", out.append):
+        with mock.patch.object(fc.fc_core, "say", out.append):
             self.assertTrue(fc.register_stack(self.repo, self.proj, "fast-coding/p"))
         return out
 

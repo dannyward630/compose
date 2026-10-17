@@ -1,9 +1,11 @@
 import importlib.machinery, importlib.util, json, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import subprocess, sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -43,9 +45,9 @@ class Teardown(unittest.TestCase):
 
     def test_team_lead_done_tears_down_crew_done_closes_itself(self):
         def report(who):
-            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                     mock.patch.object(fc, "herdr", self.herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                    mock.patch.object(fc, "teardown") as td, mock.patch.object(fc.subprocess, "Popen") as popen:
+                    mock.patch.object(fc, "teardown") as td, mock.patch.object(subprocess, "Popen") as popen:
                 fc.cmd_report(type("A", (), {"as_": who, "state": "done", "message": ["finished"]}))
             return td, popen
         td, popen = report("shop-e2e")

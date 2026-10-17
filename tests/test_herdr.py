@@ -1,9 +1,11 @@
 import importlib.machinery, importlib.util, json, os, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import sys, time
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -131,20 +133,20 @@ class Tabs(unittest.TestCase):
 class AgentStartRace(unittest.TestCase):
     def test_a_busy_pane_is_retried_until_it_is_ready(self):
         answers = iter([(None, "agent_pane_busy"), (None, "agent_pane_busy"), ({"agent": {"name": "a"}}, None)])
-        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(fc.time, "sleep"):
+        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
             self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
 
     def test_an_unregistered_name_is_retried(self):
         answers = iter([(None, "agent_name_not_found"), ({"agent": {"name": "a"}}, None)])
-        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(fc.time, "sleep"):
+        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
             self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
 
     def test_other_errors_and_a_pane_that_never_frees_still_fail(self):
-        with mock.patch.object(fc, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(fc.time, "sleep"):
+        with mock.patch.object(fc, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "pane_not_found"):
                 fc.herdr_agent_start("a")
             self.assertEqual(e.call_count, 1)
-        with mock.patch.object(fc, "herdr_error", return_value=(None, "agent_pane_busy")) as e, mock.patch.object(fc.time, "sleep"):
+        with mock.patch.object(fc, "herdr_error", return_value=(None, "agent_pane_busy")) as e, mock.patch.object(time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
                 fc.herdr_agent_start("a", tries=3)
             self.assertEqual(e.call_count, 3)

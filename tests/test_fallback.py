@@ -1,11 +1,13 @@
 import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import sys, time
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 os.environ["FAST_CODING_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -214,7 +216,7 @@ class FixScope(unittest.TestCase):
                 mock.patch.object(fc, "run_stages", lambda *a: next(stages)), mock.patch.object(fc, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
-                fc.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], fc.time.time())
+                fc.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
 
     def test_fix_inside_the_stack_commits_and_passes(self):
@@ -242,7 +244,7 @@ class FixScope(unittest.TestCase):
             systems.append((system, user))
             return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
                 else {"confirmed": True, "evidence": "e"}
-        with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc, "load_env", return_value={}):
+        with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
             fc.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
         review, confirm = systems
         self.assertIn("hardening", review[0])
@@ -253,7 +255,7 @@ class FixScope(unittest.TestCase):
         def review(evidence, cfg=None):
             fj = lambda env, system, user, max_tokens=4000: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
                 if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
-            with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc, "load_env", return_value={}):
+            with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
                 return fc.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
         self.assertEqual(len(review("fileName:   'x.js',")["confirmed"]), 1)
         rv = review("lib output defaults to main.js")
@@ -274,7 +276,7 @@ class FixScope(unittest.TestCase):
 
 
 def ws(name=None, target=None, stdin=""):
-    with mock.patch.object(fc.sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
+    with mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
         fc.cmd_workspace(type("A", (), {"name": name, "target": target}))
 
 
@@ -318,7 +320,7 @@ class Workspaces(unittest.TestCase):
     def test_pi_gets_the_workspace_key(self):
         fc.apply_config()
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
-        with mock.patch.object(fc.subprocess, "run", run):
+        with mock.patch.object(subprocess, "run", run):
             fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[cmd.index("--api-key") + 1], "sk-work")
@@ -328,7 +330,7 @@ class Workspaces(unittest.TestCase):
                           "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
         end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
-        with mock.patch.object(fc.subprocess, "run", run), mock.patch.object(fc, "WORKSPACE", "work"):
+        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc, "WORKSPACE", "work"):
             with self.assertRaises(RuntimeError) as cm:
                 fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))

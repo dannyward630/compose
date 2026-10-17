@@ -1,9 +1,11 @@
 import importlib.machinery, importlib.util, os, tempfile, time, unittest
 from pathlib import Path
+import sys
 os.environ["FAST_CODING_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 DETACHED = "python3 -c \"import os,subprocess; subprocess.Popen(['python3','-m','http.server',os.environ['E2E_CLIENT_PORT']],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\""
@@ -36,8 +38,8 @@ class E2eLifecycle(unittest.TestCase):
         self.assertTrue(ok, report)
         server, client = map(int, ports.read_text().split())
         time.sleep(0.5)
-        self.assertFalse(fc.port_listening(server))
-        self.assertFalse(fc.port_listening(client))  # detached from the setup's group, like `bp launch`
+        self.assertFalse(fc.fc_core.port_listening(server))
+        self.assertFalse(fc.fc_core.port_listening(client))  # detached from the setup's group, like `bp launch`
         self.assertFalse(self.alive(int((Path(self.dir) / "sleep.pid").read_text())))
 
     def test_every_stage_gets_fresh_ports(self):
@@ -59,7 +61,7 @@ class E2eLifecycle(unittest.TestCase):
         self.assertNotIn(port, (9222, 9333))  # never the product owner's Chrome or a fixed shared port
         self.assertTrue(name)
         time.sleep(0.5)
-        self.assertFalse(fc.port_listening(port))
+        self.assertFalse(fc.fc_core.port_listening(port))
 
     def test_a_configured_browser_is_used_instead(self):
         out = Path(self.dir) / "cdp"

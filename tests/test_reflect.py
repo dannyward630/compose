@@ -3,9 +3,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 MAP = """## Destination
@@ -39,8 +41,8 @@ def answers(**choices):
 
 class Reflect(unittest.TestCase):
     def setUp(self):
-        for name, value in (("ENV_FILE", Path(tempfile.mkdtemp()) / "none.env"), ("say", lambda m: None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc, "ENV_FILE", Path(tempfile.mkdtemp()) / "none.env"), (fc.fc_core, "say", lambda m: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         p = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); p.start(); self.addCleanup(p.stop)
 
     def test_decision_lines_are_the_live_items_of_their_section(self):
@@ -124,7 +126,7 @@ class Reflect(unittest.TestCase):
         proj = project()
         (proj / "results" / "evidence.jsonl").write_text(json.dumps({"at": "2026-10-11 10:00:00", "trigger": "task:001", "text": "first failure"}) + "\n")
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
             fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="the sandbox flake, not the plan", against=None))
         self.assertIn("dismissed", out.getvalue())
         self.assertEqual(json.loads((proj / "results" / "evidence.jsonl").read_text().splitlines()[-1])["cut"], True)
@@ -140,13 +142,13 @@ class Reflect(unittest.TestCase):
         proj = project()
         (proj / "results" / "tasks.json").unlink()  # a contradiction reported during groundwork, before any task exists
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
             fc.cmd_reflect(SimpleNamespace(evidence=None, dismiss="a false alarm", against=None))
         self.assertIn("dismissed", out.getvalue())
 
     def test_the_command_takes_evidence_or_a_dismissal(self):
         proj = project()
-        with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(io.StringIO()):
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(io.StringIO()):
             for kw in ({"evidence": None, "dismiss": None}, {"evidence": "x", "dismiss": "y"}):
                 with self.assertRaises(SystemExit):
                     fc.cmd_reflect(SimpleNamespace(against=None, **kw))
@@ -160,7 +162,7 @@ class Reflect(unittest.TestCase):
     def test_the_command_prints_each_verdict(self):
         proj = project()
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", lambda a: proj), \
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), \
                 mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
                 mock.patch("sys.stdin", io.StringIO("product owner: drafts must sync across devices\n")), redirect_stdout(out):
             fc.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
@@ -190,7 +192,7 @@ class WatchReflect(unittest.TestCase):
 
     def test_the_snapshot_drops_screens_a_closed_change_answered(self):
         proj = project()
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc, "say", lambda m: None), \
+        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.reflect(proj, "task:001", "x")
         with mock.patch.object(fc, "herdr", return_value={}):
@@ -201,7 +203,7 @@ class WatchReflect(unittest.TestCase):
 
     def test_the_snapshot_drops_screens_a_dismissal_answered(self):
         proj = project()
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc, "say", lambda m: None), \
+        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             fc.reflect(proj, "task:001", "x")
         with open(proj / "results" / "evidence.jsonl", "a") as f:
@@ -213,7 +215,7 @@ class WatchReflect(unittest.TestCase):
         proj = project()
         def watch(now):
             out, a = [], SimpleNamespace(repo=".", now=now, from_=None, timeout=0.05, interval=0.01, stall=10_000)
-            with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", return_value={}), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", return_value={}), \
                     mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 try:
                     fc.cmd_watch(a)
@@ -221,7 +223,7 @@ class WatchReflect(unittest.TestCase):
                     pass
             return out
         watch(now=True)
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc, "say", lambda m: None), \
+        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.reflect(proj, "task:001", "x")  # while no watch runs
         out = watch(now=False)
@@ -276,9 +278,9 @@ class Holds(unittest.TestCase):
         with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002"), task("004")])
         self.said, self.notes = [], []
         fc._hold_warned.clear()
-        for name, value in (("say", self.said.append), ("project_dir", lambda a: self.proj),
-                            ("linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc.fc_core, "say", self.said.append), (fc.fc_core, "project_dir", lambda a: self.proj),
+                            (fc, "linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def hold(self, **kw):
         out = io.StringIO()
@@ -351,7 +353,7 @@ class Holds(unittest.TestCase):
 
     def test_status_shows_held_with_the_reason(self):
         self.hold(only="002", reason="D2 broken")
-        with mock.patch.object(fc, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+        with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
             row = fc.task_state(Path("."), self.proj, task("002", "001"), "HEAD")
         self.assertEqual((row["state"], row["note"]), ("held", "D2 broken"))
 
@@ -373,7 +375,7 @@ class ImplementerContradiction(unittest.TestCase):
             prompts.append(prompt)
             return "s", reply, 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "say", lambda m: None), \
+                mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.run_task(repo, proj, meta, 3), prompts
 
@@ -405,7 +407,7 @@ class AutoReflect(unittest.TestCase):
         self.proj = project()
         with_tasks(self.proj, [task("001"), task("002")])
         self.said = []
-        p = mock.patch.object(fc, "say", self.said.append); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc.fc_core, "say", self.said.append); p.start(); self.addCleanup(p.stop)
 
     def test_a_task_that_does_not_pass_is_screened(self):
         _, _, reflect = run_all(self.proj, status={"001": "failed"})
@@ -428,7 +430,7 @@ class AutoReflect(unittest.TestCase):
     def test_a_crew_contradiction_is_screened(self):
         reflect = mock.MagicMock(return_value=(Path("/p/reflect.json"), {"flagged": []}))
         msg = "the API returns a list; Linear says: returns a dict (ENG-7); evidence: api.py:40".split()
-        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc, "project_dir", lambda a: self.proj), \
+        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
                 mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(io.StringIO()):
             fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=msg))
         self.assertEqual(reflect.call_args.args[1], "contradiction:hw-tests-003")
@@ -436,7 +438,7 @@ class AutoReflect(unittest.TestCase):
 
     def test_a_screen_that_crashes_never_stops_a_report_or_a_verify(self):
         reflect, out = mock.MagicMock(side_effect=RuntimeError("disk full")), io.StringIO()
-        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc, "project_dir", lambda a: self.proj), \
+        with mock.patch.object(fc, "reflect", reflect), mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), \
                 mock.patch.object(fc, "crew_attention", lambda *a: None), redirect_stdout(out):
             fc.cmd_report(SimpleNamespace(as_="hw-tests-003", state="contradiction", message=["x"]))
             fc.verify_failed(self.proj, [{}], "confirmed [high] s.go: a query per answer")
@@ -497,7 +499,7 @@ def git_repo(branches):
 
 def change(proj, repo, action, cid=None, why=None):
     out = io.StringIO()
-    with mock.patch.object(fc, "project_dir", lambda a: proj), redirect_stdout(out):
+    with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
         fc.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why))
     return out.getvalue()
 
@@ -506,8 +508,8 @@ class Changes(unittest.TestCase):
     def setUp(self):
         self.proj = project()
         self.repo, self.git = git_repo(("003", "004"))
-        for name, value in (("say", lambda m: None), ("LINEAR_KEY", None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc, "LINEAR_KEY", None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
 
     def test_sync_keeps_every_issue_whole(self):
@@ -643,9 +645,9 @@ class Undo(unittest.TestCase):
         self.proj = project()
         self.repo, self.git = git_repo(("003", "004"))
         self.lin = LinearIssues(AFTER, MAP_AFTER)
-        for name, value in (("say", lambda m: None), ("LINEAR_KEY", "lin_test"), ("linear_gql", self.lin),
-                            ("register_stack", lambda *a, **k: None)):
-            p = mock.patch.object(fc, name, value); p.start(); self.addCleanup(p.stop)
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc, "LINEAR_KEY", "lin_test"), (fc, "linear_gql", self.lin),
+                            (fc, "register_stack", lambda *a, **k: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
         change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
         rebuilt = self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "rebuilt")
@@ -750,12 +752,12 @@ class ChangeBrief(unittest.TestCase):
     def setUp(self):
         self.proj = project()
         self.repo, _ = git_repo(())
-        p = mock.patch.object(fc, "say", lambda m: None); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc.fc_core, "say", lambda m: None); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
 
     def brief(self, cid, extra=None):
         out = io.StringIO()
-        with mock.patch.object(fc, "project_dir", lambda a: self.proj), mock.patch.object(fc, "project_worktree", lambda p: self.repo), \
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc, "project_worktree", lambda p: self.repo), \
                 redirect_stdout(out):
             fc.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
         return out.getvalue()

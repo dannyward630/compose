@@ -5,6 +5,7 @@ from unittest import mock
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 NOW = 1_800_000_000.0
@@ -89,7 +90,7 @@ class WatchTimeout(unittest.TestCase):
                 "run": False, "verify": None, "run_end": 0, "last": (0, "")}
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.01, interval=0.01, stall=10_000)
         out = []
-        with mock.patch.object(fc, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}), \
                 mock.patch.object(fc, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit) as e:
                 fc.cmd_watch(a)
@@ -113,7 +114,7 @@ class WatchMemory(unittest.TestCase):
         a.__dict__.update(kw)
         out = []
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role is not None else {})
-        with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=snap), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "watch_snapshot", return_value=snap), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
             try:
                 fc.cmd_watch(a)
@@ -139,7 +140,7 @@ class WatchMemory(unittest.TestCase):
         with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
-            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
                 with contextlib.suppress(SystemExit):
                     fc.cmd_watch(a)
         self.assertEqual(seen, [[f"event crew={ORCH} state=needs-user message='which db?'"]])
@@ -158,7 +159,7 @@ class WatchMemory(unittest.TestCase):
         with mock.patch.object(fc, "manager_attention", lambda proj, ev: seen.append(ev)), \
                 mock.patch.object(fc, "watch_snapshot", side_effect=[snap, later, later, later]), mock.patch.dict(os.environ, env, clear=True):
             a = SimpleNamespace(repo=".", now=False, from_="orchestrator", timeout=0.05, interval=0.01, stall=10_000, rewake=False)
-            with mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"):
                 with contextlib.suppress(SystemExit):
                     fc.cmd_watch(a)
         self.assertEqual(seen, [["event crew=hw-planner state=needs-user message='3 stories; accept-all'"]])
@@ -217,9 +218,9 @@ class Rewake(unittest.TestCase):
     def rewake(self, snaps, env=None, session="s1"):
         """The hook reads its JSON from stdin: feed it here, since the real stdin may be a pipe nobody writes to (then the hook waits forever)."""
         err = io.StringIO()
-        with mock.patch.dict(fc.os.environ, env or self.env), mock.patch.object(fc, "project_dir", return_value=self.proj) as pd, \
+        with mock.patch.dict(os.environ, env or self.env), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj) as pd, \
                 mock.patch.object(fc, "watch_snapshot", side_effect=snaps), mock.patch.object(fc, "WATCH_INTERVAL", 0.01), \
-                mock.patch.object(fc.sys, "stdin", io.StringIO(json.dumps({"session_id": session}))), contextlib.redirect_stderr(err):
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"session_id": session}))), contextlib.redirect_stderr(err):
             try:
                 fc.cmd_rewake(SimpleNamespace())
                 code = 0
@@ -269,7 +270,7 @@ class Reenter(unittest.TestCase):
 
     def reenter(self, env):
         out = io.StringIO()
-        with mock.patch.dict(fc.os.environ, env, clear=True), mock.patch.object(fc, "project_dir", return_value=self.proj) as pd, \
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj) as pd, \
                 contextlib.redirect_stdout(out):
             fc.cmd_reenter(SimpleNamespace())
         return out.getvalue(), pd
@@ -296,7 +297,7 @@ class Reenter(unittest.TestCase):
 
     def test_the_plugin_runs_it_on_a_compaction_and_help_lists_it(self):
         root = Path(fc.__file__).resolve().parents[1]
-        hooks = fc.json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
+        hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
         cmds = lambda ev, m=None: [h["command"] for e in hooks.get(ev, []) if e.get("matcher") == m for h in e["hooks"]]
         self.assertTrue(any(c.endswith(" reenter") for c in cmds("SessionStart", "compact")), hooks.get("SessionStart"))
         self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit")[0].endswith(" guard"))
@@ -372,7 +373,7 @@ class Detach(unittest.TestCase):
         proj = Path(tempfile.mkdtemp()) / "hw"
         out = []
         a = SimpleNamespace(repo=".", now=True, from_=None)
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "watch_snapshot", return_value=wsnap("running", run=True)), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "watch_snapshot", return_value=wsnap("running", run=True)), \
                 mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
             fc.cmd_watch(a)
         self.assertTrue(any(line.startswith("event run=live") for line in out), out)
@@ -413,7 +414,7 @@ class JevLeash(unittest.TestCase):
 
     def test_a_jev_case_is_killed_at_its_limit(self):
         with mock.patch.object(fc, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc, "timed", return_value=fc.subprocess.CompletedProcess("x", 124, "", "hung")) as t:
+             mock.patch.object(fc, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
             r = fc.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.tool_error(r["stderr"]))

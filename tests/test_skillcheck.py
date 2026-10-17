@@ -2,9 +2,11 @@ import importlib.machinery, importlib.util, io, json, os, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import sys, time
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 
@@ -31,7 +33,7 @@ class SkillCheck(unittest.TestCase):
         out = io.StringIO()
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | ({"FAST_CODING_ROLE": role} if role else {})
         stdin = io.StringIO(ev if isinstance(ev, str) else json.dumps(ev))
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.sys, "stdin", stdin), mock.patch.object(fc.sys, "stdout", out):
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, "stdin", stdin), mock.patch.object(sys, "stdout", out):
             fc.cmd_skillcheck(None)
         return out.getvalue()
 
@@ -116,10 +118,10 @@ class SkillCheck(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
         a = SimpleNamespace(action="start", role="eol", title="eol", brief="Do it.", model=None, cwd=None)
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
                 mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(fc.time, "sleep"), mock.patch("builtins.print"), \
+                mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(time, "sleep"), mock.patch("builtins.print"), \
                 mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
             fc.cmd_crew(a)
         return json.loads((proj / "results" / "crew" / "shop-eol.json").read_text())

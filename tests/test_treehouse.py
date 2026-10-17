@@ -1,9 +1,11 @@
 import importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
+import sys
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
@@ -34,7 +36,7 @@ class Treehouse(unittest.TestCase):
     def init(self):
         p = subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.repo)], capture_output=True, text=True, env=self.env)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        return fc.all_projects(self.repo)["p"]
+        return fc.fc_core.all_projects(self.repo)["p"]
 
     def test_project_is_a_slot_in_the_repos_own_pool_and_the_user_checkout_stays_clean(self):
         wt, proj = self.init()
@@ -85,7 +87,7 @@ class Treehouse(unittest.TestCase):
         (proj / "results" / "contract.md").write_text("c")
         started = []
         run = lambda: fc.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
-        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr_space"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr_space"), \
              mock.patch.object(fc, "cmd_crew", lambda ns: started.append(ns.role)):
             with self.assertRaises(SystemExit) as e:
                 run()  # 003 and 004 need two slots, one is free

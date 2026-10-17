@@ -6,6 +6,7 @@ os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree p
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "fast_coding.py")))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
@@ -33,7 +34,7 @@ class TestCrewWorktrees(unittest.TestCase):
         tasks = [{"id": "001", "title": "A", "files": ["a.go"], "protected": ["a_test.go"], "test": "true", "body": "a"},
                  {"id": "002", "title": "B", "files": ["b.go"], "protected": ["b_test.go"], "test": "true", "body": "b", "test_lines": "25"}]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
-        for p in (mock.patch.object(fc, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo)):
+        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo)):
             p.start(); self.addCleanup(p.stop)
 
     def crew_commits(self, tid, name, text):
@@ -250,7 +251,7 @@ class ProjectBranch(unittest.TestCase):
         self.cli("init", "--project", "old")
         f = self.r.parent / "fast-coding-old" / ".fast-coding" / "old" / "verify.json"
         f.write_text(json.dumps({k: v for k, v in json.loads(f.read_text()).items() if k != "branch"}))
-        self.assertEqual(fc.project_branch(f.parent), "fast-coding/old")
+        self.assertEqual(fc.fc_core.project_branch(f.parent), "fast-coding/old")
         self.assertIn("fast-coding/old", self.branches())
 
 

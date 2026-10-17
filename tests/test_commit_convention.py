@@ -1,10 +1,12 @@
 import importlib.machinery, importlib.util, json, os, tempfile, unittest
 from pathlib import Path
+import sys
 os.environ["FAST_CODING_NO_TREEHOUSE"] = "1"
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "fast-coding")
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(CLI).with_name("fast_coding.py"))))
 fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 
 CONV = {"types": ["feat", "fix", "chore", "test", "docs", "refactor", "build", "ci"], "example": "feat: add resume upload"}
@@ -24,8 +26,8 @@ class CommitConvention(unittest.TestCase):
 
     def test_fix_loop_commit_is_a_fix_and_unlisted_types_fall_back(self):
         self.assertEqual(fc.fix_message("Save in one transaction", ["a.js"], CONV), "fix: Save in one transaction")
-        self.assertEqual(fc.typed("Add lodash", "deps", {"types": ["feat", "build"]}), "build: Add lodash")
-        self.assertEqual(fc.typed("Add lodash", "deps", {"types": ["feat"]}), "Add lodash")
+        self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat", "build"]}), "build: Add lodash")
+        self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat"]}), "Add lodash")
 
     def test_briefs_carry_the_convention_and_forbid_config_tests(self):
         meta = {"id": "001", "protected": ["tests/a.test.js"], "test": "true"}
@@ -37,7 +39,7 @@ class CommitConvention(unittest.TestCase):
             self.assertIn("dependency lists", brief)
         d = Path(tempfile.mkdtemp())
         (d / "verify.json").write_text(json.dumps({"commit_convention": CONV}))
-        self.assertEqual(fc.commit_convention(d), CONV)
+        self.assertEqual(fc.fc_core.commit_convention(d), CONV)
         self.assertIn("feat: add resume upload", fc.crew_preamble(d, "p-x", "t"))
         self.assertNotIn("type prefix", fc.crew_preamble(Path(tempfile.mkdtemp()), "p-x", "t"))
 
