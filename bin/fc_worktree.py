@@ -179,16 +179,16 @@ def exclude_paths(wt, rules):
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text("".join(l + "\n" for l in have + add))
 
-TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # graft 0.23 moves a repo's graph from graft/ to .trail/cache/
+TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # trail moves a repo's graph from graft/ to .trail/cache/
 
 def graph_dir(root):
-    """The folder holding the repo's graft graph: .trail/cache/ once graft 0.23 moved the repo to trail, else graft/.
+    """The folder holding the repo's trail graph: .trail/cache/, else an old `graft/` graph.
     None when neither has one."""
     return next((Path(root) / d for d in (".trail/cache", "graft") if (Path(root) / d / "INDEX.md").exists()), None)
 
 def ignore_tool_files(wt):
-    """Keep compose's and graft's own files out of the repository, before anything else is written: every checkout
-    ignores them through info/exclude (also graft's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
+    """Keep compose's and trail's own files out of the repository, before anything else is written: every checkout
+    ignores them through info/exclude (also trail's `.ignore`), and an existing `.gitignore` gets the two lines, so a clone
     of the delivered branch ignores them too. Returns True when `.gitignore` changed (the caller commits it)."""
     exclude_paths(wt, ["/" + d for d in TOOL_DIRS] + ["/.ignore"])
     gi = wt / ".gitignore"
@@ -219,7 +219,7 @@ def stamp_trail_wiring(wt):
 
 def ready_checkout(repo, wt, borrow=True, install=None):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
-    (node_modules at any depth, vendor, .venv) from it, and keep those links and graft's graph out of git status through
+    (node_modules at any depth, vendor, .venv) from it, and keep those links and trail's graph out of git status through
     the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
     `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's.
     `install` (verify.json `install`) runs in the checkout instead of linking: bundlers write a dependency's real path into

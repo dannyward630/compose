@@ -71,7 +71,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         raise fc_models.RateLimited(usage)
     return session, text, tools, usage
 
-LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `graft ask` output
+LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `trail ask` output
 BANNERS = ("[trail]", "⬆ trail", "· no learnings")  # trail's own notes there, not code
 
 def trail_pack(wt, query, repo=None, limit=6):
