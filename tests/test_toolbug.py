@@ -58,6 +58,66 @@ class Text(unittest.TestCase):
 class Gh(unittest.TestCase):
     """gh_status, open_matches, post, record_issue against a fake gh on PATH."""
 
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        self.log = self.home / ".compose" / "tool-bugs.jsonl"
+        for p in (mock.patch.object(fc.fc_crew, "TOOL_BUGS", self.log),
+                  mock.patch.object(fc.fc_config, "CONFIG_PATH", self.home / ".compose" / "config.json")):
+            p.start(); self.addCleanup(p.stop)
+
+    def fake_gh(self, replies):
+        d = Path(tempfile.mkdtemp()).resolve(); (d / "replies.json").write_text(json.dumps(replies))
+        (d / "gh").write_text(f'''#!{sys.executable}
+import json, sys
+d = {str(d)!r}
+open(d + "/calls.jsonl", "a").write(json.dumps(sys.argv[1:]) + "\\n")
+code, out = json.load(open(d + "/replies.json")).get(" ".join(sys.argv[1:3]), [1, ""])
+print(out, end="")
+sys.exit(code)
+''')
+        (d / "gh").chmod(0o755)
+        p = mock.patch.dict(os.environ, {"PATH": f"{d}:/usr/bin:/bin"}); p.start(); self.addCleanup(p.stop)
+        return lambda: [json.loads(l) for l in (d / "calls.jsonl").read_text().splitlines()]
+
+    def test_gh_status_is_no_gh_maintainer_or_reporter(self):
+        with mock.patch.dict(os.environ, {"PATH": tempfile.mkdtemp()}): self.assertEqual(fc.fc_toolbug.gh_status(), ("no-gh", None))
+        self.fake_gh({"api user": [1, "alice9\n"], "api repos/prodoxx/compose": [0, "true\n"]})
+        self.assertEqual(fc.fc_toolbug.gh_status(), ("no-gh", None))
+        for perm, state in (([0, "true\n"], "maintainer"), ([0, "false\n"], "reporter"), ([1, "true\n"], "reporter")):
+            calls = self.fake_gh({"api user": [0, "alice9\n"], "api repos/prodoxx/compose": perm})
+            self.assertEqual(fc.fc_toolbug.gh_status(), (state, "alice9"))
+            self.assertEqual(calls(), [["api", "user", "--jq", ".login"], ["api", "repos/prodoxx/compose", "--jq", ".permissions.push"]])
+
+    def test_open_matches_searches_the_symptom(self):
+        hit = [{"number": 1, "title": "crew start: hangs", "url": "https://github.com/prodoxx/compose/issues/1"}]
+        calls = self.fake_gh({"issue list": [0, json.dumps(hit)]})
+        self.assertEqual(fc.fc_toolbug.open_matches("crew start: hangs: at trust"), hit)
+        self.assertEqual(fc.fc_toolbug.open_matches("hangs at trust"), hit)
+        args, tail = ["issue", "list", "--repo", "prodoxx/compose", "--state", "open", "--search"], ["--json", "number,title,url", "--limit", "5"]
+        self.assertEqual(calls(), [args + ["hangs: at trust"] + tail, args + ["hangs at trust"] + tail])
+        self.fake_gh({"issue list": [1, "[]"]})
+        self.assertEqual(fc.fc_toolbug.open_matches("x: y"), [])
+
+    def test_post_creates_or_comments_and_returns_the_url(self):
+        calls = self.fake_gh({"issue create": [0, "Creating issue\nhttps://github.com/prodoxx/compose/issues/2\n\n"],
+                              "issue comment": [0, "https://github.com/prodoxx/compose/issues/1#c-9\n"]})
+        self.assertEqual(fc.fc_toolbug.post("crew: t", "## Summary\n"), "https://github.com/prodoxx/compose/issues/2")
+        self.assertEqual(fc.fc_toolbug.post("crew: t", "b", comment=1), "https://github.com/prodoxx/compose/issues/1#c-9")
+        self.assertEqual(calls(), [["issue", "create", "--repo", "prodoxx/compose", "--label", "bug", "--title", "crew: t", "--body", "## Summary\n"],
+                                   ["issue", "comment", "1", "--repo", "prodoxx/compose", "--body", "b"]])
+        self.fake_gh({"issue create": [1, "https://github.com/prodoxx/compose/issues/3\n"]})
+        self.assertIsNone(fc.fc_toolbug.post("t", "b"))
+
+    def test_record_issue_marks_the_projects_newest_entry(self):
+        self.assertFalse(fc.fc_toolbug.record_issue("shop", "u"))
+        self.log.parent.mkdir(parents=True); lines = ['{"project": "shop", "message": "old"}\n', '{"project":"shop","message":"new"}\n', '{"project": "blog",  "message": "x"}\n']
+        self.log.write_text("".join(lines))
+        self.assertTrue(fc.fc_toolbug.record_issue("shop", "https://github.com/prodoxx/compose/issues/2"))
+        got = self.log.read_text().splitlines(keepends=True)
+        self.assertEqual((got[0], got[2]), (lines[0], lines[2]))
+        self.assertEqual(json.loads(got[1]), {"project": "shop", "message": "new", "issue": "https://github.com/prodoxx/compose/issues/2"})
+        self.assertFalse(fc.fc_toolbug.record_issue("cafe", "u"))
+
 
 class FileCommand(unittest.TestCase):
     """cmd_tool_bug: post on the maintainer's machine or with --approved, else save a draft; search before every create."""
