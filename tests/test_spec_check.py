@@ -149,7 +149,7 @@ class SpecCheck(unittest.TestCase):
         repo = Path(tempfile.mkdtemp())
         proj = repo / ".fast-coding" / "p"
         proj.mkdir(parents=True)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         self.assertIn("no tasks synced for p", str(e))
         self.assertIn("fast-coding sync", str(e))
@@ -162,7 +162,7 @@ class SpecCheck(unittest.TestCase):
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.fc_tasks.sync_tasks(proj, d)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         want, we = self.run_cli(json.dumps(d))
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)

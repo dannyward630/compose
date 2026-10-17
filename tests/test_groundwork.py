@@ -48,7 +48,7 @@ class Groundwork(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
 
     def patched(self):
-        return (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo))
+        return (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo))
 
     def test_brief_covers_the_detected_toolchains_and_appends_the_notes(self):
         out = io.StringIO()
@@ -147,7 +147,7 @@ class Groundwork(unittest.TestCase):
             if ns.role.endswith("001"):
                 raise RuntimeError("agent_prompt_stalled")
             started.append(ns.role)
-        with self.patched()[0], mock.patch.object(fc, "cmd_crew", crew), mock.patch.object(fc, "herdr_space"), \
+        with self.patched()[0], mock.patch.object(fc, "cmd_crew", crew), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
             fc.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
         self.assertEqual(started, ["tests-002"])
@@ -259,7 +259,7 @@ class PlannerRules(unittest.TestCase):
         proj = repo / ".fast-coding" / "p"; proj.mkdir(parents=True)
         (proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo), mock.patch("sys.stdout", out):
             fc.cmd_planner(SimpleNamespace(repo=str(repo), project="p", issue=None, extra=""))
         self.brief = out.getvalue()
 
@@ -304,7 +304,7 @@ class DesignerBrief(unittest.TestCase):
 
     def brief(self, extra=None, figma=None, stdin=""):
         out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.wt), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.wt), \
                 mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch.object(fc.fc_core, "say"), mock.patch("sys.stdout", out):
             fc.cmd_designer(SimpleNamespace(repo=str(self.wt), project="p", extra=extra, figma=figma))
         return out.getvalue()
@@ -374,7 +374,7 @@ class DesignCrews(unittest.TestCase):
         def crew(ns):
             started.append(ns)
             if ns.role in busy: raise SystemExit("busy")
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr_space") as space, \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space") as space, \
                 mock.patch.object(fc, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
             fc.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space

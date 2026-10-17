@@ -33,8 +33,8 @@ class Teardown(unittest.TestCase):
             self.tabs.pop(args[2])
 
     def teardown(self):
-        with mock.patch.object(fc, "herdr", self.herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                mock.patch.object(fc, "herdr_find_space", return_value="w9"), mock.patch("builtins.print"):
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch("builtins.print"):
             return fc.teardown(self.proj)
 
     def test_closes_runs_verify_and_done_crew_only(self):
@@ -46,7 +46,7 @@ class Teardown(unittest.TestCase):
     def test_team_lead_done_tears_down_crew_done_closes_itself(self):
         def report(who):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
-                    mock.patch.object(fc, "herdr", self.herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
+                    mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                     mock.patch.object(fc, "teardown") as td, mock.patch.object(subprocess, "Popen") as popen:
                 fc.cmd_report(type("A", (), {"as_": who, "state": "done", "message": ["finished"]}))
             return td, popen

@@ -71,7 +71,7 @@ class E2EBesideReview(unittest.TestCase):
         # a configured browser, so the stage does not launch its own: this times the overlap, not a Chromium start
         cfg = {"e2e": [{"name": "flow"}], "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, "review": True, "jev_acceptance": True}
         args = type("A", (), {"skip_e2e": False, "skip_review": False})()
-        with mock.patch.object(fc, "herdr_verify_panes", return_value={}), mock.patch.object(fc, "herdr_space", return_value=None), \
+        with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_space", return_value=None), \
                 mock.patch.object(fc, "review_inputs", return_value=("", "", "", [])), \
                 mock.patch.object(fc, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
                 mock.patch.object(fc, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \

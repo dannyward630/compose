@@ -11,16 +11,16 @@ _spec.loader.exec_module(fc)
 
 class AgentNames(unittest.TestCase):
     def test_agent_name(self):
-        self.assertEqual(fc.agent_name("custom-dropdowns", "001"), "custom-dropdowns-001")
-        self.assertEqual(fc.agent_name("Workday Login!", "012"), "workday-login-012")
-        long = fc.agent_name("a" * 40, "003")
+        self.assertEqual(fc.fc_herdr.agent_name("custom-dropdowns", "001"), "custom-dropdowns-001")
+        self.assertEqual(fc.fc_herdr.agent_name("Workday Login!", "012"), "workday-login-012")
+        long = fc.fc_herdr.agent_name("a" * 40, "003")
         self.assertEqual(len(long), 32)
         self.assertTrue(long.endswith("-003"))
-        self.assertTrue(fc.agent_name("9lives", "001").startswith("fc-9lives"))
+        self.assertTrue(fc.fc_herdr.agent_name("9lives", "001").startswith("fc-9lives"))
 
     def test_herdr_noop_outside(self):
         with mock.patch.dict(os.environ, {"HERDR_ENV": ""}):
-            self.assertIsNone(fc.herdr("agent", "list"))
+            self.assertIsNone(fc.fc_herdr.herdr("agent", "list"))
 
     def test_implementer_routes_headless_outside_herdr(self):
         with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_models, "pi_turn", return_value=("s", "t", 0, {})) as pt:
@@ -109,14 +109,14 @@ class Tabs(unittest.TestCase):
 
     def test_first_implementer_creates_the_tab_later_ones_split_it(self):
         calls, h = self.fake({}, [])
-        with mock.patch.object(fc, "herdr", h):
-            self.assertEqual(fc.herdr_implementer_pane("w9", "/tmp", {"K": "v"}), "w9:p1")
+        with mock.patch.object(fc.fc_herdr, "herdr", h):
+            self.assertEqual(fc.fc_herdr.herdr_implementer_pane("w9", "/tmp", {"K": "v"}), "w9:p1")
         self.assertIn("implementers", calls[-1]); self.assertIn("K=v", calls[-1])
         for n, direction in ((1, "right"), (2, "down")):
             panes = [{"pane_id": f"w9:p{i}", "tab_id": "w9:t9"} for i in range(1, n + 1)] + [{"pane_id": "w9:pX", "tab_id": "w9:t1"}]
             calls, h = self.fake({"implementers": "w9:t9"}, panes)
-            with mock.patch.object(fc, "herdr", h):
-                fc.herdr_implementer_pane("w9", "/tmp", {})
+            with mock.patch.object(fc.fc_herdr, "herdr", h):
+                fc.fc_herdr.herdr_implementer_pane("w9", "/tmp", {})
             split = calls[-1]
             self.assertEqual(split[:3], ("pane", "split", f"w9:p{n}"))
             self.assertIn(direction, split)
@@ -124,8 +124,8 @@ class Tabs(unittest.TestCase):
 
     def test_verify_replaces_its_previous_tab(self):
         calls, h = self.fake({"verify": "w9:t2", "verify 12:10": "w9:t3", "status": "w9:t4"}, [])
-        with mock.patch.object(fc, "herdr", h):
-            fc.herdr_verify_panes("w9", "/tmp", ["checks"])
+        with mock.patch.object(fc.fc_herdr, "herdr", h):
+            fc.fc_herdr.herdr_verify_panes("w9", "/tmp", ["checks"])
         closed = [c[2] for c in calls if c[:2] == ("tab", "close")]
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
 
@@ -133,22 +133,22 @@ class Tabs(unittest.TestCase):
 class AgentStartRace(unittest.TestCase):
     def test_a_busy_pane_is_retried_until_it_is_ready(self):
         answers = iter([(None, "agent_pane_busy"), (None, "agent_pane_busy"), ({"agent": {"name": "a"}}, None)])
-        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
-            self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
+        with mock.patch.object(fc.fc_herdr, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
+            self.assertEqual(fc.fc_herdr.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
 
     def test_an_unregistered_name_is_retried(self):
         answers = iter([(None, "agent_name_not_found"), ({"agent": {"name": "a"}}, None)])
-        with mock.patch.object(fc, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
-            self.assertEqual(fc.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
+        with mock.patch.object(fc.fc_herdr, "herdr_error", lambda *a, **k: next(answers)), mock.patch.object(time, "sleep"):
+            self.assertEqual(fc.fc_herdr.herdr_agent_start("a", "--pane", "p1"), {"agent": {"name": "a"}})
 
     def test_other_errors_and_a_pane_that_never_frees_still_fail(self):
-        with mock.patch.object(fc, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(time, "sleep"):
+        with mock.patch.object(fc.fc_herdr, "herdr_error", return_value=(None, "pane_not_found")) as e, mock.patch.object(time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "pane_not_found"):
-                fc.herdr_agent_start("a")
+                fc.fc_herdr.herdr_agent_start("a")
             self.assertEqual(e.call_count, 1)
-        with mock.patch.object(fc, "herdr_error", return_value=(None, "agent_pane_busy")) as e, mock.patch.object(time, "sleep"):
+        with mock.patch.object(fc.fc_herdr, "herdr_error", return_value=(None, "agent_pane_busy")) as e, mock.patch.object(time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "agent_pane_busy"):
-                fc.herdr_agent_start("a", tries=3)
+                fc.fc_herdr.herdr_agent_start("a", tries=3)
             self.assertEqual(e.call_count, 3)
 
 

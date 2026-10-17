@@ -67,10 +67,10 @@ class RoleModels(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t1"}, "root_pane": {"pane_id": "w9:p1"}}
             return None
         a = SimpleNamespace(action="start", role="groundwork", title="groundwork", brief="do it", force=False, cwd=None, model=None)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
-                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), mock.patch.object(fc, "frame0_register"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
         self.assertIn("teammate p-groundwork started in tab 'groundwork' of space p on claude:claude-sonnet-5-5", out.getvalue())
@@ -161,9 +161,9 @@ class PlannerChain(unittest.TestCase):
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
         a = SimpleNamespace(action="start", role="explore", repo=str(proj), project="p", model=None, title=None,
                             brief="look", cwd=None, force=False)
-        with self.probe(False, down=("claude-sonnet-5-5",)), mock.patch.object(fc, "herdr", lambda *x, **k: calls.append(x)), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
-                mock.patch.object(fc, "project_worktree", return_value=proj), self.assertRaises(SystemExit) as e:
+        with self.probe(False, down=("claude-sonnet-5-5",)), mock.patch.object(fc.fc_herdr, "herdr", lambda *x, **k: calls.append(x)), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
+                mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), self.assertRaises(SystemExit) as e:
             fc.cmd_crew(a)  # models.crew.default is one entry with no fallback
         self.assertIn("claude:claude-sonnet-5-5 unavailable (model not found)", str(e.exception))
         self.assertIn("models.crew.default", str(e.exception))
@@ -201,10 +201,10 @@ class PlannerChain(unittest.TestCase):
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
         a = SimpleNamespace(action="start", role="wayfinder", repo=str(proj), project="p", model=None, title=None,
                             brief="plan it", cwd=None, force=False)
-        with self.probe(False), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=proj), \
-                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
-                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc, "herdr_await_start"), \
+        with self.probe(False), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc, "crew_preamble", return_value=""), \
+                mock.patch.object(fc, "write_report"), mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.cmd_crew(a)
         self.assertIn("WARNING: wayfinder wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())

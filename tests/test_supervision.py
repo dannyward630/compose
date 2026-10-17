@@ -45,8 +45,8 @@ class Stalls(unittest.TestCase):
         self.assertIn("no team lead", ev[0])
 
     def test_the_team_lead_name_is_the_one_crew_start_gives_it(self):
-        self.assertEqual(fc.agent_name("autofill-hifi-design", "orchestrator"), "autofill-hifi-desig-orchestrator")
-        self.assertLessEqual(len(fc.agent_name("autofill-hifi-design", "orchestrator")), 32)
+        self.assertEqual(fc.fc_herdr.agent_name("autofill-hifi-design", "orchestrator"), "autofill-hifi-desig-orchestrator")
+        self.assertLessEqual(len(fc.fc_herdr.agent_name("autofill-hifi-design", "orchestrator")), 32)
 
     def test_recent_activity_is_not_a_stall(self):
         self.assertEqual(self.stalls(self.snap(crew={ORCH: ("working", 60)}, last_ago=60)), [])
@@ -277,7 +277,7 @@ class Reenter(unittest.TestCase):
 
     def test_a_teammate_is_pointed_at_its_brief_the_board_and_linear(self):
         out, _ = self.reenter(self.env)
-        self.assertIn(str(self.proj / "results" / "crew" / f"{fc.agent_name('hw', 'tests-021')}.brief.md"), out)
+        self.assertIn(str(self.proj / "results" / "crew" / f"{fc.fc_herdr.agent_name('hw', 'tests-021')}.brief.md"), out)
         self.assertIn("hw-tests-021.brief.md", out)
         self.assertIn("0r", out)
         self.assertIn("fast-coding status --repo /r --project hw", out)

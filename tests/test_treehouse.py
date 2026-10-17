@@ -87,7 +87,7 @@ class Treehouse(unittest.TestCase):
         (proj / "results" / "contract.md").write_text("c")
         started = []
         run = lambda: fc.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr_space"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc, "cmd_crew", lambda ns: started.append(ns.role)):
             with self.assertRaises(SystemExit) as e:
                 run()  # 003 and 004 need two slots, one is free

@@ -34,7 +34,7 @@ class TestCrewWorktrees(unittest.TestCase):
         tasks = [{"id": "001", "title": "A", "files": ["a.go"], "protected": ["a_test.go"], "test": "true", "body": "a"},
                  {"id": "002", "title": "B", "files": ["b.go"], "protected": ["b_test.go"], "test": "true", "body": "b", "test_lines": "25"}]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
-        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "project_worktree", return_value=self.repo)):
+        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo)):
             p.start(); self.addCleanup(p.stop)
 
     def crew_commits(self, tid, name, text):
@@ -124,7 +124,7 @@ class Leftovers(unittest.TestCase):
         scratch = fc.scratch_dir(proj, "p-groundwork"); scratch.mkdir(parents=True)
         mine, other = server(scratch), server(tempfile.mkdtemp())
         self.addCleanup(lambda: [(p.kill(), p.wait()) for p in (mine, other)])
-        with mock.patch.object(fc, "project_worktree", return_value=proj_wt), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
+        with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj_wt), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
                 mock.patch("sys.stdout", io.StringIO()):
             fc.teardown(proj)
         self.assertIsNotNone(mine.wait(timeout=5))
@@ -133,7 +133,7 @@ class Leftovers(unittest.TestCase):
 
     def test_preamble_points_scratch_inside_the_project(self):
         proj = Path(tempfile.mkdtemp()) / ".fast-coding" / "shop"
-        with mock.patch.object(fc, "project_worktree", return_value=proj.parent.parent):
+        with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj.parent.parent):
             pre = fc.crew_preamble(proj, "shop-groundwork", "groundwork")
         self.assertIn(str(proj / "scratch" / "shop-groundwork"), pre)
         self.assertIn("never /tmp", pre)

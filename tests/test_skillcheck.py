@@ -118,8 +118,8 @@ class SkillCheck(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
         a = SimpleNamespace(action="start", role="eol", title="eol", brief="Do it.", model=None, cwd=None)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc, "crew_pick_full", return_value=(model, None, "", [])), mock.patch.object(time, "sleep"), mock.patch("builtins.print"), \
                 mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):  # the team lead starts it, whatever this test's caller is
@@ -128,7 +128,7 @@ class SkillCheck(unittest.TestCase):
 
     def snapshot(self, proj, live):
         agents = {"agents": [{"name": "shop-eol", "agent_status": "working"}] if live else []}
-        with mock.patch.object(fc, "herdr", return_value=agents), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value=agents), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
             return fc.watch_snapshot(Path("."), proj)
 
     def test_a_live_pi_teammate_hears_once_through_watch(self):  # pi runs no Claude hooks: watch tells the team lead, who relays it

@@ -195,7 +195,7 @@ class WatchReflect(unittest.TestCase):
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.reflect(proj, "task:001", "x")
-        with mock.patch.object(fc, "herdr", return_value={}):
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"][str(path)]["counts"], (1, 0))
             fc.changes_dir(proj).mkdir(parents=True)
             (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2999-01-01 00:00:00"}))
@@ -208,14 +208,14 @@ class WatchReflect(unittest.TestCase):
             fc.reflect(proj, "task:001", "x")
         with open(proj / "results" / "evidence.jsonl", "a") as f:
             f.write(json.dumps({"at": "2999-01-01 00:00:00", "trigger": "dismissed", "text": "a false alarm", "cut": True}) + "\n")
-        with mock.patch.object(fc, "herdr", return_value={}):
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["reflects"], {})
 
     def test_a_screen_written_between_two_watches_is_reported_by_the_next(self):
         proj = project()
         def watch(now):
             out, a = [], SimpleNamespace(repo=".", now=now, from_=None, timeout=0.05, interval=0.01, stall=10_000)
-            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", return_value={}), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", return_value={}), \
                     mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 try:
                     fc.cmd_watch(a)
@@ -263,7 +263,7 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
         return {"id": meta["id"], "title": meta["title"], "status": st, "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": log}
     out = io.StringIO()
     with mock.patch.object(fc, "run_task", fake), mock.patch.object(fc, "preflight", lambda m: None), \
-            mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc, "herdr_space", lambda p: None), \
+            mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
             mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
         try:
             fc.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
@@ -446,7 +446,7 @@ class AutoReflect(unittest.TestCase):
         self.assertEqual(len([m for m in self.said if "reflect failed (disk full)" in m]), 2, self.said)
 
     def test_every_crew_brief_says_how_to_report_one(self):
-        with mock.patch.object(fc, "project_worktree", lambda p: Path("/wt")):
+        with mock.patch.object(fc.fc_herdr, "project_worktree", lambda p: Path("/wt")):
             text = fc.crew_preamble(self.proj, "hw-groundwork", "groundwork")
         self.assertIn('contradiction "<what you found>; Linear says: <quoted line> (<issue>); evidence:', text)
 
@@ -757,7 +757,7 @@ class ChangeBrief(unittest.TestCase):
 
     def brief(self, cid, extra=None):
         out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc, "project_worktree", lambda p: self.repo), \
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", lambda p: self.repo), \
                 redirect_stdout(out):
             fc.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
         return out.getvalue()

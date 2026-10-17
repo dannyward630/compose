@@ -97,8 +97,8 @@ class Crew(unittest.TestCase):
                                     ("designer", {"FAST_CODING_ROLE": "orchestrator"}, "orchestrator", "You report to shop-orchestrator, your team lead.")):
             a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Go."})
             clean = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"} | env
-            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                    mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                    mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                     mock.patch.object(fc, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
                 fc.cmd_crew(a)
@@ -121,8 +121,8 @@ class Crew(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {}
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)
@@ -132,7 +132,7 @@ class Crew(unittest.TestCase):
                                  ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
-        self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
+        self.assertIn(f"FAST_CODING_REPO={fc.fc_herdr.project_worktree(self.proj)}", calls[1])
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
@@ -156,8 +156,8 @@ class Crew(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.crew_reports(self.proj, "shop-eol")], ["working", "done"])
@@ -189,8 +189,8 @@ class Crew(unittest.TestCase):
                                          "foreground_processes": [{"pid": 99, "name": "claude"}] if pane_busy else []}}
             return {}
         a = type("A", (), {"action": "start", "role": "eol", "title": "eol", "brief": "Do it."})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch("builtins.print", side_effect=lambda *x, **k: out.append(" ".join(map(str, x)))):
             try:
@@ -232,7 +232,7 @@ class Crew(unittest.TestCase):
 
     def test_a_report_from_a_teammate_whose_record_is_missing_registers_it_again(self):
         live = {"agent": {"name": "shop-eol", "pane_id": "w9:p7", "tab_id": "w9:t3", "workspace_id": "w9", "cwd": "/x"}}
-        with mock.patch.object(fc, "herdr", lambda *a, **k: live if a[:2] == ("agent", "get") else {}):
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: live if a[:2] == ("agent", "get") else {}):
             self.report("shop-eol", "done", "finished")
         c = fc.crew_record(self.proj, "shop-eol")
         self.assertEqual((c["pane"], c["tab"], c["space"]), ("w9:p7", "w9:t3", "w9"))
@@ -255,8 +255,8 @@ class Crew(unittest.TestCase):
                     return {"agent": {"agent_status": "working"}}
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
             a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Plan the feature."})
-            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                    mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                    mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
                 fc.cmd_crew(a)
             self.assertEqual(calls[1][:2], ("tab", "create"))
@@ -277,9 +277,9 @@ class Crew(unittest.TestCase):
             return {}
         start = type("A", (), {"action": "start", "role": "explore", "title": "Explore", "brief": "Look around."})
         out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc, "herdr_find_space", return_value="w9"), mock.patch.object(fc, "frame0_register"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc, "frame0_register"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("sys.stdout", out):
             fc.cmd_crew(start)
         self.assertIn("starting this one as shop-explore-2", out.getvalue())
@@ -289,7 +289,7 @@ class Crew(unittest.TestCase):
         mine = {"name": "shop-explore-2", "workspace_id": "w9", "agent_status": "working"}
         for agents, shown in (([stranger], "closed"), ([stranger, mine], "working")):
             out = io.StringIO()
-            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", lambda *a, **k: {"agents": agents}), \
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agents": agents}), \
                     mock.patch("sys.stdout", out):
                 fc.cmd_crew(type("A", (), {"action": "list"}))
             self.assertIn(shown, out.getvalue())
@@ -309,8 +309,8 @@ class Crew(unittest.TestCase):
     def test_start_in_an_untrusted_worktree_says_so_before_opening_a_tab(self):
         calls = []
         a = type("A", (), {"action": "start", "role": "orchestrator", "title": None, "brief": "x"})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", lambda *x, **k: calls.append(x)), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=False), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *x, **k: calls.append(x)), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=False), \
                 self.assertRaises(SystemExit) as e:
             fc.cmd_crew(a)
         self.assertIn("never trusted", str(e.exception.code))
@@ -329,7 +329,7 @@ class Crew(unittest.TestCase):
         def stop(force):
             a = type("A", (), {"action": "stop", "role": "q-1", "force": force})
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
-                    mock.patch.object(fc, "herdr", lambda *args, **kw: closed.append(args)):
+                    mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: closed.append(args)):
                 fc.cmd_crew(a)
         with self.assertRaises(SystemExit) as e:
             stop(False)
@@ -358,7 +358,7 @@ class Attention(unittest.TestCase):
 
     def report(self, who, state, msg):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
-                mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+                mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)):
             fc.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
 
     def test_needs_user_badges_the_pane_without_notifying_or_focusing(self):
@@ -381,7 +381,7 @@ class Attention(unittest.TestCase):
               "event crew=shop-q-neb-1 state=done message='Provider: Stripe'",
               "event stall=idle agent=shop-orchestrator the team lead has been idle"]
         runs = []
-        with mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)), mock.patch.object(sys, "platform", "darwin"), \
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)), mock.patch.object(sys, "platform", "darwin"), \
                 mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 fc.manager_attention(self.proj, ev)  # the team lead watching its teammates
@@ -420,7 +420,7 @@ class Attention(unittest.TestCase):
     def test_focus_jumps_on_request(self):
         a = type("A", (), {"action": "focus", "role": "q-neb-2"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
-                mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+                mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args)):
             fc.cmd_crew(a)
         self.assertEqual(self.calls, [("workspace", "focus", "w9"), ("tab", "focus", "w9:q-neb-2")])
 
@@ -509,8 +509,8 @@ class ToolBug(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             return {}
         a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "cwd": "/tmp/fast-coding"})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
@@ -546,8 +546,8 @@ class AwaitStart(unittest.TestCase):
         def herdr(*args, check=False, timeout=120):
             calls.append(args)
             return {"agent": {"agent_status": next(seen)}} if args[:2] == ("agent", "get") else {}
-        with mock.patch.object(fc, "herdr", herdr), mock.patch.object(time, "sleep"):
-            fc.herdr_await_start("shop-tests-003", first)
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(time, "sleep"):
+            fc.fc_herdr.herdr_await_start("shop-tests-003", first)
         return [c for c in calls if c[:2] in (("agent", "send-keys"), ("agent", "prompt"))]
 
     def test_a_slow_to_ready_agent_is_waited_for_without_enter(self):
@@ -577,9 +577,9 @@ class Ready(unittest.TestCase):
 
     def run_ready(self, status, screens, timeout=60):
         reads, shown = [], iter(screens)
-        with mock.patch.object(fc, "herdr", lambda *a, **k: {"agent": {"agent_status": status}} if a[:2] == ("agent", "get") else {}), \
-                mock.patch.object(fc, "herdr_text", lambda *a, **k: reads.append(a) or next(shown, "")), mock.patch.object(time, "sleep"):
-            fc.herdr_ready("shop-tests-003", timeout=timeout)
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agent": {"agent_status": status}} if a[:2] == ("agent", "get") else {}), \
+                mock.patch.object(fc.fc_herdr, "herdr_text", lambda *a, **k: reads.append(a) or next(shown, "")), mock.patch.object(time, "sleep"):
+            fc.fc_herdr.herdr_ready("shop-tests-003", timeout=timeout)
         return reads
 
     def test_the_brief_waits_for_the_input_box(self):
@@ -605,9 +605,9 @@ class Ready(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             return {}
         a = type("A", (), {"action": "start", "role": "tests", "title": "tests", "brief": "Write them.", "cwd": None})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_ready", lambda agent, **k: calls.append(("ready", agent))), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_ready", lambda agent, **k: calls.append(("ready", agent))), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.cmd_crew(a)
         heads = [c[:2] for c in calls]
@@ -624,8 +624,8 @@ class StartPaneBusy(unittest.TestCase):
             if args[:2] == ("agent", "start") and len([c for c in calls if c[:2] == args[:2]]) <= busy:
                 raise RuntimeError("herdr agent start: agent_pane_busy")
             return {}
-        with mock.patch.object(fc, "herdr", herdr):
-            fc.herdr_start_crew("shop-design-086", "--kind", "claude")
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr):
+            fc.fc_herdr.herdr_start_crew("shop-design-086", "--kind", "claude")
         return len(calls)
 
     def test_a_busy_pane_is_retried_until_it_starts(self):
@@ -638,8 +638,8 @@ class StartPaneBusy(unittest.TestCase):
             if args[:2] == ("agent", "start") and len(calls) == 1:
                 raise RuntimeError("herdr agent start: agent_name_not_found")
             return {"agents": []} if args[:2] == ("agent", "list") else {}
-        with mock.patch.object(fc, "herdr", herdr):
-            fc.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr):
+            fc.fc_herdr.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
         self.assertEqual([c[:2] for c in calls].count(("agent", "start")), 2)
 
     def test_a_name_not_found_start_that_made_a_session_names_it_and_never_starts_a_second(self):
@@ -649,8 +649,8 @@ class StartPaneBusy(unittest.TestCase):
             if args[:2] == ("agent", "start"):
                 raise RuntimeError("herdr agent start: agent_name_not_found")
             return {"agents": [{"name": "claude", "pane_id": "wH:p19"}]} if args[:2] == ("agent", "list") else {}
-        with mock.patch.object(fc, "herdr", herdr):
-            fc.herdr_start_crew("shop-design-123", "--kind", "claude", "--pane", "wH:p19")
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr):
+            fc.fc_herdr.herdr_start_crew("shop-design-123", "--kind", "claude", "--pane", "wH:p19")
         self.assertEqual([c[:2] for c in calls].count(("agent", "start")), 1)
         self.assertIn(("agent", "rename", "wH:p19", "shop-design-123"), calls)
 
@@ -665,8 +665,8 @@ class StartPaneBusy(unittest.TestCase):
             if args[:2] == ("agent", "start"):
                 raise RuntimeError("herdr agent start: timeout")
             return {"agents": live} if args[:2] == ("agent", "list") else {}
-        with mock.patch.object(fc, "herdr", herdr):
-            fc.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr):
+            fc.fc_herdr.herdr_start_crew("shop-design-086", "--kind", "claude", "--pane", "wJ:p3")
         return calls
 
     def test_a_start_that_timed_out_but_came_up_is_named_and_kept(self):
@@ -706,7 +706,7 @@ class AtomicState(unittest.TestCase):
             if isinstance(r, Exception):
                 raise r
             return r
-        with mock.patch.object(fc.fc_tasks, "load_tasks", load), mock.patch.object(fc, "herdr", return_value={}):
+        with mock.patch.object(fc.fc_tasks, "load_tasks", load), mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["tasks"], {})
 
 
@@ -729,11 +729,11 @@ class RestrictedStart(unittest.TestCase):
             return {"agents": []} if args[:2] == ("agent", "list") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else \
                 {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
         a = type("A", (), dict(action="start", role=role, title="t", brief="b", **kw))  # no `frame0` unless given: internal callers build it so
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc, "herdr_env", return_value=True), \
-                mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register") as self.frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc, "crew_workdir", return_value=(str(proj), None)), \
-                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
                 mock.patch("pathlib.Path.home", return_value=home):
             fc.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
@@ -875,10 +875,10 @@ class PiStart(unittest.TestCase):
                 return {"agent": {"agent_status": "working"}}
             return {}
         a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": "pi:x/y"})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), \
-                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing.ts"), \
+                mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing.ts"), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)

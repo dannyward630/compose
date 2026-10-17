@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models  # noqa: E402
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr  # noqa: E402
 
 CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
 
@@ -39,189 +39,10 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     if fc_claude.is_claude(model):
         return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
     if model.startswith("pi:"):
-        if herdr_env() and task and task.get("space"):
+        if fc_herdr.herdr_env() and task and task.get("space"):
             return herdr_pi(cwd, model[3:], prompt, session, task, timeout)
         return fc_models.pi_turn(cwd, model[3:], prompt, session, timeout)
     return fc_models.opencode(cwd, model, prompt, session)
-
-# ---------- herdr ----------
-# Inside herdr (HERDR_ENV=1) the fleet is visible: one space per project, a `status` tab, one tab per task holding a named
-# interactive pi agent the team lead can steer with `herdr agent prompt`, and a verify tab of stage panes. Every call
-# here is best-effort: outside herdr, or when herdr refuses, the run continues exactly as the headless path would.
-
-HERDR_SPACES = {}  # project name -> workspace id, filled by herdr_space
-PI_HERDR_EXT = Path.home() / ".pi" / "agent" / "extensions" / "herdr-agent-state.ts"
-
-def herdr_env():
-    return os.environ.get("HERDR_ENV") == "1" and bool(os.environ.get("HERDR_SOCKET_PATH"))
-
-def herdr(*args, check=False, timeout=120):
-    """One herdr CLI call. Returns the JSON `result`, or None when not inside herdr or the call failed (raises if check)."""
-    if not herdr_env():
-        return None
-    try:
-        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        if check:
-            raise RuntimeError(f"herdr {' '.join(map(str, args[:2]))}: {e}")
-        return None
-    try:
-        out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        out = {}
-    if p.returncode or "error" in out:
-        if check:
-            raise RuntimeError(f"herdr {' '.join(map(str, args[:2]))}: {(out.get('error') or {}).get('code') or p.stderr.strip()[-200:]}")
-        return None
-    return out.get("result", out)
-
-def herdr_error(*args, timeout=120):
-    """Like herdr() but returns the error code string on failure ("timeout", "agent_blocked", ...) instead of None."""
-    p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    try:
-        out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        out = {}
-    if p.returncode or "error" in out:
-        return None, ((out.get("error") or {}).get("code") or p.stderr.strip()[-200:] or "error")
-    return out.get("result", out), None
-
-def herdr_text(*args, timeout=30):
-    """One herdr CLI call whose answer is plain text (`agent read`): the text, or "" outside herdr or when the call failed."""
-    if not herdr_env():
-        return ""
-    try:
-        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return p.stdout if p.returncode == 0 else ""
-
-def herdr_ready(agent, timeout=60):
-    """Return once a Claude session's input box (its `❯` line) is on screen, or it is already on a turn, blocked on a dialog, or done.
-    `herdr agent start` reports a Claude session ready seconds before its UI exists, while the pane still shows the shell command
-    (`herdr agent explain`: idle, rule none): text typed then is kept in the box unsent, or dropped outright, so a brief waits for the box."""
-    for _ in range(max(1, timeout // 2)):
-        got = (herdr("agent", "get", agent) or {}).get("agent") or {}
-        if not got or got.get("agent_status") in ("working", "blocked", "done"):
-            return
-        if any(ln.lstrip().startswith("❯") for ln in herdr_text("agent", "read", agent, "--source", "visible", "--lines", "40").splitlines()):
-            return
-        time.sleep(2)
-
-def herdr_await_start(agent, first=None, tries=3):
-    """Return once `agent` has started on its brief, the first prompt it gets. This only confirms the submission landed (status
-    working, blocked, or done); when it did not, presses Enter for a box that kept the text without submitting, then sends `first`
-    again for a box that lost it, and fails loudly with the agent name when it still did not start."""
-    def started():  # `done` counts too: a short first turn can finish before the check
-        return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
-    def settles(secs):
-        for _ in range(secs // 2):
-            if started():
-                return True
-            time.sleep(2)
-        return False
-    for attempt in range(tries + 1):
-        if attempt:
-            herdr("agent", "send-keys", agent, "enter")
-            if settles(6):
-                return
-            if first:
-                herdr("agent", "prompt", agent, first)
-        if settles(20):
-            return
-    raise RuntimeError(f"{agent} did not start on its brief after {tries} retries: look in its tab"
-                       + (f", and send it again with: herdr agent prompt {agent} {shlex.quote(first)}" if first else ""))
-
-def herdr_start_crew(*args, tries=8):
-    """`herdr agent start` for a teammate, retried while its pane is still coming up: starts running in parallel (designcrews,
-    testcrews) race each other and the new pane answers agent_pane_busy until its shell is there, or agent_name_not_found while herdr
-    has not yet registered the name the start waits for (the session may be up under its pane's default name: it is renamed)."""
-    for i in range(tries):
-        try:
-            return herdr("agent", "start", *args, check=True, timeout=90)
-        except RuntimeError as e:
-            if ("timeout" in str(e) or "agent_name_not_found" in str(e)) and "--pane" in args:  # the session can come up after the call gave up: name it rather than lose it
-                pane = args[args.index("--pane") + 1]
-                for _ in range(10):  # it may still be registering with herdr when the call gives up
-                    if any(ag.get("pane_id") == pane for ag in live_agents()):
-                        print(f"herdr agent start timed out but {args[0]} came up; continuing")
-                        return herdr("agent", "rename", pane, args[0], check=True)
-                    time.sleep(2)
-                if pane_launching(args[0], pane):  # one last look by name and by pane: an agent that can still come up is never declared dead
-                    print(f"herdr agent start timed out but {args[0]} is still starting in its pane; continuing")
-                    return None
-            if not any(c in str(e) for c in ("agent_pane_busy", "agent_name_not_found")) or i == tries - 1:
-                raise
-            time.sleep(0.5 * (i + 1))
-
-def pane_processes(pane):
-    """The processes running in `pane` in front of its shell: empty when the pane holds nothing but an idle shell."""
-    info = (herdr("pane", "process-info", "--pane", pane) or {}).get("process_info") or {}
-    return [p for p in info.get("foreground_processes", []) if p.get("pid") != info.get("shell_pid")] \
-        if info.get("foreground_process_group_id") != info.get("shell_pid") else []
-
-def pane_launching(agent, pane):
-    """True when `agent` is registered by name, listed on `pane`, or the pane runs a process that is still becoming it."""
-    return bool(herdr("agent", "get", agent)) or any(ag.get("pane_id") == pane for ag in live_agents()) or bool(pane_processes(pane))
-
-def pane_kill(pane):
-    """Stop whatever runs in `pane` in front of its shell, so closing the tab leaves nothing unregistered behind."""
-    for p in pane_processes(pane):
-        try:
-            os.kill(p["pid"], signal.SIGTERM)
-        except (OSError, KeyError):
-            pass
-
-def agent_name(slug, tid):
-    """herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents. `<slug>-<id>`, slug trimmed to fit."""
-    s = re.sub(r"[^a-z0-9_-]+", "-", slug.lower()).strip("-")
-    if not re.match(r"[a-z]", s):
-        s = "fc-" + s
-    return f"{s[:32 - len(tid) - 1]}-{tid}"
-
-def herdr_main_repo(wt):
-    common = fc_core.sh(["git", "rev-parse", "--git-common-dir"], wt, check=False).stdout.strip()
-    return str(Path(wt, common).resolve().parent) if common else str(wt)
-
-def herdr_find_space(wt):
-    """The workspace id whose checkout is this path (`worktree.checkout_path` in `workspace list`)."""
-    wt = str(Path(wt).resolve())
-    for w in (herdr("workspace", "list") or {}).get("workspaces", []):
-        cp = (w.get("worktree") or {}).get("checkout_path")
-        if cp and str(Path(cp).resolve()) == wt:
-            return w["workspace_id"]
-    return None
-
-def project_worktree(proj):
-    """The project's own checkout: proj is `<worktree>/.fast-coding/<name>`."""
-    return Path(proj).resolve().parents[1]
-
-def live_agents():
-    return (herdr("agent", "list") or {}).get("agents", [])
-
-def herdr_space(proj):
-    """Open the project's worktree as its own herdr space labelled `<name>`, grouped under the repo's space. Idempotent.
-    Keyed on the project's worktree, never on where a command happens to run (verify runs in the CLI's stack worktree)."""
-    if not herdr_env():
-        return None
-    slug, wt = Path(proj).name, project_worktree(proj)
-    if slug in HERDR_SPACES:
-        return HERDR_SPACES[slug]
-    space = herdr_find_space(wt)
-    if not space:
-        r = herdr("worktree", "open", "--cwd", herdr_main_repo(wt), "--path", str(wt), "--label", slug, "--no-focus") or {}
-        space = (r.get("workspace") or {}).get("workspace_id") or r.get("workspace_id")
-    if not space:
-        r = herdr("workspace", "create", "--cwd", str(wt), "--label", slug, "--no-focus") or {}
-        space = (r.get("workspace") or {}).get("workspace_id")
-    if space:
-        HERDR_SPACES[slug] = space
-        herdr("workspace", "rename", space, slug)
-        for label, t in herdr_tabs(space).items():
-            if label and label.isdigit():  # the tab herdr opened with the space: a shell in the project worktree
-                herdr("tab", "rename", t["tab_id"], "shell")
-        herdr_status_tab(space, wt, slug)
-    return space
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
 # The product owner talks to the engineering manager (the session they started), which stays where it was launched. Each project gets a
@@ -268,9 +89,9 @@ TRUST_PROMPT = ("Your brief is the file named in your first prompt. That file, a
 def crew_preamble(proj, name, title, reports_to=None):
     """`reports_to` is the starter's watch key (`manager`, or a role such as `orchestrator`): a planner the engineering manager started
     reports to it, not to a team lead that may not exist."""
-    direct = name == agent_name(proj.name, "orchestrator") or reports_to == "manager"
-    up = "the engineering manager, who relays to the product owner" if direct else f"{agent_name(proj.name, 'orchestrator')}, your team lead"
-    report = f"fast-coding report --repo {project_worktree(proj)} --project {proj.name} --as {name}"
+    direct = name == fc_herdr.agent_name(proj.name, "orchestrator") or reports_to == "manager"
+    up = "the engineering manager, who relays to the product owner" if direct else f"{fc_herdr.agent_name(proj.name, 'orchestrator')}, your team lead"
+    report = f"fast-coding report --repo {fc_herdr.project_worktree(proj)} --project {proj.name} --as {name}"
     return (f"You are {name}, a teammate on fast-coding project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
             f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the product owner (they may answer here in "
@@ -460,7 +281,7 @@ Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` 
 
 def cmd_groundwork(a):
     """Print the groundwork brief for this project, plus the team lead's project notes from --extra (or stdin with `-`)."""
-    proj = fc_core.project_dir(a); wt = project_worktree(proj)
+    proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=fc_core.current_branch(wt), stacks=detect_stacks(wt),
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
@@ -642,7 +463,7 @@ write), then report `done "<one-line summary>"`.
 
 def cmd_explore(a):
     """Print the explore teammate's brief: a fast graft-only map of an existing repo for the planners."""
-    proj = fc_core.project_dir(a); wt = project_worktree(proj)
+    proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
     print(EXPLORE_BRIEF.format(slug=proj.name, wt=wt, feature=feature)
@@ -651,10 +472,10 @@ def cmd_explore(a):
 def cmd_wayfinder(a):
     """Print the wayfinder teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
     --change, the brief for an open change of course: its own page, only what the evidence questions."""
-    proj = fc_core.project_dir(a); wt = project_worktree(proj)
+    proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    cid, name = getattr(a, "change", None), agent_name(proj.name, "wayfinder")
+    cid, name = getattr(a, "change", None), fc_herdr.agent_name(proj.name, "wayfinder")
     if cid:
         rec = load_change(proj, cid)
         if not rec or rec.get("done_at"):
@@ -668,10 +489,10 @@ def cmd_wayfinder(a):
 
 def cmd_planner(a):
     """Print the planner teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`)."""
-    proj = fc_core.project_dir(a); wt = project_worktree(proj)
+    proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=agent_name(proj.name, "planner"))
+    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=fc_herdr.agent_name(proj.name, "planner"))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 FIGMA_CONNECTOR = ("Figma tools: the authenticated connector `mcp__claude_ai_Figma__*` is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
@@ -735,7 +556,7 @@ def cmd_designer(a):
     """Print the designer teammate's brief; --figma stores the file key first, --extra adds the team lead's notes."""
     if check_deps("designer"):  # before any brief: crew start gets none and stops too
         sys.exit("designer stopped: install what is missing above, then run it again (`fast-coding doctor` checks again)")
-    proj = fc_core.project_dir(a); wt = project_worktree(proj)
+    proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     if a.figma:
         key = fc_core.figma_key(a.figma)
         if not key:
@@ -796,10 +617,10 @@ def cmd_testcrews(a):
         return
     if use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = slots(proj)
-        short = pool_shortfall(project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
+        short = pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
         if short:
             sys.exit(f"testcrews: {short}")
-    herdr_space(proj)  # once, before the parallel starts
+    fc_herdr.herdr_space(proj)  # once, before the parallel starts
     model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
     wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
     def start(m):
@@ -855,7 +676,7 @@ def cmd_designcrews(a):
     cap = a.max or cfg.get("design_concurrency", DESIGN_CONCURRENCY)
     # designcrews exits once the builders start, so nothing can start the rest later: the queued ids are printed with the command.
     metas, queued = metas[:cap], metas[cap:]
-    herdr_space(proj)  # once, before the parallel starts
+    fc_herdr.herdr_space(proj)  # once, before the parallel starts
     def start(m):
         try:
             cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
@@ -879,7 +700,7 @@ def test_branch(proj, tid):
 def test_worktree(proj, tid):
     """Each test-writing teammate writes on its own branch in its own worktree off the stubs commit: teammates sharing one
     branch raced (an amend landed on another teammate's commit). The collect step brings their commits back in task order."""
-    wt = project_worktree(proj)
+    wt = fc_herdr.project_worktree(proj)
     branch, held = test_branch(proj, tid), slots(proj).get(f"tests-{tid}")
     if held and Path(held).exists():
         return Path(held)
@@ -898,7 +719,7 @@ def test_worktree(proj, tid):
 def collect_tests(proj, only=None):
     """Cherry-pick every test-writing teammate's own commits onto the project branch in task order, then remove their worktrees and
     branches. A conflict stops with the task named and leaves that teammate's branch for a look."""
-    wt = project_worktree(proj)
+    wt = fc_herdr.project_worktree(proj)
     want = {x.strip() for x in only.split(",")} if only else None
     ids = sorted(m["id"] for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want)
     for tid in ids:
@@ -931,24 +752,24 @@ def cmd_crew(a):
     """`crew start` a teammate, a Claude session in the project's space (own tab, named `<slug>-<role>`), and brief it; `crew list` shows
     each with its last report; `crew stop` closes a finished one's tab."""
     proj = fc_core.project_dir(a)
-    slug, wt = proj.name, project_worktree(proj)
+    slug, wt = proj.name, fc_herdr.project_worktree(proj)
     if a.action == "list":
         for f in sorted(crew_dir(proj).glob("*.json")):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
-            live = next((ag for ag in live_agents() if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
+            live = next((ag for ag in fc_herdr.live_agents() if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
             print(f"  {c['name']:32} {last.get('state', '-'):10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
         return
     if not a.role:
         sys.exit(f"usage: fast-coding crew {a.action} --project {slug} --role <role>")
-    name = agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
+    name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":
         if not rec.exists():
             sys.exit(f"no teammate {name}")
         c = json.loads(rec.read_text())
-        herdr("workspace", "focus", c["space"])
-        herdr("tab", "focus", c["tab"])
+        fc_herdr.herdr("workspace", "focus", c["space"])
+        fc_herdr.herdr("tab", "focus", c["tab"])
         print(f"focused {name} ({c['title']})")
         return
     if a.action == "stop":
@@ -958,15 +779,15 @@ def cmd_crew(a):
         if last.get("state") != "done" and not a.force:  # closing mid-conversation loses what the product owner was saying there
             sys.exit(f"{name} has not reported done (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); "
                      f"read it with `herdr agent read {name} --lines 60`, or pass --force to close it anyway")
-        herdr("tab", "close", json.loads(rec.read_text())["tab"])
+        fc_herdr.herdr("tab", "close", json.loads(rec.read_text())["tab"])
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"teammate {name} stopped")
         return
     model, effort, why_model, skipped = crew_pick_full(a.role, getattr(a, "model", None))
-    if not herdr_env():
+    if not fc_herdr.herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     agent = name  # the herdr agent name: `name`, or a numbered one when a stranger outside this space already holds it
-    live, space = live_agents(), herdr_find_space(wt)
+    live, space = fc_herdr.live_agents(), fc_herdr.herdr_find_space(wt)
     if any(ag.get("name") == name and ag.get("workspace_id") == space for ag in live):
         sys.exit(f"{name} is already running; steer it with: herdr agent prompt {name} \"...\"")
     taken = {ag.get("name") for ag in live}
@@ -991,9 +812,9 @@ def cmd_crew(a):
     if branch:
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
-    space = herdr_space(proj)
+    space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
-    tab = herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"FAST_CODING_ROLE={role}", "--env", f"FAST_CODING_PROJECT={slug}", "--env", f"FAST_CODING_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
@@ -1010,35 +831,35 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-            herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions", "-e", "builtin:mcp",
-                  *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
+            fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions", "-e", "builtin:mcp",
+                  *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), *fc_models.pi_key_args(model), "--append-system-prompt", TRUST_PROMPT)
         else:
-            herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
+            fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
-        if len(crew_reports(proj, name)) > seen or pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
+        if len(crew_reports(proj, name)) > seen or fc_herdr.pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")
         else:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
-            pane_kill(pane)
-            herdr("tab", "close", tab["tab"]["tab_id"])
+            fc_herdr.pane_kill(pane)
+            fc_herdr.herdr("tab", "close", tab["tab"]["tab_id"])
             for f in crew_dir(proj).glob(f"{name}.*"):
                 f.unlink()
             sys.exit(f"teammate {name} did not start: {e}")
     if not model.startswith("pi:"):
-        herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
+        fc_herdr.herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
-        herdr("agent", "prompt", agent, first, check=True)
+        fc_herdr.herdr("agent", "prompt", agent, first, check=True)
     except RuntimeError as e:
         sys.exit(f"teammate {name} came up but did not take its brief ({e}); send it with: herdr agent prompt {agent} {shlex.quote(first)}")
-    herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
+    fc_herdr.herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", f"{name}: {title}")
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
     if len(crew_reports(proj, name)) <= seen:  # one that has reported has started, and may be gone already
-        herdr_await_start(agent, first)
+        fc_herdr.herdr_await_start(agent, first)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 
@@ -1140,7 +961,7 @@ def crew_reporting_to(proj, key):
 
 def crew_reregister(proj, name):
     """A teammate whose record was lost (a start that gave up on it too early) reports anyway: rebuild the record from its live agent."""
-    ag = (herdr("agent", "get", name) or {}).get("agent")
+    ag = (fc_herdr.herdr("agent", "get", name) or {}).get("agent")
     if ag and ag.get("pane_id"):
         fc_core.atomic_write(crew_dir(proj) / f"{name}.json", json.dumps({"name": name, "agent": name, "role": "", "title": ag.get("title") or name, "model": "claude", "cwd": ag.get("cwd", ""),
                                                                    "space": ag.get("workspace_id"), "tab": ag.get("tab_id"), "pane": ag["pane_id"], "started_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
@@ -1153,7 +974,7 @@ def crew_attention(proj, name, state, message):
     if not c:
         return
     label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
-    herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
+    fc_herdr.herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
 
 def desktop_notify(title, body):
     """The product owner's desktop alert, sent by the CLI itself and never through `herdr notification show`: that command follows
@@ -1216,7 +1037,7 @@ def cmd_report(a):
     crew_attention(proj, a.as_, a.state, message)
     print(f"reported {a.as_} {a.state}")
     if a.state == "done":
-        if a.as_ == agent_name(proj.name, "orchestrator"):
+        if a.as_ == fc_herdr.agent_name(proj.name, "orchestrator"):
             teardown(proj)  # the project is finished: nothing it started should stay open
         else:
             close_after_turn(proj, a.as_)
@@ -1234,7 +1055,7 @@ def close_after_turn(proj, name):
     so the close is a detached process (its own session, so the tab's hangup cannot reach it) that waits for the agent to
     settle first."""
     c = crew_record(proj, name)
-    if not c or not c.get("tab") or not herdr_env():
+    if not c or not c.get("tab") or not fc_herdr.herdr_env():
         return
     me = shutil.which("herdr") or "herdr"
     subprocess.Popen(["sh", "-c", f'"$0" agent wait "$1" --timeout 900000; "$0" tab close "$2"', me, name, c["tab"]],
@@ -1324,7 +1145,7 @@ def frame0_up(proj):
     if not design.exists():
         fc_core.atomic_write(design, json.dumps(frame0_empty_doc()))
     try:
-        frame0_register(project_worktree(proj), port)
+        frame0_register(fc_herdr.project_worktree(proj), port)
     except RuntimeError as e:  # the app still starts; only the MCP tools are missing
         print(f"frame0 MCP server not registered: {e}")
     if frame0_pid(proj):
@@ -1624,17 +1445,17 @@ def teardown(proj):
     and every teammate tab whose last report is `done`. `shell`, `status`, and the team lead stay. Idempotent. Returns the closed labels."""
     if frame0_down(proj):
         print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
-    stopped = stop_listeners_under(project_worktree(proj))
+    stopped = stop_listeners_under(fc_herdr.project_worktree(proj))
     if stopped:
         print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")
     shutil.rmtree(scratch_dir(proj), ignore_errors=True)
-    space = herdr_env() and herdr_find_space(project_worktree(proj))
+    space = fc_herdr.herdr_env() and fc_herdr.herdr_find_space(fc_herdr.project_worktree(proj))
     if not space:
         return []
-    slug, orch = proj.name, agent_name(proj.name, "orchestrator")
-    tabs = (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])
+    slug, orch = proj.name, fc_herdr.agent_name(proj.name, "orchestrator")
+    tabs = (fc_herdr.herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])
     hosted = {}  # tab id -> live agent names in it
-    for ag in (herdr("agent", "list") or {}).get("agents", []):
+    for ag in (fc_herdr.herdr("agent", "list") or {}).get("agents", []):
         if ag.get("workspace_id") == space and ag.get("name"):
             hosted.setdefault(ag.get("tab_id"), []).append(ag["name"])
     crew = {c["tab"]: c for c in (json.loads(f.read_text()) for f in sorted(crew_dir(proj).glob("*.json"))) if c.get("tab")}
@@ -1651,9 +1472,9 @@ def teardown(proj):
                 continue
             crew_closed(proj, c["name"], "teardown")
         elif not (label == "implementers" or VERIFY_TAB.fullmatch(label)
-                  or ((m := TASK_TAB.match(label)) and all(n == agent_name(slug, m.group(1)) for n in names))):
+                  or ((m := TASK_TAB.match(label)) and all(n == fc_herdr.agent_name(slug, m.group(1)) for n in names))):
             continue  # not ours
-        herdr("tab", "close", tid)
+        fc_herdr.herdr("tab", "close", tid)
         closed.append(label)
         print(f"teardown closed {label!r}")
     return closed
@@ -1663,52 +1484,6 @@ def cmd_teardown(a):
     closed = teardown(fc_core.project_dir(a))
     print(f"teardown: {len(closed)} tab(s) closed" if closed else "teardown: nothing to close")
 
-def herdr_tabs(space):
-    return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
-
-def herdr_status_tab(space, wt, slug):
-    """A `status` tab running `fast-coding status --watch`, so the product owner sees every task's state without asking."""
-    if "status" in herdr_tabs(space):
-        return
-    r = herdr("tab", "create", "--workspace", space, "--label", "status", "--cwd", str(wt), "--no-focus") or {}
-    pane = (r.get("root_pane") or {}).get("pane_id")
-    if pane:
-        me = str(Path(sys.argv[0]).resolve())
-        herdr("pane", "run", pane, f"clear; {me} status --repo {wt} --project {slug} --watch")
-
-def herdr_label(session, label, cost, state="working"):
-    """Display-only pane metadata: the state label the product owner reads next to the agent, and the running cost."""
-    if session and session.get("pane"):
-        herdr("pane", "report-metadata", session["pane"], "--source", "fast-coding", "--state-label", f"{state}={label}",
-              "--state-label", f"done={label}", "--token", f"cost=${cost:.4f}")
-
-IMPLEMENTERS_TAB = "implementers"
-
-def herdr_implementer_pane(space, cwd, env):
-    """A fresh pane for one implementer in the space's single `implementers` tab: the tab's root pane when the tab is new,
-    else a split of its newest pane, alternating right and down so the panes tile instead of thinning into strips."""
-    env_args = [x for k, v in env.items() for x in ("--env", f"{k}={v}")]
-    tab = herdr_tabs(space).get(IMPLEMENTERS_TAB)
-    if not tab:
-        r = herdr("tab", "create", "--workspace", space, "--label", IMPLEMENTERS_TAB, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
-        return r["root_pane"]["pane_id"]
-    panes = [p for p in (herdr("pane", "list", "--workspace", space) or {}).get("panes", []) if p.get("tab_id") == tab["tab_id"]]
-    direction = "right" if len(panes) % 2 else "down"
-    r = herdr("pane", "split", panes[-1]["pane_id"], "--direction", direction, "--cwd", str(cwd), *env_args, "--no-focus", check=True)
-    return r["pane"]["pane_id"]
-
-def herdr_agent_start(*args, tries=8):
-    """`herdr agent start`, retried while the pane is still coming up: a pane split a moment ago answers agent_pane_busy
-    until its shell prompt is there, which is the harness racing itself and never a reason to fail a task."""
-    for i in range(tries):
-        started, err = herdr_error("agent", "start", *args, timeout=90)
-        if err not in ("agent_pane_busy", "agent_name_not_found") or i == tries - 1:
-            break
-        time.sleep(0.5 * (i + 1))
-    if err:
-        raise RuntimeError(f"herdr agent start: {err}")
-    return started
-
 def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
     Same contract as pi_turn(): (session, reply_text, tool_calls, usage). The session dict names the agent, its pane and tab,
@@ -1716,43 +1491,43 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     `herdr agent prompt <name> ...` between the CLI's own prompts."""
     timeout = timeout or fc_models.TURN_TIMEOUT
     meta, proj = task["meta"], task["proj"]
-    tid, name = meta["id"], agent_name(proj.name, meta["id"])
+    tid, name = meta["id"], fc_herdr.agent_name(proj.name, meta["id"])
     title = f"{tid} {meta.get('title', '')}".strip()[:60]
     if session is None:
-        old = herdr("agent", "get", name)
+        old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
-            herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
+            fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         env = dict(os.environ)
         if "OPENROUTER_API_KEY" not in env and fc_core.load_env(fc_config.ENV_FILE).get("TEXT_MODEL_API_KEY"):
             env["OPENROUTER_API_KEY"] = fc_core.load_env(fc_config.ENV_FILE)["TEXT_MODEL_API_KEY"].strip('"')
-        pane = herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": env["OPENROUTER_API_KEY"]} if env.get("OPENROUTER_API_KEY") else {}),
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": env["OPENROUTER_API_KEY"]} if env.get("OPENROUTER_API_KEY") else {}),
                                                            "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1"})
-        herdr("pane", "rename", pane, title)
+        fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
         import uuid
-        args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(PI_HERDR_EXT)] if PI_HERDR_EXT.exists() else []),
+        args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model,
                 *(["--api-key", fc_config.OPENROUTER_KEY] if fc_config.OPENROUTER_KEY else [])]
-        started = herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
+        started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
-        herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
+        fc_herdr.herdr("pane", "report-metadata", pane, "--source", "fast-coding", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     for attempt in range(2):
-        result, err = herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
+        result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
-            herdr("agent", "send-keys", session["name"], "esc")
+            fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
             time.sleep(1)
             continue
         break
     if err == "timeout" or err == "agent_prompt_stalled":
-        herdr("agent", "send-keys", session["name"], "esc")
-        herdr("pane", "close", session["pane"])
+        fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
+        fc_herdr.herdr("pane", "close", session["pane"])
         raise subprocess.TimeoutExpired("herdr agent prompt", timeout)
     if err:
         raise RuntimeError(f"herdr agent prompt {session['name']}: {err}")
     if not session.get("sfile"):
-        got = herdr("agent", "get", session["name"]) or {}
+        got = fc_herdr.herdr("agent", "get", session["name"]) or {}
         session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
     session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
     if not text and not tools and not usage["tokens_in"]:
@@ -1763,31 +1538,6 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     if any("rate" in e.lower() and "limit" in e.lower() for e in errors):
         raise fc_models.RateLimited(usage)
     return session, text, tools, usage
-
-def herdr_verify_panes(space, wt, names):
-    """The space's one `verify` tab, rebuilt per run, with one pane per stage, each a plain shell the CLI reports states for. {name: pane_id}."""
-    if not space or not names:
-        return {}
-    for label, t in herdr_tabs(space).items():  # the previous run's tab (and the older `verify HH:MM` ones)
-        if label == "verify" or re.fullmatch(r"verify \d\d:\d\d", label or ""):
-            herdr("tab", "close", t["tab_id"])
-    r = herdr("tab", "create", "--workspace", space, "--label", "verify", "--cwd", str(wt), "--no-focus") or {}
-    pane = (r.get("root_pane") or {}).get("pane_id")
-    if not pane:
-        return {}
-    panes, prev = {names[0]: pane}, pane
-    for n in names[1:]:
-        s = herdr("pane", "split", prev, "--direction", "down", "--cwd", str(wt), "--no-focus") or {}
-        prev = (s.get("pane") or {}).get("pane_id") or prev
-        panes[n] = prev
-    for n, pid in panes.items():
-        herdr("pane", "rename", pid, n)
-        herdr_stage(panes, n, "idle", "pending")
-    return panes
-
-def herdr_stage(panes, name, state, message=""):
-    if panes.get(name):
-        herdr("pane", "report-agent", panes[name], "--source", "fast-coding", "--agent", name, "--state", state, "--message", message, "--seq", str(time.time_ns()))
 
 def graft_pack(wt, query, repo=None, limit=6):
     """Context pack from a graft graph, $0 and no model. graft/ is git-ignored, so a worktree gets its own graph:
@@ -2029,7 +1779,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         attempt += 1
         t0 = time.time()
         try:
-            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": HERDR_SPACES.get(proj.name)},
+            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
                                                        timeout=fc_models.turn_timeout(meta))
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
@@ -2088,7 +1838,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         log.append(entry)
         progress("running")
         if isinstance(session, dict):
-            herdr_label(session, f"attempt {attempt}/{attempts}", cost)
+            fc_herdr.herdr_label(session, f"attempt {attempt}/{attempts}", cost)
         over = lines > fc_config.MAX_DIFF_LINES
         verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray else "fail"
         fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
@@ -2158,9 +1908,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     total = round(time.time() - started, 1)
     fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={len(log)}  ${cost:.4f}")
     if isinstance(session, dict):
-        herdr_label(session, status, cost, state="idle")
+        fc_herdr.herdr_label(session, status, cost, state="idle")
         if status == "passed":  # its branch is the record; a missed task's pane stays for the team lead to read and steer
-            herdr("pane", "close", session["pane"])
+            fc_herdr.herdr("pane", "close", session["pane"])
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
@@ -2753,10 +2503,10 @@ def cmd_run(a):
     if redo:
         os.environ["FAST_CODING_REDO"] = "1"
     # Test-writing teammates write on their own branches; their tests must be on the project branch before any implementer starts.
-    wt = project_worktree(proj)
+    wt = fc_herdr.project_worktree(proj)
     pending = [m["id"] for m in tasks if fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, m["id"])], wt, check=False).returncode == 0]
     if pending:
-        busy = [t for t in pending if (crew_reports(proj, agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
+        busy = [t for t in pending if (crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{t}")) or [{}])[-1].get("state") != "done"]
         if busy:
             sys.exit(f"test-writing teammates still writing: {', '.join('tests-' + t for t in busy)}; wait for their done reports, then run again")
         collect_tests(proj, ",".join(pending))
@@ -2797,7 +2547,7 @@ def run_tasks(repo, proj, tasks, a):
         linearize(repo, proj, a.trunk, stack_worktree(repo, proj, a.trunk))
         if STACK_STOP:
             sys.exit(f"stack  STOP  {STACK_STOP}")
-    herdr_space(proj)
+    fc_herdr.herdr_space(proj)
     t0 = time.time()
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -3656,7 +3406,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
         for i, case in enumerate(cfg.get("e2e", [])):
             t1 = time.time()
             stage = f"e2e {case.get('name', i)}"[:40]
-            herdr_stage(panes, stage, "working")
+            fc_herdr.herdr_stage(panes, stage, "working")
             run_case = lambda: jev_e2e({**case, "env": {**env, **(case.get("env") or {})}}, repo)
             r = run_case()
             if r["exit"] and tool_error(r["stdout"] + r["stderr"]):
@@ -3667,7 +3417,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
             report["e2e"].append(r)
             ok &= r["exit"] == 0
             verdict = "ok  " if r["exit"] == 0 else "TOOL ERROR" if r["tool_error"] else "FAIL"
-            herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
+            fc_herdr.herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
             run = r.get("run") or {}
             fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {case.get('name')}  "
                 f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
@@ -3694,8 +3444,8 @@ def run_stages(repo, proj, cfg, a):
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
     stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
-    panes = herdr_verify_panes(herdr_space(proj), repo, stages)
-    herdr_stage(panes, "checks", "working")
+    panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages)
+    fc_herdr.herdr_stage(panes, "checks", "working")
     for c in cfg.get("checks", []):
         t1 = time.time()
         p = fc_core.sh(c, repo, timeout=900, check=False)
@@ -3710,14 +3460,14 @@ def run_stages(repo, proj, cfg, a):
         if p.returncode and not tool:
             findings.append(f"Command failed: {c}\n{out}")
     checks_pass = all(c["exit"] == 0 for c in report["checks"])
-    herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
+    fc_herdr.herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
     # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
     # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
     pool = ThreadPoolExecutor(max_workers=1)
     e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings) if not a.skip_e2e and cfg.get("e2e") else None
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
-        herdr_stage(panes, "review", "working")
+        fc_herdr.herdr_stage(panes, "review", "working")
         diff, plan, docs, _ = review_inputs(repo, proj, cfg)
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
@@ -3725,7 +3475,7 @@ def run_stages(repo, proj, cfg, a):
         gate_review = True
         if gate_review:
             ok &= rv["pass"]
-        herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
+        fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
         fc_core.say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
@@ -3734,7 +3484,7 @@ def run_stages(repo, proj, cfg, a):
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
     if not a.skip_review and cfg.get("jev_acceptance", True):
         t1 = time.time()
-        herdr_stage(panes, "jev", "working")
+        fc_herdr.herdr_stage(panes, "jev", "working")
         diff, _, _, _ = review_inputs(repo, proj, cfg)
         try:
             acc = jev_acceptance(cfg, proj, diff, repo=repo)
@@ -3747,7 +3497,7 @@ def run_stages(repo, proj, cfg, a):
             ok &= acc["pass"]
         n = len(acc.get("criteria", []))
         met = sum(r["choice"] == "MET" for r in acc.get("criteria", []))
-        herdr_stage(panes, "jev", "idle" if acc["pass"] or not gate else "blocked", f"{met}/{n} met")
+        fc_herdr.herdr_stage(panes, "jev", "idle" if acc["pass"] or not gate else "blocked", f"{met}/{n} met")
         fc_core.say(f"jev    {'ok  ' if acc['pass'] else ('FAIL' if gate else 'warn')} {fc_core.fmt(acc['seconds']):>8}  {met}/{n} criteria met, "
             f"{len(acc.get('unclear', []))} unproven"
             + (f"  error={acc['error'][:120]}" if acc.get("error") else ""))
@@ -4151,7 +3901,7 @@ def cmd_spec_check(a):
         root = None
     else:
         proj = fc_core.project_dir(a)
-        root = project_worktree(proj)
+        root = fc_herdr.project_worktree(proj)
         fc_tasks.load_tasks(proj, required=True)
         cache = fc_tasks.linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
@@ -4204,9 +3954,9 @@ def watch_snapshot(repo, proj):
     for m in tasks:
         r = task_state(repo, proj, m, trunk_head)
         snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
-    for ag in (herdr("agent", "list") or {}).get("agents", []):
+    for ag in (fc_herdr.herdr("agent", "list") or {}).get("agents", []):
         n = ag.get("name") or ""
-        if n.startswith(agent_name(proj.name, "")[:-1]):
+        if n.startswith(fc_herdr.agent_name(proj.name, "")[:-1]):
             snap["agents"][n] = ag.get("agent_status")
     pis = [c for f in sorted((proj / "results" / "crew").glob("*.json"))
            if "skill" in (c := json.loads(f.read_text())) and c.get("agent", c["name"]) in snap["agents"]]
@@ -4269,7 +4019,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once per watcher
     (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence."""
     now_s = now_s or time.time()
-    orch = agent_name(proj.name, "orchestrator")
+    orch = fc_herdr.agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
     if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
         return []  # finished, or waiting on the product owner: silence is expected
@@ -4364,7 +4114,7 @@ def watch_filter(events, slug, sources, direct=()):
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
-    me = agent_name(slug, "orchestrator")
+    me = fc_herdr.agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
 
 WATCH_INTERVAL = 2.0
@@ -4375,7 +4125,7 @@ def cmd_watch(a, rewake=False):
     Each role's watcher (FAST_CODING_ROLE, else manager; --from only filters what is printed) remembers what it last
     reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    sources = [agent_name(proj.name, x.strip()) if not x.strip().startswith(agent_name(proj.name, "")) else x.strip()
+    sources = [fc_herdr.agent_name(proj.name, x.strip()) if not x.strip().startswith(fc_herdr.agent_name(proj.name, "")) else x.strip()
                for x in (a.from_ or "").split(",") if x.strip()]
     key = os.environ.get("FAST_CODING_ROLE") or "manager"
     direct = lambda: crew_reporting_to(proj, key) if key == "manager" else ()  # the engineering manager's own teammates pass whatever --from says
@@ -4460,7 +4210,7 @@ def cmd_reenter(a):
         return
     proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("FAST_CODING_REPO") or ".", project=project))
     print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
-    print(f"Re-read your brief file {crew_dir(proj) / f'{agent_name(project, role)}.brief.md'} now.")
+    print(f"Re-read your brief file {crew_dir(proj) / f'{fc_herdr.agent_name(project, role)}.brief.md'} now.")
     print(f"Run `fast-coding status --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project}` and "
           f"`fast-coding watch --repo {os.environ.get('FAST_CODING_REPO') or '.'} --project {project} --now` to see the board.")
     print("Re-read the feature's Decisions so far and Plan on Linear before acting.")
@@ -4657,7 +4407,7 @@ def setup_graft(wt):
 
 def cmd_graft(a):
     """Set graft up in the project's worktree again (after installing graft, or to rebuild the graph)."""
-    setup_graft(project_worktree(fc_core.project_dir(a)))
+    setup_graft(fc_herdr.project_worktree(fc_core.project_dir(a)))
 
 HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
 TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
@@ -4825,8 +4575,8 @@ def cmd_init(a):
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main",
             **({"after": a.after} if a.after else {}), **({"branch": a.branch} if a.branch else {})}, indent=2))
-    if herdr_space(proj):
-        print(f"herdr space {name!r} ({HERDR_SPACES[name]}) with a status tab")
+    if fc_herdr.herdr_space(proj):
+        print(f"herdr space {name!r} ({fc_herdr.HERDR_SPACES[name]}) with a status tab")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
 
@@ -4853,10 +4603,6 @@ def merge_evidence(repo, branch, targets, has_remote):
 def merged_into(repo, branch, targets, has_remote=False):
     return merge_evidence(repo, branch, targets, has_remote) is not None
 
-def herdr_space_is(space, name):
-    """Only the project's own space is ever closed by its clean: a checkout path can be a pool slot another project now uses."""
-    return any(w.get("workspace_id") == space and w.get("label") == name for w in (herdr("workspace", "list") or {}).get("workspaces", []))
-
 def own_commits(repo, branch):
     """False when the branch never got a commit of its own: it still sits where it was created (an empty or design-only project),
     so ancestry says nothing about it being merged. Unknown (no reflog) counts as having commits."""
@@ -4866,14 +4612,14 @@ def own_commits(repo, branch):
 def live_crew(proj, wt):
     """Why the project still has people working: teammates whose last report is not done, or agents alive in its herdr space.
     The team lead (orchestrator) is the one running the post-merge clean, so it does not count."""
-    lead, why = agent_name(proj.name, "orchestrator"), []
+    lead, why = fc_herdr.agent_name(proj.name, "orchestrator"), []
     for f in sorted(crew_dir(proj).glob("*.json")):
         c = json.loads(f.read_text())
         last = (crew_reports(proj, c["name"]) or [{}])[-1]
         if c["name"] != lead and not c.get("closed") and last.get("state") != "done":
             why.append(f"{c['name']} last reported {last.get('state', 'nothing')}")
-    space = herdr_find_space(wt) if herdr_env() else None
-    why += [f"{ag.get('name')} is alive in its herdr space" for ag in live_agents() if space and ag.get("workspace_id") == space and ag.get("name") != lead]
+    space = fc_herdr.herdr_find_space(wt) if fc_herdr.herdr_env() else None
+    why += [f"{ag.get('name')} is alive in its herdr space" for ag in fc_herdr.live_agents() if space and ag.get("workspace_id") == space and ag.get("name") != lead]
     return why
 
 def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=False, force=False):
@@ -4955,17 +4701,17 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
         if why:
             stop_listeners_under(wt)
             if is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
-                space = herdr_find_space(wt)
-                if space and herdr_space_is(space, name):
-                    herdr("workspace", "close", space)
+                space = fc_herdr.herdr_find_space(wt)
+                if space and fc_herdr.herdr_space_is(space, name):
+                    fc_herdr.herdr("workspace", "close", space)
                 fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)
                 release_slot(main_repo, wt)
             else:
                 fc_core.sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists() and not is_slot(main_repo, wt):
-                space = herdr_find_space(wt)
-                if space and herdr_space_is(space, name):
-                    herdr("workspace", "close", space)
+                space = fc_herdr.herdr_find_space(wt)
+                if space and fc_herdr.herdr_space_is(space, name):
+                    fc_herdr.herdr("workspace", "close", space)
                 shutil.rmtree(wt, ignore_errors=True)
             fc_core.sh(["git", "worktree", "prune"], main_repo, check=False)
             fc_core.sh(["git", "branch", "-D", pbranch], main_repo, check=False)
