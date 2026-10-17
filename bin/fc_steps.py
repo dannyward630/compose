@@ -10,16 +10,100 @@ FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
 FRAMELINK_ADD = f"claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env {FRAMELINK_ENV} --no-telemetry"
 HERDR_MIN = "0.9.3"  # `herdr agent start` and `agent prompt` (herdr_start_crew, pi_herdr_turn): the version they were proven on
 TREEHOUSE_MIN = "3.1.2"  # `treehouse get --lease --json --lease-holder` (slot_on): the version it was proven on
-STEPS = ()  # task 009: the rows, in setup order
+FLOORS = {"herdr": HERDR_MIN, "treehouse": TREEHOUSE_MIN}
 
 def user_mcp_servers():
     """The MCP servers Claude Code has at user scope, read from ~/.claude.json without starting any (moved from fc_init)."""
-    raise NotImplementedError("not implemented: task 009")
+    try:
+        return json.loads((Path.home() / ".claude.json").read_text()).get("mcpServers") or {}
+    except (OSError, ValueError):
+        return {}
 
 def version_of(tool):
     """`<tool> --version` as a tuple of ints, or None (moved from fc_init)."""
-    raise NotImplementedError("not implemented: task 009")
+    p = fc_core.sh([tool, "--version"], None, timeout=20, check=False)
+    m = re.search(r"\d+(?:\.\d+)+", p.stdout + p.stderr)
+    return tuple(map(int, m.group().split("."))) if m else None
+
+def owned_link(name, checkout):
+    """(ok, detail) for one of the links compose owns (fc_checks.owned_links): a dangling link names link and raw target."""
+    link, target = {n: (l, t) for n, l, t in fc_checks.owned_links(checkout)}[name]
+    state, seen = fc_checks.link_state(link)
+    if state == "dangling":
+        return False, f"dangling link {link} -> {seen}"
+    if state != "ok" or seen != str(Path(target).resolve()):
+        return False, f"{link} is not a link to {target}"
+    return True, ""
+
+def key_ok(kind):
+    """(ok, detail) for one key row: a non-empty key (Linear: or the Connected claude.ai connector); never a key value."""
+    status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), fc_config.WORKSPACE, FRAMELINK_ENV)
+    if status[kind]:
+        return True, ""
+    if kind == "linear":
+        return (True, "") if fc_keys.linear_connected() else (False, "no linear key, no Connected Linear connector")
+    return False, f"no {kind} key"
+
+def herdr_integration(agent):
+    """(ok, detail) for one herdr integration: `herdr integration status` shows it current."""
+    try:
+        p = fc_core.sh(["herdr", "integration", "status"], None, timeout=20, check=False)
+    except FileNotFoundError:
+        return False, ""
+    line = next((l for l in p.stdout.splitlines() if l.startswith(f"{agent}:")), "")
+    return ("current" in line, "" if not line or "current" in line else line.strip())
 
 def check(row, checkout):
     """(ok, detail) for one row: detail names a floor miss, a dangling link, or a key's absence, never a key value."""
-    raise NotImplementedError("not implemented: task 009")
+    how = row[1]
+    if callable(how):
+        return how(checkout)
+    if isinstance(how, (list, tuple)):
+        try:
+            return fc_core.sh(list(how), None, timeout=20, check=False).returncode == 0, ""
+        except FileNotFoundError:
+            return False, ""
+    if "/" in how:  # a file under home, or a glob there
+        return (any(Path.home().glob(how)) if "*" in how else (Path.home() / how).exists()), ""
+    if not shutil.which(how):
+        return False, ""
+    floor = FLOORS.get(how)
+    if floor:
+        v = version_of(how)
+        if v and v < tuple(map(int, floor.split("."))):
+            return False, f"{'.'.join(map(str, v))} is older than {floor}"
+    return True, ""
+
+STEPS = (  # the rows, in setup order
+    ("Homebrew", "brew", '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', "default", False, "interactive"),
+    ("git", "git", "xcode-select --install", "required", False, "manual"),
+    ("npx", "npx", "brew install node", "required", False, "run"),
+    ("gh", "gh", "brew install gh", "required", False, "run"),
+    ("gh auth", lambda co: (fc_checks.gh_authed(), ""), "gh auth login", "required", False, "interactive"),
+    ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", "required", False, "run"),
+    ("claude", "claude", "curl -fsSL https://claude.ai/install.sh | bash", "required", False, "manual"),
+    ("herdr", "herdr", "curl -fsSL https://herdr.dev/install.sh | sh", "required", False, "run"),
+    ("herdr skill", ".claude/skills/herdr/SKILL.md", "mkdir -p ~/.claude/skills/herdr && herdr --skill > ~/.claude/skills/herdr/SKILL.md", "required", False, "run"),
+    ("i-have-adhd skill", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md", "claude plugin marketplace add ayghri/i-have-adhd", "required", True, "run"),
+    ("pi", "pi", "npm install -g --ignore-scripts @earendil-works/pi-coding-agent", "required", False, "run"),
+    ("pi openrouter-fast provider", lambda co: (fc_pi.provider_declared(fc_pi.PI_MODELS), ""), "compose setup", "required", False, "write"),
+    ("compose CLI link", lambda co: owned_link("compose CLI link", co), "compose setup", "required", False, "write"),
+    ("compose skill link", lambda co: owned_link("compose skill link", co), "compose setup", "required", False, "write"),
+    ("~/.local/bin on PATH", lambda co: (fc_checks.local_bin_on_path(), ""), 'put `export PATH="$HOME/.local/bin:$PATH"` in your shell profile', "required", False, "manual"),
+    ("OpenRouter key", lambda co: key_ok("openrouter"), "get one at openrouter.ai/keys; compose setup stores it", "required", False, "key"),
+    ("TypeSafe key", lambda co: key_ok("typesafe"), "get one from TypeSafe; compose setup stores it", "required", False, "key"),
+    ("Linear key or connector", lambda co: key_ok("linear"), "get one at linear.app/settings/api, or connect claude.ai's Linear connector; compose setup stores it", "required", True, "key"),
+    ("uv", "uv", "curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh", "default", False, "run"),
+    ("jev", lambda co: (fc_checks.jev_synced(co), ""), f"uv sync --locked --project {fc_config.JEV_DIR}", "default", False, "run"),
+    ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, "default", False, "run"),
+    ("bp link", lambda co: owned_link("bp link", co), "compose setup", "default", False, "write"),
+    ("Chromium", lambda co: (fc_checks.chromium_installed(), ""), "npx playwright install chromium", "default", False, "run"),
+    ("superpowers", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers@claude-plugins-official", "default", True, "run"),
+    ("herdr pi integration", lambda co: herdr_integration("pi"), "herdr integration install pi", "default", False, "run"),
+    ("herdr claude integration", lambda co: herdr_integration("claude"), "herdr integration install claude", "default", True, "run"),
+    ("TEXT_MODEL lines", lambda co: (fc_pi.text_model_set(fc_config.ENV_FILE), ""), "compose setup", "default", False, "write"),
+    ("git rerere", lambda co: (fc_checks.rerere_set(), ""), "git config --global rerere.enabled true", "default", False, "run"),
+    ("pi auth.json override", lambda co: (not fc_pi.pi_auth_overrides(fc_pi.PI_AUTH), ""), "remove the openrouter and openrouter-fast entries from pi's auth.json", "default", False, "manual"),
+    ("framelink-figma", lambda co: ("framelink-figma" in user_mcp_servers(), ""), FRAMELINK_ADD, "designer", True, "run"),
+    ("framelink-figma token", lambda co: key_ok("figma"), "put a Figma personal access token in ~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600", "designer", False, "key"),
+)
