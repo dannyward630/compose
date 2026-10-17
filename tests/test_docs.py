@@ -563,7 +563,26 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("check it in the code first (`trail ask`, `trail callers`), and if the code cannot settle it", explore)
 
     def test_4_and_readme(self):
-        self.skipTest("not written yet")
+        self.assert_no_graft("sections/4.md", "README.md")
+        four, readme = read("sections/4.md").splitlines(), read("README.md").splitlines()
+        self.assertIn(
+            "Each clone, and the worktree verify runs in, borrows the main checkout's git-ignored installs"
+            " (`node_modules` at any depth, `vendor`, `.venv`) as symlinks that never show in `git status`,"
+            " and trail never edits `.gitignore` there. So install dependencies once in the project worktree"
+            " before `run`; do not patch test commands to link them.",
+            four,
+        )
+        self.assertIn(
+            "   An explore teammate maps your codebase through trail,"
+            " so no question, ticket, or plan rests on a guess about the code.",
+            readme,
+        )
+        # The trail rename touches only the tool word: the unrelated "trail in the ticket" line stays as is.
+        self.assertIn(
+            "- Log each steer as a comment on the task's Linear issue, one line,"
+            " so the trail is in the ticket and not only in a terminal.",
+            four,
+        )
 
     def test_cli_and_requirements(self):
         self.skipTest("not written yet")
