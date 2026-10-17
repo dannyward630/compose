@@ -1,7 +1,5 @@
-import re
-import unittest
+import re, unittest
 from unittest import mock
-
 from textual.app import App
 from textual.widgets import Button, Input, Static
 
@@ -16,7 +14,6 @@ class Host(App):
     def __init__(self, workspace):
         super().__init__()
         self.workspace, self.result = workspace, None
-
     def on_mount(self): self.push_screen(KeysScreen(self.workspace), self.done)
     def done(self, result): self.result = result
 
@@ -35,8 +32,7 @@ class KeysScreenTest(unittest.IsolatedAsyncioTestCase):
                 inputs = list(app.screen.query(Input))
                 self.assertEqual([i.password for i in inputs], [True] * 4)
                 self.assertTrue(all(i.region.right <= 80 and i.region.bottom <= 24 for i in inputs))
-                for i, value in zip(inputs, typed):
-                    i.focus(); await pilot.press(*value)
+                for i, value in zip(inputs, typed): i.focus(); await pilot.press(*value)
                 for _ in range(presses):
                     await pilot.click(next(b for b in app.screen.query(Button) if "Continue" in str(b.label))); await pilot.pause()
                 text = "" if app.result else "\n".join(str(w.render()) for w in app.screen.query(Static))
