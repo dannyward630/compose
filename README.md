@@ -41,7 +41,7 @@ The team leads steer their teammates while they work, and the engineering manage
 Run `/compose <what you want>` and each feature moves through the same life cycle a good software team follows.
 
 1. **Discovery.**
-   An explore teammate maps your codebase through graft, so no question, ticket, or plan rests on a guess about the code.
+   An explore teammate maps your codebase through trail, so no question, ticket, or plan rests on a guess about the code.
 2. **Product decisions.**
    You are the product owner.
    A wayfinder teammate writes every open decision as a card with options and a recommendation.
