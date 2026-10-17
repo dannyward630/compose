@@ -451,7 +451,7 @@ class Guard(unittest.TestCase):
 
     def test_planner_is_guarded_like_the_team_lead(self):
         self.assertEqual(fc.GUARDED_ROLES, ("orchestrator", "planner"))
-        self.assertEqual(fc.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
+        self.assertEqual(fc.fc_config.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
         for tool in fc.GUARDED_TOOLS:
             for role in fc.GUARDED_ROLES:
                 why = fc.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""

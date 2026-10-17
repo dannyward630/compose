@@ -350,7 +350,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
     def test_clean_moves_the_tasks_it_proves_merged_to_done_and_rolls_the_story_and_the_feature_up(self):
         self.linear_project()
         linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2"), ENG_5=("Canceled", "ENG-2"))
-        with mock.patch.object(fc, "linear_gql", linear), mock.patch.object(fc, "LINEAR_KEY", "k"):
+        with mock.patch.object(fc, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
             out = self.clean_here()  # layer-01 merged: 001 is Done, 003 stays Canceled, the story waits for 002, the feature for the project branch
             self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "In Review", "Canceled", "In Review", "In Review"])
             self.assertIn("linear ENG-3 -> Done", out)
@@ -362,7 +362,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
     def test_clean_without_a_linear_key_says_so_in_one_line_and_calls_nothing(self):
         self.linear_project()
         with mock.patch.object(fc, "linear_gql", side_effect=AssertionError("Linear called without a key")), \
-                mock.patch.object(fc, "LINEAR_KEY", ""), mock.patch.object(fc, "_linear_warned", []):
+                mock.patch.object(fc.fc_config, "LINEAR_KEY", ""), mock.patch.object(fc, "_linear_warned", []):
             out = self.clean_here()
         self.assertEqual(out.count("linear skipped"), 1, out)
         self.assertIn("fast/p/001", out)  # the branches are still cleaned

@@ -161,7 +161,7 @@ class Yolo(unittest.TestCase):
     def test_main_parses_decided_after_the_project_flag(self):
         seen = []
         with mock.patch.object(sys, "argv", ["fast-coding", "yolo", "decided", "--project", "hw", "db?: postgres"]), \
-                mock.patch.object(fc, "cmd_yolo", seen.append), mock.patch.object(fc, "apply_config", return_value="default"):
+                mock.patch.object(fc, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
             fc.main()
         self.assertEqual(seen[0].words, ["decided", "db?: postgres"])
 

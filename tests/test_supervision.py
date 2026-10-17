@@ -413,7 +413,7 @@ class JevLeash(unittest.TestCase):
         self.assertFalse(fc.tool_error("AssertionError: score was 2 of 3"))
 
     def test_a_jev_case_is_killed_at_its_limit(self):
-        with mock.patch.object(fc, "JEV_DIR", Path(tempfile.mkdtemp())), \
+        with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
              mock.patch.object(fc, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
             r = fc.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)

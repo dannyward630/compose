@@ -27,7 +27,7 @@ class FormatOnPass(unittest.TestCase):
             (Path(cwd) / "a.go").write_text("package a\nfunc   F( ) int {\nreturn 1}\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "FALLBACK_MODEL", None), \
+                mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             r = fc.run_task(repo, proj, task, 1)
         self.assertEqual(r["status"], "passed")
@@ -113,7 +113,7 @@ class AcceptanceJudge(unittest.TestCase):
             crit, code = user.split("\n\nCODE:\n", 1)
             sent.append((crit[len("CRITERION: "):], code))
             return True, "x"
-        with mock.patch.object(fc, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask, \
+        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask, \
                 mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
             res = fc.jev_acceptance({}, proj, diff, repo=repo)
         states = {c.args[2]["task"]: c.args[2] for c in ask.call_args_list if c.args[4] == "Jev acceptance"}
@@ -151,7 +151,7 @@ class AcceptanceJudge(unittest.TestCase):
             crit, code = user.split("\n\nCODE:\n", 1)
             sent.append((crit[len("CRITERION: "):], code))
             return True, "x"
-        with mock.patch.object(fc, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
                 mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
             res = fc.jev_acceptance({}, proj, hunk("a.py", "x"), repo=repo)  # raises IsADirectoryError if a directory is read
         whole = "==== a.py ====\n" + "A" * 50000

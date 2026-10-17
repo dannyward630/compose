@@ -41,7 +41,7 @@ def answers(**choices):
 
 class Reflect(unittest.TestCase):
     def setUp(self):
-        for mod, name, value in ((fc, "ENV_FILE", Path(tempfile.mkdtemp()) / "none.env"), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "ENV_FILE", Path(tempfile.mkdtemp()) / "none.env"), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         p = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); p.start(); self.addCleanup(p.stop)
 
@@ -508,7 +508,7 @@ class Changes(unittest.TestCase):
     def setUp(self):
         self.proj = project()
         self.repo, self.git = git_repo(("003", "004"))
-        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc, "LINEAR_KEY", None)):
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
 
@@ -645,7 +645,7 @@ class Undo(unittest.TestCase):
         self.proj = project()
         self.repo, self.git = git_repo(("003", "004"))
         self.lin = LinearIssues(AFTER, MAP_AFTER)
-        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc, "LINEAR_KEY", "lin_test"), (fc, "linear_gql", self.lin),
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", "lin_test"), (fc, "linear_gql", self.lin),
                             (fc, "register_stack", lambda *a, **k: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         synced(self.proj, MAP, BEFORE)
@@ -716,7 +716,7 @@ class Undo(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "fast/hw/003"), rebuilt)
 
     def test_without_a_key_it_prints_the_edits(self):
-        with mock.patch.object(fc, "LINEAR_KEY", None):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None):
             out = change(self.proj, self.repo, "undo", cid="C1")
         self.assertIn("apply these through Linear (save_issue), then sync:", out)
         self.assertIn('ENG-4: {"status": "Todo", "blockedBy": ["ENG-3"]}', out)

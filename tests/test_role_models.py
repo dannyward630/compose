@@ -24,13 +24,13 @@ class RoleModels(unittest.TestCase):
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
-        with mock.patch.object(fc, "CONFIG_PATH", d / "config.json"):
-            fc.apply_config()
-        self.addCleanup(setattr, fc, "CREW_MODELS", {})
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"):
+            fc.fc_config.apply_config()
+        self.addCleanup(setattr, fc.fc_config, "CREW_MODELS", {})
 
     def test_an_entry_can_carry_an_effort(self):
         self.config({**CREW, "orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}})
-        self.addCleanup(setattr, fc, "CREW_EFFORT", {})
+        self.addCleanup(setattr, fc.fc_config, "CREW_EFFORT", {})
         self.assertEqual(fc.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
         self.assertEqual(fc.crew_effort("orchestrator"), "high")
         self.assertIsNone(fc.crew_effort("groundwork"))  # a plain string keeps Claude Code's default effort
@@ -96,13 +96,13 @@ class PlannerChain(unittest.TestCase):
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
-        for p in (mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json"),
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"),
                   mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"})):
             p.start(); self.addCleanup(p.stop)
-        fc.apply_config(); fc._PROBED.clear()
+        fc.fc_config.apply_config(); fc._PROBED.clear()
         self.addCleanup(fc._PROBED.clear)
         for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"):
-            self.addCleanup(setattr, fc, k, {})
+            self.addCleanup(setattr, fc.fc_config, k, {})
         self.probe_cache = d / "probe.json"
 
     def probe(self, ok, down=("claude-fable-5-1",)):
@@ -131,8 +131,8 @@ class PlannerChain(unittest.TestCase):
         astra, fable, opus = "pi:openai/gpt-6-astra", "claude:claude-fable-5-1", "claude:claude-opus-5-5"
         chain = {"planner": {"model": astra, "effort": "high", "fallback": [fable, {"model": opus, "effort": "high"}]}}
         d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": chain}}))
-        with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
-            fc.apply_config()
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "c.json"):
+            fc.fc_config.apply_config()
         for up, want in (({fable, astra}, astra), ({fable}, fable), ({opus}, opus)):  # a pi session has the Linear MCP too, so astra is probed first
             fc._PROBED.clear()
             with mock.patch.object(fc, "model_available", side_effect=lambda m: (m in up, "down")):
@@ -224,9 +224,9 @@ class DesignerModels(unittest.TestCase):
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": crew}}))
-        with mock.patch.object(fc, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc, "PROBE_CACHE", d / "probe.json"):
-            fc.apply_config()
-        for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"): self.addCleanup(setattr, fc, k, {})
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"):
+            fc.fc_config.apply_config()
+        for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"): self.addCleanup(setattr, fc.fc_config, k, {})
 
     def test_design_roles_use_the_design_entry_else_default(self):
         self.config({**CREW, "design": {"model": "claude:claude-opus-5-5", "effort": "high"}})
@@ -249,8 +249,8 @@ class PiKeepsLinear(unittest.TestCase):
 
     def chain(self, role):
         d = Path(tempfile.mkdtemp()); (d / "c.json").write_text(json.dumps({"models": {"crew": {role: {"model": self.astra, "fallback": self.sonnet}}}}))
-        with mock.patch.object(fc, "CONFIG_PATH", d / "c.json"):
-            fc.apply_config()
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "c.json"):
+            fc.fc_config.apply_config()
         fc._PROBED.clear()
 
     def test_linear_roles_take_the_pi_model(self):

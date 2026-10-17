@@ -34,7 +34,7 @@ class Fallback(unittest.TestCase):
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
-                mock.patch.object(fc, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc, "FALLBACK_MODEL", BACKUP), \
+                mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.run_task(repo, proj, task, 3, reset_files=reset_files), calls
 
@@ -72,13 +72,13 @@ class Fallback(unittest.TestCase):
         self.assertEqual(calls, [PRIMARY, BACKUP])
 
     def test_fallback_has_no_fallback(self):
-        with mock.patch.object(fc, "FALLBACK_MODEL", BACKUP):
+        with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
             self.assertIsNone(fc.fallback_for(BACKUP))
             self.assertIsNone(fc.fallback_for("claude"))
 
     def test_glm_is_the_default_with_no_fallback(self):
-        self.assertIn("glm-5.3-flash@preset/glm-5-3-flash-fast", fc.DEFAULT_MODEL)
-        self.assertIsNone(fc.fallback_for(fc.DEFAULT_MODEL))
+        self.assertIn("glm-5.3-flash@preset/glm-5-3-flash-fast", fc.fc_config.DEFAULT_MODEL)
+        self.assertIsNone(fc.fallback_for(fc.fc_config.DEFAULT_MODEL))
 
 
 class Preflight(unittest.TestCase):
@@ -277,7 +277,7 @@ class FixScope(unittest.TestCase):
 
 def ws(name=None, target=None, stdin=""):
     with mock.patch.object(sys, "stdin", io.StringIO(stdin)), mock.patch("builtins.print"):
-        fc.cmd_workspace(type("A", (), {"name": name, "target": target}))
+        fc.fc_config.cmd_workspace(type("A", (), {"name": name, "target": target}))
 
 
 class Workspaces(unittest.TestCase):
@@ -286,9 +286,9 @@ class Workspaces(unittest.TestCase):
         self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fix": "pi:f/x"},'
                              ' "workspaces": {"work": {"openrouter_api_key": "sk-work"},'
                              ' "personal": {"openrouter_api_key": "sk-home", "models": {"fallback": null}, "env": {"X_FC": "1"}}}}')
-        self.patches = [mock.patch.object(fc, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
-                        mock.patch.object(fc, "DEFAULT_MODEL", fc.DEFAULT_MODEL), mock.patch.object(fc, "FALLBACK_MODEL", fc.FALLBACK_MODEL),
-                        mock.patch.object(fc, "OPENROUTER_KEY", None)]
+        self.patches = [mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
+                        mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
+                        mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None)]
         for p in self.patches:
             p.start()
 
@@ -297,9 +297,9 @@ class Workspaces(unittest.TestCase):
             p.stop()
 
     def test_active_workspace_sets_key_and_models(self):
-        self.assertEqual(fc.apply_config(), "work")
-        self.assertEqual((fc.OPENROUTER_KEY, os.environ["OPENROUTER_API_KEY"], os.environ["TEXT_MODEL_API_KEY"]), ("sk-work",) * 3)
-        self.assertEqual(fc.DEFAULT_MODEL, "pi:a/b")
+        self.assertEqual(fc.fc_config.apply_config(), "work")
+        self.assertEqual((fc.fc_config.OPENROUTER_KEY, os.environ["OPENROUTER_API_KEY"], os.environ["TEXT_MODEL_API_KEY"]), ("sk-work",) * 3)
+        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
         self.assertEqual(os.environ["FAST_CODING_FIX_MODEL"], "pi:f/x")
         self.assertIn("sk-work", os.environ["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(fc.fallback_for("pi:a/b"), "pi:g/h")
@@ -307,10 +307,10 @@ class Workspaces(unittest.TestCase):
     def test_switch_overrides_top_level(self):
         ws("personal")
         self.assertEqual(oct(self.path.stat().st_mode & 0o777), "0o600")
-        self.assertEqual(fc.apply_config(), "personal")
-        self.assertEqual(fc.OPENROUTER_KEY, "sk-home")
+        self.assertEqual(fc.fc_config.apply_config(), "personal")
+        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-home")
         self.assertEqual(os.environ["X_FC"], "1")
-        self.assertEqual(fc.DEFAULT_MODEL, "pi:a/b")  # inherited from the top level
+        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")  # inherited from the top level
         self.assertIsNone(fc.fallback_for("pi:a/b"))  # personal turned the fallback off
 
     def test_unknown_workspace_refused(self):
@@ -318,7 +318,7 @@ class Workspaces(unittest.TestCase):
             ws("nope")
 
     def test_pi_gets_the_workspace_key(self):
-        fc.apply_config()
+        fc.fc_config.apply_config()
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
         with mock.patch.object(subprocess, "run", run):
             fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
@@ -330,7 +330,7 @@ class Workspaces(unittest.TestCase):
                           "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
         end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc, "WORKSPACE", "work"):
+        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"):
             with self.assertRaises(RuntimeError) as cm:
                 fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))
@@ -340,27 +340,27 @@ class Workspaces(unittest.TestCase):
     def test_add_key_switch_remove(self):
         ws("add", "client-x", stdin="sk-client\n")
         ws("client-x")
-        self.assertEqual(fc.apply_config(), "client-x")
-        self.assertEqual(fc.OPENROUTER_KEY, "sk-client")
+        self.assertEqual(fc.fc_config.apply_config(), "client-x")
+        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-client")
         ws("key", "client-x", stdin="sk-rotated")
-        fc.apply_config()
-        self.assertEqual(fc.OPENROUTER_KEY, "sk-rotated")
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-rotated")
         ws("remove", "client-x")  # removing the active one falls back to default
-        self.assertNotIn("client-x", fc.read_config()["workspaces"])
-        self.assertEqual(fc.settings(fc.read_config())[0], "default")
+        self.assertNotIn("client-x", fc.fc_config.read_config()["workspaces"])
+        self.assertEqual(fc.fc_config.settings(fc.fc_config.read_config())[0], "default")
 
     def test_keyless_add_fails_loudly_on_use(self):
         ws("add", "later")
         ws("later")
         with self.assertRaises(SystemExit):
-            fc.apply_config()
+            fc.fc_config.apply_config()
 
     def test_default_always_exists(self):
         ws("default")
-        fc.OPENROUTER_KEY = None
-        self.assertEqual(fc.apply_config(), "default")
-        self.assertIsNone(fc.OPENROUTER_KEY)  # no top-level key: harnesses keep their own auth stores
-        self.assertEqual(fc.DEFAULT_MODEL, "pi:a/b")
+        fc.fc_config.OPENROUTER_KEY = None
+        self.assertEqual(fc.fc_config.apply_config(), "default")
+        self.assertIsNone(fc.fc_config.OPENROUTER_KEY)  # no top-level key: harnesses keep their own auth stores
+        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
         for bad in (("add", "default"), ("add", "work"), ("remove", "default"), ("add", "a b"), ("add", None)):
             with self.assertRaises(SystemExit):
                 ws(*bad)
@@ -388,7 +388,7 @@ class RetryMessage(unittest.TestCase):
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
                 mock.patch.object(fc, "condense_failure", return_value=summary), \
-                mock.patch.object(fc, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc, "FALLBACK_MODEL", backup), \
+                mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", backup), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.run_task(repo, proj, task, 3), prompts, seen, log
 

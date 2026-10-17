@@ -147,14 +147,14 @@ class DesignTasks(unittest.TestCase):
         with mock.patch.object(fc, "task_branches", return_value={"fast/p/001": None, "fast/p/002": None}):
             self.assertEqual(fc.stack_order(Path("."), self.proj), ["fast/p/002"])
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
-        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
+        with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
             fc.jev_acceptance({}, self.proj, "diff")
         self.assertEqual([c.args[3]["c0"]["instructions"]["task"] for c in ask.call_args_list], ["002"])
 
     def test_acceptance_passes_only_when_every_criterion_is_met(self):
         for choice, ok in (("MET", True), ("UNCLEAR", False), ("NOT_MET", False)):
             reply = {"model": "m", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.1}}}}
-            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+            with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
                     mock.patch.object(fc, "fast_json", return_value={"confirmed": False, "evidence": ""}):
                 self.assertEqual(fc.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
 
@@ -163,7 +163,7 @@ class DesignTasks(unittest.TestCase):
         again = lambda c: {"model": "m", "answers": {"c0": {"choice": c, "probabilities": {c: 0.9}}}}
         for second, confirm, ok, calls in (("MET", {"confirmed": False, "evidence": "satisfied"}, True, 2), ("NOT_MET", {"confirmed": False, "evidence": "satisfied"}, False, 2),
                                            ("MET", "nope", False, 1)):
-            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", side_effect=[first, again(second)]) as ask, \
+            with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", side_effect=[first, again(second)]) as ask, \
                     mock.patch.object(fc, "fast_json", return_value=confirm):
                 res = fc.jev_acceptance({}, self.proj, "diff")
             self.assertEqual((res["pass"], ask.call_count), (ok, calls), (second, confirm))
@@ -178,7 +178,7 @@ class DesignTasks(unittest.TestCase):
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("ENG-2", "Store", block(id="002", files="a.go, bun.lock", protected="b.go", test="go test"))]})
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
-        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
+        with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
             fc.jev_acceptance({}, self.proj, "diff", repo=repo)
         code = ask.call_args.args[2]["code"]
         self.assertNotIn("bun.lock", code)
@@ -194,14 +194,14 @@ class DesignTasks(unittest.TestCase):
 
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
         fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
-        with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask") as ask:
+        with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask") as ask:
             res = fc.jev_acceptance({}, self.proj, "diff")
         self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))
 
     def test_acceptance_confirm_unwraps_a_list_and_reports_a_failed_confirm_as_an_error(self):
         reply = {"model": "m", "answers": {"c0": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}}}}
         for confirm, failed, error in (([{"confirmed": True, "evidence": "x"}], 1, None), ("nope", 0, True)):
-            with mock.patch.object(fc, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
+            with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
                     mock.patch.object(fc, "fast_json", return_value=confirm):
                 res = fc.jev_acceptance({}, self.proj, "diff")
             self.assertEqual((len(res["failed"]), "confirm call failed" in res.get("error", "") if error else "error" not in res, res["pass"]), (failed, True, False))

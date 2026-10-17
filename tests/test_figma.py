@@ -159,7 +159,7 @@ class FigmaJudge(unittest.TestCase):
             judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"]), judge_task("ENG-7", "005", "Bare", [])]})
         for tid in ("001", "002", "004", "005", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
             (self.proj / "results" / f"{tid}.tree.txt").write_text(f"FRAME {tid}\n  TEXT Total: $10\n")
-        for mod, name, value in ((fc, "ENV_FILE", self.proj / "none.env"), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "ENV_FILE", self.proj / "none.env"), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None):

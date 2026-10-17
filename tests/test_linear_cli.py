@@ -43,13 +43,13 @@ class LinearKey(unittest.TestCase):
     def setUp(self):
         self.cfg = Path(tempfile.mkdtemp()) / "config.json"
         self.cfg.write_text(json.dumps({"workspace": "work", "workspaces": {"work": {"openrouter_api_key": "sk-or-x"}}}))
-        p = mock.patch.object(fc, "CONFIG_PATH", self.cfg); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc.fc_config, "CONFIG_PATH", self.cfg); p.start(); self.addCleanup(p.stop)
 
     def workspace(self, *args, stdin=""):
         a = SimpleNamespace(name=args[0] if args else None, target=args[1] if len(args) > 1 else None, linear="--linear" in args)
         out = io.StringIO()
         with mock.patch("sys.stdin", io.StringIO(stdin)), redirect_stdout(out):
-            fc.cmd_workspace(a)
+            fc.fc_config.cmd_workspace(a)
         return out.getvalue()
 
     def test_the_key_comes_from_stdin_is_stored_per_workspace_and_never_printed(self):
@@ -68,7 +68,7 @@ class LinearStates(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.lin = FakeLinear()
-        for mod, name, value in ((fc, "LINEAR_KEY", KEY), (fc, "linear_gql", self.lin), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc, "linear_gql", self.lin), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         fc._linear_warned.clear()
 
@@ -97,7 +97,7 @@ class LinearStates(unittest.TestCase):
 
     def test_no_key_skips_once_with_how_to_set_it(self):
         said = []
-        with mock.patch.object(fc, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
             fc.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
             fc.linear_event(self.proj, {"linear": "ENG-4"}, "dispatched")
         self.assertEqual(self.lin.calls, 0)
@@ -120,7 +120,7 @@ class SyncFromLinear(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp())
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.queries = []
-        for mod, name, value in ((fc, "LINEAR_KEY", KEY), (fc, "linear_gql", self.gql), (fc.fc_core, "say", lambda m: None)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc, "linear_gql", self.gql), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def node(self, i, parent, blocked=()):
@@ -165,7 +165,7 @@ class SyncFromLinear(unittest.TestCase):
         self.assertEqual([i["id"] for i in fc.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
 
     def test_no_key_points_to_stdin_and_prints_no_key(self):
-        with mock.patch.object(fc, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
             fc.linear_sync_payload(self.proj)
         self.assertIn("pipe the JSON on stdin", str(e.exception))
         self.assertNotIn(KEY, str(e.exception))
