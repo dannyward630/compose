@@ -599,4 +599,22 @@ class NoGraftWord(unittest.TestCase):
         self.assertFalse([l for l in reqs if "COMPOSE_NO_GRAFT" in l], "COMPOSE_NO_GRAFT")
 
     def test_how_it_works_and_new_machine(self):
-        self.skipTest("not written yet")
+        self.assert_no_graft("docs/how-it-works.md", "docs/new-machine.md")
+        how, machine = read("docs/how-it-works.md").splitlines(), read("docs/new-machine.md").splitlines()
+        self.assertIn(
+            "In a repo that already has code, an explore teammate maps it through trail first"
+            " and adds a short codebase brief to the feature.",
+            how,
+        )
+        self.assertIn(
+            "1. It reads before it writes: the ticket and its parents with their Decisions so far, the Frame0 wireframes,"
+            " the repo's tokens and components through trail, `DESIGN.md`, and what the Figma file already has.",
+            how,
+        )
+        # The folder names stay: init still ignores the old map folder beside .trail/.
+        self.assertIn("  `init` git-ignores it, `graft/`, and `.trail/` first.", how)
+        # The install row takes graft's place in the table, between treehouse and Frame0.
+        row = machine.index("| trail | `npm i -g @trailhq/trail-code` |")
+        self.assertTrue(machine[row - 1].startswith("| treehouse |"), machine[row - 1])
+        self.assertTrue(machine[row + 1].startswith("| Frame0, OpenCode |"), machine[row + 1])
+        self.assertEqual(sum("trail" in l for l in machine), 1, "only the install row names trail")
