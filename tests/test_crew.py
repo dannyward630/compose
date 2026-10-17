@@ -878,7 +878,7 @@ class PiStart(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), \
                 mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), mock.patch.object(fc, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc, "model_available", return_value=(True, "")), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing.ts"), \
+                mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc, "PI_HERDR_EXT", proj / "missing.ts"), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):
             fc.cmd_crew(a)
@@ -889,7 +889,7 @@ class PiStart(unittest.TestCase):
         self.assertEqual([v for k, v in pairs if k == "-e"], ["builtin:mcp"])  # the herdr extension is absent here, so nothing else is loaded
         for flag in ("--no-extensions", "--no-prompt-templates", "--skill"):
             self.assertIn(flag, args)  # the user's npm extension packages and prompt templates stay off
-        self.assertNotIn("builtin:mcp", fc.probe_command("pi:x/y"))  # the implementer probe is unchanged
+        self.assertNotIn("builtin:mcp", fc.fc_models.probe_command("pi:x/y"))  # the implementer probe is unchanged
 
 
 class CardsById(unittest.TestCase):

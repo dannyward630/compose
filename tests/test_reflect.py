@@ -57,7 +57,7 @@ class Reflect(unittest.TestCase):
     def test_one_question_per_line_and_flags_at_the_threshold(self):
         proj = project()
         reply = answers(d0=("BROKEN", 0.82), d1=("HOLDS", 0.9), d2=("UNCLEAR", 0.6), d3=("UNCLEAR", 0.59))
-        with mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask:
             path, rec = fc.reflect(proj, "task:003", "localStorage is wiped by the sandbox",
                                    against=["Task 003 brief: use localStorage.setItem"])
         state, questions = ask.call_args.args[2], ask.call_args.args[3]
@@ -70,7 +70,7 @@ class Reflect(unittest.TestCase):
 
     def test_no_decisions_and_nothing_against_asks_nothing(self):
         proj = project("## Destination\nx\n")
-        with mock.patch.object(fc, "jev_ask") as ask:
+        with mock.patch.object(fc.fc_models, "jev_ask") as ask:
             path, rec = fc.reflect(proj, "verify", "a finding")
         ask.assert_not_called()
         self.assertEqual((rec["verdicts"], rec["flagged"], rec.get("error")), ([], [], None))
@@ -81,7 +81,7 @@ class Reflect(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
             _, rec = fc.reflect(proj, "verify", "x")
         self.assertIn("TYPESAFE_API_KEY", rec["error"])
-        with mock.patch.object(fc, "jev_ask", side_effect=fc.PaymentRequired("typesafe", "out of credits")):
+        with mock.patch.object(fc.fc_models, "jev_ask", side_effect=fc.fc_models.PaymentRequired("typesafe", "out of credits")):
             _, rec = fc.reflect(proj, "verify", "x")
         self.assertIn("out of credits", rec["error"])
         (proj / "results" / "tasks.json").write_text("{not json")
@@ -95,7 +95,7 @@ class Reflect(unittest.TestCase):
         def ask(*a):
             meet.wait()
             return answers()
-        with mock.patch.object(fc, "jev_ask", ask):
+        with mock.patch.object(fc.fc_models, "jev_ask", ask):
             threads = [threading.Thread(target=lambda i=i: recs.append(fc.reflect(proj, f"task:00{i}", "x")[1])) for i in range(6)]
             for t in threads:
                 t.start()
@@ -109,14 +109,14 @@ class Reflect(unittest.TestCase):
         rows = [{"at": "2026-10-11 10:00:00", "trigger": "task:001", "text": "first failure"},
                 {"at": "2026-10-11 10:05:00", "trigger": "task:002", "text": "second failure"}]
         (proj / "results" / "evidence.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-        with mock.patch.object(fc, "jev_ask", return_value=answers()) as ask:
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
             fc.reflect(proj, "task:003", "third failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertLess(ev.index("third"), ev.index("second"))  # newest first
         self.assertIn("first failure", ev)
         fc.changes_dir(proj).mkdir(parents=True)
         (fc.changes_dir(proj) / "C1.json").write_text(json.dumps({"id": "C1", "done_at": "2026-10-11 10:03:00"}))
-        with mock.patch.object(fc, "jev_ask", return_value=answers()) as ask:
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
             fc.reflect(proj, "task:004", "fourth failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertNotIn("first failure", ev)  # a closed change already acted on it
@@ -131,7 +131,7 @@ class Reflect(unittest.TestCase):
         self.assertIn("dismissed", out.getvalue())
         self.assertEqual(json.loads((proj / "results" / "evidence.jsonl").read_text().splitlines()[-1])["cut"], True)
         time.sleep(1)  # the next screen is a second later than the dismissal
-        with mock.patch.object(fc, "jev_ask", return_value=answers()) as ask:
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
             fc.reflect(proj, "task:002", "second failure")
         ev = ask.call_args.args[2]["evidence"]
         self.assertNotIn("first failure", ev)
@@ -155,7 +155,7 @@ class Reflect(unittest.TestCase):
 
     def test_reflects_in_the_same_second_get_their_own_files(self):
         proj = project()
-        with mock.patch.object(fc, "jev_ask", return_value=answers()):
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()):
             paths = {fc.reflect(proj, f"task:00{i}", "x")[0] for i in range(3)}
         self.assertEqual(len(paths), 3)
 
@@ -163,7 +163,7 @@ class Reflect(unittest.TestCase):
         proj = project()
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), \
-                mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
+                mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), \
                 mock.patch("sys.stdin", io.StringIO("product owner: drafts must sync across devices\n")), redirect_stdout(out):
             fc.cmd_reflect(SimpleNamespace(evidence="-", dismiss=None, against=None))
         self.assertIn("BROKEN", out.getvalue())
@@ -192,7 +192,7 @@ class WatchReflect(unittest.TestCase):
 
     def test_the_snapshot_drops_screens_a_closed_change_answered(self):
         proj = project()
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.reflect(proj, "task:001", "x")
         with mock.patch.object(fc, "herdr", return_value={}):
@@ -203,7 +203,7 @@ class WatchReflect(unittest.TestCase):
 
     def test_the_snapshot_drops_screens_a_dismissal_answered(self):
         proj = project()
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             fc.reflect(proj, "task:001", "x")
         with open(proj / "results" / "evidence.jsonl", "a") as f:
@@ -223,7 +223,7 @@ class WatchReflect(unittest.TestCase):
                     pass
             return out
         watch(now=True)
-        with mock.patch.object(fc, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers(d0=("BROKEN", 0.9))), mock.patch.object(fc.fc_core, "say", lambda m: None), \
                 mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}):
             path, _ = fc.reflect(proj, "task:001", "x")  # while no watch runs
         out = watch(now=False)

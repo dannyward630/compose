@@ -165,8 +165,8 @@ class FigmaJudge(unittest.TestCase):
     def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
-                mock.patch.object(fc, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
+                mock.patch.object(fc.fc_models, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
             except SystemExit as e:
@@ -245,8 +245,8 @@ class FigmaJudge(unittest.TestCase):
             self.assertNotIn("code", " ".join(q["criteria"].values()).lower())
 
     def test_a_billing_halt_from_the_confirm_call_stops_the_command(self):
-        with self.assertRaises(fc.PaymentRequired):
-            self.judge("001,004", {"Cart page": [("NOT_MET", 0.9), ("MET", 0.9)], "Pay": [("MET", 0.9)]}, fail=fc.PaymentRequired("openrouter", "402"))
+        with self.assertRaises(fc.fc_models.PaymentRequired):
+            self.judge("001,004", {"Cart page": [("NOT_MET", 0.9), ("MET", 0.9)], "Pay": [("MET", 0.9)]}, fail=fc.fc_models.PaymentRequired("openrouter", "402"))
         self.assertEqual((self.confirm.call_count, self.ask.call_count, self.ev.called), (1, 1, False))
         self.assertFalse((self.proj / "results" / "001.json").exists())
 
@@ -276,7 +276,7 @@ class FigmaJudge(unittest.TestCase):
             self.states.append(state)
             choice, p = answer(state["tree"])
             return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9, "NOT_MET": p}}}}
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "fast_json", return_value=confirm), \
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_models, "fast_json", return_value=confirm), \
                 mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
             try:
                 fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
@@ -324,7 +324,7 @@ class FigmaJudge(unittest.TestCase):
             return {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         (self.proj / "results" / "001.tree.txt").write_text(big_tree())
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_linear, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_linear, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
         res = json.loads((self.proj / "results" / "001.json").read_text())
         self.assertEqual(res["status"], "blocked")

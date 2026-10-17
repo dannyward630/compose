@@ -191,30 +191,30 @@ class Triage(unittest.TestCase):
             with lock:
                 live[0] -= 1
             return {"verdict": "flag", "reason": "adds a retry flag: `retries := 3`"} if "001 change" in user else {"verdict": "clean"}
-        with mock.patch.object(fc, "fast_json", fake), mock.patch.object(fc.fc_core, "say"):
+        with mock.patch.object(fc.fc_models, "fast_json", fake), mock.patch.object(fc.fc_core, "say"):
             out = fc.triage(self.repo, self.proj, ["001", "002"])
         self.assertEqual(peak[0], 2)
         self.assertEqual(out["001"][0], "flag"); self.assertEqual(out["002"][0], "clean")
         self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["triage"]["verdict"], "flag")
 
     def test_a_failed_call_is_unknown_never_a_crash(self):
-        with mock.patch.object(fc, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc.fc_core, "say"):
+        with mock.patch.object(fc.fc_models, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc.fc_core, "say"):
             out = fc.triage(self.repo, self.proj, ["001"])
         self.assertEqual(out["001"][0], "unknown")
 
 
 class CondenseFailure(unittest.TestCase):
     def test_short_output_keyless_or_failing_calls_add_nothing(self):
-        with mock.patch.object(fc, "fast_json", side_effect=AssertionError("no call for short output")):
+        with mock.patch.object(fc.fc_models, "fast_json", side_effect=AssertionError("no call for short output")):
             self.assertEqual(fc.condense_failure("FAIL x"), "")
         long = "noise\n" * 400
-        with mock.patch.object(fc, "fast_env", return_value={}):
+        with mock.patch.object(fc.fc_models, "fast_env", return_value={}):
             self.assertEqual(fc.condense_failure(long), "")
-        with mock.patch.object(fc, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
-                mock.patch.object(fc, "fast_json", side_effect=TimeoutError()):
+        with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
+                mock.patch.object(fc.fc_models, "fast_json", side_effect=TimeoutError()):
             self.assertEqual(fc.condense_failure(long), "")
-        with mock.patch.object(fc, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
-                mock.patch.object(fc, "fast_json", return_value={"summary": "TestScore: want 2, got 1"}):
+        with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
+                mock.patch.object(fc.fc_models, "fast_json", return_value={"summary": "TestScore: want 2, got 1"}):
             self.assertEqual(fc.condense_failure(long), "TestScore: want 2, got 1")
 
 

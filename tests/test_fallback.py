@@ -56,7 +56,7 @@ class Fallback(unittest.TestCase):
         with mock.patch.object(fc, "implementer", impl), mock.patch.object(fc, "graft_pack", return_value=""), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.run_task(repo, proj, task, 3)
-        self.assertGreaterEqual(limits[0], fc.TURN_TIMEOUT + 300)
+        self.assertGreaterEqual(limits[0], fc.fc_models.TURN_TIMEOUT + 300)
 
     def test_error_falls_back(self):
         r, calls = self.run_once("error")
@@ -73,12 +73,12 @@ class Fallback(unittest.TestCase):
 
     def test_fallback_has_no_fallback(self):
         with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
-            self.assertIsNone(fc.fallback_for(BACKUP))
-            self.assertIsNone(fc.fallback_for("claude"))
+            self.assertIsNone(fc.fc_models.fallback_for(BACKUP))
+            self.assertIsNone(fc.fc_models.fallback_for("claude"))
 
     def test_glm_is_the_default_with_no_fallback(self):
         self.assertIn("glm-5.3-flash@preset/glm-5-3-flash-fast", fc.fc_config.DEFAULT_MODEL)
-        self.assertIsNone(fc.fallback_for(fc.fc_config.DEFAULT_MODEL))
+        self.assertIsNone(fc.fc_models.fallback_for(fc.fc_config.DEFAULT_MODEL))
 
 
 class Preflight(unittest.TestCase):
@@ -87,7 +87,7 @@ class Preflight(unittest.TestCase):
             if model == BACKUP:
                 raise RuntimeError("400 z-ai/glm-5-3-flash is not a valid model ID")
             if model == "pi:r/limited":
-                raise fc.RateLimited({"cost": 0.0})
+                raise fc.fc_models.RateLimited({"cost": 0.0})
             return "s", "OK", 0, {"cost": 0.0}
         with mock.patch.object(fc, "implementer", impl):
             fc.preflight({PRIMARY, "pi:r/limited", "claude", None})  # a rate limit proves the model resolved; claude is not probed
@@ -244,7 +244,7 @@ class FixScope(unittest.TestCase):
             systems.append((system, user))
             return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
                 else {"confirmed": True, "evidence": "e"}
-        with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
+        with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
             fc.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
         review, confirm = systems
         self.assertIn("hardening", review[0])
@@ -255,7 +255,7 @@ class FixScope(unittest.TestCase):
         def review(evidence, cfg=None):
             fj = lambda env, system, user, max_tokens=4000: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
                 if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
-            with mock.patch.object(fc, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
+            with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
                 return fc.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
         self.assertEqual(len(review("fileName:   'x.js',")["confirmed"]), 1)
         rv = review("lib output defaults to main.js")
@@ -302,7 +302,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")
         self.assertEqual(os.environ["FAST_CODING_FIX_MODEL"], "pi:f/x")
         self.assertIn("sk-work", os.environ["OPENCODE_CONFIG_CONTENT"])
-        self.assertEqual(fc.fallback_for("pi:a/b"), "pi:g/h")
+        self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:g/h")
 
     def test_switch_overrides_top_level(self):
         ws("personal")
@@ -311,7 +311,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(fc.fc_config.OPENROUTER_KEY, "sk-home")
         self.assertEqual(os.environ["X_FC"], "1")
         self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")  # inherited from the top level
-        self.assertIsNone(fc.fallback_for("pi:a/b"))  # personal turned the fallback off
+        self.assertIsNone(fc.fc_models.fallback_for("pi:a/b"))  # personal turned the fallback off
 
     def test_unknown_workspace_refused(self):
         with self.assertRaises(SystemExit):
@@ -321,7 +321,7 @@ class Workspaces(unittest.TestCase):
         fc.fc_config.apply_config()
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
         with mock.patch.object(subprocess, "run", run):
-            fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[cmd.index("--api-key") + 1], "sk-work")
 
@@ -332,7 +332,7 @@ class Workspaces(unittest.TestCase):
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
         with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"):
             with self.assertRaises(RuntimeError) as cm:
-                fc.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+                fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))
         self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
         self.assertNotIn("No project session", str(cm.exception))

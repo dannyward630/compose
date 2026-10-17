@@ -23,7 +23,7 @@ class AgentNames(unittest.TestCase):
             self.assertIsNone(fc.herdr("agent", "list"))
 
     def test_implementer_routes_headless_outside_herdr(self):
-        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc, "pi_turn", return_value=("s", "t", 0, {})) as pt:
+        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_models, "pi_turn", return_value=("s", "t", 0, {})) as pt:
             fc.implementer("/tmp", "pi:x/y", "hi", None, task={"space": "w9"})
             pt.assert_called_once()
 
@@ -44,18 +44,18 @@ class PiSession(unittest.TestCase):
             line(role="assistant", stopReason="stop", content=[{"type": "text", "text": "done"}],
                  usage={"input": 50, "output": 5, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0, "cost": {"total": 0.002}}),
         ]) + "\n")
-        seen, text, tools, usage, errors = fc.parse_pi_session(f, 0)
+        seen, text, tools, usage, errors = fc.fc_models.parse_pi_session(f, 0)
         self.assertEqual((seen, text, tools, errors), (5, "done", 1, []))
         self.assertEqual((usage["tokens_in"], usage["tokens_out"]), (155, 17))
         self.assertAlmostEqual(usage["cost"], 0.012)
-        seen2, text2, tools2, usage2, _ = fc.parse_pi_session(f, seen)
+        seen2, text2, tools2, usage2, _ = fc.fc_models.parse_pi_session(f, seen)
         self.assertEqual((seen2, text2, tools2, usage2["tokens_in"]), (5, "", 0, 0))
 
     def test_parse_pi_session_error(self):
         f = Path(tempfile.mkdtemp()) / "s.jsonl"
         f.write_text(line(role="assistant", stopReason="error", errorMessage="402 Payment Required: insufficient credits", content=[]) + "\n")
-        with self.assertRaises(fc.PaymentRequired):
-            fc.parse_pi_session(f, 0)
+        with self.assertRaises(fc.fc_models.PaymentRequired):
+            fc.fc_models.parse_pi_session(f, 0)
 
 
 if __name__ == "__main__":

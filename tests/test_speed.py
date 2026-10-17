@@ -113,8 +113,8 @@ class AcceptanceJudge(unittest.TestCase):
             crit, code = user.split("\n\nCODE:\n", 1)
             sent.append((crit[len("CRITERION: "):], code))
             return True, "x"
-        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask, \
-                mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
+        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask, \
+                mock.patch.object(fc.fc_models, "confirm_call", side_effect=confirm_call):
             res = fc.jev_acceptance({}, proj, diff, repo=repo)
         states = {c.args[2]["task"]: c.args[2] for c in ask.call_args_list if c.args[4] == "Jev acceptance"}
         a, b, c = states["002"], states["003"], states["004"]
@@ -151,8 +151,8 @@ class AcceptanceJudge(unittest.TestCase):
             crit, code = user.split("\n\nCODE:\n", 1)
             sent.append((crit[len("CRITERION: "):], code))
             return True, "x"
-        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply), \
-                mock.patch.object(fc, "confirm_call", side_effect=confirm_call):
+        with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
+                mock.patch.object(fc.fc_models, "confirm_call", side_effect=confirm_call):
             res = fc.jev_acceptance({}, proj, hunk("a.py", "x"), repo=repo)  # raises IsADirectoryError if a directory is read
         whole = "==== a.py ====\n" + "A" * 50000
         a = sorted((code for crit, code in sent if crit.startswith("a")), key=len)
