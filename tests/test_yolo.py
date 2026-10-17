@@ -139,7 +139,7 @@ class Yolo(unittest.TestCase):
     def test_status_shows_the_header(self):
         self.yolo(push=True)
         since = json.loads(self.file.read_text())["since"]
-        with mock.patch.object(fc, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
                 mock.patch.object(fc, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
             lines = fc.render_status(Path("."), [self.proj]).splitlines()

@@ -365,7 +365,7 @@ class DesignCrews(unittest.TestCase):
         def issue(n, status="Todo", **kv):
             block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": f"judge {n}", **kv}.items())
             return {"id": f"ENG-{n}", "title": f"Task {n}", "description": f"## Goal\nDraw {n}.\n\n```fast-coding\n{block}\n```\n", "status": status, "blockedBy": []}
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
             issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
 
@@ -391,7 +391,7 @@ class DesignCrews(unittest.TestCase):
     def test_default_pace_is_three_builders_at_once(self):
         def issue(n):
             return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\nid: {n}\nkind: design\ntest: t\nnodes: P{n}/A\n```\n", "status": "Todo", "blockedBy": []}
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue(f"10{i}") for i in range(5)]})
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue(f"10{i}") for i in range(5)]})
         started, out, _ = self.run_crews()
         self.assertEqual((len(started), "queued past the cap of 3" in out), (3, True))
 
@@ -399,7 +399,7 @@ class DesignCrews(unittest.TestCase):
         started, out, space = self.run_crews(busy={"design-001"})
         self.assertEqual(sorted(ns.role for ns in started), ["design-001", "design-005"])
         self.assertEqual(space.call_count, 1); self.assertIn("design-001 not started: busy", out)
-        ns, meta = next(ns for ns in started if ns.role == "design-005"), fc.load_tasks(self.proj)[-1]
+        ns, meta = next(ns for ns in started if ns.role == "design-005"), fc.fc_tasks.load_tasks(self.proj)[-1]
         self.assertEqual((ns.project, ns.action, ns.title, ns.force, ns.cwd, ns.model), ("p", "start", "design 005", False, None, None))
         self.assertEqual(ns.brief, fc.design_brief(meta, "AbCdEf123456", self.proj / "results"))
         self.assertEqual([ns.role for ns in self.run_crews(only="005")[0]], ["design-005"])
@@ -427,7 +427,7 @@ class DesignCrews(unittest.TestCase):
         def issue(n, **kv):
             block = "\n".join(f"{k}: {v}" for k, v in {"id": n, "kind": "design", "test": "t", "nodes": "P/A", **kv}.items())
             return {"id": f"ENG-{n}", "title": n, "description": f"```fast-coding\n{block}\n```\n", "status": "Todo", "blockedBy": []}
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("123", figma="https://www.figma.com/design/LibKey123456789/Lib?node-id=1-2"), issue("124")]})
         out = self.run_crews(print_=True)[1]
         self.assertEqual((out.count("Figma file LibKey123456789"), out.count("Figma file AbCdEf123456")), (1, 1))
@@ -436,7 +436,7 @@ class DesignCrews(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_crews(only="124")
         with self.assertRaises(SystemExit) as e:
-            fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("125", figma="junk")]})
+            fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("125", figma="junk")]})
         self.assertIn("figma is not a Figma file url or key: junk", str(e.exception))
 
     def test_no_stored_figma_key_refuses(self):

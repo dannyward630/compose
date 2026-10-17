@@ -128,7 +128,7 @@ class SkillCheck(unittest.TestCase):
 
     def snapshot(self, proj, live):
         agents = {"agents": [{"name": "shop-eol", "agent_status": "working"}] if live else []}
-        with mock.patch.object(fc, "herdr", return_value=agents), mock.patch.object(fc, "load_tasks", return_value=[]):
+        with mock.patch.object(fc, "herdr", return_value=agents), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
             return fc.watch_snapshot(Path("."), proj)
 
     def test_a_live_pi_teammate_hears_once_through_watch(self):  # pi runs no Claude hooks: watch tells the team lead, who relays it

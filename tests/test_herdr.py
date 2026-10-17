@@ -86,9 +86,9 @@ class Watch(unittest.TestCase):
         self.assertEqual(fc.watch_events(b, b), [])
 
     def test_pid_alive(self):
-        self.assertTrue(fc.pid_alive(os.getpid()))
-        self.assertFalse(fc.pid_alive(2**22 + 12345))
-        self.assertFalse(fc.pid_alive(None))
+        self.assertTrue(fc.fc_tasks.pid_alive(os.getpid()))
+        self.assertFalse(fc.fc_tasks.pid_alive(2**22 + 12345))
+        self.assertFalse(fc.fc_tasks.pid_alive(None))
 
 
 class Tabs(unittest.TestCase):
@@ -174,8 +174,8 @@ class WatchCrash(unittest.TestCase):
     def test_a_dead_run_with_its_marker_left_is_an_ended_run(self):
         proj = Path(tempfile.mkdtemp()); (proj / "results").mkdir()
         (proj / "results" / "run.json").write_text(json.dumps({"pid": 999999}))
-        self.assertFalse(fc.run_alive(proj))
+        self.assertFalse(fc.fc_tasks.run_alive(proj))
         before = {"tasks": {}, "agents": {}, "run": True, "verify": None}
-        after = {"tasks": {}, "agents": {}, "run": fc.run_alive(proj), "crashed": True, "verify": None}
+        after = {"tasks": {}, "agents": {}, "run": fc.fc_tasks.run_alive(proj), "crashed": True, "verify": None}
         ev = fc.watch_events(before, after)
         self.assertEqual(len(ev), 1); self.assertIn("run=ended", ev[0]); self.assertIn("CRASHED", ev[0])

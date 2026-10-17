@@ -266,7 +266,7 @@ def run_all(proj, status=None, during=None, reflect=None, parallel=1):
             mock.patch.object(fc, "stack_order", lambda r, p: []), mock.patch.object(fc, "herdr_space", lambda p: None), \
             mock.patch.object(fc, "triage", lambda *x: None), mock.patch.object(fc, "reflect", reflect), redirect_stdout(out):
         try:
-            fc.run_tasks(Path("."), proj, fc.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
+            fc.run_tasks(Path("."), proj, fc.fc_tasks.load_tasks(proj), SimpleNamespace(trunk="main", parallel=parallel, attempts=1, no_stack=True))
         except SystemExit:
             pass
     return calls, out.getvalue(), reflect
@@ -277,7 +277,7 @@ class Holds(unittest.TestCase):
         self.proj = project()
         with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002"), task("004")])
         self.said, self.notes = [], []
-        fc._hold_warned.clear()
+        fc.fc_tasks._hold_warned.clear()
         for mod, name, value in ((fc.fc_core, "say", self.said.append), (fc.fc_core, "project_dir", lambda a: self.proj),
                             (fc, "linear_note", lambda meta, body: self.notes.append((meta["id"], body)))):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
@@ -290,12 +290,12 @@ class Holds(unittest.TestCase):
 
     def test_hold_and_release_write_the_file_and_comment_on_linear(self):
         self.hold(only="002,003", reason="D2 broken")
-        self.assertEqual(set(fc.held(self.proj)), {"002", "003"})
+        self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"002", "003"})
         self.assertEqual(self.notes, [("002", "Held: D2 broken"), ("003", "Held: D2 broken")])
         self.hold(release="002")
-        self.assertEqual(set(fc.held(self.proj)), {"003"})
+        self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"003"})
         self.hold(release="all")
-        self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(fc.fc_tasks.held(self.proj), {})
         self.assertEqual(self.notes[-2:], [("002", "Released"), ("003", "Released")])
 
     def test_hold_needs_ids_and_a_reason(self):
@@ -336,14 +336,14 @@ class Holds(unittest.TestCase):
 
     def test_an_unreadable_hold_file_holds_nothing(self):
         (self.proj / "results" / "hold.json").write_text("{not json")
-        self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(fc.fc_tasks.held(self.proj), {})
         self.assertEqual(len(self.said), 1)
         self.assertTrue(self.said[0].startswith("hold.json unreadable"))
-        fc.held(self.proj)
+        fc.fc_tasks.held(self.proj)
         self.assertEqual(len(self.said), 1)
 
     def test_a_missing_hold_file_is_not_a_warning(self):
-        self.assertEqual(fc.held(self.proj), {})
+        self.assertEqual(fc.fc_tasks.held(self.proj), {})
         self.assertEqual(self.said, [])
 
     def test_hold_leaves_no_temp_file_and_a_parseable_hold_json(self):
@@ -478,7 +478,7 @@ MAP_AFTER = MAP.replace("- Store drafts in localStorage\n",
 
 def synced(proj, description, issues, ahead=0):
     """Sync the feature and `issues` (id -> issue) the way the team lead does, stamped `ahead` seconds from now."""
-    fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "Drafts", "description": description},
+    fc.fc_tasks.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "Drafts", "description": description},
                          "issues": [{"id": i, **v} for i, v in issues.items()]})
     cache = json.loads((proj / "results" / "tasks.json").read_text())
     cache["synced_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + ahead))
@@ -513,10 +513,10 @@ class Changes(unittest.TestCase):
         synced(self.proj, MAP, BEFORE)
 
     def test_sync_keeps_every_issue_whole(self):
-        issues = fc.linear_cache(self.proj)["issues"]
+        issues = fc.fc_tasks.linear_cache(self.proj)["issues"]
         self.assertEqual(issues["ENG-4"], BEFORE["ENG-4"])
         synced(self.proj, MAP, dict(BEFORE, **{"ENG-6": {"title": "story", "description": "A story.", "status": None, "blockedBy": []}}))
-        self.assertEqual(fc.linear_cache(self.proj)["issues"]["ENG-6"]["status"], "")  # a null status never reaches .lower()
+        self.assertEqual(fc.fc_tasks.linear_cache(self.proj)["issues"]["ENG-6"]["status"], "")  # a null status never reaches .lower()
 
     def test_start_snapshots_linear_and_saves_each_branch_tip(self):
         self.assertIn("C1 open: localStorage is wiped", change(self.proj, self.repo, "start", why="localStorage is wiped"))
@@ -571,8 +571,8 @@ class Changes(unittest.TestCase):
         for t in ("003", "004"):  # both layers were built
             self.git("branch", "-f", f"fast/hw/{t}", self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", t))
         synced(self.proj, MAP, dict(BEFORE, **{"ENG-4": dict(BEFORE["ENG-4"], status="Canceled")}))  # canceled, block and all
-        self.assertEqual([m["id"] for m in fc.load_tasks(self.proj)], ["003"])
-        self.assertIn("ENG-4", fc.linear_cache(self.proj)["issues"])  # still stored whole: undo can bring it back
+        self.assertEqual([m["id"] for m in fc.fc_tasks.load_tasks(self.proj)], ["003"])
+        self.assertIn("ENG-4", fc.fc_tasks.linear_cache(self.proj)["issues"])  # still stored whole: undo can bring it back
         self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003"])
         (self.proj / "results" / "tasks.json").unlink()
         self.assertEqual(fc.stack_order(self.repo, self.proj), ["fast/hw/003", "fast/hw/004"])  # nothing synced: every branch
@@ -699,7 +699,7 @@ class Undo(unittest.TestCase):
         self.assertIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
         change(self.proj, self.repo, "undo", cid="C1")
         self.sync_linear(4)
-        self.assertNotIn("005", [m["id"] for m in fc.load_tasks(self.proj)])
+        self.assertNotIn("005", [m["id"] for m in fc.fc_tasks.load_tasks(self.proj)])
         self.assertNotIn("fast/hw/005", fc.stack_order(self.repo, self.proj))
 
     def test_undoing_the_undo_puts_the_change_back(self):

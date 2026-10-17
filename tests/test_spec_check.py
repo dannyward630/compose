@@ -66,7 +66,7 @@ class SpecCheck(unittest.TestCase):
         lines, e = self.run_cli(json.dumps(data([], "## Not yet specified\n\n- which color?")))
         self.assertEqual(e.code, 1)
         self.assertRegex(lines[0], r"^FAIL ENG-1 feature: [^;]+; [^;]+; [^;]+$")
-        self.assertIn(fc.SYNC_SHAPE, str(self.run_cli("not json")[1]))
+        self.assertIn(fc.fc_tasks.SYNC_SHAPE, str(self.run_cli("not json")[1]))
 
     def test_command_line_registers_spec_check(self):
         def cli(desc):
@@ -105,7 +105,7 @@ class SpecCheck(unittest.TestCase):
         self.assertTrue(not r["ENG-13"][0] and has(r["ENG-13"][2], "task"), r["ENG-13"])  # a Groundwork line never excuses a story
 
     def test_criteria_fold_nested_bullets_and_continuations(self):
-        parse = lambda body: fc.parse_criteria("## Acceptance criteria\n" + body)
+        parse = lambda body: fc.fc_tasks.parse_criteria("## Acceptance criteria\n" + body)
         self.assertEqual(parse("- a\n* b\n"), ["a", "b"])
         for pad in ("  ", "    "):
             self.assertEqual(parse(f"* Sheet shows one example per role:\n{pad}* primary\n{pad}* ghost\n* other"),
@@ -137,12 +137,12 @@ class SpecCheck(unittest.TestCase):
         proj = repo / ".fast-coding" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
-        fc.sync_tasks(proj, data(clash, ""))
+        fc.fc_tasks.sync_tasks(proj, data(clash, ""))
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
             fc.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
         self.assertEqual(out.getvalue(), TASKS_OUT)
-        self.assertEqual(fc.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
+        self.assertEqual(fc.fc_tasks.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
 
     def test_unsynced_project_stops_with_the_sync_message(self):
@@ -161,7 +161,7 @@ class SpecCheck(unittest.TestCase):
         proj = repo / ".fast-coding" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
-        fc.sync_tasks(proj, d)
+        fc.fc_tasks.sync_tasks(proj, d)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc, "project_worktree", return_value=repo):
             lines, e = self.run_cli(repo=str(repo), project="p")
         want, we = self.run_cli(json.dumps(d))

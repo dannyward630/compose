@@ -26,7 +26,7 @@ class Sync(unittest.TestCase):
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
 
     def sync(self, issues, feature="ENG-1"):
-        return fc.sync_tasks(self.proj, {"feature": {"id": feature, "title": "Feature", "description": "## Plan\nThe plan."}, "issues": issues})
+        return fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": feature, "title": "Feature", "description": "## Plan\nThe plan."}, "issues": issues})
 
     def test_tasks_come_from_issue_blocks(self):
         tasks = self.sync([
@@ -43,9 +43,9 @@ class Sync(unittest.TestCase):
         self.assertEqual(first["body"], "## Goal\nDo it.\n\n## Acceptance criteria\n- works")  # the block is not part of the brief
         self.assertEqual(second["after"], "001")  # ENG-77 is outside the feature's tasks
         self.assertEqual(second["model"], "claude")
-        self.assertEqual(fc.load_tasks(self.proj, required=True), tasks)  # the cache serves every later command
-        self.assertEqual(fc.linear_cache(self.proj)["feature"]["description"], "## Plan\nThe plan.")
-        self.assertEqual(fc.criteria_from_tasks(self.proj)[0], ("001", "works"))
+        self.assertEqual(fc.fc_tasks.load_tasks(self.proj, required=True), tasks)  # the cache serves every later command
+        self.assertEqual(fc.fc_tasks.linear_cache(self.proj)["feature"]["description"], "## Plan\nThe plan.")
+        self.assertEqual(fc.fc_tasks.criteria_from_tasks(self.proj)[0], ("001", "works"))
 
     def test_story_scope_and_done_tasks(self):
         def story_task(ident, parent, tid, state="Todo"):
@@ -59,12 +59,12 @@ class Sync(unittest.TestCase):
             self.sync([issue("ENG-9", "Story B"), issue("ENG-5", "Task", block(id="003", files="a.go", test="t"))])
         self.assertIn("parentId", str(no_parent.exception))
         self.assertIn("ENG-5", str(no_parent.exception))
-        self.assertEqual(set(fc.linear_cache(self.proj)["issues"]), {"ENG-9", "ENG-5"})
+        self.assertEqual(set(fc.fc_tasks.linear_cache(self.proj)["issues"]), {"ENG-9", "ENG-5"})
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         done, todo = self.sync(issues)[:2]
         state = lambda m: fc.task_state(self.proj, self.proj, m, "HEAD")["state"]
         self.assertEqual((state(done), state(todo)), ("merged", "pending"))
-        self.assertTrue(fc.linear_done(done) and not fc.linear_done(todo))
+        self.assertTrue(fc.fc_tasks.linear_done(done) and not fc.fc_tasks.linear_done(todo))
 
     def test_big_tasks_are_flagged(self):
         small, wide, long = self.sync([
@@ -79,7 +79,7 @@ class Sync(unittest.TestCase):
         """What `tasks` prints about a shared file for (id, after) tasks that all own x.go."""
         tasks = [{"id": i, "title": i, "files": ["x.go"], "protected": [], "test": "t", "after": a, "linear": "", "body": ""} for i, a in specs]
         out = io.StringIO()
-        with mock.patch.object(fc, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
                 mock.patch("sys.stdout", out):
             fc.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
@@ -93,7 +93,7 @@ class Sync(unittest.TestCase):
     def test_criteria_in_linear_bullets(self):
         desc = "## Goal\n\nDo it.\n\n## Acceptance criteria\n\n* one\n* two\n\n## Test plan\n\n* run\n\n```fast-coding\nid: 001\ntest: t\n```"
         self.sync([issue("ENG-3", "A", desc)])
-        self.assertEqual(fc.criteria_from_tasks(self.proj), [("001", "one"), ("001", "two")])
+        self.assertEqual(fc.fc_tasks.criteria_from_tasks(self.proj), [("001", "one"), ("001", "two")])
 
     def test_refusals(self):
         for issues, feature in (([issue("ENG-3", "A", block(id="001", test="t")), issue("ENG-4", "B", block(id="001", test="t"))], "ENG-1"),
@@ -102,20 +102,20 @@ class Sync(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.sync(issues, feature)
         with self.assertRaises(SystemExit):
-            fc.sync_tasks(self.proj, {"issues": []})
+            fc.fc_tasks.sync_tasks(self.proj, {"issues": []})
 
     def test_unsynced_project_says_how(self):
         with self.assertRaises(SystemExit) as e:
-            fc.load_tasks(self.proj, required=True)
+            fc.fc_tasks.load_tasks(self.proj, required=True)
         self.assertIn("fast-coding sync", str(e.exception))
-        self.assertEqual(fc.load_tasks(self.proj), [])  # status and watch still work before a sync
+        self.assertEqual(fc.fc_tasks.load_tasks(self.proj), [])  # status and watch still work before a sync
 
     def test_cli_reads_stdin(self):
         payload = json.dumps({"feature": {"id": "ENG-1", "title": "F"}, "issues": [issue("ENG-3", "A", block(id="001", test="t"))]})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(sys, "stdin", io.StringIO(payload)), \
                 mock.patch("builtins.print"):
             fc.cmd_sync(type("A", (), {"from_linear": False}))
-        self.assertEqual(fc.load_tasks(self.proj)[0]["linear"], "ENG-3")
+        self.assertEqual(fc.fc_tasks.load_tasks(self.proj)[0]["linear"], "ENG-3")
 
 
 class DesignTasks(unittest.TestCase):
@@ -125,16 +125,16 @@ class DesignTasks(unittest.TestCase):
         self.proj.mkdir(parents=True)
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         design = lambda i, nodes: issue(f"ENG-{i}", f"Page {i}", block(id=f"00{i}", kind="design", nodes=nodes, test="t"))
-        self.tasks = fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        self.tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             design(1, " Checkout/Cart ,Checkout/Pay"), issue("ENG-2", "Store", block(id="002", files="a.go, b.go", protected="a_test.go", test="go test")),
             design(3, "Home/Hero"), design(4, "Checkout/Summary"), design(5, "Home/Footer")]})
-        self.by = {m["id"]: m for m in fc.load_tasks(self.proj)}
+        self.by = {m["id"]: m for m in fc.fc_tasks.load_tasks(self.proj)}
 
     def test_sync_keeps_kind_and_nodes_and_code_tasks_drops_design(self):
         self.assertEqual((self.by["001"]["kind"], self.by["001"]["nodes"]), ("design", ["Checkout/Cart", "Checkout/Pay"]))
         self.assertEqual({k: self.by["002"][k] for k in ("kind", "nodes", "files", "protected")},
                          {"kind": "code", "nodes": [], "files": ["a.go", "b.go"], "protected": ["a_test.go"]})
-        self.assertEqual([m["id"] for m in fc.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
+        self.assertEqual([m["id"] for m in fc.fc_tasks.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
 
     def test_run_stack_and_acceptance_never_see_a_design_task(self):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "run_tasks") as run, \
@@ -175,7 +175,7 @@ class DesignTasks(unittest.TestCase):
         (repo / "bun.lock").write_text("lock\n" * 20000)
         (repo / "a.go").write_text("package a\n" * 6000)
         (repo / "b.go").write_text("package b\n")
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             issue("ENG-2", "Store", block(id="002", files="a.go, bun.lock", protected="b.go", test="go test"))]})
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask", return_value=reply) as ask:
@@ -193,7 +193,7 @@ class DesignTasks(unittest.TestCase):
         self.assertIn("400", str(e.exception))
 
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```fast-coding\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc, "jev_ask") as ask:
             res = fc.jev_acceptance({}, self.proj, "diff")
         self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))

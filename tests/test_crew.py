@@ -706,7 +706,7 @@ class AtomicState(unittest.TestCase):
             if isinstance(r, Exception):
                 raise r
             return r
-        with mock.patch.object(fc, "load_tasks", load), mock.patch.object(fc, "herdr", return_value={}):
+        with mock.patch.object(fc.fc_tasks, "load_tasks", load), mock.patch.object(fc, "herdr", return_value={}):
             self.assertEqual(fc.watch_snapshot(Path("."), proj)["tasks"], {})
 
 

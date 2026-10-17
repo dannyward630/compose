@@ -1,0 +1,198 @@
+import json, os, re, sys, time
+import fc_core, fc_config
+
+
+# ---------- tasks ----------
+
+# Linear is the record humans and agents share. The team lead reads the feature and its tasks through its Linear MCP tools
+# and pipes them to `fast-coding sync` (or `sync --from-linear` reads them with the workspace key), which keeps them in the git-ignored results/tasks.json.
+# A task is any issue under the feature (directly or under a story) whose description ends with this block:
+#   ```fast-coding
+#   id: 001
+#   files: server/graph/validate.go
+#   protected: server/graph/validate_test.go
+#   test: cd server && go test ./graph/ -run TestValidateAnswers
+#   ```
+# Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks.
+TASK_BLOCK = re.compile(r"\n*```fast-coding[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
+SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "blockedBy": ["<issue id>"]}]}'
+              ": every issue under the feature, its stories' children included")
+
+def task_from_issue(issue):
+    """A task meta (with its brief under "body") from a Linear issue whose description carries the fast-coding block, else None."""
+    desc = issue.get("description") or ""
+    m = TASK_BLOCK.search(desc)
+    if not m:
+        return None
+    meta = {k.strip(): v.strip() for k, v in (l.split(":", 1) for l in m.group(1).splitlines() if ":" in l)}
+    if "id" not in meta or "test" not in meta:
+        sys.exit(f"{issue['id']}: its fast-coding block needs id and test")
+    for key in ("files", "protected", "nodes"):
+        meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
+    if "figma" in meta:  # a design task's own file, a key or a url; else the project's stored key
+        meta["figma"] = fc_core.figma_key(meta["figma"]) or sys.exit(f"{issue['id']}: figma is not a Figma file url or key: {meta['figma']}")
+    meta.setdefault("kind", "code")
+    meta.setdefault("model", fc_config.DEFAULT_MODEL)
+    meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
+                 "blocked_by": [b["id"] if isinstance(b, dict) else b for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
+                 "body": TASK_BLOCK.sub("\n", desc).strip()})
+    return meta
+
+def sync_tasks(proj, data):
+    """Store the feature and its tasks, as the team lead read them from Linear, in results/tasks.json. Returns the tasks."""
+    link = proj / "linear.json"
+    feature = json.loads(link.read_text()).get("feature") if link.exists() else None
+    if not feature:
+        sys.exit(f'{link}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
+    if not isinstance(data, dict) or not isinstance(data.get("feature"), dict) or not isinstance(data.get("issues"), list):
+        sys.exit(f"sync reads JSON on stdin shaped {SYNC_SHAPE}")
+    if data["feature"].get("id") != feature:
+        sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
+    stories = set(json.loads(link.read_text()).get("stories") or [])
+    if stories:  # a project scoped to stories sees those stories and their children, nothing else under the feature
+        missing = [i["id"] for i in data["issues"] if i["id"] not in stories and "parentId" not in i]
+        if missing:
+            sys.exit(f"{link} scopes this project to stories, so sync needs each issue's parentId (get_issue field `parentId`): "
+                     f"missing on {', '.join(missing)}")
+        data = {**data, "issues": [i for i in data["issues"] if i["id"] in stories or i.get("parentId") in stories]}
+    # A canceled issue is no task even with its block still on: a re-plan or an undo canceled it, and it must not run or stack.
+    tasks = [t for t in (task_from_issue(i) for i in data["issues"] if (i.get("status") or "").lower() not in CANCELED) if t]
+    ids = [t["id"] for t in tasks]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        sys.exit(f"{feature}: task ids used twice: {', '.join(dupes)}")
+    by_issue = {t["linear"]: t["id"] for t in tasks}
+    for t in tasks:  # blockers outside this feature's tasks do not stack
+        t["after"] = ",".join(sorted(by_issue[b] for b in t.pop("blocked_by") if b in by_issue))
+    tasks.sort(key=lambda t: t["id"])
+    (proj / "results").mkdir(exist_ok=True)
+    f = data["feature"]
+    issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status") or "",
+                        "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or []),
+                        **({"parentId": i["parentId"]} if i.get("parentId") else {})}
+              for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
+    fc_core.atomic_write((proj / "results" / "tasks.json"), json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks,
+        "issues": issues}, indent=2))
+    if any((proj / "tasks").glob("*.md")):
+        fc_core.say(f"note: {proj / 'tasks'} still has task files; they are ignored, Linear is the record. Delete them.")
+    return tasks
+
+
+def linear_cache(proj):
+    path = proj / "results" / "tasks.json"
+    return json.loads(path.read_text()) if path.exists() else {"feature": {}, "tasks": []}
+
+def load_tasks(proj, required=False):
+    """The tasks as the team lead last synced them from Linear. Commands that act on tasks require a sync."""
+    if required and not (proj / "results" / "tasks.json").exists():
+        sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
+                 f"`fast-coding sync --project {proj.name}` (JSON {SYNC_SHAPE})")
+    return linear_cache(proj)["tasks"]
+
+def linear_done(meta):
+    """Linear says the task is Done: its work is on trunk, whatever this project's own files say."""
+    return (meta.get("linear_state") or "").lower() == "done"
+
+def code_tasks(tasks):
+    """The tasks that change code: a design task never clones, stacks, or is judged from files."""
+    return [t for t in tasks if t.get("kind") != "design"]
+
+
+FINISHED = ("passed", "hand_done")  # a layer whose branch is the record: a run keeps it unless told to --redo
+
+def task_finished(proj, meta, redo=False):
+    """Why a task needs no more work, or None: the one rule `run`, `resume`, and `testcrews` share. Done or Canceled on Linear,
+    always; else, unless --redo, a passed result (its branch kept, or gone because it landed, which `status` reads as merged) or
+    a hand_done one (finished by hand, wherever its commits are: it needs no branch and never moves Linear again)."""
+    if meta.get("linear_state") in ("Done", "Canceled"):
+        return f"its state is {meta['linear_state']}"
+    f = proj / "results" / f"{meta['id']}.json"
+    status = json.loads(f.read_text()).get("status") if f.exists() else None
+    return f"its result is {status}" if status in FINISHED and not redo else None
+
+
+def parse_criteria(text):
+    """Criteria under '## Acceptance criteria' in a task or issue body: one per top-level bullet.
+    Top level is the first bullet's indent (Linear stores "-" as "*" and nests with 2 or 4 spaces); deeper bullets and
+    wrapped lines fold into their parent, sub-items joined with "; "."""
+    m = re.search(r"## Acceptance criteria\n(.*?)(?:\n## |\Z)", text or "", re.S)
+    out, base = [], None
+    for line in (m.group(1) if m else "").splitlines():
+        body = line.strip()
+        if not body:
+            continue
+        flat = line.expandtabs(4)
+        indent = len(flat) - len(flat.lstrip())
+        if body[0] in "-*" and (base is None or indent <= base):
+            base = indent if base is None else base
+            out.append([body[1:].strip()])
+        elif out and body[0] in "-*":
+            out[-1].append(body[1:].strip())
+        elif out:
+            out[-1][-1] += " " + body
+    def join(parts):
+        s = parts[0]
+        for p in parts[1:]:
+            s += (" " if s.endswith(":") else "; ") + p
+        return s
+    return [join(parts) for parts in out]
+
+def criteria_from_tasks(proj):
+    """(task id, criterion text) for every criterion in every task file."""
+    return [(meta["id"], c) for meta in load_tasks(proj) for c in parse_criteria(meta["body"])]
+
+
+_hold_warned = []
+
+def held(proj):
+    """{task id: {"reason", "at"}} for every held task. A missing file holds nothing; so does an unreadable one, said once, so a broken file never freezes a run."""
+    path = proj / "results" / "hold.json"
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as e:
+        if not _hold_warned:
+            _hold_warned.append(1)
+            fc_core.say(f"hold.json unreadable ({e}); nothing is held until it is fixed: {path}")
+        return {}
+
+def held_behind(pending, hold, failed):
+    """The pending tasks a hold keeps back: each held one, and each that waits on those with no failed dependency of its own."""
+    stuck = {p for p in pending if p in hold}
+    while True:
+        more = {p for p, d in pending.items() if p not in stuck and set(d) & stuck and not set(d) & failed}
+        if not more:
+            return stuck
+        stuck |= more
+
+
+def yolo_state(proj):
+    """The posture file, or None when yolo is off. Unreadable counts as off, so notifications keep firing."""
+    try:
+        return json.loads((proj / "results" / "yolo.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+CANCELED = ("canceled", "cancelled")
+
+
+def run_marker(proj):
+    f = proj / "results" / "run.json"
+    try:
+        return json.loads(f.read_text()) if f.exists() else None
+    except json.JSONDecodeError:
+        return None
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+def run_alive(proj):
+    m = run_marker(proj)
+    return bool(m and pid_alive(m.get("pid")))

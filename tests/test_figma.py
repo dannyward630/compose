@@ -100,7 +100,7 @@ class FigmaTree(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp()).resolve() / ".fast-coding" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             judge_task("ENG-1", "001", "Button", ["Has a label"]), judge_task("ENG-2", "002", "Code", ["x"], kind="code")]})
 
     def tree(self, **kw):
@@ -154,7 +154,7 @@ class FigmaJudge(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
         (self.proj / "verify.json").write_text(json.dumps({"acceptance_threshold": 0.7}))
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             judge_task("ENG-3", "001", "Cart page", ["Shows the total", "Has a pay button"]), judge_task("ENG-4", "002", "Store", ["x"], kind="code"),
             judge_task("ENG-5", "003", "Hero", ["Has a headline"]), judge_task("ENG-6", "004", "Pay", ["Has a card field"]), judge_task("ENG-7", "005", "Bare", [])]})
         for tid in ("001", "002", "004", "005", "009"):  # a tree for every id but 003, so only the id and kind checks can refuse 002 and 009
@@ -215,7 +215,7 @@ class FigmaJudge(unittest.TestCase):
             self.assertEqual((res["status"], len(res["unclear"]), self.ask.call_count), ("failed", 1, 2), (first, again))
 
     def test_a_task_figma_line_is_the_file_the_result_names(self):
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             {**judge_task("ENG-3", "001", "Cart page", ["x"]), "description": judge_task("ENG-3", "001", "Cart page", ["x"])["description"].replace("test: t", "test: t\nfigma: LibKey123456789")}]})
         res = self.judge("001", {"Cart page": [("MET", 0.95)]})
         self.assertEqual(res["branch"], "figma:LibKey123456789")
@@ -269,7 +269,7 @@ class FigmaJudge(unittest.TestCase):
     def judge_big(self, answer, confirm=None, text=None):
         """Judge task 001 on a big tree; answer(part_text) -> (choice, p_not_met) per chunk, one criterion."""
         (self.proj / "results" / "001.tree.txt").write_text(text or big_tree())
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
         self.states = []
 
         def jev(env, cfg, state, q, label):
@@ -323,7 +323,7 @@ class FigmaJudge(unittest.TestCase):
                 raise RuntimeError("max_tokens_exceeded")
             return {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         (self.proj / "results" / "001.tree.txt").write_text(big_tree())
-        fc.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc, "jev_ask", side_effect=jev), mock.patch.object(fc, "linear_event") as ev, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
         res = json.loads((self.proj / "results" / "001.json").read_text())

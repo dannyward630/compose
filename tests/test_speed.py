@@ -102,7 +102,7 @@ class AcceptanceJudge(unittest.TestCase):
             (repo / f).write_text("R" * n)  # whole files, which only confirm reads
         proj.mkdir()
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
-        fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             task_issue("ENG-2", "002", ["a1", "a2", "a3"], files="a.py", protected="tests/test_a.py"),
             task_issue("ENG-3", "003", ["b1", "b2", "b3"], files="b.py"),
             task_issue("ENG-4", "004", ["c1"], files="c.py")]})
@@ -142,7 +142,7 @@ class AcceptanceJudge(unittest.TestCase):
         (repo / "a.py").write_text("A" * 50000)
         proj.mkdir()
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
-        fc.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+        fc.fc_tasks.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
             task_issue("ENG-2", "002", ["a1", "a2", "a3"], files="sections, a.py", protected="tests/fixtures, gone.py"),
             task_issue("ENG-3", "003", ["b1"], files="docs")]})
         reply = {"model": "m", "answers": {f"c{i}": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}} for i in range(3)}}

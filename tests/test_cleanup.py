@@ -100,7 +100,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
 
     def test_brief_states_the_line_budget(self):
-        tasks = fc.load_tasks(self.proj)
+        tasks = fc.fc_tasks.load_tasks(self.proj)
         self.assertIn("at most 60 lines", fc.test_brief(tasks[0], "c"))
         self.assertIn("at most 25 lines", fc.test_brief(tasks[1], "c"))  # the task's test_lines wins
         self.assertIn("at most 40 lines", fc.test_brief(tasks[0], "c", 40))
