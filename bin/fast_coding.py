@@ -870,20 +870,51 @@ def herdr_error(*args, timeout=120):
         return None, ((out.get("error") or {}).get("code") or p.stderr.strip()[-200:] or "error")
     return out.get("result", out), None
 
-def herdr_await_start(agent, tries=3):
+def herdr_text(*args, timeout=30):
+    """One herdr CLI call whose answer is plain text (`agent read`): the text, or "" outside herdr or when the call failed."""
+    if not herdr_env():
+        return ""
+    try:
+        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return p.stdout if p.returncode == 0 else ""
+
+def herdr_ready(agent, timeout=60):
+    """Return once a Claude session's input box (its `❯` line) is on screen, or it is already on a turn, blocked on a dialog, or done.
+    `herdr agent start` reports a Claude session ready seconds before its UI exists, while the pane still shows the shell command
+    (`herdr agent explain`: idle, rule none): text typed then is kept in the box unsent, or dropped outright, so a brief waits for the box."""
+    for _ in range(max(1, timeout // 2)):
+        got = (herdr("agent", "get", agent) or {}).get("agent") or {}
+        if not got or got.get("agent_status") in ("working", "blocked", "done"):
+            return
+        if any(ln.lstrip().startswith("❯") for ln in herdr_text("agent", "read", agent, "--source", "visible", "--lines", "40").splitlines()):
+            return
+        time.sleep(2)
+
+def herdr_await_start(agent, first=None, tries=3):
     """Return once `agent` has started on its brief, the first prompt it gets. This only confirms the submission landed (status
-    working, blocked, or done), presses Enter when the box kept the text without submitting, and fails loudly with the agent name
-    when it still did not start."""
+    working, blocked, or done); when it did not, presses Enter for a box that kept the text without submitting, then sends `first`
+    again for a box that lost it, and fails loudly with the agent name when it still did not start."""
     def started():  # `done` counts too: a short first turn can finish before the check
         return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
+    def settles(secs):
+        for _ in range(secs // 2):
+            if started():
+                return True
+            time.sleep(2)
+        return False
     for attempt in range(tries + 1):
         if attempt:
             herdr("agent", "send-keys", agent, "enter")
-        for _ in range(10):
-            if started():
+            if settles(6):
                 return
-            time.sleep(2)
-    raise RuntimeError(f"{agent} did not start on its brief; the brief may sit unsent in its tab: press Enter there")
+            if first:
+                herdr("agent", "prompt", agent, first)
+        if settles(20):
+            return
+    raise RuntimeError(f"{agent} did not start on its brief after {tries} retries: look in its tab"
+                       + (f", and send it again with: herdr agent prompt {agent} {shlex.quote(first)}" if first else ""))
 
 def herdr_start_crew(*args, tries=8):
     """`herdr agent start` for a teammate, retried while its pane is still coming up: starts running in parallel (designcrews,
@@ -1915,6 +1946,8 @@ def cmd_crew(a):
             for f in crew_dir(proj).glob(f"{name}.*"):
                 f.unlink()
             sys.exit(f"teammate {name} did not start: {e}")
+    if not model.startswith("pi:"):
+        herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
         herdr("agent", "prompt", agent, first, check=True)
     except RuntimeError as e:
@@ -1923,7 +1956,7 @@ def cmd_crew(a):
     if skipped:
         crew_fallback(proj, name, a.role, skipped, model)
     if len(crew_reports(proj, name)) <= seen:  # one that has reported has started, and may be gone already
-        herdr_await_start(agent)
+        herdr_await_start(agent, first)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `fast-coding report`, `watch` wakes on it")
 

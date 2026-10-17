@@ -126,7 +126,8 @@ class Crew(unittest.TestCase):
             fc.cmd_crew(a)
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
+        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
+                                 ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
         self.assertIn("FAST_CODING_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("FAST_CODING_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
         self.assertIn(f"FAST_CODING_REPO={fc.project_worktree(self.proj)}", calls[1])
@@ -135,8 +136,8 @@ class Crew(unittest.TestCase):
         self.assertIn("claude", start)
         self.assertEqual(json.loads(start[start.index("--settings") + 1])["attribution"], {"commit": "", "pr": ""})  # no co-author trailer on a crew commit
         self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
-        self.assertEqual(calls[3][2], "shop-q-neb-12")
-        self.assertIn("brief.md", calls[3][3])  # the brief goes in once the session is idle and ready
+        self.assertEqual(calls[4][2], "shop-q-neb-12")
+        self.assertIn("brief.md", calls[4][3])  # the brief goes in once the session is idle and its box is on screen
         prompt = (self.proj / "results" / "crew" / "shop-q-neb-12.brief.md").read_text()
         self.assertIn("fast-coding report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)
@@ -534,27 +535,82 @@ class ToolsmithWorktree(unittest.TestCase):
 
 class AwaitStart(unittest.TestCase):
     """The brief is the session's initial prompt, so a prompt sent right after start cannot come first. crew start returns only
-    once the agent is working on it, presses Enter if the box kept the text, and names the agent when it never starts."""
-    def run_await(self, statuses):
+    once the agent is working on it, presses Enter if the box kept the text, sends the brief again if the box lost it, and names
+    the agent when it never starts."""
+    FIRST = "Your brief is the file /p/shop-tests-003.brief.md. Read it now and follow it."
+
+    def run_await(self, statuses, first=None):
         calls, seen = [], iter(statuses)
         def herdr(*args, check=False, timeout=120):
             calls.append(args)
             return {"agent": {"agent_status": next(seen)}} if args[:2] == ("agent", "get") else {}
         with mock.patch.object(fc, "herdr", herdr), mock.patch.object(fc.time, "sleep"):
-            fc.herdr_await_start("shop-tests-003")
-        return [c for c in calls if c[:2] == ("agent", "send-keys")]
+            fc.herdr_await_start("shop-tests-003", first)
+        return [c for c in calls if c[:2] in (("agent", "send-keys"), ("agent", "prompt"))]
 
     def test_a_slow_to_ready_agent_is_waited_for_without_enter(self):
         self.assertEqual(self.run_await(["idle"] * 5 + ["working"]), [])
         self.assertEqual(self.run_await(["done"]), [])
 
     def test_a_brief_left_in_the_box_is_submitted_with_enter(self):
-        self.assertEqual(self.run_await(["idle"] * 10 + ["working"]), [("agent", "send-keys", "shop-tests-003", "enter")])
+        self.assertEqual(self.run_await(["idle"] * 10 + ["working"], self.FIRST), [("agent", "send-keys", "shop-tests-003", "enter")])
+
+    def test_a_brief_the_box_lost_is_sent_again_once_enter_did_nothing(self):
+        self.assertEqual(self.run_await(["idle"] * 13 + ["working"], self.FIRST),
+                         [("agent", "send-keys", "shop-tests-003", "enter"), ("agent", "prompt", "shop-tests-003", self.FIRST)])
 
     def test_a_brief_that_never_starts_fails_loudly_with_the_agent_name(self):
         with self.assertRaises(RuntimeError) as e:
-            self.run_await(["idle"] * 100)
+            self.run_await(["idle"] * 100, self.FIRST)
         self.assertIn("shop-tests-003 did not start", str(e.exception))
+        self.assertIn("herdr agent prompt shop-tests-003", str(e.exception))
+
+
+class Ready(unittest.TestCase):
+    """`herdr agent start` calls a Claude session ready while its pane still shows the shell command, seconds before the input box
+    exists; a brief typed then is kept unsent or lost. crew start waits for the box (the `❯` line) before the brief, and not past
+    an agent already on a turn or blocked on a dialog."""
+    SHELL = "➜  dotfiles git:(main) claude --model claude-fable-5-1 --no-chrome\n"
+    BOX = "─────\n❯ Try \"edit <filepath> to...\"\n─────\n  ⏵⏵ auto mode on\n"
+
+    def run_ready(self, status, screens, timeout=60):
+        reads, shown = [], iter(screens)
+        with mock.patch.object(fc, "herdr", lambda *a, **k: {"agent": {"agent_status": status}} if a[:2] == ("agent", "get") else {}), \
+                mock.patch.object(fc, "herdr_text", lambda *a, **k: reads.append(a) or next(shown, "")), mock.patch.object(fc.time, "sleep"):
+            fc.herdr_ready("shop-tests-003", timeout=timeout)
+        return reads
+
+    def test_the_brief_waits_for_the_input_box(self):
+        reads = self.run_ready("idle", [self.SHELL, self.SHELL, self.BOX, self.BOX])
+        self.assertEqual(len(reads), 3)
+        self.assertEqual(reads[0][:3], ("agent", "read", "shop-tests-003"))
+
+    def test_an_agent_on_a_turn_or_blocked_is_not_waited_for(self):
+        self.assertEqual(self.run_ready("working", [self.SHELL]), [])
+        self.assertEqual(self.run_ready("blocked", [self.SHELL]), [])
+
+    def test_a_box_that_never_shows_stops_the_wait_at_the_timeout(self):
+        self.assertEqual(len(self.run_ready("idle", [self.SHELL] * 50, timeout=10)), 5)
+
+    def test_crew_start_waits_for_the_box_before_the_brief(self):
+        wt = Path(tempfile.mkdtemp()); proj = wt / ".fast-coding" / "shop"; proj.mkdir(parents=True)
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            return {}
+        a = type("A", (), {"action": "start", "role": "tests", "title": "tests", "brief": "Write them.", "cwd": None})
+        with mock.patch.object(fc, "project_dir", return_value=proj), mock.patch.object(fc, "herdr", herdr), \
+                mock.patch.object(fc, "herdr_ready", lambda agent, **k: calls.append(("ready", agent))), \
+                mock.patch.object(fc, "herdr_env", return_value=True), mock.patch.object(fc, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc, "frame0_register"), mock.patch.object(fc, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+            fc.cmd_crew(a)
+        heads = [c[:2] for c in calls]
+        self.assertLess(heads.index(("agent", "start")), heads.index(("ready", "shop-tests")))
+        self.assertLess(heads.index(("ready", "shop-tests")), heads.index(("agent", "prompt")))
 
 
 class StartPaneBusy(unittest.TestCase):
