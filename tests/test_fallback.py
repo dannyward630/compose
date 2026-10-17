@@ -431,7 +431,7 @@ class PiKeyFromEnv(unittest.TestCase):
 
     def test_pi_turn_never_reads_dotenv_for_the_key(self):
         argv, env = self.pi_turn({"PATH": os.environ["PATH"]})
-        self.assertNotIn("OPENROUTER_API_KEY", env)
+        self.assertFalse("OPENROUTER_API_KEY" in env)
         self.keyless(argv)
 
     def test_probe_carries_no_key_and_pi_key_args_is_gone(self):
@@ -469,17 +469,17 @@ class HerdrPiKey(unittest.TestCase):
 
     def start(self, environ, workspace_key="sk-or-test"):
         """Runs herdr_pi up to the agent start. Returns (pane env, start argv)."""
-        panes, starts, environ = [], [], {"OPENROUTER_API_KEY": None, **environ}
+        panes, starts = [], []
         def agent_start(*args):
             starts.append(args)
+            self.process_key = "OPENROUTER_API_KEY" in os.environ  # read under the patched environment
             raise KeyboardInterrupt  # stop at the start; the turn is not under test
         task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
-        with mock.patch.object(fc.fc_config, "OPENROUTER_KEY", workspace_key), mock.patch.dict(os.environ, {}, clear=False), \
+        environ = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], **environ}  # nothing from the real environment, which may hold real keys
+        with mock.patch.object(fc.fc_config, "OPENROUTER_KEY", workspace_key), mock.patch.dict(os.environ, environ, clear=True), \
                 mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", agent_start), \
                 mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env: panes.append(env) or "p1"), \
                 self.assertRaises(KeyboardInterrupt):
-            for k, v in environ.items():
-                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
             fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", None, task)
         return panes[0], starts[0]
 
@@ -501,9 +501,9 @@ class HerdrPiKey(unittest.TestCase):
         for environ in ({}, {"TEXT_MODEL_API_KEY": "sk-tm"}):
             with self.subTest(environ=environ):
                 env, _ = self.start(environ)
-                self.assertNotIn("OPENROUTER_API_KEY", env)
-                self.assertNotIn("sk-", json.dumps(env))
-                self.assertNotIn("OPENROUTER_API_KEY", os.environ)  # the fallback did not leak into the process either
+                self.assertFalse("OPENROUTER_API_KEY" in env)  # never print an env: it may hold keys
+                self.assertFalse("sk-" in json.dumps(env))
+                self.assertFalse(self.process_key)  # the fallback did not leak into the process either
 
 
 class RetryMessage(unittest.TestCase):
