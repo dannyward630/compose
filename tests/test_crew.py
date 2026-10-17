@@ -319,21 +319,43 @@ class Attention(unittest.TestCase):
         self.assertEqual([c[:2] for c in self.calls], [("pane", "report-metadata")])
 
     def test_only_the_engineering_manager_notifies_and_only_on_a_question(self):
-        """The notification fires when the report wakes the engineering manager's watch, the one watcher with no crew role."""
+        """The notification fires when the report wakes the engineering manager's watch, the one watcher with no crew role, and the
+        CLI sends it to the desktop itself: never through `herdr notification show`, whose `[ui.toast] delivery` is the same setting
+        as herdr's own toast for every agent, so turning those off would turn this off too."""
         ev = ["event crew=shop-orchestrator state=needs-user message='Stripe or Adyen? I recommend Stripe'",
               "event crew=shop-q-neb-1 state=done message='Provider: Stripe'",
               "event stall=idle agent=shop-orchestrator the team lead has been idle"]
-        with mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)):
+        runs = []
+        with mock.patch.object(fc, "herdr", lambda *args, **kw: self.calls.append(args)), mock.patch.object(fc.sys, "platform", "darwin"), \
+                mock.patch.object(fc.subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": "orchestrator"}):
                 fc.manager_attention(self.proj, ev)  # the team lead watching its teammates
-            self.assertEqual(self.calls, [])
+            self.assertEqual((self.calls, runs), ([], []))
             with mock.patch.dict(os.environ, {"FAST_CODING_ROLE": ""}):
                 os.environ.pop("FAST_CODING_ROLE")
                 fc.manager_attention(self.proj, ev)
-        self.assertEqual([c[:2] for c in self.calls], [("notification", "show")])
-        self.assertIn("shop: the engineering manager needs you", self.calls[0])
-        self.assertIn("Stripe or Adyen? I recommend Stripe  (from shop-orchestrator)", self.calls[0])
-        self.assertIn("request", self.calls[0])
+        self.assertEqual(self.calls, [])  # nothing goes through herdr
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0][0], "/usr/bin/osascript")
+        self.assertEqual(runs[0][-3:], ["--", "shop: the engineering manager needs you", "Stripe or Adyen? I recommend Stripe  (from shop-orchestrator)"])
+        self.assertIn("sound name", " ".join(runs[0][:-3]))
+
+    def test_desktop_notify_passes_the_message_as_an_argument_never_in_the_script(self):
+        """A report message is data: quotes, backticks, and a leading dash land verbatim in one argv item after `--`, and no
+        `-e` statement contains it."""
+        body = """-rm "x" `id` $(id) 'y'"""
+        runs = []
+        with mock.patch.object(fc.sys, "platform", "darwin"), mock.patch.object(fc.subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
+            self.assertTrue(fc.desktop_notify("shop: the engineering manager is blocked", body))
+        self.assertEqual(runs[0][-3:], ["--", "shop: the engineering manager is blocked", body])
+        self.assertFalse(any("id" in s for s in runs[0][:-3]))
+        runs.clear()
+        with mock.patch.object(fc.sys, "platform", "linux"), mock.patch.object(fc.subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
+            with mock.patch.object(fc.shutil, "which", lambda name: "/usr/bin/notify-send"):
+                self.assertTrue(fc.desktop_notify("t", body))
+            with mock.patch.object(fc.shutil, "which", lambda name: None):
+                self.assertFalse(fc.desktop_notify("t", body))
+        self.assertEqual(runs, [["notify-send", "--", "t", body]])
 
     def test_done_prompts_no_other_crew(self):
         """Decisions live on the map in Linear, recorded by the one wayfinder teammate; nothing is broadcast between teammates."""

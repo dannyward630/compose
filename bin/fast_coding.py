@@ -2023,11 +2023,30 @@ def crew_attention(proj, name, state, message):
     label = {"needs-user": "blocked=needs you", "blocked": "blocked=blocked", "done": "done=done"}.get(state, f"working={state}")
     herdr("pane", "report-metadata", c["pane"], "--source", "fast-coding", "--state-label", label)
 
+def desktop_notify(title, body):
+    """The product owner's desktop alert, sent by the CLI itself and never through `herdr notification show`: that command follows
+    herdr's `[ui.toast] delivery`, the same setting behind herdr's own toast for every agent that finishes or needs input, so the one
+    value that silences those (`off`) would silence this too. macOS gets osascript with the title and body as arguments after `--`
+    (never spliced into the script, so nothing in a report message can run); elsewhere notify-send when installed. Returns whether
+    a notifier ran."""
+    if sys.platform == "darwin":
+        cmd = ["/usr/bin/osascript", "-e", "on run argv",
+               "-e", 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"', "-e", "end run", "--", title, body]
+    elif shutil.which("notify-send"):
+        cmd = ["notify-send", "--", title, body]
+    else:
+        return False
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
 def manager_attention(proj, events):
     """The product owner's one notification, done by the CLI so no session can forget it: when a needs-user or blocked
     report wakes the engineering manager (the session the product owner started, the only watcher without a crew role),
-    pop a herdr notification. Teammates and the team lead only badge their panes; their questions reach the product owner
-    through the engineering manager, which relays them."""
+    pop a desktop notification (desktop_notify). Teammates and the team lead only badge their panes; their questions reach the
+    product owner through the engineering manager, which relays them."""
     if os.environ.get("FAST_CODING_ROLE"):
         return
     for e in events:
@@ -2041,8 +2060,7 @@ def manager_attention(proj, events):
             message = ast.literal_eval(message)
         except (ValueError, SyntaxError):
             pass
-        herdr("notification", "show", f"{proj.name}: the engineering manager {'needs you' if state == 'needs-user' else 'is blocked'}",
-              "--body", f"{message[:160]}  (from {who})", "--sound", "request")
+        desktop_notify(f"{proj.name}: the engineering manager {'needs you' if state == 'needs-user' else 'is blocked'}", f"{message[:160]}  (from {who})")
 
 def cmd_report(a):
     """A teammate session tells whoever it reports to what changed: working, needs-user, blocked, or done."""
@@ -5812,10 +5830,42 @@ def check_deps(role=None):
                 bad.append(name)
     return bad
 
+def herdr_toml(path):
+    """The `[section] key = value` pairs of herdr's config.toml as {"section.key": "value"}, quotes stripped: the few flat keys
+    fast-coding reads, without tomllib (the Python 3.9 macOS ships has none). Unreadable is empty."""
+    vals, section = {}, ""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return vals
+    for line in lines:
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if m := re.match(r"\[([\w.-]+)\]$", line):
+            section = m.group(1)
+        elif m := re.match(r"([\w.-]+)\s*=\s*(.+)$", line):
+            vals[f"{section}.{m.group(1)}".lstrip(".")] = m.group(2).strip().strip("\"'")
+    return vals
+
+def herdr_toast_warning():
+    """One line when herdr's own toasts or sounds are on, for the product owner to read: herdr then alerts them for every agent
+    that finishes or needs input, in every pane, while fast-coding already sends the engineering manager's one alert itself
+    (desktop_notify). None when `[ui.toast] delivery` is off (herdr's default) and `[ui.sound] enabled` is false (not the default)."""
+    cfg = herdr_toml(Path.home() / ".config" / "herdr" / "config.toml")
+    loud = [(key, cfg.get(key, default)) for key, quiet, default in (("ui.toast.delivery", "off", "off"), ("ui.sound.enabled", "false", "true"))
+            if cfg.get(key, default) != quiet]
+    if not loud:
+        return None
+    return ("WARNING: herdr alerts the product owner for every agent, not only the engineering manager ("
+            + ", ".join(f"{k}={v}" for k, v in loud) + '): set [ui.toast] delivery = "off" and [ui.sound] enabled = false in '
+            "~/.config/herdr/config.toml; fast-coding sends the engineering manager's alert itself")
+
 def cmd_doctor(a):
-    """Check every tool and skill file fast-coding depends on; exit 1 when a required one is missing."""
+    """Check every tool and skill file fast-coding depends on; exit 1 when a required one is missing. Warns, never stops, when
+    herdr's own agent toasts or sounds would reach the product owner from every agent."""
     if check_deps():
         sys.exit(1)
+    if warning := herdr_toast_warning():
+        print(warning)
     print("every tool fast-coding needs is installed")
 
 def cmd_init(a):

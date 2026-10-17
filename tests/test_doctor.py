@@ -24,6 +24,7 @@ class Doctor(unittest.TestCase):
             (self.home / s).parent.mkdir(parents=True)
             (self.home / s).write_text("# skill")
         (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"framelink-figma": {"command": "npx"}}}))
+        self.herdr_config('[ui.toast]\ndelivery = "off"\n\n[ui.sound]\nenabled = false\n')
         self.env = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)})
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -32,6 +33,10 @@ class Doctor(unittest.TestCase):
         f = self.bin / tool
         f.write_text(f"#!/bin/sh\n{body}\necho '{version}'\n")
         f.chmod(stat.S_IRWXU)
+
+    def herdr_config(self, text):
+        (self.home / ".config" / "herdr").mkdir(parents=True, exist_ok=True)
+        (self.home / ".config" / "herdr" / "config.toml").write_text(text)
 
     def deps(self):
         out = io.StringIO()
@@ -97,10 +102,29 @@ class Doctor(unittest.TestCase):
         self.assertIn("MISSING: framelink-figma token", r.stdout)
         self.assertIn("designer stopped", r.stderr)
 
+    def test_herdr_toasts_and_sounds_warn_when_not_off(self):
+        """herdr's own toast and sound fire for every agent that finishes or needs input, so doctor names the two keys to set
+        when either is on; delivery defaults to off, sound to on, so a missing key counts as its default."""
+        self.assertIsNone(fc.herdr_toast_warning())
+        self.herdr_config('onboarding = false\n[ui]\nagent_panel_sort = "spaces"  # a comment\n\n[ui.toast]\ndelivery = "system"\n')
+        w = fc.herdr_toast_warning()
+        self.assertTrue(w.startswith("WARNING: herdr alerts the product owner for every agent, not only the engineering manager (ui.toast.delivery=system, ui.sound.enabled=true)"), w)
+        self.assertIn('set [ui.toast] delivery = "off" and [ui.sound] enabled = false in ~/.config/herdr/config.toml', w)
+        self.assertEqual(len(w.splitlines()), 1)
+        self.herdr_config('[ui.sound]\nenabled = false\n')  # no [ui.toast] at all: herdr's default delivery is off
+        self.assertIsNone(fc.herdr_toast_warning())
+        (self.home / ".config" / "herdr" / "config.toml").unlink()  # no config: sounds are on by default
+        self.assertIn("(ui.sound.enabled=true)", fc.herdr_toast_warning())
+
     def test_doctor_and_init_through_the_cli(self):
         env = {**os.environ, "FAST_CODING_NO_TREEHOUSE": "1"}
         r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "every tool fast-coding needs is installed"))
+        self.herdr_config('[ui.toast]\ndelivery = "system"\n')
+        r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)  # a warning, never a stop
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual([l.split(" ")[0] for l in r.stdout.strip().splitlines()], ["WARNING:", "every"])
+        self.herdr_config('[ui.toast]\ndelivery = "off"\n\n[ui.sound]\nenabled = false\n')
         (self.bin / "claude").unlink()
         r = subprocess.run([sys.executable, CLI, "doctor"], capture_output=True, text=True, env=env)
         self.assertEqual((r.returncode, r.stdout.strip()), (1, "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"))

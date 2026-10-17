@@ -32,7 +32,8 @@ A `contradiction` report always wakes the team lead as a teammate event.
 It also screens the feature's decisions with Jev, which adds a `reflect=` event when it flags a decision line.
 
 A `needs-user` or `blocked` report badges the pane `needs you`.
-The herdr notification pops only when such a report wakes the engineering manager's `watch`, so you are alerted once, for what the engineering manager brings you, and not by every teammate or the team lead.
+The desktop notification pops only when such a report wakes the engineering manager's `watch`, so you are alerted once, for what the engineering manager brings you, and not by every teammate or the team lead.
+The CLI sends it itself (macOS `osascript`, elsewhere `notify-send`), not through herdr: herdr's own toast and sound fire for every agent that finishes or needs input, so set `[ui.toast] delivery = "off"` and `[ui.sound] enabled = false` in `~/.config/herdr/config.toml`; `fast-coding doctor` warns while either is on.
 Nothing steals focus.
 When you want to jump to a tab, `fast-coding crew focus --role <role>` takes you there.
 

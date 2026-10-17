@@ -112,11 +112,11 @@ class Yolo(unittest.TestCase):
         calls = []
         ev = [f"event crew={ORCH} state=needs-user message='Stripe or Adyen? I recommend Stripe'"]
         env = {k: v for k, v in os.environ.items() if k != "FAST_CODING_ROLE"}
-        with mock.patch.object(fc, "herdr", lambda *args, **kw: calls.append(args)), mock.patch.dict(os.environ, env, clear=True):
+        with mock.patch.object(fc, "desktop_notify", lambda *args: calls.append(args)), mock.patch.dict(os.environ, env, clear=True):
             fc.manager_attention(self.proj, ev)
             self.assertEqual(calls, [])
             fc.manager_attention(self.proj, [f"event crew={ORCH} state=blocked message='no key'"])
-        self.assertEqual([c[:2] for c in calls], [("notification", "show")])
+        self.assertEqual(calls, [("hw: the engineering manager is blocked", f"no key  (from {ORCH})")])
 
     def watch_now(self, s):
         out = []
