@@ -552,7 +552,17 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("Without trail installed it prints the install command; `compose trail --project <slug>`", zero_a)
 
     def test_0d_and_0e(self):
-        self.skipTest("not written yet")
+        self.assert_no_graft("sections/0d.md", "sections/0e.md")
+        design, explore = read("sections/0d.md"), read("sections/0e.md")
+        self.assertIn(
+            'through trail: `trail ask "design tokens theme css variables" --source`, `trail grep "--color-"`.',
+            design,
+        )
+        self.assertIn("in the repo (`trail grep` for token files, `tailwind.config`, `tokens.json`)", design)
+        self.assertIn("It maps the code through trail only, in under 3 minutes,", explore)
+        self.assertIn("check it in the code first (`trail ask`, `trail callers`), and if the code cannot settle it", explore)
+        # Only the tool word changes: no line is added, dropped, or joined.
+        self.assertEqual((len(design.splitlines()), len(explore.splitlines())), (106, 7))
 
     def test_4_and_readme(self):
         self.skipTest("not written yet")
