@@ -263,29 +263,6 @@ def adopt_installs(repo, wt):
         else:
             shutil.rmtree(aside, ignore_errors=True)
 
-def mirror_stack_state(repo, wt):
-    """gh stack writes its state into the working tree's own git dir. Copy the worktree's stacks into the main checkout's
-    file so `gh stack view` works from the user's tree too; stacks sharing a branch are replaced, others kept."""
-    src = Path(fc_core.sh(["git", "rev-parse", "--git-dir"], wt).stdout.strip()) / "gh-stack"
-    if not src.is_absolute():
-        src = wt / src
-    if not src.exists():
-        return
-    mine = json.loads(src.read_text())
-    names = {b["branch"] for st in mine.get("stacks", []) for b in st.get("branches", [])}
-    targets = set()
-    for flag in ("--git-common-dir", "--git-dir"):  # the main checkout and the project worktree both get to see the stack
-        d = Path(fc_core.sh(["git", "rev-parse", flag], repo).stdout.strip())
-        targets.add((d if d.is_absolute() else repo / d) / "gh-stack")
-    for dst in targets:
-        if dst.resolve() == src.resolve():
-            continue
-        theirs = json.loads(dst.read_text()) if dst.exists() else {"schemaVersion": mine.get("schemaVersion", 1), "repository": mine.get("repository", ""), "stacks": []}
-        kept = [st for st in theirs.get("stacks", []) if not any(b["branch"] in names for b in st.get("branches", []))]
-        theirs["stacks"] = kept + mine.get("stacks", [])
-        fc_core.atomic_write(dst, json.dumps(theirs, indent=2))
-
-
 STACK_LOCK = threading.RLock()  # parallel tasks share one stack worktree; git there must run one thread at a time
 
 GENERATED_RE = re.compile(r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|bun\.lockb?|go\.sum|[^/]+\.lock)$")

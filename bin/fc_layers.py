@@ -302,7 +302,6 @@ def register_stack(repo, proj, trunk, submit=False):
                 title, body = layer_pr(proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
-    fc_worktree.mirror_stack_state(repo, wt)
     return [stack]
 
 def cmd_stack(a):

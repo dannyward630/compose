@@ -383,7 +383,6 @@ def cmd_verify(a):
     finally:
         if wt is not None:
             fc_core.sh(["git", "checkout", "-q", "--detach", fc_core.current_branch(repo)], wt, check=False)  # free the top branch again
-            fc_worktree.mirror_stack_state(repo, wt)
 
 def fix_strays(touched, allowed, named=()):
     """Files a verify fix round may not touch. A fixer gets the same scope as the tasks: only files the stack already
