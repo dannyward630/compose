@@ -17,17 +17,23 @@ class Finish(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp()); self.cfg, self.auth = tmp / "config.json", tmp / "auth.json"
         self.cfg.write_text(json.dumps({"workspaces": {"w": {"target": "x"}}, "models": {"implementer": "pi:mine"}}))
-        self.probe, self.claude, self.connected = mock.Mock(return_value=(True, ["probe passed"])), True, False
+        self.probe, self.claude = mock.Mock(return_value=(True, ["probe passed"])), True
         self.herdr, self.path, self.tty = mock.Mock(return_value=("ok", [])), None, True  # the terminal path unless a case says no-TTY
         for p in (mock.patch.object(F.fc_config, "CONFIG_PATH", self.cfg), mock.patch.object(F.fc_config, "AUTH_PATH", self.auth),
                   mock.patch.object(F.fc_config, "ENV_FILE", tmp / ".env"), mock.patch.object(F.fc_steps, "FRAMELINK_ENV", tmp / "figma.env"),
                   mock.patch.object(F.fc_defaults, "probe_implementer", self.probe),
                   mock.patch.object(fc_herdrconf, "apply_herdr_config", self.herdr), mock.patch.object(fc_links, "path_line", lambda: self.path),
-                  mock.patch.object(F.fc_keys, "linear_connected", lambda: self.connected),
                   mock.patch.object(F.fc_keys, "skipped_line", lambda kind, ws: f"skipped {kind}"),
                   mock.patch.object(F.shutil, "which", lambda n, *a, **k: None if n == "claude" and not self.claude else f"/bin/{n}"),
                   mock.patch("sys.stdin.isatty", lambda: self.tty)):
             p.start(); self.addCleanup(p.stop)
+
+    def connector(self):
+        """`claude mcp list` shows the claude.ai Linear connector Connected; the returned path exists once claude ran."""
+        tmp = Path(tempfile.mkdtemp()); ran, claude = tmp / "ran", tmp / "claude"; (Path.home() / ".claude.json").write_text("{}")
+        claude.write_text(f"#!/bin/sh\ntouch {ran}\necho 'claude.ai Linear: https://mcp.linear.app/mcp - ✔ Connected'\n"); claude.chmod(0o755)
+        p = mock.patch.dict(os.environ, {"PATH": f"{tmp}:{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
+        return ran
 
     def run_finish(self, auth, yes=False):
         self.auth.write_text(json.dumps(auth))
@@ -46,18 +52,19 @@ class Finish(unittest.TestCase):
         self.assertEqual(again, self.run_finish(ALL)); self.assertFalse([l for l in again[0] if l.startswith(ADDED)])
         self.assertEqual(json.loads(self.cfg.read_text()), merged)
 
-    def test_missing_keys_and_linear_states(self):
-        bare = {"workspaces": {"default": {}}}
-        for self.connected, linear in ((True, []), (False, ["linear"]), (None, ["linear"])):
-            skipped = [f"skipped {k}" for k in ["openrouter", "typesafe", *linear]]
-            lines, code = self.run_finish(bare)
-            self.assertEqual((code, lines[-1], SKIPS(lines)), (1, f"{NOT_DONE}: missing OpenRouter, TypeSafe" + (", Linear" if linear else ""), skipped)); self.assertNotIn(READY[0], lines)
-            lines, code = self.run_finish(bare, yes=True)
-            fix = next(r[2] for r in F.fc_steps.STEPS if r[0] == "OpenRouter key")
-            self.assertEqual((code, lines[-1], SKIPS(lines)), (0, FOOT, [])); self.assertIn(HEAD, lines); self.assertIn(f"  OpenRouter key: {fix}", lines)
+    def test_missing_keys_name_linear_without_its_key_even_with_the_connector(self):
+        bare, ran = {"workspaces": {"default": {}}}, self.connector()
+        lines, code = self.run_finish(bare)
+        skipped = ["skipped openrouter", "skipped typesafe", "skipped linear"]
+        self.assertEqual((code, lines[-1], SKIPS(lines)), (1, f"{NOT_DONE}: missing OpenRouter, TypeSafe, Linear", skipped)); self.assertNotIn(READY[0], lines)
+        lines, code = self.run_finish(bare, yes=True)
+        fix = next(r[2] for r in F.fc_steps.STEPS if r[0] == "OpenRouter key")
+        self.assertEqual((code, lines[-1], SKIPS(lines)), (0, FOOT, [])); self.assertIn(HEAD, lines); self.assertIn(f"  OpenRouter key: {fix}", lines)
         self.probe.assert_not_called()  # no OpenRouter key, or yes
         lines, code = self.run_finish({"workspaces": {"default": {"openrouter": "sk-or-test"}}, "typesafe": "ts-test"})
         self.assertEqual((code, lines[-1], SKIPS(lines)), (1, NOT_DONE + ": missing Linear", ["skipped linear"]))
+        self.assertEqual(self.run_finish(ALL)[0][-2:], READY)
+        self.assertFalse(ran.exists(), "finish ran claude mcp list")
 
     def test_probe_failure_and_missing_claude(self):
         self.probe.return_value = (False, ["provider: no endpoints", "make the preset"])
@@ -153,8 +160,8 @@ class Tidy(unittest.TestCase):
         lines, code = self.run_finish(ALL)
         self.assertEqual((lines[-1], code), (NOT_DONE + ": the model probe failed", 1))
         self.why = (True, "ok")
-        for self.connected, auth, keys in ((False, {"workspaces": {"default": {}}}, ["openrouter", "typesafe", "linear"]),
-                                           (True, {"workspaces": {"default": {"openrouter": "sk-or-test"}}}, ["typesafe"])):
+        for auth, keys in (({"workspaces": {"default": {}}}, ["openrouter", "typesafe", "linear"]),
+                           ({"workspaces": {"default": {"openrouter": "sk-or-test"}}}, ["typesafe", "linear"])):
             lines, code = self.run_finish(auth); (line,) = NOT_DONE_LINE(lines)
             self.assertEqual((lines[-1], code), (line, 1))
             self.assertTrue(line.startswith(NOT_DONE + ": missing ") and ";" not in line, line)
@@ -271,11 +278,12 @@ class InsideHerdr(unittest.TestCase):
 
 
 KEY_ROWS = [(n, lambda c: (False, ""), f"fix-{n}", "required", False, m) for n, m in
-            [("gh", "run"), ("OpenRouter key", "key"), ("TypeSafe key", "key"), ("Linear key or connector", "key")]]
+            [("gh", "run"), ("OpenRouter key", "key"), ("TypeSafe key", "key"), ("Linear key", "key")]]
 KEYS_OK = {"workspaces": {"default": {"openrouter": "sk-or-test", "linear": "lin-test"}}, "typesafe": "ts-test"}
 
 class KeyTextOnce(unittest.TestCase):
     """Under yes or without a terminal, a missing key is named once: its row in the not-ready list, no skipped_line text."""
+    connector = Finish.connector
     def setUp(self):
         Finish.setUp(self)
         p = mock.patch.object(F.fc_steps, "STEPS", tuple(KEY_ROWS)); p.start(); self.addCleanup(p.stop)
@@ -300,14 +308,13 @@ class KeyTextOnce(unittest.TestCase):
         self.tty = False
         self.assert_once({"workspaces": {"default": {"linear": "lin-test"}}, "typesafe": "ts-test"}, ["OpenRouter key"], False)
 
-    def test_linear_without_key_or_connector_and_every_key_missing(self):
-        for self.connected in (False, None):
-            with self.subTest(connected=self.connected):
-                self.assert_once({"workspaces": {"default": {"openrouter": "sk-or-test"}}, "typesafe": "ts-test"}, ["Linear key or connector"], True)
-                self.assert_once({"workspaces": {"default": {}}}, ["OpenRouter key", "TypeSafe key", "Linear key or connector"], True)
+    def test_linear_without_its_key_and_every_key_missing(self):
+        self.connector()
+        self.assert_once({"workspaces": {"default": {"openrouter": "sk-or-test"}}, "typesafe": "ts-test"}, ["Linear key"], True)
+        self.assert_once({"workspaces": {"default": {}}}, ["OpenRouter key", "TypeSafe key", "Linear key"], True)
 
     def test_terminal_without_yes_keeps_the_key_lines(self):
-        lines, code = self.end({"workspaces": {"default": {}}}, ["OpenRouter key", "TypeSafe key", "Linear key or connector"], False)
+        lines, code = self.end({"workspaces": {"default": {}}}, ["OpenRouter key", "TypeSafe key", "Linear key"], False)
         self.assertEqual((SKIPS(lines), lines[-1], code),
                          (["skipped openrouter", "skipped typesafe", "skipped linear"], NOT_DONE + ": missing OpenRouter, TypeSafe, Linear", 1))
         self.assertNotIn(HEAD, lines)

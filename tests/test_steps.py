@@ -10,7 +10,7 @@ R, D, G, c = "required", "default", "designer", True
 ROWS = [("Homebrew", D, "interactive"), ("git", R, "manual"), ("npx", R, "run"), ("gh", R, "run"), ("gh auth", R, "interactive"), ("gh stack", R, "run"),
         ("claude", R, "manual"), ("herdr", R, "run"), ("herdr skill", R, "run"), ("i-have-adhd skill", R, "run", c), ("pi", R, "run"),
         ("pi openrouter-fast provider", R, "write"), ("compose CLI link", R, "write"), ("compose skill link", R, "write"), ("~/.local/bin on PATH", R, "manual"),
-        ("OpenRouter key", R, "key"), ("TypeSafe key", R, "key"), ("Linear key or connector", R, "key", c), ("uv", D, "run"), ("jev", D, "run"),
+        ("OpenRouter key", R, "key"), ("TypeSafe key", R, "key"), ("Linear key", R, "key"), ("uv", D, "run"), ("jev", D, "run"),
         ("treehouse", D, "run"), ("bp link", D, "write"), ("Chromium", D, "run"), ("superpowers", D, "run", c), ("herdr pi integration", D, "run"),
         ("herdr claude integration", D, "run", c), ("TEXT_MODEL lines", D, "write"), ("git rerere", D, "run"), ("pi auth.json override", D, "manual"),
         ("framelink-figma", G, "run", c), ("framelink-figma token", G, "key")]
@@ -53,12 +53,18 @@ class StepsTable(unittest.TestCase):
         self.assertFalse(ok); self.assertRegex(detail, r"^dangling link \S*\.local/bin/compose -> /nowhere/compose$")
         self.link.unlink(); self.link.symlink_to(self.co / "bin" / "compose"); self.assertEqual(self.check("compose CLI link"), (True, ""))
 
-    def test_linear_key_or_connector_and_key_rows_hide_values(self):
-        (self.home / ".claude.json").write_text("{}")  # Claude Code has run here, so the connector check reads `claude mcp list`
-        for mark, key, ok in (("! Needs authentication", False, False), ("✔ Connected", False, True), ("! Needs authentication", True, True)):
-            self.fake("claude", f"Checking MCP server health…\n\nclaude.ai Linear: https://mcp.linear.app/mcp - {mark}"); self.auth.unlink(missing_ok=True)
-            if key: self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test", "linear": "lin-test"}}, "typesafe": "ts-test"}))
-            self.assertEqual(self.check("Linear key or connector")[0], ok, mark)
+    def test_linear_key_row_counts_only_the_key_and_key_rows_hide_values(self):
+        _, _, install, level, needs_claude, mode = self.rows["Linear key"]
+        self.assertEqual((install, level, needs_claude, mode), ("get one at linear.app/settings/api; compose setup stores it", "required", False, "key"))
+        self.assertNotIn("Linear key or connector", self.rows)
+        (self.home / ".claude.json").write_text("{}"); ran = self.bin.parent / "claude-ran"  # Claude Code has run here
+        for mark in ("✔ Connected", "! Needs authentication"):
+            (self.bin / "claude").write_text(f"#!/bin/sh\ntouch {ran}\necho 'claude.ai Linear: https://mcp.linear.app/mcp - {mark}'\n")
+            (self.bin / "claude").chmod(stat.S_IRWXU)
+            self.auth.unlink(missing_ok=True); self.assertEqual(self.check("Linear key"), (False, "no linear key"), mark)
+            self.auth.write_text(json.dumps({"workspaces": {"default": {"linear": "lin-test"}}})); self.assertEqual(self.check("Linear key"), (True, ""), mark)
+        self.assertFalse(ran.exists(), "doctor ran claude mcp list")
+        self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test", "linear": "lin-test"}}, "typesafe": "ts-test"}))
         for row in [r for r in fc_steps.STEPS if r[5] == "key"]:
             ok, detail = fc_steps.check(row, self.co); self.assertTrue(ok, row[0]); self.assertFalse(re.search("sk-or|lin-test|ts-test|figd", detail), row[0])
         self.auth.unlink(); self.assertFalse(self.check("OpenRouter key")[0])
