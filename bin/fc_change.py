@@ -1,6 +1,6 @@
 import json, os, re, sys, threading, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_models, fc_layers
+import fc_core, fc_config, fc_tasks, fc_worktree, fc_linear, fc_models, fc_layers
 
 
 # ---------- changing course: reflect, hold, change ----------
@@ -171,7 +171,7 @@ def begin_change(proj, repo, why):
     cid = f"C{int(ids[-1][1:]) + 1 if ids else 1}"
     tips, results = {}, {}
     for m in cache["tasks"]:
-        tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", f"fast/{proj.name}/{m['id']}"], repo, check=False).stdout.strip()
+        tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", fc_worktree.task_branch(repo, proj, m["id"])], repo, check=False).stdout.strip()
         if tip:
             tips[m["id"]] = tip
             fc_core.sh(["git", "update-ref", f"refs/compose/{proj.name}/{cid}/{m['id']}", tip], repo)
@@ -271,7 +271,7 @@ def change_undo(a, proj, repo):
     reset, stuck = [], []
     for i in d["canceled"] + d["edited"]:
         tid = issue_label(i, rec["before"]["issues"][i])
-        tip, branch = rec["tips"].get(tid), f"fast/{proj.name}/{tid}"
+        tip, branch = rec["tips"].get(tid), fc_worktree.task_branch(repo, proj, tid)
         if tip and fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip() != tip:
             try:
                 fc_core.sh(["git", "branch", "-f", branch, tip], repo)

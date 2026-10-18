@@ -17,7 +17,7 @@ def task_state(repo, proj, meta, trunk_head):
     tid = meta["id"]
     res = proj / "results" / f"{tid}.json"
     r = json.loads(res.read_text()) if res.exists() else {}
-    branch = f"fast/{proj.name}/{tid}"
+    branch = fc_worktree.task_branch(repo, proj, tid)
     has_branch = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0
     merged = has_branch and fc_core.sh(["git", "merge-base", "--is-ancestor", branch, trunk_head], repo, check=False).returncode == 0
     state = r.get("status") or "pending"
@@ -156,7 +156,7 @@ def cmd_done(a):
         prev = json.loads(res.read_text()) if res.exists() else {}
         prev.update({"id": tid, "title": meta.get("title"), "status": "hand_done", "note": a.note, "model": "orchestrator",
                      "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "attempts": prev.get("attempts", 0), "seconds": prev.get("seconds", 0.0),
-                     "cost": prev.get("cost", 0.0), "branch": prev.get("branch", f"fast/{proj.name}/{tid}")})
+                     "cost": prev.get("cost", 0.0), "branch": prev.get("branch", fc_worktree.task_branch(repo, proj, tid))})
         fc_core.atomic_write(res, json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
         fc_linear.linear_event(proj, meta, "hand_done", prev)
