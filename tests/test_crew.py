@@ -976,8 +976,13 @@ class RestrictedStart(unittest.TestCase):
         self.assertFalse(any("invoke the compose skill" in b.lower() for b in (p, d, w)))
 
 
+LINEAR_LINE = ("Linear is the record: read and write it with `compose linear` (get, list, create, update, comment), never a Linear MCP tool; "
+               "write what you learn and decide there, never to files.")
+
+
 class PiStart(unittest.TestCase):
-    def test_pi_teammate_loads_mcp_but_no_extension_packages(self):
+    def start(self, ext):
+        """(argv after `--` of the pi wayfinder's `agent start`, its project dir, its brief); `ext` names an existing herdr extension."""
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
         calls = []
         def herdr(*args, **kw):
@@ -989,21 +994,29 @@ class PiStart(unittest.TestCase):
             if args[:2] == ("agent", "get"):
                 return {"agent": {"agent_status": "working"}}
             return {}
+        if ext:
+            (proj / ext).write_text("")
         a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": "pi:x/y"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing.ts"), \
+                mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / (ext or "missing.ts")), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=["claude_ai_Linear", "graft"]), \
                 mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
-        args = list(start[start.index("--") + 1:])
-        pairs = list(zip(args, args[1:]))
-        self.assertIn(("-e", "builtin:mcp"), pairs)  # its MCP servers, Linear among them
-        self.assertEqual([v for k, v in pairs if k == "-e"], ["builtin:mcp"])  # the herdr extension is absent here, so nothing else is loaded
-        for flag in ("--no-extensions", "--no-prompt-templates", "--skill"):
-            self.assertIn(flag, args)  # the user's npm extension packages and prompt templates stay off
+        return list(start[start.index("--") + 1:]), proj, (fc.fc_crew.crew_dir(proj) / "shop-wayfinder.brief.md").read_text()
+
+    def test_pi_teammate_starts_with_no_mcp_and_no_extension_packages(self):
+        for ext in (None, "herdr-agent-state.ts"):
+            with self.subTest(ext=ext):
+                args, proj, brief = self.start(ext)
+                pairs = list(zip(args, args[1:]))
+                self.assertFalse(any("builtin:mcp" in v for v in args))  # no MCP servers, so no Linear MCP tool
+                self.assertEqual([v for k, v in pairs if k == "-e"], [str(proj / ext)] if ext else [])  # only the herdr extension, when it exists
+                for flag in ("--no-extensions", "--no-prompt-templates", "--skill"):
+                    self.assertIn(flag, args)  # the user's npm extension packages and prompt templates stay off
+                self.assertEqual(brief.count(LINEAR_LINE), 1)  # the pi teammate is told to use compose linear instead
         self.assertNotIn("builtin:mcp", fc.fc_models.probe_command("pi:x/y"))  # the implementer probe is unchanged
 
 
@@ -1062,6 +1075,22 @@ class CardsById(unittest.TestCase):
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
         for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
+
+
+class PreambleNamesComposeLinear(unittest.TestCase):
+    """Every teammate's preamble sends Linear reads and writes through `compose linear`, never a Linear MCP tool."""
+
+    def test_every_role_uses_compose_linear(self):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
+        for name, title, up in (("shop-orchestrator", "orchestrator", None), ("shop-tests-001", "tests 001", "orchestrator"),
+                                ("shop-planner", "planner", "manager"), ("shop-designer", "designer", "manager"), ("shop-q-neb-1", "q", "orchestrator")):
+            with self.subTest(name):
+                pre = fc.fc_crew.crew_preamble(proj, name, title, up)
+                self.assertEqual(pre.count(LINEAR_LINE), 1)
+                self.assertIn("\n" + LINEAR_LINE + "\n", pre)  # a line of its own
+                self.assertNotIn("Linear is the record: write what you learn", pre)
+                for tool in ("save_issue", "get_issue", "list_issues", "save_comment", "mcp__claude_ai_Linear"):
+                    self.assertNotIn(tool, pre)
 
 
 class PreambleNamesTrail(unittest.TestCase):
