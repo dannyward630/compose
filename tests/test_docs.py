@@ -1,4 +1,5 @@
 import hermetic  # first: no test sees the real home
+import json
 import os
 import re
 import unittest
@@ -811,6 +812,58 @@ class StackDocs(unittest.TestCase):
         at = cli.index(rows[0])
         self.assertTrue(cli[at - 1].startswith("| `verify` | Runs the local pipeline."))
         self.assertEqual(cli[at + 1], "| `top` | Checks out the stack top for manual testing. `--detach` releases it |")
+
+
+class ConfigKeysDocs(unittest.TestCase):
+    HEADINGS = ["Commands", "Keys", "Config", "Parallel", "Branch names and stack size", "Linear key", "Crew models", "Billing halts"]
+
+    def setUp(self):
+        self.text = read("docs/workspaces.md")
+
+    def section(self, title):
+        self.assertEqual(self.text.count("\n## " + title + "\n"), 1, title)
+        return self.text.split("\n## " + title + "\n", 1)[1].split("\n## ", 1)[0]
+
+    def lines(self, *words):
+        # The new section's lines holding every word, joined; at least one must.
+        found = [l for l in self.section("Branch names and stack size").splitlines() if all(w in l for w in words)]
+        self.assertTrue(found, words)
+        return "\n".join(found)
+
+    def test_the_example_config_parses_with_both_keys_at_their_defaults(self):
+        cfg = json.loads(self.section("Config").split("```json\n", 1)[1].split("```", 1)[0])
+        self.assertEqual((cfg.get("branch_prefix"), cfg.get("max_stack_prs")), ("compose/", 10))
+        self.assertEqual(set(cfg), {"workspace", "models", "env", "parallel", "workspaces", "branch_prefix", "max_stack_prs"})
+        self.assertEqual((cfg["parallel"], cfg["workspaces"]["work"], set(cfg["workspaces"]["personal"])), (20, {}, {"models"}))
+
+    def test_the_section_sits_between_parallel_and_linear_key_and_nothing_else_moved(self):
+        self.assertEqual(re.findall(r"(?m)^## (.+)$", self.text), self.HEADINGS)
+        parallel = self.section("Parallel").strip().splitlines()
+        self.assertEqual((len(parallel), parallel[-1]), (12, "A value that is not a whole number of 1 or more stops every command."))
+        self.assertTrue(self.section("Linear key").startswith("\nA workspace's Linear key (`compose workspace key <name> --linear`)"))
+
+    def test_branch_prefix_default_empty_value_and_init_record(self):
+        self.assertRegex(self.lines("`branch_prefix`", "default"), r"default[^.;]*`compose/`")
+        self.assertRegex(self.lines("slug"), r"empty|`\"\"`")
+        self.assertRegex(self.lines("`init`", "verify.json", "`branch`"), r"\bonce\b")
+
+    def test_the_three_branch_shapes(self):
+        shapes = self.lines("-tests-NNN`", "-layer-NN`")
+        self.assertRegex(shapes, r"(?<!tests)-NNN`")
+
+    def test_max_stack_prs_default_override_and_fold(self):
+        self.assertRegex(self.lines("`max_stack_prs`", "default"), r"default[^.;]*\b10\b")
+        self.assertRegex(self.lines("verify.json"), r"overrid")
+        self.assertRegex(self.lines("fold"), r"adjacent")
+
+    def test_both_keys_can_be_set_per_workspace(self):
+        self.assertRegex(self.lines("workspace"), r"top.level[^.]*workspace")
+
+    def test_one_sentence_per_line_and_house_rules(self):
+        for l in self.section("Branch names and stack size").splitlines():
+            self.assertNotRegex(l, r"[a-z)`]\. [A-Z`]", l)
+        self.assertNotIn("\u2014", self.text)
+        self.assertNotRegex(self.text, r"\bgraft\b")
 
 
 
