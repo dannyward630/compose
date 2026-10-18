@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib, json, os, sys, tempfile, unittest
+import importlib.util, json, os, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -48,14 +48,17 @@ class PiChecks(unittest.TestCase):
         self.assertEqual(o(self.dir / "missing.json"), [])
 
     def test_paths_follow_agent_dir(self):
-        self.addCleanup(importlib.reload, pi)
+        def fresh():  # a new copy of the module, outside sys.modules, so no other test file's imports matter
+            spec = importlib.util.spec_from_file_location("fc_pi", pi.__file__)
+            m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+            return m
         with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(self.dir)}):
-            importlib.reload(pi)
-        self.assertEqual((pi.PI_MODELS, pi.PI_AUTH), (self.dir / "models.json", self.dir / "auth.json"))
+            m = fresh()
+        self.assertEqual((m.PI_MODELS, m.PI_AUTH), (self.dir / "models.json", self.dir / "auth.json"))
         with mock.patch.dict(os.environ, {"HOME": str(self.dir)}):
             os.environ.pop("PI_CODING_AGENT_DIR", None)
-            importlib.reload(pi)
-        self.assertEqual(pi.PI_MODELS, self.dir / ".pi" / "agent" / "models.json")
+            m = fresh()
+        self.assertEqual(m.PI_MODELS, self.dir / ".pi" / "agent" / "models.json")
 
 
 
