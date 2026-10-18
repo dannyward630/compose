@@ -358,3 +358,30 @@ class SavedKey(unittest.TestCase):
         other = {"workspaces": {**ALL["workspaces"], "w": {"openrouter": "sk-or-w"}}, "typesafe": "ts-test"}
         self.assertEqual(self.run_setup(None, other, {"workspace": "w"})[:3:2], ("sk-or-w", 0))
         self.assertEqual(self.run_setup(ALL, other, {"workspace": "w"})[:3:2], ("sk-or-w", 0))
+
+
+class HomePaths(unittest.TestCase):
+    """Every line finish returns shows ~/ for the home directory followed by /; nothing else changes."""
+    def setUp(self):
+        Finish.setUp(self); self.auth.write_text(json.dumps(ALL))
+        tmp = Path(tempfile.mkdtemp()).resolve(); self.home, self.other = tmp / "al", tmp / "alex"  # alex only shares a prefix
+        self.herdr.side_effect = lambda path, shipped: ("edited", [f"copied {shipped} to {path}", f"edited {path} and {path}"])
+        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}),
+                  mock.patch.object(F, "__file__", str(self.home / "src/compose/bin/fc_finish.py")),
+                  mock.patch.object(F.fc_steps, "STEPS", ())):
+            p.start(); self.addCleanup(p.stop)
+        F.finish([], False)  # models merged once, so later endings carry no added line
+
+    def test_herdr_lines_and_the_path_line(self):
+        self.path = EXPORT
+        lines, code = F.finish([], False)
+        self.assertEqual((lines[:4], lines[-2:], code), (["copied ~/src/compose/setup/herdr.toml to ~/.config/herdr/config.toml",
+                                                          "edited ~/.config/herdr/config.toml and ~/.config/herdr/config.toml", *PATH_LINES], READY, 0))
+        self.assertFalse([l for l in lines if str(self.home) + "/" in l], lines)
+
+    def test_probe_message_with_a_home_path_and_a_prefix_sharing_path(self):
+        self.probe.return_value = (False, [f"pi not found at {self.home}/.npm/bin/pi", f"see {self.other}/f", f"HOME is {self.home}"])
+        lines, code = F.finish([], False)
+        self.assertEqual(code, 1); self.assertEqual(lines[-1], NOT_DONE + ": the model probe failed")
+        for line in ("pi not found at ~/.npm/bin/pi", f"see {self.other}/f", f"HOME is {self.home}"):
+            self.assertIn(line, lines)
