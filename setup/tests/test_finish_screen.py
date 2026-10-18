@@ -99,11 +99,12 @@ class FinishLook(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(area and area.max_scroll_y > 0 and area.show_vertical_scrollbar, area)
             bar = area.vertical_scrollbar.region
             self.assertTrue(bar.area and app.screen.region.contains_region(bar), bar)
+            self.assertEqual(area.scroll_y, area.max_scroll_y)  # opens on the end
             seen = [area.scroll_y]
-            for key in ("down", "pagedown", "up", "pageup"):
-                await pilot.press(key); await pilot.pause()
+            for key in ("pageup", "down", "up", "pagedown"):
+                await pilot.press(key); await pilot.wait_for_animation(); await pilot.pause()
                 seen.append(area.scroll_y)
-            self.assertTrue(seen[0] < seen[1] < seen[2] and seen[2] > seen[3] > seen[4] == 0, seen)
+            self.assertTrue(seen[0] > seen[1] < seen[2] > seen[3] < seen[4] == area.max_scroll_y, seen)
             await pilot.press("tab"); await pilot.pause()
             self.assertIsInstance(app.focused, Button)
             self.assertTrue(app.screen.region.contains_region(app.focused.region))
@@ -160,8 +161,12 @@ class FinishWrap(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((buttons, app.return_value), ({"Back to keys", "Quit"}, 1))
 
     async def test_a_long_ending_with_long_paths_still_scrolls_and_ends_with_done(self):
-        app, buttons = await self.finish([LONG] * 3 + [SLASHES] + [f"step {i}" for i in range(30)] + ["compose is ready"],
-                                         0, "Done", lambda app: self.assert_breaks_clean(app, LONG))
+        def check(app):
+            area = app.screen.query_one("#lines")
+            self.assertTrue(area.max_scroll_y > 0 and area.scroll_y == area.max_scroll_y)  # opens on the end
+            self.assert_breaks_clean(app, LONG)
+            self.assert_breaks_clean(app, SLASHES)
+        app, buttons = await self.finish([f"step {i}" for i in range(30)] + [LONG, SLASHES, "compose is ready"], 0, "Done", check)
         self.assertEqual((buttons, app.return_value), ({"Done"}, 0))
 
     test_long_ending_keeps_focus_a_scrollbar_and_keyboard_scrolling = FinishLook.test_long_ending_has_focus_a_scrollbar_and_scrolls_from_the_keyboard
