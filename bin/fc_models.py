@@ -227,10 +227,10 @@ def probe_result(model, p):
         replied = any(c.get("type") == "text" and c.get("text") for m in done for c in m.get("content") or [])
         if p.returncode == 0 and replied and not failed:
             return True, "answered"
-        return False, (failed or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+        return False, (failed or p.stderr or p.stdout or f"exit {p.returncode}").strip()
     out = json.loads(p.stdout.strip()) if p.stdout.strip().startswith("{") else {}
     ok = p.returncode == 0 and out.get("is_error") is False
-    return ok, "answered" if ok else (out.get("result") or p.stderr or p.stdout or f"exit {p.returncode}").strip()[:160]
+    return ok, "answered" if ok else (out.get("result") or p.stderr or p.stdout or f"exit {p.returncode}").strip()
 
 def model_available(model):
     """Whether the harness named by `model` (a claude:<id> or pi:<provider/model>) can run it on this account: one tiny
@@ -245,14 +245,14 @@ def model_available(model):
     except (OSError, json.JSONDecodeError):
         cache = {}
     hit = cache.get(mid)
-    if hit and hit.get("date") == today:
+    if hit and hit.get("date") == today and hit.get("ok"):  # only a pass is trusted: an old failing entry is probed again
         _PROBED[mid] = (hit["ok"], hit["why"])
         return _PROBED[mid]
     ok, why, transient = probe_once(model, 60)
-    if transient:  # a slow start-up or a busy API says nothing about the account: retry once, longer, and never cache it
+    if transient:  # a slow start-up or a busy API says nothing about the account: retry once, longer
         ok, why, transient = probe_once(model, 180)
-    _PROBED[mid] = (ok, why)
-    if not transient:
+    if ok:  # only a pass is cached: a failure is returned whole and the next call probes again, so a fixed key or preset works at once
+        _PROBED[mid] = (ok, why)
         cache[mid] = {"date": today, "ok": ok, "why": why}
         fc_config.PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
         fc_core.atomic_write(fc_config.PROBE_CACHE, json.dumps(cache, indent=2))
@@ -269,7 +269,7 @@ def probe_once(model, timeout):
         p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-        return False, f"{type(e).__name__}: {e}"[:160], True
+        return False, f"{type(e).__name__}: {e}", True
     return ok, why, not ok and bool(TRANSIENT.search(why))
 
 def probe_clear():
