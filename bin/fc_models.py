@@ -8,7 +8,8 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     # --dir is required: with a git worktree, opencode otherwise resolves the project root to the main checkout and edits it.
     cmd = ["opencode", "run", "--format", "json", "--dir", str(cwd), "--model", model] + (["--session", session] if session else []) + [prompt]
     # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
-    env, key = fc_core.clean_env(), fc_config.openrouter_key()
+    # OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: its scan of ~/.claude/skills follows a symlink to a checkout holding .treehouse/ worktrees until ENAMETOOLONG, and the run never ends.
+    env, key = {**fc_core.clean_env(), "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"}, fc_config.openrouter_key()
     if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}})
     for attempt in range(4):

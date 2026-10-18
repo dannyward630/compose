@@ -152,6 +152,7 @@ class Secrets(unittest.TestCase):
         with mock.patch.object(subprocess, "run", run):
             fc.fc_models.opencode(str(self.root), "openrouter/x", "hi")
         env = run.call_args[1]["env"]
+        self.assertEqual(env["OPENCODE_DISABLE_CLAUDE_CODE_SKILLS"], "1")  # its ~/.claude/skills scan can hang on ENAMETOOLONG
         self.assertClean(json.dumps({k: v for k, v in env.items() if k != "OPENCODE_CONFIG_CONTENT"}))
         self.assertNotIn(KEY, env["OPENCODE_CONFIG_CONTENT"])
         f = Path(json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["openrouter"]["options"]["apiKey"][len("{file:"):-1])
