@@ -26,6 +26,14 @@ def repo():
     return r, run
 
 
+def own_file_commit(run, cwd, base, name, msg):
+    """A commit on `base` that adds one file of its own, so merging it into base changes base's tree."""
+    blob = run("hash-object", "-w", "/dev/null", cwd=cwd).stdout.strip()
+    entries = run("ls-tree", f"{base}^{{tree}}", cwd=cwd).stdout + f"100644 blob {blob}\t{name}\n"
+    tree = subprocess.run(["git", "mktree"], cwd=cwd, input=entries, check=True, capture_output=True, text=True).stdout.strip()
+    return run("commit-tree", tree, "-p", base, "-m", msg, cwd=cwd).stdout.strip()
+
+
 class TestCrewWorktrees(unittest.TestCase):
     """Test-writing teammates write on their own branches; collect brings their commits back in task order."""
     def setUp(self):
@@ -427,7 +435,7 @@ class ProjectBranch(unittest.TestCase):
         (wt / "f.txt").write_text("f\n"); git("add", "f.txt"); git("commit", "-qm", "f")  # unmerged project: its worktree stays
         for b in ("compose/p-001", "compose/p-tests-001", "compose/p-002-bench-x", "compose/p-layer-01", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"):
             git("branch", b, "compose/p")
-        git("branch", "compose/p-003", git("commit-tree", "main^{tree}", "-p", "main", "-m", "unmerged"))
+        git("branch", "compose/p-003", own_file_commit(self.run, wt, "main", "p003.txt", "unmerged"))
         f.write_text(json.dumps({**json.loads(f.read_text()), "task_prefix": "compose/p-"}))
         self.cli("clean", "--project", "p")
         self.assertEqual(sorted(b for b in self.branches() if b.startswith("compose/p-")), ["compose/p-003", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"])
@@ -518,8 +526,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.proj = self.r.parent / "compose-p" / ".compose" / "p"
         tip = self.run("rev-parse", "main").stdout.strip()
         for b in ("fast/p/001", "fast/p/002", "fast/p/layer-01", "fast/p/layer-02"):  # commits on top of main: never ancestors of it
-            c = self.run("commit-tree", "main^{tree}", "-p", tip, "-m", b).stdout.strip()
-            self.run("branch", b, c)
+            self.run("branch", b, own_file_commit(self.run, self.r, tip, b.replace("/", "-") + ".txt", b))
         self.run("push", "-q", "origin", "fast/p/layer-01", "fast/p/layer-02")
         (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
 
