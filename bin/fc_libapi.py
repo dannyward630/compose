@@ -78,13 +78,69 @@ def python_api(wt, files, words):
 
 def js_api(wt, files, words):
     """The same blocks for the task's JS/TS files, from each imported package's type declarations in node_modules."""
-    raise NotImplementedError("fc_libapi.js_api")
+    wt = Path(wt)
+    found = {}
+    for f in files:
+        path = wt / f
+        if path.suffix not in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs") or not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except (ValueError, OSError):
+            continue
+        imports = []
+        for m in re.finditer(r"""\bimport\s+([^'";]*?)\s*from\s*["']([^"']+)["']""", text):
+            clause, spec = m.groups()
+            names = []
+            head, _, rest = clause.partition("{")
+            if re.search(r"\w", head.replace("type", "", 1) if head.strip().startswith("type ") else head) and not head.strip().startswith("*"):
+                names.append("default")
+            names += [re.split(r"\s+as\s+", n.strip())[0].replace("type ", "").strip() for n in rest.split("}")[0].split(",") if n.strip()]
+            imports.append((spec, names))
+        imports += [(m.group(1), []) for m in re.finditer(r"""\bimport\s*["']([^"']+)["']""", text)]
+        imports += [(m.group(1), []) for m in re.finditer(r"""\brequire\(\s*["']([^"']+)["']\s*\)""", text)]
+        for spec, names in imports:
+            if spec.startswith((".", "/", "node:")):
+                continue
+            parts = spec.split("/")
+            pkg = "/".join(parts[:2] if spec.startswith("@") else parts[:1])
+            for d in [path.parent, *path.parent.parents]:
+                pj = d / "node_modules" / pkg / "package.json"
+                if pj.is_file():
+                    found.setdefault(pj, []).extend(names)
+                    break
+                if d == wt:
+                    break
+    blocks = []
+    for pj, names in found.items():
+        try:
+            meta = json.loads(pj.read_text())
+            rel = meta.get("types") or meta.get("typings")
+            if rel:
+                dts = pj.parent / rel
+            else:
+                main = pj.parent / meta["main"]
+                dts = main.with_suffix(".d.ts")
+            decl = dts.read_text().split("\n")
+        except Exception:
+            continue
+        out = []
+        for n in dict.fromkeys(names):
+            pat = r"^export\s+default\b" if n == "default" else (
+                r"^export\s+(?:declare\s+)?(?:abstract\s+)?(?:function|class|const|let|var|interface|type|enum|namespace)\s+" + re.escape(n) + r"\b")
+            out += [l for l in decl if re.search(pat, l)][:1]
+        for l in decl:
+            m = re.match(r"\s+(?:(?:public|static|async|readonly|abstract)\s+)*(\w+)\s*[(<?]", l)
+            if m and re.search(r"\b" + re.escape(m.group(1)) + r"\b", words) and l not in out:
+                out.append(l)
+        blocks.append("\n".join([meta["name"] + " " + meta["version"], *out]))
+    return blocks
 
 
 def section(wt, files, words, cap=3000):
     """"" with no block; else a `LIBRARY API` header line, then the Python blocks and the JS/TS blocks, cut after the last whole
     signature line that fits in `cap` characters."""
-    blocks = python_api(wt, files, words)
+    blocks = python_api(wt, files, words) + js_api(wt, files, words)
     if not blocks:
         return ""
     lines = ["LIBRARY API"] + "\n".join(blocks).split("\n")
