@@ -291,6 +291,8 @@ class Layers(unittest.TestCase):
         for i, l in enumerate(prs, 1):
             self.assertIn(f"({i}/3)", l.splitlines()[0])
             self.assertIn("## What changed", l)
+            self.assertNotRegex(l, r" lines|attempt")  # no size line or attempt count reaches a reviewer
+        self.assertIn("## What changed\n    - task 001\n    - task 002\n\n", prs[1])  # one line per task, its test commit folded in
         self.assertIn("- Part of o/r#9", prs[1])  # as submit writes it: the issue is fixed by the layer with its last task
         self.assertIn("- Fixes o/r#9", prs[2])
         calls =(self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
@@ -433,7 +435,7 @@ class PrTitle(unittest.TestCase):
             self.git("commit", "-q", "--allow-empty", "-m", s); commits.append(self.git("rev-parse", "HEAD"))
         l = {"branch": branch, "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": commits}
         with mock.patch.object(fc.fc_layers, "layer_body", return_value=""):  # the body is not this title's concern
-            return fc.fc_layers.layer_pr(self.repo, self.proj, l, n, 300, self.METAS)[0]
+            return fc.fc_layers.layer_pr(self.repo, self.proj, l, n, self.METAS)[0]
 
     def test_each_layer_records_the_commits_it_cherry_picks_oldest_first(self):
         real, built = fc.fc_layers.build_layers, []
@@ -460,6 +462,27 @@ class PrTitle(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more (3/4)")
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
+        self.linear()
+        self.assertEqual(self.title(["001", "002", "003"], ["toggle work", "panel work", "menu work"], 1), "JS-2888: Stacked [PRs]")
+
+    def linear(self):
+        issues = {"NEB-10": {"title": "Users flip the toggle (C2)", "parentId": "NEB-9"}, "NEB-20": {"title": "Open the menu", "parentId": "NEB-9"},
+                  "NEB-1": {"parentId": "NEB-10"}, "NEB-2": {"parentId": "NEB-10"}, "NEB-3": {"parentId": "NEB-20"}}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {"id": "NEB-9", "title": "Stacked \\[PRs\\]"}, "tasks": [], "issues": issues}))
+        self.METAS = [{**m, "linear": f"NEB-{i}"} for i, m in enumerate(PrTitle.METAS, 1)]
+
+    def test_a_one_pr_stack_is_titled_by_its_feature_and_has_no_count(self):
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 1), "Add the toggle and 1 more")  # no feature title known
+        self.linear()
+        self.assertEqual(self.title(["001", "002", "003"], ["test 001", "toggle work", "panel work", "menu work"], 1), "Stacked [PRs]")
+        self.assertEqual(self.title(["groundwork"], ["Ignore build output"], 1), "Stacked [PRs]")
+
+    def test_a_layer_holding_one_whole_story_is_titled_by_that_story(self):
+        self.linear()
+        self.assertEqual(self.title(["groundwork", "001", "002"], ["Ignore build output", "toggle work", "panel work"]), "Users flip the toggle (1/2)")
+        self.assertEqual(self.title(["003"], ["test 003", "menu work"], 3, "compose/p-layer-03"), "Open the menu (3/3)")
+        self.assertEqual(self.title(["001"], ["test 001", "toggle work"]), "Add the toggle (1/2)")  # part of a story: its task
+        self.assertEqual(self.title(["002", "003"], ["panel work", "menu work"]), "Add the panel and 1 more (1/2)")  # two stories
 
 
 class PrBody(unittest.TestCase):
@@ -475,69 +498,73 @@ class PrBody(unittest.TestCase):
                           "Decisions C1, C2 on NEB-9.\n\nThe toggle is lost on reload, so r\\[\"state\"\\] resets. Later text.\n\n## Acceptance criteria\n\n* it flips"},
                "NEB-20": {"title": "Open the menu", "description": "Card C4 (compose 6). Fixes o/r#6."}}
 
-    def body(self, tasks, commits, layers=None, **results):
+    def body(self, tasks, units, layers=None, **results):
         issues = {**{k: {**v, "parentId": "NEB-9"} for k, v in self.STORIES.items()},
                   "NEB-1": {"parentId": "NEB-10"}, "NEB-2": {"parentId": "NEB-10"}, "NEB-3": {"parentId": "NEB-20"}}
         results = {"tasks": {"feature": self.FEATURE, "tasks": [], "issues": issues}, "001": {"attempts": 1}, "002": {"attempts": 3}, **results}
         for name, data in results.items():
             (self.proj / "results" / f"{name}.json").write_text(json.dumps(data))
         (self.proj.parent / "linear.json").write_text(json.dumps({"project": "https://linear.app/acme/project/p-1", "team": "Engineering"}))
-        shas = []
-        for subject, files, extra in commits:
-            for f in files: self.write(f, f"{subject}\n")
-            self.git("add", "-A"); self.git("commit", "-q", "--allow-empty", "-m", subject, *(["-m", extra] if extra else [])); shas.append(self.git("rev-parse", "HEAD"))
-        l = {"branch": "compose/p-layer-01", "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": shas}
+        shas = []  # units: each of the layer's tasks' commits, as (subject, files, message body)
+        for commits in units:
+            shas.append([])
+            for subject, files, extra in commits:
+                for f in files: self.write(f, f"{subject}\n")
+                self.git("add", "-A"); self.git("commit", "-q", "--allow-empty", "-m", subject, *(["-m", extra] if extra else [])); shas[-1].append(self.git("rev-parse", "HEAD"))
+        l = {"branch": "compose/p-layer-01", "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": [c for cs in shas for c in cs], "units": shas}
         stack = [l, *({"branch": f"compose/p-layer-{i:02d}", "tasks": t} for i, t in enumerate(layers or [], 2))]
         with mock.patch.object(fc.fc_layers, "layer_title", return_value=""):  # the title is not this body's concern
-            body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 2, 300, self.METAS, stack if layers is not None else ())[1]
+            body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 2, self.METAS, stack if layers is not None else ())[1]
         sections, lines = {}, []
         for line in filter(str.strip, body.splitlines()):
             if line.startswith("## "): sections[line[3:]] = lines = []
             else: lines.append(line.strip())
-        return sections, fc.fc_layers.layer_note(l, 300)
+        return sections
 
-    TASK_COMMITS = [("Cover the toggle", ["t004.test"], ""), ("Build the toggle", ["toggle.src", "t001.test"], ""), ("Build the panel", ["panel.src"], "")]
+    TASK_COMMITS = [[("Cover the toggle", ["t004.test"], ""), ("Build the toggle", ["toggle.src", "t001.test"], "")], [("Build the panel", ["panel.src"], "")]]
 
     def test_a_task_layer_has_every_section_in_order_from_its_stories_commits_and_results(self):
-        s, note = self.body(["001", "002"], self.TASK_COMMITS)
+        s = self.body(["001", "002"], self.TASK_COMMITS)
         self.assertEqual(list(s), ["Why", "What changed", "How it was tested", "Tickets"])
-        self.assertEqual(s["What changed"], [f"- {x}" for x in ["Cover the toggle", "Build the toggle", "Build the panel", note]])
-        self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`: passed for 2 tasks, 4 attempt(s) in all"])  # one line per command
+        self.assertEqual(s["What changed"], ["- Build the toggle", "- Build the panel"])  # one line per task, its test commits folded in
+        self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`"])  # one line per command
         self.assertEqual(s["Tickets"], ["- [NEB-1](https://linear.app/acme/issue/NEB-1)", "- [NEB-2](https://linear.app/acme/issue/NEB-2)"])
 
     def test_why_is_the_story_title_and_first_plain_sentence_never_a_brief_card_id_or_linear_escape(self):
-        s, _ = self.body(["001", "002"], self.TASK_COMMITS)
+        s = self.body(["001", "002"], self.TASK_COMMITS)
         self.assertEqual(s["Why"][0], 'Users flip the toggle. The toggle is lost on reload, so r["state"] resets.')
         why = "\n".join(s["Why"])
         for leak in ("Goal", "bin/toggle.py", "L10", "C1", "C2", "Next", "NEB-9", "\\"):
             self.assertNotIn(leak, why)
         long = {"NEB-10": {"title": "Users flip the toggle", "description": "Why. " * 200}}
         with mock.patch.object(self, "STORIES", {**self.STORIES, **long}):
-            s, _ = self.body(["001", "002"], self.TASK_COMMITS)
+            s = self.body(["001", "002"], self.TASK_COMMITS)
         self.assertLessEqual(len("\n".join(s["Why"])), 400)
 
     def test_a_layer_with_several_stories_names_their_titles(self):
-        s, _ = self.body(["002", "003"], self.TASK_COMMITS[2:], layers=[])
+        s = self.body(["002", "003"], [self.TASK_COMMITS[1], []], layers=[])
         self.assertEqual(s["Why"][0], "Users flip the toggle. Open the menu.")
 
     def test_fixes_lands_on_the_layer_that_completes_the_issue_and_part_of_below_it(self):
-        s, _ = self.body(["001", "002"], self.TASK_COMMITS, layers=[["003"]])
+        s = self.body(["001", "002"], self.TASK_COMMITS, layers=[["003"]])
         self.assertEqual(s["Why"][1:], ["- Fixes o/r#5", "- Part of o/r#7", "- Part of o/r#8"])  # #7 and #8: the feature's, its last task above
-        s, _ = self.body(["001", "002", "003"], self.TASK_COMMITS, layers=[])
+        s = self.body(["001", "002", "003"], [*self.TASK_COMMITS, []], layers=[])
         self.assertEqual(s["Why"][1:], ["- Fixes o/r#5", "- Fixes o/r#6", "- Fixes o/r#7", "- Fixes o/r#8"])
-        s, _ = self.body(["001"], self.TASK_COMMITS[:2])  # without the stack, every task not here is still to come
+        s = self.body(["001"], self.TASK_COMMITS[:1])  # without the stack, every task not here is still to come
         self.assertEqual(s["Why"][1:], ["- Part of o/r#5", "- Part of o/r#7", "- Part of o/r#8"])
 
-    def test_verify_is_reported_last_with_its_round_count_only_when_its_results_exist(self):
-        s, _ = self.body(["001"], self.TASK_COMMITS[:1], verify={"passed": True, "rounds": [{}]})
-        self.assertIn("verify passed in 1 round", s["How it was tested"][-1])
-        s, _ = self.body(["001"], [("Cover more", ["t004.test"], "")], verify={"passed": False, "rounds": [{}, {}]})
-        self.assertIn("verify failed after 2 round", s["How it was tested"][-1])
+    def test_verify_is_reported_last_after_the_checks_it_passed_only_when_its_results_exist(self):
+        checks = [{"cmd": "make lint", "exit": 1}, {"cmd": "make all", "exit": 0}, {"cmd": "python3 -m unittest tests.toggle", "exit": 0}]
+        s = self.body(["001"], self.TASK_COMMITS[:1], verify={"passed": True, "rounds": [{"checks": checks[:1]}, {"checks": checks}]})
+        self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`", "- `make all`", "- compose verify passed"])
+        s = self.body(["001"], [[("Cover more", ["t004.test"], "")]], verify={"passed": False, "rounds": [{}, {}]})
+        self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`", "- compose verify failed"])
+        self.assertEqual(s["What changed"], ["- Task 001"])  # only test commits: the task's own title
 
     def test_a_groundwork_layer_says_in_one_sentence_what_it_prepares_with_no_issues_tests_or_tickets(self):
-        s, note = self.body(["groundwork", "groundwork"], [("Ignore build output", ["a.txt"], "Keeps dist out of review."), ("Pin the toolchain", ["b.txt"], "")])
-        self.assertEqual(s, {"Why": ["Groundwork for Stacked PRs."], "What changed": ["- Ignore build output", "- Pin the toolchain", f"- {note}"]})
-        s, _ = self.body(["groundwork", "003"], [("Ignore build output", ["a.txt"], ""), ("Build the menu", ["menu.src"], "")])
+        s = self.body(["groundwork", "groundwork"], [[("Ignore build output", ["a.txt"], "Keeps dist out of review.")], [("Pin the toolchain", ["b.txt"], "")]])
+        self.assertEqual(s, {"Why": ["Groundwork for Stacked PRs."], "What changed": ["- Ignore build output", "- Pin the toolchain"]})
+        s = self.body(["groundwork", "003"], [[("Ignore build output", ["a.txt"], "")], [("Build the menu", ["menu.src"], "")]])
         self.assertEqual(s["Why"][0], "Open the menu.")  # a task in the layer makes it a task layer
         self.assertEqual(s["Tickets"], ["- [NEB-3](https://linear.app/acme/issue/NEB-3)"])
 

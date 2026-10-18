@@ -828,16 +828,16 @@ class PrTextDocs(unittest.TestCase):
         self.assertEqual(len(found), 1, start)
         return found[0]
 
-    def test_the_layer_line_is_the_size_line_under_what_changed(self):
+    def test_the_size_stays_on_the_layer_line_out_of_the_pr_body(self):
         line = " ".join(self.lockfiles)
-        self.assertNotIn("becomes the PR body", line)
         self.assertIn("each `layer` line names them and their size", line)
-        self.assertRegex(line, r"`layer` line[^.]*\bsize line\b[^.]*## What changed")
+        self.assertIn("never in the PR body", line)
+        self.assertNotIn("## What changed", line)
 
     def test_each_pr_is_titled_from_its_commits(self):
         self.assertTrue(self.pushed[0].startswith("Nothing is pushed."), self.pushed[0])
         self.assertRegex(self.text, r"\btitles?\b[^.]*\bcommits\b")
-        for word in ("subject", "`and N more`", "groundwork", "Jira", "`(i/n)`"):
+        for word in ("subject", "`and N more`", "groundwork", "Jira", "`(i/n)`", "feature's title for a one-PR stack", "one whole story", "more than one PR"):
             self.assertIn(word, self.text)
 
     def test_the_body_has_four_sections_in_order_from_issues_and_results_with_no_model(self):
@@ -847,6 +847,8 @@ class PrTextDocs(unittest.TestCase):
         self.assertRegex(self.text, r"task issues?\b[^.]*\bresults\b")
         self.assertRegex(self.text, r"\b(no|without( a| any)?|never( calls)?( a| any)?)\s+model\b")
         self.assertFalse([l for l in self.lines if "size and generated files into the PR body" in l])
+        for said in ("one line per task", "test commits folded in", "`compose verify passed`", "no attempt or round counts"):
+            self.assertIn(said, self.text)
 
     def test_the_submit_check_and_push_rule_stay_and_house_rules_hold(self):
         for kept in ("`gh stack submit --auto`", "`submit PR #N on <base>`", "`NO PR for <branch>`"):

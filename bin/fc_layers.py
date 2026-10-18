@@ -238,8 +238,8 @@ def group_by_record(proj, units, budget, max_prs=None):
 def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
-    generated, commits}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the
-    tasks)."""
+    generated, commits, units}] (units: the commits of each entry of tasks, in order), or None when the layers do not add up to
+    the same tree as the task chain (the caller then stacks the tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs)
     layers, prev, prefix = [], base, layer_prefix(repo, proj)
@@ -249,18 +249,21 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     for i, (rec_branch, g, folded) in enumerate(groups, 1):
         branch = rec_branch or f"{prefix}layer-{i:02d}"
         fc_core.sh(["git", "checkout", "-q", "-B", branch, prev], wt)
-        commits = []
-        for c in (c for u in g for c in u["commits"]):
-            if not cherry_pick_same(wt, c):
-                fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-                fc_core.say(f"stack  STOP  {c[:7]} does not apply on layer {i}; stacking task branches as they are")
-                return None
-            commits.append(fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
+        units = []
+        for u in g:
+            units.append([])
+            for c in u["commits"]:
+                if not cherry_pick_same(wt, c):
+                    fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+                    fc_core.say(f"stack  STOP  {c[:7]} does not apply on layer {i}; stacking task branches as they are")
+                    return None
+                units[-1].append(fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
         gen = {}
         for u in g:
             for f, n in u["generated"].items():
                 gen[f] = gen.get(f, 0) + n
-        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen, "commits": commits,
+        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen,
+                       "commits": [c for cs in units for c in cs], "units": units,
                        **({"fold_cap": max_prs} if folded else {})})
         prev = branch
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
@@ -274,7 +277,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     return layers
 
 def layer_note(l, budget):
-    """One layer as a line for the log and the PR body: what it holds, its size, and the generated files kept out of the count."""
+    """One layer as a line for the log: what it holds, its size, and the generated files kept out of the count."""
     names = [t for t in l["tasks"] if t != "groundwork"]
     held = ([f"groundwork x{l['tasks'].count('groundwork')}"] if "groundwork" in l["tasks"] else []) + ([f"task {', '.join(names)}"] if names else [])
     gen = "".join(f"; generated, not counted: {f} ({n} lines)" for f, n in l["generated"].items())
@@ -285,10 +288,20 @@ def layer_note(l, budget):
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
 
 def layer_title(repo, proj, l, n, metas):
-    """A layer's PR title, from its commits: one commit's subject, else the first task's title or first commit's subject plus
-    ` and N more`, with the Jira-key prefix and the ` (i/n)` suffix."""
+    """A layer's PR title names its change: the feature's title for a one-PR stack, the story's for a layer that holds every
+    task of one story and no other story's, else its one commit's subject, or its first task's title or first commit's subject
+    plus ` and N more`. With the Jira-key prefix, and the ` (i/n)` suffix only when the stack has more than one PR."""
+    cache = fc_tasks.linear_cache(proj)
+    feature, issues = cache.get("feature") or {}, cache.get("issues") or {}
+    held = {m["id"] for m in metas if m["id"] in l["tasks"]}
+    stories = {story_of(issues, m) for m in metas if m["id"] in held}
+    whole = len(stories) == 1 and None not in stories and all(m["id"] in held for m in metas if story_of(issues, m) in stories)
     subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
-    if len(subjects) == 1:
+    if n == 1 and feature.get("title"):
+        first, more = title_text(feature["title"]), 0
+    elif whole and issues[next(iter(stories))].get("title"):
+        first, more = title_text(issues[next(iter(stories))]["title"]), 0
+    elif len(subjects) == 1:
         first, more = subjects[0], 0
     else:
         tasks = [t for t in l["tasks"] if t != "groundwork"]
@@ -299,7 +312,7 @@ def layer_title(repo, proj, l, n, metas):
             first, more = subjects[0], len(subjects) - 1
     key = re.match(r"([A-Za-z]+-\d+)-", fc_core.project_config(proj).get("branch") or "")
     idx = int(l["branch"].rsplit("layer-", 1)[1])
-    return f"{key.group(1).upper() + ': ' if key else ''}{first}{f' and {more} more' if more else ''} ({idx}/{n})"
+    return f"{key.group(1).upper() + ': ' if key else ''}{first}{f' and {more} more' if more else ''}{f' ({idx}/{n})' if n > 1 else ''}"
 
 WHY_CHARS = 400
 GITHUB_ISSUE_RE = re.compile(r"https?://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)|(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)")
@@ -309,9 +322,13 @@ def plain(text):
     text = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~\"'])", r"\1", text or "")
     return re.sub(r"\[([^\]]*)\]\(<?[^)>]*>?\)", r"\1", text).strip()
 
+def title_text(text):
+    """A Linear title as plain text, without the decision cards it cites, as `(C3)` or `(C3, C4)`."""
+    return re.sub(r"\s*\((?:C\d+[,/ ]*(?:and )?)+\)", "", plain(text)).strip()
+
 def sentence(text):
-    """A title as a sentence, without the decision cards it cites, as `(C3)` or `(C3, C4)`."""
-    text = re.sub(r"\s*\((?:C\d+[,/ ]*(?:and )?)+\)", "", plain(text)).strip()
+    """A title as a sentence (title_text, ending in a full stop)."""
+    text = title_text(text)
     return text + ("" if not text or text[-1] in ".!?" else ".")
 
 def first_sentence(desc, key):
@@ -340,6 +357,11 @@ def linear_url(proj, ident):
     m = re.match(r"https://linear\.app/([^/]+)/", json.loads(f.read_text()).get("project") or "" if f.exists() else "")
     return f"[{ident}](https://linear.app/{m.group(1)}/issue/{ident})" if m else ident
 
+def story_of(issues, m):
+    """The Linear id of the story a task sits under, or None when its parent is not a cached story (the feature)."""
+    parent = (issues.get(m.get("linear")) or {}).get("parentId")
+    return parent if parent in issues else None
+
 def layer_why(proj, l, metas, layers):
     """A layer's `## Why`: what its stories are for, in at most three sentences (their titles, and for a one-story layer the
     first sentence of its description; the feature's when its tasks sit under no story), then the GitHub issues they name:
@@ -350,7 +372,7 @@ def layer_why(proj, l, metas, layers):
     feature, issues = cache.get("feature") or {}, cache.get("issues") or {}
     if not any(t != "groundwork" for t in l["tasks"]):
         return [sentence(f"Groundwork for {feature.get('title') or 'the tasks above'}")[:WHY_CHARS]]
-    story = lambda m: (issues.get(m["linear"]) or {}).get("parentId") if (issues.get(m["linear"]) or {}).get("parentId") in issues else None
+    story = lambda m: story_of(issues, m)
     stories = list(dict.fromkeys(story(m) for m in metas if m["id"] in l["tasks"]))
     text = lambda s: issues[s] if s else feature
     said = [sentence(text(s).get("title", "")) for s in stories]
@@ -376,32 +398,38 @@ def layer_why(proj, l, metas, layers):
         why = [said[0][:room - 3].rsplit(" ", 1)[0] + "..."]
     return [" ".join(why), *refs] if why else refs
 
-def layer_body(repo, proj, l, budget, metas, layers=()):
-    """A layer's PR body: `## Why` (layer_why), `## What changed` (its commit subjects and its size line), `## How it was tested`
-    (one line per test command, then verify) and `## Tickets` (its tasks' Linear links), each left out when empty. `layers` is
-    the whole stack, bottom first, so an issue's `Fixes` lands on the layer that completes it; without it, every task not in
-    this layer is still to come."""
+def layer_body(repo, proj, l, metas, layers=()):
+    """A layer's PR body: `## Why` (layer_why), `## What changed` (one line per task, the subject of its first commit that is
+    not one of its test commits, else its title; one per groundwork commit), `## How it was tested` (each test command and
+    passing verify check once, then whether compose verify passed) and `## Tickets` (its tasks' Linear links), each left out
+    when empty. `layers` is the whole stack, bottom first, so an issue's `Fixes` lands on the layer that completes it; without
+    it, every task not in this layer is still to come. The layer's size stays on its `layer` line, out of the body."""
     res = Path(proj) / "results"
     read = lambda name: json.loads((res / f"{name}.json").read_text()) if (res / f"{name}.json").exists() else {}
     by_id = {m["id"]: m for m in metas}
     tasks = [by_id[t] for t in dict.fromkeys(l["tasks"]) if t in by_id]
-    subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
-    runs = {}  # test command -> attempts of each task it tests
-    for m in tasks:
-        runs.setdefault(m["test"], []).append(read(m["id"]).get("attempts", 0))
-    how = [f"`{t}`: passed, {n[0]} attempt(s)" if len(n) == 1 else f"`{t}`: passed for {len(n)} tasks, {sum(n)} attempt(s) in all" for t, n in runs.items()]
+    subject = lambda c: fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip()
+    changed = []
+    for t, commits in zip(l["tasks"], l["units"]):
+        m = by_id.get(t)
+        if not m:  # groundwork: one line per commit
+            changed += [subject(c) for c in commits]
+            continue
+        own = [c for c in commits if not set(commit_facts(repo, c)[0]) <= set(m["protected"])]
+        changed.append(subject(own[0]) if own else commit_message(m))
     verify = read("verify")
+    checks = [c["cmd"] for c in ((verify.get("rounds") or [{}])[-1].get("checks") or []) if c.get("exit") == 0]
+    how = list(dict.fromkeys(f"`{t}`" for t in [*(m["test"] for m in tasks), *checks]))
     if verify:
-        n = len(verify.get("rounds", []))
-        how.append(f"verify passed in {n} round(s)" if verify.get("passed") else f"verify failed after {n} round(s)")
-    sections = [("Why", layer_why(proj, l, metas, list(layers))), ("What changed", [f"- {x}" for x in [*subjects, layer_note(l, budget)]]),
+        how.append("compose verify passed" if verify.get("passed") else "compose verify failed")
+    sections = [("Why", layer_why(proj, l, metas, list(layers))), ("What changed", [f"- {x}" for x in changed]),
                 ("How it was tested", [f"- {x}" for x in how]), ("Tickets", [f"- {linear_url(proj, m['linear'])}" for m in tasks])]
     return "\n\n".join(f"## {h}\n" + "\n".join(lines) for h, lines in sections if lines)
 
-def layer_pr(repo, proj, l, n, budget, metas, layers=()):
+def layer_pr(repo, proj, l, n, metas, layers=()):
     """A layer's PR title and body. The title comes from the layer's commits (`JS-2888: ... (1/4)` when the project branch starts
     with a Jira key); the body says why the layer exists, what changed, and how it was tested (layer_body)."""
-    return layer_title(repo, proj, l, n, metas), layer_body(repo, proj, l, budget, metas, layers)
+    return layer_title(repo, proj, l, n, metas), layer_body(repo, proj, l, metas, layers)
 
 def gh_pr_text(wt, b):
     """The title and body of the PR on branch b, or None when it has none."""
@@ -411,7 +439,7 @@ def gh_pr_text(wt, b):
 def write_pr_text(proj, wt, b, before, title, body):
     """Write a layer's generated title and body on its PR only when the CLI owns the text: the PR was just created (before is None),
     or its text still equals what the CLI wrote last time (recorded in pr_text.json). A person's or reviewer's edit, and any PR
-    from before the record existed, keeps its text; the size line is regenerated with the rest or not at all."""
+    from before the record existed, keeps its text; the whole text is regenerated or none of it."""
     rec_file = Path(proj) / "pr_text.json"
     rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
     last = rec.get(b)
@@ -466,7 +494,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     for l in layers or []:
         fc_core.say(f"layer  {l['branch'].removeprefix(layer_prefix(repo, proj))}  {layer_note(l, budget)}")
     for l in layers if preview and layers else []:
-        title, body = layer_pr(repo, proj, l, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
+        title, body = layer_pr(repo, proj, l, len(layers), fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
         fc_core.say(f"pr     {l['branch']}  {title}\n" + "\n".join(f"    {x}" if x else "" for x in body.splitlines()))
     if submit:
         fc_core.sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
@@ -481,7 +509,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
             fc_core.say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
             lay = next((l for l in layers or [] if l["branch"] == b), None)
             if pr and lay:
-                title, body = layer_pr(repo, proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
+                title, body = layer_pr(repo, proj, lay, len(layers), fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     return [stack]
