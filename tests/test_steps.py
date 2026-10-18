@@ -5,7 +5,7 @@ from unittest import mock
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_config, fc_steps
+import fc_config, fc_steps, fc_pi, fc_worktree
 R, D, G, c = "required", "default", "designer", True
 ROWS = [("Homebrew", D, "interactive"), ("git", R, "manual"), ("npx", R, "run"), ("gh", R, "run"), ("gh auth", R, "interactive"), ("gh stack", R, "run"),
         ("claude", R, "manual"), ("herdr", R, "run"), ("herdr skill", R, "run"), ("i-have-adhd skill", R, "run", c), ("pi", R, "run"),
@@ -139,3 +139,48 @@ class OwnedLinks(unittest.TestCase):
             self.assertFalse(self.at(name, link, None)[0], name)
         (self.home / ".local/bin/compose").write_text("")  # a copy, not a link
         self.assertFalse(fc_steps.check(self.rows["compose CLI link"], self.co)[0])
+
+class RowFixes(unittest.TestCase):
+    """superpowers adds its marketplace first; herdr integration details drop the agent; the pi auth.json override row names file and reason."""
+    SUPERPOWERS = "claude plugin marketplace add anthropics/claude-plugins-official && claude plugin install superpowers@claude-plugins-official"
+
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp()); self.bin = tmp / "bin"; self.bin.mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(tmp / "home")}); p.start(); self.addCleanup(p.stop)
+        self.rows = {r[0]: r for r in fc_steps.STEPS}
+
+    def status(self, *lines):
+        f = self.bin / "herdr"; f.write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(f"'{l}'" for l in lines) + "\n"); f.chmod(stat.S_IRWXU)
+
+    def test_superpowers_adds_the_marketplace_then_installs(self):
+        name, check, install, level, needs_claude, mode = self.rows["superpowers"]
+        self.assertEqual(install, self.SUPERPOWERS)
+        self.assertEqual((check, level, needs_claude, mode), (".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "default", True, "run"))
+
+    def test_herdr_integration_detail_drops_the_agent(self):
+        self.assertEqual(fc_steps.herdr_integration("pi"), (False, ""))  # no herdr on PATH
+        self.status("claude: outdated (claude: 1.0 < 1.1)", "pi: not installed (x)")
+        self.assertEqual(fc_steps.herdr_integration("pi"), (False, "not installed (x)"))
+        self.assertEqual(fc_steps.herdr_integration("claude"), (False, "outdated (claude: 1.0 < 1.1)"))
+        self.assertEqual(fc_steps.check(self.rows["herdr pi integration"], Path(".")), (False, "not installed (x)"))
+        self.status("pi: current", "claude: not installed")
+        self.assertEqual(fc_steps.herdr_integration("pi"), (True, ""))
+        self.assertEqual(fc_steps.check(self.rows["herdr claude integration"], Path(".")), (False, "not installed"))
+
+    def test_pi_auth_override_names_the_file_entries_and_reason(self):
+        install = self.rows["pi auth.json override"][2]
+        self.assertIn(str(fc_pi.PI_AUTH), install)
+        self.assertRegex(install, r"\bopenrouter\b(?!-)"); self.assertIn("openrouter-fast", install)
+        self.assertRegex(install, r"overrides? .*workspace key")
+        auth = Path(tempfile.mkdtemp()) / "auth.json"; auth.write_text(json.dumps({"openrouter": {"type": "api_key", "key": "sk-or-test"}}))
+        with mock.patch.object(fc_pi, "PI_AUTH", auth): self.assertEqual(fc_steps.check(self.rows["pi auth.json override"], Path(".")), (False, ""))
+        auth.write_text("{}")
+        with mock.patch.object(fc_pi, "PI_AUTH", auth): self.assertEqual(fc_steps.check(self.rows["pi auth.json override"], Path(".")), (True, ""))
+
+    def test_other_rows_keep_place_level_mode_and_install(self):
+        rows = [r for r in fc_steps.STEPS if r[0] != "trail"]
+        self.assertEqual([(r[0], r[3], r[5], r[4]) for r in rows], [(n, l, m, bool(x)) for n, l, m, *x in ROWS])
+        more = {"gh stack": "gh extension install github/gh-stack", "claude": "curl -fsSL https://claude.ai/install.sh | bash",
+                "i-have-adhd skill": "claude plugin marketplace add ayghri/i-have-adhd", "git rerere": "git config --global rerere.enabled true",
+                "treehouse": fc_worktree.TREEHOUSE_INSTALL, "framelink-figma": fc_steps.FRAMELINK_ADD, "TEXT_MODEL lines": "compose setup"}
+        self.assertEqual({n: self.rows[n][2] for n in {**INSTALLS, **more}}, {**INSTALLS, **more})
