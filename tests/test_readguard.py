@@ -65,5 +65,12 @@ class ReadGuard(unittest.TestCase):
         self.assertEqual([json.loads(l) for l in Path(self.g["log"]).read_text().splitlines()], [{"tool": "Read", "args": claude["tool_input"]}, {"tool": "bash", "args": pi["args"]}])
 
 
+    def test_the_script_exits_2_with_an_error_on_any_failure(self):
+        bad = self.top / "bad.guard.json"; bad.write_text("{not json")
+        ev = json.dumps({"tool": "read", "args": {"path": "src/c.py"}})
+        for guard, stdin in ((self.top / "missing.guard.json", ev), (bad, ev), (self.path, "not an event")):
+            r = subprocess.run(fc.fc_readguard.command(str(guard)), shell=True, input=stdin, capture_output=True, text=True, cwd=self.top)
+            self.assertEqual(r.returncode, 2, (guard, stdin, r.stdout)); self.assertTrue(r.stderr.strip(), (guard, stdin))
+
 if __name__ == "__main__":
     unittest.main()
