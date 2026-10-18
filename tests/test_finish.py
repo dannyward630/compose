@@ -161,3 +161,57 @@ class Tidy(unittest.TestCase):
         (line,) = NOT_DONE_LINE(self.run_finish({"workspaces": {"default": {"openrouter": "sk-or-test"}}})[0])
         self.assertTrue(line.startswith(NOT_DONE + ": missing ") and line.endswith("; the model probe failed"), line)
         self.assertNotIn("openrouter", line.lower())
+
+
+NR_ROWS = [(n, lambda c: (False, ""), f"fix-{n}", lvl, False, m) for n, lvl, m in
+           [("Homebrew", "default", "interactive"), ("git", "required", "manual"), ("gh", "required", "run"),
+            ("gh auth", "required", "interactive"), ("pi", "required", "run"), ("~/.local/bin on PATH", "required", "manual"),
+            ("OpenRouter key", "required", "key"), ("uv", "default", "run"), ("framelink-figma token", "designer", "key")]]
+OK = {r[0]: "ok" for r in NR_ROWS} | {"git": "done"}
+HEAD, FOOT = "compose is installed but not ready:", "run compose setup in a terminal to finish"
+ENDING = lambda *names: [HEAD, *[f"  {n}: fix-{n}" for n in names], FOOT]
+
+class NotReady(unittest.TestCase):
+    def setUp(self):
+        Finish.setUp(self); self.tty = True
+        for p in (mock.patch.object(F.fc_steps, "STEPS", tuple(NR_ROWS)), mock.patch("sys.stdin.isatty", lambda: self.tty)):
+            p.start(); self.addCleanup(p.stop)
+        F.finish([], False)  # models merged once, so later endings carry no added line
+
+    def end(self, changes, yes, auth=ALL):
+        self.auth.write_text(json.dumps(auth)); self.probe.reset_mock()
+        lines, code = F.finish(list((OK | changes).items())[::-1], yes)  # reversed: the ending follows STEPS order
+        self.assertNotIn("sk-or-test", "\n".join(lines)); return lines, code
+
+    def assert_not_ready(self, lines, code, *names):
+        self.assertEqual((lines[-len(names) - 2:], code), (ENDING(*names), 0))
+        self.assertNotIn(READY[0], lines); self.assertFalse([l for l in lines if l.startswith("next:")])
+
+    def test_yes_lists_every_missing_required_row_in_steps_order(self):
+        changes = {"gh": "failed", "gh auth": "skipped", "~/.local/bin on PATH": "manual", "OpenRouter key": "skipped",
+                   "pi": "claude", "Homebrew": "failed", "uv": "skipped", "framelink-figma token": "skipped"}
+        self.assert_not_ready(*self.end(changes, True), "gh", "gh auth", "pi", "~/.local/bin on PATH", "OpenRouter key")
+
+    def test_each_kind_of_missing_required_row_counts_alone(self):
+        for name, state in (("gh", "failed"), ("gh auth", "skipped"), ("~/.local/bin on PATH", "manual"),
+                            ("OpenRouter key", "skipped"), ("git", "skipped")):
+            with self.subTest(name):
+                self.assert_not_ready(*self.end({name: state}, True), name)
+
+    def test_yes_with_required_rows_in_place_is_ready_even_if_default_or_designer_rows_fail(self):
+        lines, code = self.end({"Homebrew": "failed", "uv": "skipped", "framelink-figma token": "skipped"}, True)
+        self.assertEqual((lines[-2:], code), (READY, 0)); self.assertNotIn(HEAD, lines)
+
+    def test_stdin_not_a_terminal_is_handled_as_yes(self):
+        self.tty = False
+        self.assert_not_ready(*self.end({"gh auth": "skipped", "OpenRouter key": "skipped"}, False), "gh auth", "OpenRouter key")
+        lines, code = self.end({}, False, {"workspaces": {"default": {}}})  # keys missing: yes never refuses to finish
+        self.assertEqual((lines[-2:], code), (READY, 0)); self.probe.assert_not_called()
+
+    def test_terminal_without_yes_is_unchanged(self):
+        lines, code = self.end({"gh auth": "skipped", "OpenRouter key": "skipped"}, False)
+        self.assertEqual((lines[-2:], code), (READY, 0)); self.assertNotIn(HEAD, lines); self.probe.assert_called_once()
+        lines, code = self.end({"gh": "failed"}, False, {"workspaces": {"default": {}}})
+        self.assertEqual((lines[-1].startswith(NOT_DONE), code), (True, 1)); self.assertNotIn(HEAD, lines)
+        self.claude = False; lines, code = self.end({"gh": "failed"}, False)
+        self.assertEqual((lines[-1], code), (CLAUDE, 1)); self.assertNotIn(HEAD, lines)
