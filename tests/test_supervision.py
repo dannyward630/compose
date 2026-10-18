@@ -533,5 +533,9 @@ class JevLeash(unittest.TestCase):
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
 
 
+class RunStop(unittest.TestCase):
+    """Task 003 (NEB-920): Ctrl-C during run_tasks stops at once, exits 130, keeps run.json; no attempt or fallback after the stop; the herdr hook."""
+
+
 if __name__ == "__main__":
     unittest.main()

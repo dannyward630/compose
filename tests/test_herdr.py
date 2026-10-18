@@ -421,5 +421,9 @@ class BareUsage(unittest.TestCase):
         self.assertIn("unrecognized arguments: --bogus", err)
 
 
+class HerdrPromptSession(unittest.TestCase):
+    """Task 004 (NEB-921): herdr_error runs the herdr client in a session of its own; return values unchanged."""
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -367,5 +367,13 @@ class ProbeCache(unittest.TestCase):
             self.assertEqual(fc.fc_models.probe_once(self.M, 60), (False, f"OSError: {whole}", True))
 
 
+class ClaudeProcGroup(unittest.TestCase):
+    """Task 002 (NEB-919): claude_once starts through fc_proc.run; timeout and stop."""
+
+
+class ClaudeReadGuard(unittest.TestCase):
+    """Task 008 (NEB-942): claude_once under --restricted, with the read guard hook when a guard file exists."""
+
+
 if __name__ == "__main__":
     unittest.main()

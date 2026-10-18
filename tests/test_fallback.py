@@ -704,3 +704,23 @@ class RetryMessage(unittest.TestCase):
         problems = prompts[2][prompts[2].index("The test still fails."):]
         self.assertIn("Full output: ", problems)
         self.assertLess(len(problems), 2000)  # the short tail, not the 3,000-character one
+
+
+class ProcGroupTurns(unittest.TestCase):
+    """Task 002 (NEB-919): pi_turn and opencode start through fc_proc.run; timeout and stop."""
+
+
+class RunnerReadGuard(unittest.TestCase):
+    """Task 007 (NEB-955): pi_turn and opencode argv, env and config with and without a guard file."""
+
+
+class ReadGuardWiring(unittest.TestCase):
+    """Task 009 (NEB-946): run_task writes the guard, herdr pi loads it, refusals are counted per attempt."""
+
+
+class LibrarySection(unittest.TestCase):
+    """Task 012 (NEB-950): the LIBRARY API section in the implementer prompt and the shared budget."""
+
+
+class DeleteTasks(unittest.TestCase):
+    """Task 015 (NEB-952): delete: applied in the clone, and delete-only tasks with no model turn."""

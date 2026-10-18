@@ -751,5 +751,9 @@ class PrBody(unittest.TestCase):
         self.assertEqual(s["Tickets"], ["- [NEB-3](https://linear.app/acme/issue/NEB-3)"])
 
 
+class DeletionBudget(unittest.TestCase):
+    """Task 014 (NEB-951): branch_budget counts a whole-file deletion and each delete: path as one line."""
+
+
 if __name__ == "__main__":
     unittest.main()

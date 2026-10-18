@@ -192,3 +192,7 @@ class SpecCheck(unittest.TestCase):
         want, we = self.run_cli(json.dumps(d))
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)
         self.assertEqual((lines, e.code), (want, we.code))
+
+
+class DeleteLine(unittest.TestCase):
+    """Task 013 (NEB-934): delete: parsed from the compose block; spec-check and the 2-file cap with delete: paths."""

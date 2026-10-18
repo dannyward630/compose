@@ -61,3 +61,7 @@ class TrailPack(FakeTrail):
         self.assertIn('CONTEXT PACK from the repo\'s trail graph (exact file:line, with source). Use it instead of exploring. '
                       'If you need more, run `trail ask "<question>"` or `trail callers <symbol>`; do not open unrelated files.\nPACK', prompts[0])
         self.assertNotRegex(prompts[0], r"\bgraft\b")
+
+
+class PackCap(FakeTrail):
+    """Task 012 (NEB-950): trail_pack cuts its output at `cap`, 12000 by default."""

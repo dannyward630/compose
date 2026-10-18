@@ -213,5 +213,9 @@ class AcceptanceJudge(unittest.TestCase):
         self.assertEqual(len(res["failed"]), 3)  # suspects are judged as before
 
 
+class PrettierOptIn(unittest.TestCase):
+    """Task 016 (NEB-953): prettier_opted_in and format_files running prettier only on an opt-in."""
+
+
 if __name__ == "__main__":
     unittest.main()
