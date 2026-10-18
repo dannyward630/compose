@@ -57,16 +57,15 @@ def state_and_labels(team, a):
 
 def replace_section(body, heading, text):
     text = text.strip()
-    if text.split("\n")[0] == heading:
-        text = text[len(heading):].strip()
-    section = heading + "\n\n" + text + "\n"
+    new = text.split("\n")[0] if text.startswith("## ") else heading
+    section = new + "\n\n" + text.removeprefix(new).strip() if text else ""
     lines = body.split("\n")
     if heading not in lines:
-        return body.rstrip("\n") + "\n\n" + section
+        return body.rstrip("\n") + "\n\n" + section + "\n" if section else body
     i = lines.index(heading)
     end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
-    head = "\n".join(lines[:i]) + "\n" if i else ""
-    return head + section + ("\n" + "\n".join(lines[end:]) if end < len(lines) else "")
+    parts = [p for p in ("\n".join(lines[:i]).rstrip("\n"), section.rstrip("\n"), "\n".join(lines[end:]).rstrip("\n")) if p]
+    return "\n\n".join(parts) + "\n" if parts else ""
 
 def verb_project(a):
     p = linear_project(a.repo)
