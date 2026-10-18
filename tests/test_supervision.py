@@ -126,6 +126,19 @@ class WatchTimeout(unittest.TestCase):
             with mock.patch.object(fc.fc_herdr, "herdr", return_value=answer), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
                 self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["closed"], closed)
 
+    def test_the_snapshot_sees_a_team_lead_whose_name_was_cut(self):
+        proj = Path(tempfile.mkdtemp()) / "clean-recut-branches"; (proj / "results").mkdir(parents=True)
+        live = {"agents": [{"name": "clean-recut-branche-orchestrator", "workspace_id": "w9", "agent_status": "working"},
+                           {"name": "clean-recut-branches-groundwork", "workspace_id": "w9", "agent_status": "idle"},
+                           {"name": "clean-bugs-orchestrator", "workspace_id": "w9", "agent_status": "done"}]}
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value=live), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+            snap = fc.fc_watch.watch_snapshot(Path("."), proj)
+        self.assertEqual(snap["agents"], {"clean-recut-branche-orchestrator": "working", "clean-recut-branches-groundwork": "idle"})
+        snap.update({"tasks": {"001": {"state": "pending"}}, "last": (NOW - 600, "teammate x reported working")})
+        ev = fc.fc_watch.watch_stalls(proj, snap, 240, now_s=NOW)
+        self.assertIn("team lead working", ev[0])
+        self.assertIn("herdr agent prompt clean-recut-branche-orchestrator", ev[0])
+
 
 def wsnap(state="pending", run=False, crashed=False, halt=None):
     return {"tasks": {"001": {"state": state, "attempts": 1, "cost": 0.0, "note": "", "linear": "", "title": "t"}}, "agents": {},

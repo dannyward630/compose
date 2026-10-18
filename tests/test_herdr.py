@@ -20,6 +20,17 @@ class AgentNames(unittest.TestCase):
         self.assertTrue(long.endswith("-003"))
         self.assertTrue(fc.fc_herdr.agent_name("9lives", "001").startswith("fc-9lives"))
 
+    def test_a_cut_name_is_still_the_projects(self):
+        slug = "clean-recut-branches"  # 20 characters: its team lead's name is cut to 32, its groundwork's is not
+        lead = fc.fc_herdr.agent_name(slug, "orchestrator")
+        self.assertEqual(lead, "clean-recut-branche-orchestrator")
+        self.assertEqual(fc.fc_herdr.agent_id(slug, lead), "orchestrator")
+        self.assertEqual(fc.fc_herdr.agent_id(slug, "clean-recut-branches-groundwork"), "groundwork")
+        self.assertEqual(fc.fc_herdr.agent_id(slug, "clean-recut-branches-tests-001"), "tests-001")
+        self.assertIsNone(fc.fc_herdr.agent_id(slug, "clean-bugs-orchestrator"))
+        for ref in ("orchestrator", lead, "clean-recut-branches-orchestrator"):  # the role, the registered name, the name the docs spell out
+            self.assertEqual(fc.fc_herdr.agent_ref(slug, ref), lead)
+
     def test_herdr_noop_outside(self):
         with mock.patch.dict(os.environ, {"HERDR_ENV": ""}):
             self.assertIsNone(fc.fc_herdr.herdr("agent", "list"))
