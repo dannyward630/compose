@@ -421,5 +421,60 @@ class PrTitle(unittest.TestCase):
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
 
 
+class PrBody(unittest.TestCase):
+    """A layer's PR body: Why, What changed, How it was tested and Tickets, from results files and the layer's own commits."""
+    setUp, git, write, commit = Layers.setUp, Layers.git, Layers.write, Layers.commit
+    METAS = [{"title": f"Task {m['id']}", "files": [], "after": "", **m} for m in [
+             {"id": "001", "linear": "NEB-1", "test": "python3 -m unittest tests.toggle", "protected": ["t004.test", "t001.test"],
+              "body": "## Goal\n\nUsers flip the toggle.\n\n## Acceptance criteria\n\n* it flips\n"},
+             {"id": "002", "linear": "NEB-2", "test": "npm test", "protected": ["t005.test"], "body": "## Goal\nShow the panel.\n"},
+             {"id": "003", "linear": "NEB-3", "test": "make menu", "protected": ["t003.test"], "body": "## Goal\nOpen the menu.\n"}]]
+
+    def body(self, tasks, commits, **results):
+        results = {"tasks": {"feature": {"id": "ENG-1", "title": "Stacked PRs"}, "tasks": []}, "001": {"attempts": 1}, "002": {"attempts": 3}, **results}
+        for name, data in results.items():
+            (self.proj / "results" / f"{name}.json").write_text(json.dumps(data))
+        shas = []
+        for subject, files, extra in commits:
+            for f in files: self.write(f, f"{subject}\n")
+            self.git("add", "-A"); self.git("commit", "-q", "--allow-empty", "-m", subject, *(["-m", extra] if extra else [])); shas.append(self.git("rev-parse", "HEAD"))
+        l = {"branch": "compose/p-layer-01", "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": shas}
+        with mock.patch.object(fc.fc_layers, "layer_title", return_value=""):  # the title is not this body's concern
+            body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 2, 300, self.METAS)[1]
+        sections, lines = {}, []
+        for line in filter(str.strip, body.splitlines()):
+            if line.startswith("## "): sections[line[3:]] = lines = []
+            else: lines.append(line.strip().lstrip("-* "))
+        return sections, fc.fc_layers.layer_note(l, 300)
+
+    TASK_COMMITS = [("Cover the toggle", ["t004.test"], ""), ("Build the toggle", ["toggle.src", "t001.test"], ""), ("Build the panel", ["panel.src"], "")]
+
+    def test_a_task_layer_has_every_section_in_order_from_its_tasks_commits_and_results(self):
+        s, note = self.body(["001", "002"], self.TASK_COMMITS)
+        self.assertEqual(list(s), ["Why", "What changed", "How it was tested", "Tickets"])
+        self.assertIn("Stacked PRs", s["Why"][0])
+        self.assertEqual(s["Why"][1:], ["Users flip the toggle.", "Show the panel."])
+        self.assertEqual(s["What changed"], ["Cover the toggle", "Build the toggle", "Build the panel", note])
+        how = s["How it was tested"]
+        self.assertIn("passed, 1 attempt", next(x for x in how if "`python3 -m unittest tests.toggle`" in x))
+        self.assertIn("passed, 3 attempt", next(x for x in how if "`npm test`" in x))
+        self.assertTrue(any("t004.test" in x for x in how))  # added by the layer and protected; a modified or unprotected file is not a test it adds
+        self.assertFalse(any(f in x for x in how for f in ("t001.test", "toggle.src", "t003.test", "verify")))
+        self.assertEqual(s["Tickets"], ["NEB-1", "NEB-2"])
+
+    def test_verify_is_reported_last_with_its_round_count_only_when_its_results_exist(self):
+        s, _ = self.body(["001"], self.TASK_COMMITS[:1], verify={"passed": True, "rounds": [{}]})
+        self.assertIn("verify passed in 1 round", s["How it was tested"][-1])
+        s, _ = self.body(["001"], [("Cover more", ["t004.test"], "")], verify={"passed": False, "rounds": [{}, {}]})
+        self.assertIn("verify failed after 2 round", s["How it was tested"][-1])
+
+    def test_a_groundwork_layer_says_whose_groundwork_it_is_with_its_commit_bodies_and_no_tests_or_tickets(self):
+        s, note = self.body(["groundwork", "groundwork"], [("Ignore build output", ["a.txt"], "Keeps dist out of review."), ("Pin the toolchain", ["b.txt"], "")])
+        self.assertEqual(s, {"Why": ["Groundwork for Stacked PRs.", "Keeps dist out of review."], "What changed": ["Ignore build output", "Pin the toolchain", note]})
+        s, _ = self.body(["groundwork", "002"], [("Ignore build output", ["a.txt"], ""), ("Build the panel", ["panel.src"], "")])
+        self.assertEqual(s["Why"][1:], ["Show the panel."])  # a task in the layer makes it a task layer
+        self.assertEqual(s["Tickets"], ["NEB-2"])
+
+
 if __name__ == "__main__":
     unittest.main()
