@@ -8,38 +8,51 @@ import fc_core, fc_config, fc_tasks
 def task_prefix(repo, proj):
     """What every task, bench and test-writer branch of the project starts with: verify.json `task_prefix` when recorded, else
     `fast/<project>/` while such branches exist (recorded once), else the project branch plus `-`."""
-    raise NotImplementedError("task_prefix")
+    f = proj / "verify.json"
+    rec = json.loads(f.read_text()) if f.exists() else {}
+    if rec.get("task_prefix"):
+        return rec["task_prefix"]
+    if fc_core.sh(["git", "for-each-ref", "--format=%(refname)", f"refs/heads/fast/{proj.name}/", f"refs/remotes/*/fast/{proj.name}/*"],
+                  repo, check=False).stdout.strip():
+        if f.exists():
+            fc_core.atomic_write(f, json.dumps({**rec, "task_prefix": f"fast/{proj.name}/"}, indent=2))
+        return f"fast/{proj.name}/"
+    return fc_core.project_branch(proj) + "-"
 
 def task_branch(repo, proj, tid):
     """Task `tid`'s branch: the task prefix plus the id."""
-    raise NotImplementedError("task_branch")
+    return task_prefix(repo, proj) + tid
 
 def own_branches(repo, proj):
     """The project's local task (`NNN`), bench (`NNN-bench-...`) and test-writer (`tests-NNN`) branches, merged or not."""
-    raise NotImplementedError("own_branches")
+    prefix = task_prefix(repo, proj)
+    pat = rf"{re.escape(prefix)}(\d{{3}}(-bench-.+)?|tests-\d{{3}})"
+    return [b for b in fc_core.sh(["git", "branch", "--list", f"{prefix}*"], repo, check=False).stdout.split()
+            if re.fullmatch(pat, b)]
 
 def replace_branch(repo, proj, branch):
     """Delete a task branch that is about to be rebuilt. Its old tip is kept under a ref: layers stacked above still carry the
     old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""
     tip = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).stdout.strip()
     if tip:
-        fc_core.sh(["git", "update-ref", f"refs/compose/replaced/{proj.name}/{branch.rsplit('/', 1)[1]}/{tip}", tip], repo)
+        fc_core.sh(["git", "update-ref", f"refs/compose/replaced/{proj.name}/{branch.removeprefix(task_prefix(repo, proj))}/{tip}", tip], repo)
     fc_core.sh(["git", "branch", "-D", branch], repo, check=False)
 
 def replaced_tips(repo, proj):
     """[(branch, old tip)] for the project's replaced task branches (see replace_branch)."""
     out = fc_core.sh(["git", "for-each-ref", "--format=%(refname) %(objectname)", f"refs/compose/replaced/{proj.name}/"], repo, check=False).stdout
-    return [(f"fast/{proj.name}/{ref.split('/')[-2]}", tip) for ref, tip in (l.split() for l in out.splitlines())]
+    return [(task_branch(repo, proj, ref.split("/")[-2]), tip) for ref, tip in (l.split() for l in out.splitlines())]
 
 def task_branches(repo, proj):
     """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
     head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    branches = [b for b in fc_core.sh(["git", "branch", "--list", f"fast/{proj.name}/*"], repo, check=False).stdout.split()
-                if re.fullmatch(rf"fast/{re.escape(proj.name)}/\d+", b)  # task branches only, not bench tags
+    prefix = task_prefix(repo, proj)
+    branches = [b for b in fc_core.sh(["git", "branch", "--list", f"{prefix}*"], repo, check=False).stdout.split()
+                if re.fullmatch(rf"{re.escape(prefix)}\d+", b)  # task branches only, not bench tags
                 and fc_core.sh(["git", "merge-base", "--is-ancestor", b, head], repo, check=False).returncode != 0]
     out = {}
     for b in branches:
-        tid = b.rsplit("/", 1)[1]
+        tid = b.removeprefix(prefix)
         res = proj / "results" / f"{tid}.json"
         base = json.loads(res.read_text()).get("base", "HEAD") if res.exists() else "HEAD"
         out[b] = base if base in branches else None
@@ -52,7 +65,8 @@ def stack_order(repo, proj):
     bases = task_branches(repo, proj)
     metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
     synced = (proj / "results" / "tasks.json").exists()
-    ids = sorted(t for t in (b.rsplit("/", 1)[1] for b in bases) if t in metas or not synced)
+    prefix = task_prefix(repo, proj)
+    ids = sorted(t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced)
     order, placed = [], set()
     while len(order) < len(ids):
         progressed = False
@@ -67,7 +81,7 @@ def stack_order(repo, proj):
         if not progressed:  # a dependency cycle in `after:`; fall back to id order for the rest
             order += [t for t in ids if t not in placed]
             break
-    return [f"fast/{proj.name}/{t}" for t in order]
+    return [task_branch(repo, proj, t) for t in order]
 
 TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
 
