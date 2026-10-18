@@ -62,10 +62,12 @@ WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree
 The map is the feature issue {feature} on Linear:
 its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
 1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking anything, look
-   for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a `list_issues`
-   search in the project for the question's key terms. A decision found there is settled: do not ask it again.
-2. Chart the map body on the feature issue (`save_issue`), then write every open question as a card: the question, why it
-   matters, the options with one line each, and your recommended option marked. Never choose for the product owner: every card
+   for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a
+   `compose linear list --search "<terms>"` search in the project for the question's key terms. A decision found there is
+   settled: do not ask it again.
+2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
+   open question as a card: the question, why it matters, the options with one line each, and your recommended option marked.
+   Never choose for the product owner: every card
    carries a recommendation, the product owner answers. Decide the channel per card with one test: would the product owner
    understand it better by seeing it than reading it? Text (the default) for requirements, conceptual choices, tradeoffs, scope,
    and toolchain; a UI topic alone is not visual. Lavish only for a card whose content IS visual: a Frame0 wireframe, a layout or
@@ -87,8 +89,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside
    `prompt`), not as a data field. If the poll is interrupted, or your Bash call ends first (Claude stops a call at 10 minutes),
    run it again at once, as often as it takes: queued answers wait for you.
-5. Record each answer in the map's Decisions so far as it arrives: one line each, a `save_issue` patch append, never a
-   whole-description write.
+5. Record each answer in the map's Decisions so far as it arrives: one line each, a `compose linear update <id> --section "## Decisions so far"` patch append, never a whole-description write.
 6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
    are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
@@ -106,11 +107,12 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    - Project link: list its epics and features with their story and task counts, and ask which one to continue (needs-user).
    - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
-     No plan: write `## Plan` in the feature description (`save_issue`, never a file): numbered steps, each with the files it
-     touches, the test that proves it, and its dependencies; decisions already made are not reopened. Stories missing: draft
-     the proposal on the map (one per user-visible slice, acceptance criteria in each, in ship order) with a card id per
-     story, then name them in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line and create them in
-     Linear only on the product owner's go. Then check and cut each story.
+     No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
+     numbered steps, each with the files it touches, the test that proves it, and its dependencies; decisions already made are
+     not reopened. Stories missing: draft the proposal on the map (one per user-visible slice, acceptance criteria in each, in
+     ship order) with a card id per story, then name them in one
+     `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line and create them in Linear with
+     `compose linear create` only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only; other stories' tasks are not touched.
    - Task: lint it against the format and the cutting rules below; re-split it if it fails.
    - A loose idea is not the planner's: say so and point at the compose skill's step 0.
@@ -138,7 +140,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    A story that fails: report `blocked "<story>: not specced: <gap list>"`, naming the cards. The gap list is one comment on
    the story.
 
-3. Cut each checked story into task issues. A task is right-sized when all of these hold:
+3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all of these hold:
    - one or two files in `files:`, one test command, at most five acceptance criteria
    - its brief (the issue description) is under 2500 characters
    - its branch stays within the CLI's 350-line limit (added plus deleted)
@@ -172,7 +174,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.
 
-5. After cutting: `compose sync` (the feature and every issue under it, read from Linear and piped in) as sections/2.md says, then `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
+5. After cutting: `compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says, then `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
    A first cut and a re-cut are one diff: read the story's live task issues, compare them to the story and the map, then
    cancel, edit, add; ids stay monotonic, and a canceled task loses its `compose` block.
    Once a task of the feature was dispatched, the edits go inside `compose change start --why "<one line>"` (sync first)
@@ -218,7 +220,7 @@ The screen that raised it: {reflect}
    this pane. Never background or kill it, never reopen a session the product owner ended. Answers arrive in the poll's `text`
    column (and as JSON after "Context data:" inside `prompt`), not as a data field. If the poll is interrupted, or your Bash call
    ends first (Claude stops a call at 10 minutes), run it again at once: queued answers wait for you.
-5. Record each answer as it arrives, a `save_issue` patch, never a whole-description write. A line that changes is struck through
+5. Record each answer as it arrives, a `compose linear update <id> --section "## Decisions so far"` patch, never a whole-description write. A line that changes is struck through
    and tagged, with the new line right after it:
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
@@ -239,8 +241,8 @@ Write a codebase brief of at most 40 lines:
 - existing patterns and helpers to reuse instead of rewriting
 - test setup: frameworks, where tests live, the exact commands
 - risks and unknowns the plan must settle
-Append it to the feature's description under Notes as `### Codebase brief` (a `save_issue` patch append, never a whole-description
-write), then report `done "<one-line summary>"`.
+Append it to the feature's description under Notes as `### Codebase brief` (a `compose linear update <id> --section "## Notes"`
+patch append, never a whole-description write), then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
