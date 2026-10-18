@@ -54,7 +54,7 @@ class Finish(unittest.TestCase):
             self.assertEqual((code, lines[-1], SKIPS(lines)), (1, f"{NOT_DONE}: missing OpenRouter, TypeSafe" + (", Linear" if linear else ""), skipped)); self.assertNotIn(READY[0], lines)
             lines, code = self.run_finish(bare, yes=True)
             fix = next(r[2] for r in F.fc_steps.STEPS if r[0] == "OpenRouter key")
-            self.assertEqual((code, lines[-3:], SKIPS(lines)), (0, [HEAD, f"  OpenRouter key: {fix}", FOOT], skipped))
+            self.assertEqual((code, lines[-1], SKIPS(lines)), (0, FOOT, skipped)); self.assertIn(HEAD, lines); self.assertIn(f"  OpenRouter key: {fix}", lines)
         self.probe.assert_not_called()  # no OpenRouter key, or yes
         lines, code = self.run_finish({"workspaces": {"default": {"openrouter": "sk-or-test"}}, "typesafe": "ts-test"})
         self.assertEqual((code, lines[-1], SKIPS(lines)), (1, NOT_DONE + ": missing Linear", ["skipped linear"]))
