@@ -216,3 +216,54 @@ class NotReady(unittest.TestCase):
         self.assertEqual((lines[-1].startswith(NOT_DONE), code), (True, 1)); self.assertNotIn(HEAD, lines)
         self.claude = False; lines, code = self.end({"gh": "failed"}, False)
         self.assertEqual((lines[-1], code), (CLAUDE, 1)); self.assertNotIn(HEAD, lines)
+
+
+IN_HERDR = "next: run claude in a pane and type /compose"
+
+class InsideHerdr(unittest.TestCase):
+    end = NotReady.end
+
+    def setUp(self):
+        NotReady.setUp(self)
+
+    def under(self, extra, changes={}, yes=False, auth=ALL):
+        """The ending with HERDR_ENV and HERDR_SOCKET_PATH dropped from the environment, then extra added."""
+        env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_SOCKET_PATH")} | extra
+        with mock.patch.dict(os.environ, env, clear=True):
+            return self.end(changes, yes, auth)
+
+    def test_ready_inside_herdr_says_run_claude_and_nothing_else_changes(self):
+        for yes, self.tty in ((False, True), (True, True), (False, False)):
+            out = self.under({}, yes=yes)
+            self.assertEqual((out[0][-2:], out[1]), (READY, 0))
+            for value in ("1", "0", "anything"):  # any non-empty value, no socket path
+                with self.subTest(yes=yes, tty=self.tty, value=value):
+                    lines, code = self.under({"HERDR_ENV": value}, yes=yes)
+                    self.assertEqual((lines[:-1], lines[-1], code), (out[0][:-1], IN_HERDR, 0))
+                    self.assertNotIn(READY[1], lines)
+
+    def test_outside_herdr_keeps_run_compose(self):
+        for extra in ({}, {"HERDR_ENV": ""}, {"HERDR_SOCKET_PATH": "/run/herdr.sock"}):
+            with self.subTest(extra):
+                lines, code = self.under(extra)
+                self.assertEqual((lines[-2:], code), (READY, 0)); self.assertNotIn(IN_HERDR, lines)
+
+    def test_endings_that_are_not_ready_print_no_next_line_inside_or_outside(self):
+        def same(changes={}, yes=False, auth=ALL):
+            out = self.under({}, changes, yes, auth)
+            for value in ("1", ""):
+                lines, code = self.under({"HERDR_ENV": value}, changes, yes, auth)
+                self.assertEqual((lines, code), out)
+                self.assertNotIn(READY[0], lines); self.assertFalse([l for l in lines if l.startswith("next:")], lines)
+            return out
+        self.herdr.return_value = ("manual", ["set by hand in config.toml: a = 1"])
+        self.probe.return_value = (False, ["provider: no endpoints"])
+        for changes, auth in (({}, ALL), ({"OpenRouter key": "skipped"}, {"workspaces": {"default": {}}})):
+            lines, code = same(changes, auth=auth)
+            self.assertEqual((lines[-1].startswith(NOT_DONE), code), (True, 1))
+        self.probe.return_value = (True, ["probe passed"])
+        self.assertEqual(same({"gh": "failed"}, True)[0][-1], FOOT)
+        self.tty = False
+        self.assertEqual(same({"gh auth": "skipped"})[0][-1], FOOT)
+        self.tty, self.claude = True, False
+        self.assertEqual(same()[0][-1], CLAUDE); self.assertEqual(same({}, True)[0][-1], CLAUDE)
