@@ -1,15 +1,29 @@
-"""The end of every setup run: models merged, key rules, the implementer probe, the exit code."""
+"""The end of every setup run: the steps' outcome, herdr's config, the PATH line, models merged, key rules, the implementer probe, the exit code."""
 import shutil
-import fc_auth, fc_config, fc_keys, fc_steps, fc_defaults
+from pathlib import Path
+import fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links, fc_steps
 
 CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://claude.ai/install.sh | bash, log in, then run compose setup again"
 
 
 def finish(results, yes):
     """(lines, code) from results, the [(row name, state)] of run_step; code 0 when compose is ready, else 1."""
+    state = dict(results)
+    groups = {s: [] for s in ("failed", "claude", "manual", "skipped")}
+    for name, _, _, _, _, mode in fc_steps.STEPS:
+        if mode != "key" and state.get(name) in groups:
+            groups[state.get(name)].append(name)
+    lines = [f"{head}: " + ", ".join(names) for head, names in
+             (("failed", groups["failed"]), ("waiting on Claude Code", groups["claude"]),
+              ("run by hand", groups["manual"]), ("skipped", groups["skipped"])) if names]
+    lines += fc_herdrconf.apply_herdr_config(Path.home() / ".config" / "herdr" / "config.toml",
+                                             Path(__file__).resolve().parents[1] / "setup" / "herdr.toml")[1]
+    if (path := fc_links.path_line()):
+        lines += ["~/.local/bin is not on your PATH; add this line to your shell profile:", path]
     cfg = fc_config.read_config()
-    merged, lines = fc_defaults.merge_models(cfg)
+    merged, added = fc_defaults.merge_models(cfg)
     fc_config.write_config(merged)
+    lines += added
     lines += fc_defaults.PRESET_STEPS
     ws, _ = fc_config.settings(cfg)
     status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), ws, fc_steps.FRAMELINK_ENV)
