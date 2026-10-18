@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers
+import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -32,19 +32,24 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
-        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-                                                           "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()},
-                                               fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
+        guard = fc_readguard.guard_file(cwd)
+        env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()}
+        if guard.exists():
+            env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
+                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
+    fc_proc.HOOKS[name] = lambda: (fc_herdr.herdr("agent", "send-keys", session["name"], "esc"), fc_herdr.herdr("pane", "close", session["pane"]))
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -74,7 +79,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
 LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `trail ask` output
 BANNERS = ("[trail]", "⬆ trail", "· no learnings")  # trail's own notes there, not code
 
-def trail_pack(wt, query, repo=None, limit=6):
+def trail_pack(wt, query, repo=None, limit=6, cap=12000):
     """Context pack from a trail graph, $0 and no model. The graph is git-ignored, so a worktree gets its own graph:
     the main repo's graph is copied in as a cache, at the same place (graft/ or .trail/cache/), and rebuilt from the
     worktree's files (so a bench reset is not leaked)."""
@@ -98,21 +103,29 @@ def trail_pack(wt, query, repo=None, limit=6):
         elif skip != "learning":
             skip = None
             lines.append(l)
-    return "\n".join(lines).strip()[:12000]
+    return "\n".join(lines).strip()[:cap]
 
-def branch_budget(wt, base, allowed=None):
+def branch_budget(wt, base, allowed=None, delete=()):
     """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
-    All three are hard limits for an implementer: size, no documents, and scope."""
+    All three are hard limits for an implementer: size, no documents, and scope. A file deleted whole counts one line, as
+    does each `delete:` path; files under a `delete:` path count nothing and are never stray."""
     fc_core.sh(["git", "add", "-A"], wt, check=False)
-    lines = 0
+    del_paths = {d.rstrip("/") for d in delete}
+    gone = set(fc_core.sh(["git", "diff", "--cached", "--diff-filter=D", "--name-only", base], wt, check=False).stdout.split())
+    lines = len(del_paths)
     for row in fc_core.sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
         a, d, f = row.split("\t", 2)
-        if not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
+        if any(f == p or f.startswith(p + "/") for p in del_paths):
+            continue
+        if f in gone:
+            lines += 1
+        elif not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
             lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
     changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     new_docs = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
                 if fc_config.DOC_RE.search(f)]
-    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs]
+    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs
+             and not any(f == p or f.startswith(p + "/") for p in del_paths)]
     return lines, new_docs, stray
 
 def task_base(repo, proj, meta):
@@ -142,6 +155,28 @@ def task_base(repo, proj, meta):
 
 PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
 
+def prettier_opted_in(wt, path):
+    """Whether the repo chose prettier for `path`: a prettier config file or a package.json `prettier` key on the way from the
+    file's directory up to `wt`, or prettier as a direct dependency of the nearest package.json."""
+    names = [".prettierrc"] + [".prettierrc." + e for e in ("json", "yaml", "yml", "json5", "js", "cjs", "mjs", "ts", "cts", "mts", "toml")] \
+        + ["prettier.config." + e for e in ("js", "cjs", "mjs", "ts", "cts", "mts")]
+    nearest = None
+    d = path.parent
+    while d == wt or wt in d.parents:
+        if any((d / n).exists() for n in names):
+            return True
+        pkg = d / "package.json"
+        if pkg.exists():
+            cfg = json.loads(pkg.read_text())
+            if "prettier" in cfg:
+                return True
+            if nearest is None:
+                nearest = cfg
+        d = d.parent
+    if nearest is None:
+        return False
+    return "prettier" in {**nearest.get("dependencies", {}), **nearest.get("devDependencies", {})}
+
 def format_files(wt, files, base="HEAD"):
     """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
     fix rounds never spend one on formatting: gofmt for Go, the repo's installed prettier for web files. Whatever the formatter,
@@ -153,7 +188,7 @@ def format_files(wt, files, base="HEAD"):
         cmd = None
         if p.suffix == ".go" and shutil.which("gofmt"):
             cmd = ["gofmt", "-w", str(p)]
-        elif p.suffix in PRETTIER_EXT:
+        elif p.suffix in PRETTIER_EXT and prettier_opted_in(wt, p):
             d = p.parent
             while cmd is None and (d == wt or wt in d.parents):  # the nearest node_modules, up to the clone root
                 bin_ = d / "node_modules" / ".bin" / "prettier"
@@ -240,6 +275,7 @@ def cmd_timed(argv):
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
+    delete = meta.get("delete") or []
     if model:
         meta["model"] = model
     tid, branch = meta["id"], fc_worktree.task_branch(repo, proj, meta["id"]) + tag
@@ -280,11 +316,18 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
         return result
+    if delete:  # the task's own deletions, applied in the clone before any turn
+        fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
-    pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo)
+    words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
+    section = fc_libapi.section(wt, meta["files"], words)
+    pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo, cap=12000 - len(section))
+    fc_readguard.write_guard(wt, meta["files"] + meta["protected"], pack)
     context = (f"CONTEXT PACK from the repo's trail graph (exact file:line, with source). Use it instead of exploring. "
                f"If you need more, run `trail ask \"<question>\"` or `trail callers <symbol>`; do not open unrelated files.\n{pack}\n\n"
                if pack else "")
+    if section:
+        context += section + "\n\n"
     root = str(wt.resolve())
     abs_files = ", ".join(str(wt.resolve() / f) for f in meta["files"]) or "files under the root as needed"
     abs_protected = ", ".join(str(wt.resolve() / f) for f in meta["protected"]) or "none"
@@ -335,12 +378,19 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             switch(why, next_prompt)
             return True
         return False
+    only_delete = bool(delete) and not meta["files"]  # the deletion is the whole task: no model turn, one test run decides
     while attempt < attempts:
+        if fc_proc.STOP.is_set():
+            raise fc_proc.Stopped
         attempt += 1
         t0 = time.time()
+        ref_before = fc_readguard.refused(wt)
         try:
-            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
-                                                       timeout=fc_models.TURN_TIMEOUT)
+            if only_delete:
+                session, reply, tools, usage = None, "", 0, {"cost": 0.0}
+            else:
+                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
+                                                           timeout=fc_models.TURN_TIMEOUT)
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
             if fall():
@@ -361,6 +411,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             time.sleep(wait)
             continue
         except subprocess.TimeoutExpired:
+            if fc_proc.STOP.is_set():
+                raise fc_proc.Stopped
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
             fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}; fresh session")
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
@@ -374,6 +426,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "payment_required"
             break
         except Exception as e:  # noqa: BLE001
+            if fc_proc.STOP.is_set():
+                raise fc_proc.Stopped
             fc_core.say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
             if fall():  # a fresh session on the same model until the fallback takes over
@@ -391,9 +445,10 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         test = run_test(meta, wt)
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
-        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
+        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
         entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
                  "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
         progress("running")
@@ -411,7 +466,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 entry["reader"] = {"model": fc_config.TEST_READER, "usage": reader}
                 cost += reader["cost"]
                 progress("running")
-        fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
+        fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
             + (f"  outside files: {', '.join(stray)}" if stray else ""))
@@ -420,6 +475,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         if verdict == "pass":
             status = "passed"
+            break
+        if only_delete:  # no turn can fix anything: the one attempt decides
             break
         problems = []
         if test.returncode != 0:

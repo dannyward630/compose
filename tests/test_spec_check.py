@@ -192,3 +192,36 @@ class SpecCheck(unittest.TestCase):
         want, we = self.run_cli(json.dumps(d))
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)
         self.assertEqual((lines, e.code), (want, we.code))
+
+
+class DeleteLine(unittest.TestCase):
+    """Task 013 (NEB-934): delete: parsed from the compose block; spec-check and the 2-file cap with delete: paths."""
+
+    def test_delete_parses_like_files_and_defaults_to_empty(self):
+        parse = lambda **kv: fc.fc_tasks.task_from_issue(task("ENG-3", "001", **kv))["delete"]
+        self.assertEqual(parse(delete="a.py, old/"), ["a.py", "old/"])
+        self.assertEqual(parse(delete=" a.py ,, old/ , "), ["a.py", "old/"])
+        self.assertEqual(parse(), [])
+        self.assertEqual(parse(delete=""), [])
+
+    def test_a_delete_only_task_passes_and_one_with_neither_still_fails(self):
+        got = check([task("ENG-3", "001", files="", delete="old.go, old/"), task("ENG-4", "002", files=""),
+                      task("ENG-5", "003", files="", delete="")])
+        self.assertEqual(got["ENG-3"], (True, "task", []))
+        for i in ("ENG-4", "ENG-5"):
+            self.assertFalse(got[i][0])
+            self.assertTrue(has(got[i][2], "empty `files:`"), got[i])
+
+    def test_a_delete_only_task_still_reports_its_other_gaps(self):
+        ok, _, gaps = check([task("ENG-3", "001", files="", protected="", delete="old.go")])["ENG-3"]
+        self.assertFalse(ok)
+        self.assertTrue(has(gaps, "empty `protected:`"), gaps)
+        self.assertFalse(has(gaps, "empty `files:`"), gaps)
+
+    def test_delete_paths_never_count_toward_the_file_cap(self):
+        many = ", ".join(f"old/{n}.go" for n in range(6))
+        got = check([task("ENG-3", "001", files="a.go, b.go", delete=many), task("ENG-4", "002", files="c.go, d.go, e.go", delete=many)])
+        self.assertEqual(got["ENG-3"], (True, "task", []))
+        self.assertTrue(has(got["ENG-4"][2], "owns 3 files"), got["ENG-4"])
+        meta = fc.fc_tasks.task_from_issue(task("ENG-3", "001", files="", delete=many))
+        self.assertEqual((len(meta["delete"]), fc.fc_spec.too_big(meta)), (6, None))

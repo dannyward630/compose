@@ -61,3 +61,15 @@ class TrailPack(FakeTrail):
         self.assertIn('CONTEXT PACK from the repo\'s trail graph (exact file:line, with source). Use it instead of exploring. '
                       'If you need more, run `trail ask "<question>"` or `trail callers <symbol>`; do not open unrelated files.\nPACK', prompts[0])
         self.assertNotRegex(prompts[0], r"\bgraft\b")
+
+
+class PackCap(FakeTrail):
+    """Task 012 (NEB-950): trail_pack cuts its output at `cap`, 12000 by default."""
+
+    def test_the_pack_is_cut_at_cap_characters_and_12000_by_default(self):
+        repo, _ = repo_with({".trail/cache/INDEX.md": "index"})
+        out = "".join(f"{i:05d} code line\n" for i in range(2000))  # 32,000 characters
+        with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout=out)):
+            for cap, want in [(500, 500), (15000, 15000), (None, 12000)]:
+                pack = fc.fc_implement.trail_pack(repo, "q") if cap is None else fc.fc_implement.trail_pack(repo, "q", cap=cap)
+                self.assertEqual(pack, out[:want])

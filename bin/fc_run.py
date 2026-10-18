@@ -1,7 +1,7 @@
-import argparse, json, os, sys, tempfile, threading, time
+import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -153,7 +153,13 @@ def run_tasks(repo, proj, tasks, a):
                     results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
                                     "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
                 break
-            finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+            try:
+                finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+            except KeyboardInterrupt:
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+                fc_proc.stop()
+                print(f"\n[{fc_core.now()}] run stopped by Ctrl-C; `compose resume` continues it", file=sys.stderr)
+                os._exit(130)
             for f in finished:
                 p = running.pop(f)
                 try:

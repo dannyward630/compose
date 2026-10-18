@@ -427,7 +427,8 @@ class Workspaces(unittest.TestCase):
                           "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
         end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"), self.assertRaises(RuntimeError) as cm:
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")), \
+                mock.patch.object(fc.fc_config, "WORKSPACE", "work"), self.assertRaises(RuntimeError) as cm:
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))
         self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
@@ -449,7 +450,7 @@ class PiKeyFromEnv(unittest.TestCase):
 
     def pi_turn(self, environ):
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.dict(os.environ, environ, clear=True):
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")), mock.patch.dict(os.environ, environ, clear=True):
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "openrouter/x/y", "hi")
         return run.call_args[0][0], run.call_args[1]["env"]
 
@@ -704,3 +705,242 @@ class RetryMessage(unittest.TestCase):
         problems = prompts[2][prompts[2].index("The test still fails."):]
         self.assertIn("Full output: ", problems)
         self.assertLess(len(problems), 2000)  # the short tail, not the 3,000-character one
+
+
+class ProcGroupTurns(unittest.TestCase):
+    """Task 002 (NEB-919): pi_turn and opencode start through fc_proc.run; timeout and stop."""
+    def setUp(self):
+        self.addCleanup(fc.fc_proc.STOP.clear); self.addCleanup(fc.fc_proc.HOOKS.clear); self.addCleanup(fc.fc_proc.RUNNING.clear)
+        self.d = Path(tempfile.mkdtemp()); (self.d / "bin").mkdir(); (self.d / "wt").mkdir(); self.wt = str(self.d / "wt"); self.addCleanup(shutil.rmtree, self.d, True)
+
+    def fake(self, body):
+        for f in (self.d / "bin" / "pi", self.d / "bin" / "opencode"): f.write_text(f"#!/bin/sh\n{body}\n"); f.chmod(0o755)
+        p = mock.patch.dict(os.environ, {"PATH": f"{self.d / 'bin'}{os.pathsep}{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
+
+    def test_both_turns_start_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
+        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {}),
+                                                      ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}',
+                                                       {"OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"})):
+            with self.subTest(name), mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
+                    mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
+                turn(self.wt, "openrouter/x/y", "hi", timeout=timeout)
+                (argv,), kw = run.call_args
+                self.assertEqual((argv[0], argv[-3:], kw["cwd"], kw["timeout"]), (name, ["--model", "openrouter/x/y", "hi"], self.wt, want))
+                self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in {**fc.fc_core.clean_env(), **extra}.items() if k != "COMPOSE_CONFIG"})
+
+    def test_a_turn_past_its_timeout_raises_and_its_whole_group_is_gone(self):
+        self.fake("sleep 31.7 >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
+        left = lambda: subprocess.run(["pgrep", "-f", "sleep 31.7( |$)"], capture_output=True, text=True).stdout.split()
+        self.addCleanup(lambda: [os.kill(int(p), 9) for p in left()])
+        with self.assertRaises(subprocess.TimeoutExpired):
+            fc.fc_models.pi_turn(self.wt, "openrouter/x/y", "hi", timeout=1)
+        for _ in range(30): left() and time.sleep(0.1)  # up to 3 s for the killed group to exit
+        self.assertEqual(left(), [], "the turn's tool child outlived its timeout")
+
+    def test_after_the_stop_no_turn_starts(self):
+        self.fake(f"touch {self.d / 'started'}; echo '{{\"type\":\"tool_execution_start\"}}'; echo '{{\"type\":\"text\",\"sessionID\":\"s\",\"part\":{{\"text\":\"ok\"}}}}'")
+        fc.fc_proc.STOP.set()
+        self.assertRaises(fc.fc_proc.Stopped, fc.fc_models.pi_turn, self.wt, "openrouter/x/y", "hi")
+        self.assertRaises(fc.fc_proc.Stopped, fc.fc_models.opencode, self.wt, "openrouter/x/y", "hi")
+        self.assertFalse((self.d / "started").exists(), "a turn started after the stop")
+
+
+class RunnerReadGuard(unittest.TestCase):
+    """Task 007 (NEB-955): pi_turn and opencode argv, env and config with and without a guard file."""
+
+    def turn(self, runner, guard, key=None):
+        wt = Path(tempfile.mkdtemp()) / "001"; wt.mkdir(); self.addCleanup(shutil.rmtree, wt.parent, True); g = wt.parent / "001.guard.json"
+        if guard:
+            g.write_text(json.dumps({"root": str(wt), "allow": [], "log": str(wt.parent / "001.refused")}))
+        out = '{"type":"tool_execution_start"}' if runner is fc.fc_models.pi_turn else '{"type":"text","sessionID":"s","part":{"text":"ok"}}'
+        with mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
+                mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_readguard, "command", lambda f: f"guard {f}"), \
+                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": key} if key else {}):
+            runner(str(wt), "openrouter/x/y", "hi")
+        argv, env = run.call_args.args[0], run.call_args.kwargs["env"]
+        self.assertEqual(env.get("COMPOSE_READGUARD"), f"guard {g}" if guard else None)
+        return argv, env
+
+    def test_pi_turn_loads_the_extension_only_with_a_guard_file(self):
+        argv, _ = self.turn(fc.fc_models.pi_turn, True)
+        self.assertIn(["-e", str(fc.fc_readguard.PI_EXT)], [argv[i:i + 2] for i in range(len(argv))])
+        self.assertNotIn("-e", self.turn(fc.fc_models.pi_turn, False)[0])
+
+    def test_opencode_config_adds_the_plugin_and_deny_rules_to_the_key_block_only_with_a_guard_file(self):
+        rules = {"plugin": [f"file://{fc.fc_readguard.OC_PLUGIN}"], "permission": {"external_directory": "deny",
+                 "bash": {"*": "deny", "trail ask *": "allow", "trail callers *": "allow"}}}
+        block = lambda: {"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc.fc_config.key_file('sk-x')}}}"}}}}
+        for guard, key, want in [(True, "sk-x", {**block(), **rules}), (True, None, rules), (False, "sk-x", block()), (False, None, None)]:
+            env = self.turn(fc.fc_models.opencode, guard, key)[1]
+            got = env.get("OPENCODE_CONFIG_CONTENT")
+            self.assertEqual(got and json.loads(got), want, (guard, key))
+
+
+class ReadGuardWiring(unittest.TestCase):
+    """Task 009 (NEB-946): run_task writes the guard, herdr pi loads it, refusals are counted per attempt."""
+    USAGE = {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+
+    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}, pack="", stale=0):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        (proj / "worktrees").mkdir(); (proj / "worktrees" / "001.refused").write_text("{}\n" * stale)  # a previous run's refusals
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in files.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
+
+    def test_the_guard_beside_the_clone_allows_files_protected_tests_and_the_pack_before_the_turn(self):
+        files = {"a.txt": "no\n", "t.sh": "x\n", "lib/x.py": "y\n"}
+        for pack, allowed in [("1. f · function\n   lib/x.py:L1-L2\n   t.sh:L3-L4", {"a.txt", "t.sh", "lib/x.py"}), ("", {"a.txt", "t.sh"})]:
+            seen = []
+            def impl(cwd, *a, **k):
+                g = Path(cwd).parent / "001.guard.json"
+                seen.append(g.exists() and json.loads(g.read_text()))
+                (Path(cwd) / "a.txt").write_text("yes\n")
+                return ("s", "", 1, self.USAGE)
+            _, _, proj = self.run_one(impl, {"protected": ["t.sh"]}, files=files, pack=pack)
+            wt = proj / "worktrees" / "001"
+            self.assertTrue(seen[0], "no guard file beside the clone when the turn started")
+            self.assertEqual(set(seen[0]["allow"]), {os.path.realpath(wt / f) for f in allowed}, pack)
+
+    def test_each_attempt_counts_only_its_own_refusals_in_the_result_and_the_run_log(self):
+        def impl(cwd, *a, **k):
+            first = not (Path(cwd).parent / "turned").exists(); (Path(cwd).parent / "turned").touch()
+            with open(Path(cwd).parent / "001.refused", "a") as f:
+                f.write('{"tool": "read", "args": {}}\n' * (2 if first else 1))
+            (Path(cwd) / "a.txt").write_text("no\n" if first else "yes\n")
+            return ("s", "", 1, self.USAGE)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result, _, proj = self.run_one(impl, stale=5)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual([e.get("refused") for e in json.loads((proj / "results" / "001.json").read_text())["log"]], [2, 1])
+        self.assertRegex(out.getvalue(), r"001 attempt 1 fail .*lines=\d+\s+refused=2\b")
+        self.assertRegex(out.getvalue(), r"001 attempt 2 pass .*lines=\d+\s+refused=1\b")
+
+    def test_herdr_pi_loads_the_extension_and_the_guard_command_only_with_a_guard_file(self):
+        for guard in (True, False):
+            root = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, root, True); (root / "wt").mkdir(); g = root / "wt.guard.json"
+            if guard:
+                g.write_text(json.dumps({"root": str(root / "wt"), "allow": [], "log": str(root / "wt.refused")}))
+            panes, starts = [], []
+            task = {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"}
+            with mock.patch.object(fc.fc_herdr, "herdr", return_value={}), \
+                    mock.patch.object(fc.fc_herdr, "herdr_agent_start", lambda *a: starts.append(list(a)) or (_ for _ in ()).throw(KeyboardInterrupt)), \
+                    mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), \
+                    mock.patch.object(fc.fc_readguard, "command", lambda f: f"guard {f}"), self.assertRaises(KeyboardInterrupt):
+                fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, task)
+            pairs = [starts[0][i:i + 2] for i in range(len(starts[0]))]
+            self.assertEqual(["-e", str(fc.fc_readguard.PI_EXT)] in pairs, guard)
+            self.assertEqual(panes[0].get("COMPOSE_READGUARD"), f"guard {g}" if guard else None)
+
+
+class LibrarySection(unittest.TestCase):
+    """Task 012 (NEB-950): the LIBRARY API section in the implementer prompt and the shared budget."""
+    def run_one(self, section, pack=True):
+        """run_task with fc_libapi.section answering `section` and a fake trail_pack that fills its cap (or gives nothing).
+        Returns (first prompt, the caps the pack got, the section calls, the clone)."""
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in {"a.txt": "no\n", "t.sh": "grep -q yes a.txt  # TEST TEXT\n"}.items(): (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": ["t.sh", "gone.sh"], "test": "sh t.sh",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.\n## Notes\nKeep it short."}
+        prompts, caps = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt); (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        def trail_pack(wt, query, repo=None, limit=6, cap=12000):
+            caps.append(cap); return "P" * cap if pack else ""
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", trail_pack), \
+                mock.patch.object(fc.fc_libapi, "section", return_value=section) as sec, mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            self.assertEqual(fc.fc_implement.run_task(repo, proj, task, 3)["status"], "passed")
+        return prompts[0], caps, sec.call_args_list, proj / "worktrees" / "001"
+
+    def test_the_section_sits_between_the_pack_and_the_body_and_shares_the_12000_budget(self):
+        section = "LIBRARY API for the packages this task imports\nlib 1.0\nlib.f(x, y=2)"
+        prompt, caps, calls, wt = self.run_one(section)
+        self.assertEqual(len(calls), 1)
+        (cwt, files, words), kw = calls[0]
+        self.assertEqual((Path(cwt).resolve(), files, kw), (wt.resolve(), ["a.txt"], {}))
+        self.assertIn("Write yes.", words); self.assertIn("TEST TEXT", words); self.assertNotIn("Keep it short.", words)
+        self.assertEqual(caps, [12000 - len(section)])
+        pack = "P" * caps[0]
+        self.assertLess(prompt.index(pack + "\n"), prompt.index(section))
+        self.assertLess(prompt.index(section) + len(section), prompt.index("## Goal\nWrite yes."))
+        self.assertNotIn("P" * (caps[0] + 1), prompt)
+
+    def test_a_section_without_a_pack_still_comes_before_the_body(self):
+        prompt, caps, _, _ = self.run_one("LIBRARY API x\nlib 1.0", pack=False)
+        self.assertLess(prompt.index("LIBRARY API x\nlib 1.0"), prompt.index("## Goal\nWrite yes."))
+        self.assertNotIn("CONTEXT PACK", prompt)
+
+    def test_no_section_leaves_the_prompt_as_today_with_the_full_pack(self):
+        prompt, caps, calls, _ = self.run_one("")
+        self.assertEqual((caps, len(calls)), ([12000], 1))
+        self.assertIn("do not open unrelated files.\n" + "P" * 12000 + "\n\n## Goal\nWrite yes.", prompt)
+
+
+class DeleteTasks(unittest.TestCase):
+    """Task 015 (NEB-952): delete: applied in the clone, and delete-only tasks with no model turn."""
+    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in files.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
+
+    def tree(self, repo):
+        branch = fc.fc_worktree.task_branch(repo, repo.parent / "proj", "001")  # run_one puts proj beside repo
+        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", branch], cwd=repo, capture_output=True, text=True)
+        return out.stdout.split() if out.returncode == 0 else None
+
+    def edit(self, seen, extra=lambda cwd: None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            seen.append(sorted(str(p.relative_to(cwd)) for p in Path(cwd).rglob("*.txt"))); (Path(cwd) / "a.txt").write_text("yes\n"); extra(Path(cwd))
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        return impl
+
+    def test_a_delete_only_task_removes_a_400_line_directory_and_commits_with_no_turn(self):
+        impl = mock.Mock(side_effect=AssertionError("no turn"))
+        files = {"a.txt": "no\n", "old/a.py": "x\n" * 300, "old/sub/b.py": "y\n" * 100}
+        result, repo, _ = self.run_one(impl, {"files": [], "delete": ["old/"], "test": "test ! -e old"}, files=files)
+        impl.assert_not_called()
+        self.assertEqual((result["status"], len(result["log"])), ("passed", 1))
+        self.assertEqual(self.tree(repo), ["a.txt"])
+
+    def test_a_delete_only_task_whose_test_fails_or_touches_other_files_fails_after_one_attempt(self):
+        for test in ("grep -q yes a.txt", "test ! -e gone.txt && touch b.py"):
+            impl = mock.Mock(side_effect=AssertionError("no turn"))
+            result, repo, _ = self.run_one(impl, {"files": [], "delete": ["gone.txt"], "test": test}, files={"a.txt": "no\n", "gone.txt": "z\n"})
+            impl.assert_not_called()
+            self.assertEqual((result["status"], len(result["log"]), self.tree(repo)), ("failed", 1, None), test)
+
+    def test_delete_paths_are_gone_before_the_turn_and_from_the_branch_beside_an_edit(self):
+        seen = []
+        result, repo, _ = self.run_one(self.edit(seen), {"delete": ["gone.txt"]}, files={"a.txt": "no\n", "gone.txt": "z\n", "keep.txt": "k\n"})
+        self.assertEqual((result["status"], seen), ("passed", [["a.txt", "keep.txt"]]))
+        self.assertEqual(self.tree(repo), ["a.txt", "keep.txt"])
+
+    def test_a_turn_deleting_a_file_outside_files_and_delete_is_rejected_for_scope(self):
+        impl = self.edit([], lambda cwd: (cwd / "keep.txt").unlink())
+        result, _, _ = self.run_one(impl, {"delete": ["gone.txt"]}, attempts=1, files={"a.txt": "no\n", "gone.txt": "z\n", "keep.txt": "k\n"})
+        self.assertEqual((result["status"], result["log"][0]["stray"]), ("rejected_scope", ["keep.txt"]))
+
+    def test_a_task_without_delete_and_without_files_still_gets_a_turn_and_no_scope_check(self):
+        seen = []
+        result, repo, _ = self.run_one(self.edit(seen, lambda cwd: (cwd / "b.py").write_text("b\n")), {"files": []})
+        self.assertEqual((result["status"], len(seen), self.tree(repo)), ("passed", 1, ["a.txt", "b.py"]))

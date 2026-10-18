@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, shutil, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys, time
@@ -419,6 +419,40 @@ class BareUsage(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("usage: compose tasks", err)
         self.assertIn("unrecognized arguments: --bogus", err)
+
+
+class HerdrPromptSession(unittest.TestCase):
+    """Task 004 (NEB-921): herdr_error runs the herdr client in a session of its own; return values unchanged."""
+
+    def call(self, body, *args):
+        """herdr_error(*args) against a fake `herdr` first on PATH whose script ends with `body` (it has `me`, the client's ids and argv)."""
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "herdr").write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+                                 "me = {'pgid': os.getpgid(0), 'argv': sys.argv[1:]}\n" + body)
+        (d / "herdr").chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": f"{d}{os.pathsep}{os.environ['PATH']}"}):
+            return fc.fc_herdr.herdr_error(*args, timeout=30)
+
+    def test_the_client_runs_outside_the_callers_process_group_and_returns_its_result(self):
+        result, err = self.call("print(json.dumps({'result': me}))", "agent", "prompt", "a-001", "hi", "--wait")
+        self.assertIsNone(err)
+        self.assertEqual(result["argv"], ["agent", "prompt", "a-001", "hi", "--wait"])
+        self.assertNotEqual(result["pgid"], os.getpgid(0))
+
+    def test_a_herdr_error_returns_its_code(self):
+        self.assertEqual(self.call("print(json.dumps({'error': {'code': 'agent_blocked'}})); sys.exit(1)", "agent", "prompt", "a", "hi"),
+                         (None, "agent_blocked"))
+
+    def test_an_error_in_the_json_counts_even_on_exit_zero(self):
+        self.assertEqual(self.call("print(json.dumps({'error': {'code': 'timeout'}}))", "agent", "prompt", "a", "hi"), (None, "timeout"))
+
+    def test_a_failure_without_json_returns_stderr_or_error(self):
+        self.assertEqual(self.call("sys.stderr.write('boom: pane gone\\n'); sys.exit(2)", "agent", "prompt", "a", "hi"), (None, "boom: pane gone"))
+        self.assertEqual(self.call("sys.exit(3)", "agent", "prompt", "a", "hi"), (None, "error"))
+
+    def test_a_result_without_a_result_key_returns_the_whole_object(self):
+        self.assertEqual(self.call("print('noise'); print(json.dumps({'ok': True}))", "agent", "get", "a"), ({"ok": True}, None))
 
 
 if __name__ == "__main__":

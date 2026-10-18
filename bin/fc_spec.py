@@ -120,7 +120,7 @@ def spec_check(data, root=None):
                 gaps.append(f"too big: {too_big(meta)}")
             if len(bullets) > 5:
                 gaps.append(f"{len(bullets)} bullets under `## Acceptance criteria` (max 5)")
-            if not meta["files"]:
+            if not meta["files"] and not meta["delete"]:
                 gaps.append("empty `files:`")
             if not meta["protected"]:
                 gaps.append("empty `protected:`")
