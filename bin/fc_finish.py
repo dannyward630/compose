@@ -1,5 +1,6 @@
 """The end of every setup run: the steps' outcome, herdr's config, the PATH line, models merged, key rules, the implementer probe, the exit code."""
 import shutil
+import sys
 from pathlib import Path
 import fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links, fc_steps
 
@@ -8,6 +9,7 @@ CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://cla
 
 def finish(results, yes):
     """(lines, code) from results, the [(row name, state)] of run_step; code 0 when compose is ready, else 1."""
+    yes = yes or not sys.stdin.isatty()
     state = dict(results)
     groups = {s: [] for s in ("failed", "claude", "manual", "skipped")}
     for name, _, _, _, _, mode in fc_steps.STEPS:
@@ -54,5 +56,12 @@ def finish(results, yes):
             reasons.append("the model probe failed")
         lines.append("setup is not finished: " + "; ".join(reasons))
         return lines, 1
+    if yes:
+        rows = [(name, install) for name, _, install, level, _, _ in fc_steps.STEPS
+                if level == "required" and state.get(name) not in ("ok", "done")]
+        if rows:
+            lines += ["compose is installed but not ready:", *[f"  {name}: {install}" for name, install in rows],
+                      "run compose setup in a terminal to finish"]
+            return lines, 0
     lines += ["compose is ready", "next: run compose to open herdr"]
     return lines, 0
