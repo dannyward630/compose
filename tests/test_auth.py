@@ -112,3 +112,52 @@ class KeyMove(unittest.TestCase):
         self.assertEqual(json.loads(self.auth.read_text()), {"typesafe": "ts-env", "workspaces": {"default": {"openrouter": "sk-or-env"}}})
         self.assertEqual(self.env.read_text(), "# keys\nTEXT_MODEL=pi:x/y\nTAIL=1\n")
         self.assertFalse(self.cfg.exists())
+
+
+class KeyClash(unittest.TestCase):
+    def setUp(self):
+        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.cfg, self.env, self.auth = d / "config.json", d / ".env", d / "auth.json"
+
+    def move(self, cfg, env, auth=None):
+        self.cfg.write_text(json.dumps(cfg))
+        self.env.write_text(env)
+        if auth: self.auth.write_text(json.dumps(auth))
+        lines = fc_auth.move_keys(self.cfg, self.env, self.auth)
+        self.assertFalse([l for l in lines for v in ("sk-or", "lin-", "ts-") if v in l])
+        return sorted(lines)
+
+    def out(self, *names):
+        return sorted(f"{n} out of {self.env if n.isupper() else self.cfg}" for n in names)
+
+    def test_differing_keys_keep_the_first_and_leave_the_other(self):
+        env = "A=1\nTYPESAFE_API_KEY=ts-env\nTEXT_MODEL_API_KEY=sk-or-env\n"
+        lines = self.move({"openrouter_api_key": "sk-or-cfg", "env": {"TYPESAFE_API_KEY": "ts-cfg"}}, env)
+        self.assertEqual(lines, self.out("openrouter_api_key", "env.TYPESAFE_API_KEY"))
+        self.assertEqual(json.loads(self.auth.read_text()), {"workspaces": {"default": {"openrouter": "sk-or-cfg"}}, "typesafe": "ts-cfg"})
+        self.assertEqual(self.env.read_text(), env)
+        self.assertEqual(sorted(fc_auth.old_keys(self.cfg, self.env)), [("TEXT_MODEL_API_KEY", self.env), ("TYPESAFE_API_KEY", self.env)])
+        snap = [p.read_bytes() for p in (self.cfg, self.env, self.auth)]
+        self.assertEqual(fc_auth.move_keys(self.cfg, self.env, self.auth), [])
+        self.assertEqual([p.read_bytes() for p in (self.cfg, self.env, self.auth)], snap)
+
+    def test_old_key_against_auth_json_per_slot(self):
+        auth = {"workspaces": {"default": {"openrouter": "sk-or-auth"}, "work": {"linear": "lin-auth"}}, "typesafe": "ts-auth"}
+        cfg = {"linear_api_key": "lin-top", "env": {"TYPESAFE_API_KEY": "ts-auth"},
+               "workspaces": {"work": {"openrouter_api_key": "sk-or-work", "linear_api_key": "lin-other"}}}
+        lines = self.move(cfg, "TEXT_MODEL_API_KEY=sk-or-auth\nTYPESAFE_API_KEY=ts-other\n", auth)
+        self.assertEqual(lines, self.out("linear_api_key", "env.TYPESAFE_API_KEY", "workspaces.work.openrouter_api_key", "TEXT_MODEL_API_KEY"))
+        self.assertEqual(json.loads(self.auth.read_text()), {"typesafe": "ts-auth", "workspaces": {
+            "default": {"openrouter": "sk-or-auth", "linear": "lin-top"}, "work": {"linear": "lin-auth", "openrouter": "sk-or-work"}}})
+        self.assertEqual(json.loads(self.cfg.read_text())["workspaces"], {"work": {"linear_api_key": "lin-other"}})
+        self.assertEqual(self.env.read_text(), "TYPESAFE_API_KEY=ts-other\n")
+        self.assertEqual(sorted(fc_auth.old_keys(self.cfg, self.env)),
+                         sorted([("workspaces.work.linear_api_key", self.cfg), ("TYPESAFE_API_KEY", self.env)]))
+
+    def test_equal_keys_in_both_places_are_both_removed(self):
+        lines = self.move({"openrouter_api_key": "sk-or-same", "env": {"TYPESAFE_API_KEY": "ts-same"}},
+                          "TEXT_MODEL_API_KEY=sk-or-same\nTYPESAFE_API_KEY=ts-same\nTAIL=1\n")
+        self.assertEqual(lines, self.out("openrouter_api_key", "env.TYPESAFE_API_KEY", "TEXT_MODEL_API_KEY", "TYPESAFE_API_KEY"))
+        self.assertEqual(json.loads(self.auth.read_text()), {"workspaces": {"default": {"openrouter": "sk-or-same"}}, "typesafe": "ts-same"})
+        self.assertEqual(self.env.read_text(), "TAIL=1\n")
+        self.assertEqual(fc_auth.old_keys(self.cfg, self.env), [])
