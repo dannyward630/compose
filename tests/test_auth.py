@@ -81,8 +81,8 @@ class KeyMove(unittest.TestCase):
     def test_moves_every_old_place_once(self):
         self.write({"workspace": "work", "openrouter_api_key": "sk-or-top", "linear_api_key": "lin-top", "models": MODELS,
                     "env": {"TYPESAFE_API_KEY": "ts-cfg", "OTHER": "x"},
-                    "workspaces": {"work": {"openrouter_api_key": "sk-or-work", "linear_api_key": "", "models": MODELS}}},
-                   ENV.replace("TYPESAFE_API_KEY=ts-env\n", ""), {"workspaces": {"work": {"openrouter": "sk-or-auth"}}})
+                    "workspaces": {"work": {"openrouter_api_key": "sk-or-auth", "linear_api_key": "", "models": MODELS}}},
+                   ENV.replace("TYPESAFE_API_KEY=ts-env\n", "").replace("sk-or-env", "sk-or-top"), {"workspaces": {"work": {"openrouter": "sk-or-auth"}}})
         before = fc_auth.old_keys(self.cfg, self.env)
         self.assertEqual(sorted(before), sorted([(n, self.cfg) for n in ("openrouter_api_key", "linear_api_key", "env.TYPESAFE_API_KEY",
                          "workspaces.work.openrouter_api_key", "workspaces.work.linear_api_key")] + [("TEXT_MODEL_API_KEY", self.env)]))
