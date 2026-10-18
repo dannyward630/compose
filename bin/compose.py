@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""compose: a frontier model plans, parallel fast implementers build, a local pipeline verifies. Stdlib only.
+"""compose: a frontier model plans, parallel fast implementers build, a local
+pipeline verifies. Stdlib only.
 
-Layout inside any repo (all of .compose/, graft/, and .trail/ are git-ignored; `init` ignores them before anything else, nothing here is committed):
-  .compose/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is its description, its tasks are issues under it
+Layout inside any repo (all of .compose/, graft/, and .trail/ are git-ignored;
+`init` ignores them before anything else, nothing here is committed):
+  .compose/<project>/linear.json   {"feature": "<Linear issue>"}: the plan is
+    its description, its tasks are issues under it
   .compose/<project>/verify.json    local verification config
-  .compose/<project>/results/       tasks.json (the team lead's Linear sync), one JSON per task run, verify results
+  .compose/<project>/results/       tasks.json (the team lead's Linear sync),
+    one JSON per task run, verify results
   .compose/<project>/worktrees/     one git clone per task
-  .compose/<project>/design.f0      the project's Frame0 wireframes; frame0/ is its own Frame0 instance's data
+  .compose/<project>/design.f0      the project's Frame0 wireframes; frame0/ is
+    its own Frame0 instance's data
 Nothing is pushed. The only network calls are the model APIs.
 """
 import argparse, os, signal, sys, time
@@ -71,10 +76,8 @@ def detach(a):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])
-    if len(sys.argv) == 1:
-        fc_herdr.herdr_attach()
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
                             ("setup", fc_setup.cmd_setup, "install and configure everything compose needs: the guided setup on a terminal; --yes takes every default and never prompts"),
                             ("update", fc_update.cmd_update, "pull this checkout --ff-only, relink the links compose owns, run doctor"),
@@ -248,11 +251,15 @@ def main():
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
+    if len(sys.argv) == 1:
+        fc_herdr.herdr_attach()
+        ap.print_help(sys.stderr)
+        sys.exit(2)
     a, extra = ap.parse_known_args()
     if extra and a.cmd == "yolo":
         a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
     elif extra:
-        ap.error(f"unrecognized arguments: {' '.join(extra)}")
+        sub.choices[a.cmd].error(f"unrecognized arguments: {' '.join(extra)}")
     if a.cmd in DETACHED and not os.environ.get("COMPOSE_DETACHED"):
         return detach(a)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
