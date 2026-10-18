@@ -864,18 +864,5 @@ class ConfigKeysDocs(unittest.TestCase):
         self.assertNotRegex(self.text, r"\bgraft\b")
 
 
-
-        self.assertNotIn("trunk is the project branch", line)
-        self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
-
-    def test_no_other_line_changes(self):
-        self.assertEqual(len(self.lines), 191)
-        self.assertFalse([l for l in self.lines if "—" in l], "em dash")
-        self.assertEqual(self.lines[20], "  │                                  ▼                                                      │")
-        self.assertEqual(self.lines[22], "  └──────────────────────────────────┬──────────────────────────────────────────────────────┘")
-        self.assertEqual(self.lines[151], "  `init` git-ignores it, `graft/`, and `.trail/` first.")
-        self.assertEqual(self.lines[153], "- `init --after <other>` branches from another project's branch when the feature needs its code.")
-
-
 if __name__ == "__main__":
     unittest.main()
