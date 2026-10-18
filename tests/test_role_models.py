@@ -170,8 +170,8 @@ class PlannerChain(unittest.TestCase):
         self.assertIn("claude:claude-sonnet-5-5 unavailable (model not found)", str(e.exception))
         self.assertIn("models.crew.default", str(e.exception))
         self.assertEqual(calls, [])
-        with self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (cached for the day now)
+        with self.probe(False, down=("claude-sonnet-5-5",)), self.assertRaises(SystemExit) as e:
+            fc.fc_crew.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (a failure is never cached)
         self.assertIn("--model", str(e.exception))
 
     def test_headless_claude_runs_carry_no_compose_or_anthropic_env(self):
