@@ -94,10 +94,54 @@ class PlainSteps(unittest.TestCase):
                     "skipped framelink-figma", "  designer extra, skipped",
                     "manual git", "  run: xcode-select --install",
                     "failed pi", "  boom", "  exit 3",
-                    "skipped framelink-figma token", "  designer extra, skipped",
+                    "skipped framelink-figma token",
                     "done npx",
                     PATH_LINE, "herdr: set ui.toast.delivery", "ready"])
                 self.assertEqual((got, self.steps), (5, ["gh", "git", "pi", "npx"]))
                 self.assertFalse((self.tmp / "ran").exists() or (self.tmp / "claude.calls").exists())
                 self.herdr.assert_not_called(), self.path.assert_not_called()
                 self.assertIs(self.finish.call_args.args[1], yes)
+
+
+class KeyRows(unittest.TestCase):
+    """A key row prints only its state and name; setup's ending carries the key's text. Other rows keep their details."""
+    maxDiff = None
+    def setUp(self):
+        Plain.setUp(self)
+        self.home.mkdir()
+        env = mock.patch.dict(os.environ, {"COMPOSE_CONFIG": str(self.home / ".compose")})
+        env.start(), self.addCleanup(env.stop)
+        row = lambda n, m, nc=False: (n, lambda c: (False, ""), "true", "required", nc, m)
+        self.rows = (row("pi", "run"), row("OpenRouter key", "key"), row("compose CLI link", "write"),
+                     row("TypeSafe key", "key"), row("Linear key or connector", "key", True), row("git", "manual"))
+        self.results = {"pi": ("failed", "boom\nexit 3"), "compose CLI link": ("done", "linked ~/.local/bin/compose"),
+                        "OpenRouter key": ("skipped", "OpenRouter key not set\n  run: compose workspace default --key"),
+                        "TypeSafe key": ("ok", "TypeSafe key set: sk-or-v1-fake-typesafe"),
+                        "Linear key or connector": ("claude", "waiting on Claude Code\nsk-or-v1-fake-linear"),
+                        "git": ("manual", "run: xcode-select --install")}
+
+    def run_plain(self, yes):
+        ending = ["setup is not finished", "  OpenRouter key: run compose workspace default --key"]
+        with mock.patch.object(fc_steps, "STEPS", self.rows), \
+             mock.patch.object(fc_steprun, "run_step", lambda row, *a, **k: self.results[row[0]]), \
+             mock.patch.object(fc_herdrconf, "apply_herdr_config", return_value=("ok", [])), \
+             mock.patch.object(fc_links, "path_line", return_value=None), \
+             mock.patch.object(fc_finish, "finish", autospec=True, return_value=(ending, 1)) as self.finish, \
+             redirect_stdout(io.StringIO()) as out:
+            got = fc_plain.run_plain(self.checkout, yes)
+        return got, out.getvalue().splitlines(), ending
+
+    def test_key_rows_print_one_line_under_yes_and_without_a_terminal(self):
+        for yes in (True, False):
+            with self.subTest(yes=yes):
+                got, lines, ending = self.run_plain(yes)
+                self.assertEqual(lines, [
+                    "failed pi", "  boom", "  exit 3",
+                    "skipped OpenRouter key",
+                    "done compose CLI link", "  linked ~/.local/bin/compose",
+                    "ok TypeSafe key",
+                    "claude Linear key or connector",
+                    "manual git", "  run: xcode-select --install"] + ending)
+                self.assertNotIn("sk-or-v1-fake", "\n".join(lines))
+                self.assertEqual(got, 1)
+                self.finish.assert_called_once_with([(n, self.results[n][0]) for n, *_ in self.rows], yes)
