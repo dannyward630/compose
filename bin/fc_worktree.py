@@ -5,6 +5,19 @@ import fc_core, fc_config, fc_tasks
 
 # ---------- stacks (gh stack) ----------
 
+def task_prefix(repo, proj):
+    """What every task, bench and test-writer branch of the project starts with: verify.json `task_prefix` when recorded, else
+    `fast/<project>/` while such branches exist (recorded once), else the project branch plus `-`."""
+    raise NotImplementedError("task_prefix")
+
+def task_branch(repo, proj, tid):
+    """Task `tid`'s branch: the task prefix plus the id."""
+    raise NotImplementedError("task_branch")
+
+def own_branches(repo, proj):
+    """The project's local task (`NNN`), bench (`NNN-bench-...`) and test-writer (`tests-NNN`) branches, merged or not."""
+    raise NotImplementedError("own_branches")
+
 def replace_branch(repo, proj, branch):
     """Delete a task branch that is about to be rebuilt. Its old tip is kept under a ref: layers stacked above still carry the
     old commits, and the chain rebase must drop them instead of replaying them onto the new layer."""

@@ -194,10 +194,11 @@ def record_layers(proj, layers):
     """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it."""
     fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l.get("keys", l["tasks"]))) for l in layers}, indent=2))
 
-def group_by_record(proj, units, budget):
+def group_by_record(proj, units, budget, max_prs=None):
     """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork, or
     groundwork above that task), and
-    units no layer holds yet are grouped as usual into new layers above. [(recorded branch or None, units)]."""
+    units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap).
+    [(recorded branch or None, units, folded)]."""
     rec_file = Path(proj) / "layers.json"
     rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
     groups, seen = [], set()
@@ -205,20 +206,20 @@ def group_by_record(proj, units, budget):
         held = [i for i, u in enumerate(units) if i not in seen and u.get("key", u["name"]) in keys]
         seen.update(held)
         if held:
-            groups.append((b, [units[i] for i in held]))
-    return groups + [(None, g) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
+            groups.append((b, [units[i] for i in held], False))
+    return groups + [(None, g, False) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
 
-def build_layers(repo, proj, base, trunk, chain, wt, budget):
+def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
     generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
-    groups = group_by_record(proj, units, budget)
+    groups = group_by_record(proj, units, budget, max_prs)
     layers, prev, prefix = [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
     if cfg_file.exists() and fc_core.project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
         fc_core.atomic_write(cfg_file, json.dumps({**fc_core.project_config(proj), "layer_prefix": prefix}, indent=2))
-    for i, (rec_branch, g) in enumerate(groups, 1):
+    for i, (rec_branch, g, folded) in enumerate(groups, 1):
         branch = rec_branch or f"{prefix}layer-{i:02d}"
         fc_core.sh(["git", "checkout", "-q", "-B", branch, prev], wt)
         for c in (c for u in g for c in u["commits"]):
@@ -230,7 +231,8 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget):
         for u in g:
             for f, n in u["generated"].items():
                 gen[f] = gen.get(f, 0) + n
-        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen})
+        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen,
+                       **({"fold_cap": max_prs} if folded else {})})
         prev = branch
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0 \
@@ -250,7 +252,16 @@ def layer_note(l, budget):
     over = f"; over the {budget}-line budget, a task is never split" if l["lines"] > budget and len(l["tasks"]) == 1 else ""
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
 
-def layer_pr(proj, l, n, budget, metas):
+def layer_title(repo, proj, l, n, metas):
+    """A layer's PR title, from its commits: one commit's subject, else the first task's title or first commit's subject plus
+    ` and N more`, with the Jira-key prefix and the ` (i/n)` suffix."""
+    raise NotImplementedError("layer_title")
+
+def layer_body(repo, proj, l, budget, metas):
+    """A layer's PR body: `## Why`, `## What changed`, `## How it was tested` and `## Tickets`, each left out when empty."""
+    raise NotImplementedError("layer_body")
+
+def layer_pr(repo, proj, l, n, budget, metas):
     """A layer's PR title and body. The title is the layer's tasks (`JS-2888: add a, add b (1/4)` when the project branch starts with a
     Jira key); the body lists the tasks and the layer's size."""
     names = {m["id"]: commit_message(m) for m in metas}
@@ -332,7 +343,7 @@ def register_stack(repo, proj, trunk, submit=False):
             fc_core.say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
             lay = next((l for l in layers or [] if l["branch"] == b), None)
             if pr and lay:
-                title, body = layer_pr(proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
+                title, body = layer_pr(repo, proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     return [stack]

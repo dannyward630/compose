@@ -244,11 +244,11 @@ class Layers(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         metas = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}]
         l = {"branch": "js-2888-react-beside-vue-layer-01", "tasks": ["001", "002"], "lines": 230, "generated": {}}
-        title, body = fc.fc_layers.layer_pr(self.proj, l, 4, 300, metas)
+        title, body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 4, 300, metas)
         self.assertEqual(title, "JS-2888: Add the toggle, Add the panel (1/4)")
         self.assertEqual(body, "- Add the toggle\n- Add the panel\n\ntask 001, 002: 230 lines")
         (self.proj / "verify.json").write_text("{}")
-        self.assertEqual(fc.fc_layers.layer_pr(self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
+        self.assertEqual(fc.fc_layers.layer_pr(self.repo, self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
 
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
