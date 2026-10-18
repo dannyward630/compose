@@ -748,6 +748,33 @@ class ProcGroupTurns(unittest.TestCase):
 class RunnerReadGuard(unittest.TestCase):
     """Task 007 (NEB-955): pi_turn and opencode argv, env and config with and without a guard file."""
 
+    def turn(self, runner, guard, key=None):
+        wt = Path(tempfile.mkdtemp()) / "001"; wt.mkdir(); self.addCleanup(shutil.rmtree, wt.parent, True); g = wt.parent / "001.guard.json"
+        if guard:
+            g.write_text(json.dumps({"root": str(wt), "allow": [], "log": str(wt.parent / "001.refused")}))
+        out = '{"type":"tool_execution_start"}' if runner is fc.fc_models.pi_turn else '{"type":"text","sessionID":"s","part":{"text":"ok"}}'
+        with mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
+                mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_readguard, "command", lambda f: f"guard {f}"), \
+                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": key} if key else {}):
+            runner(str(wt), "openrouter/x/y", "hi")
+        argv, env = run.call_args.args[0], run.call_args.kwargs["env"]
+        self.assertEqual(env.get("COMPOSE_READGUARD"), f"guard {g}" if guard else None)
+        return argv, env
+
+    def test_pi_turn_loads_the_extension_only_with_a_guard_file(self):
+        argv, _ = self.turn(fc.fc_models.pi_turn, True)
+        self.assertIn(["-e", str(fc.fc_readguard.PI_EXT)], [argv[i:i + 2] for i in range(len(argv))])
+        self.assertNotIn("-e", self.turn(fc.fc_models.pi_turn, False)[0])
+
+    def test_opencode_config_adds_the_plugin_and_deny_rules_to_the_key_block_only_with_a_guard_file(self):
+        rules = {"plugin": [f"file://{fc.fc_readguard.OC_PLUGIN}"], "permission": {"external_directory": "deny",
+                 "bash": {"*": "deny", "trail ask *": "allow", "trail callers *": "allow"}}}
+        block = lambda: {"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc.fc_config.key_file('sk-x')}}}"}}}}
+        for guard, key, want in [(True, "sk-x", {**block(), **rules}), (True, None, rules), (False, "sk-x", block()), (False, None, None)]:
+            env = self.turn(fc.fc_models.opencode, guard, key)[1]
+            got = env.get("OPENCODE_CONFIG_CONTENT")
+            self.assertEqual(got and json.loads(got), want, (guard, key))
+
 
 class ReadGuardWiring(unittest.TestCase):
     """Task 009 (NEB-946): run_task writes the guard, herdr pi loads it, refusals are counted per attempt."""
