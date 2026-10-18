@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, tempfile, unittest, urllib.error
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -217,6 +217,53 @@ class SyncFromLinear(unittest.TestCase):
             fc.fc_linear.linear_sync_payload(self.proj)
         self.assertIn("pipe the JSON on stdin", str(e.exception))
         self.assertNotIn(KEY, str(e.exception))
+
+
+class LinearErrors(unittest.TestCase):
+    """linear_gql with urlopen faked: an HTTP error whose body holds Linear's `errors` gives the text a 200 reply gives."""
+    def setUp(self):
+        p = mock.patch.object(fc.fc_config, "LINEAR_KEY", KEY); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, reply):
+        """urlopen raises `reply` when it is an exception, else answers with its bytes."""
+        r = mock.MagicMock()
+        r.__enter__.return_value = None if isinstance(reply, Exception) else io.BytesIO(reply)
+        with mock.patch("urllib.request.urlopen", side_effect=reply if isinstance(reply, Exception) else None, return_value=r):
+            return fc.fc_linear.linear_gql("query { viewer { id } }", {})
+
+    def http(self, body, code=400):
+        return urllib.error.HTTPError(fc.fc_linear.LINEAR_URL, code, "Bad Request", {}, io.BytesIO(body))
+
+    def rejected(self, reply):
+        with self.assertRaises(RuntimeError) as e:
+            self.gql(reply)
+        self.assertNotIn(KEY, str(e.exception))
+        return str(e.exception)
+
+    def test_an_http_error_with_json_errors_raises_linears_messages(self):
+        self.assertEqual(self.rejected(self.http(b'{"errors": [{"message": "a"}, {"message": "b"}]}')), "a; b")
+
+    def test_the_text_is_cut_to_300_and_is_what_a_200_reply_gives(self):
+        cases = (([{"message": "x" * 200}, {"message": "y" * 200}], ("x" * 200 + "; " + "y" * 200)[:300]),
+                 ([{"message": "Unknown field 'nope'"}, {"extensions": {}}], "Unknown field 'nope'; ?"))
+        for errors, text in cases:
+            with self.subTest(text=text[:20]):
+                body = json.dumps({"errors": errors}).encode()
+                self.assertEqual(self.rejected(self.http(body, 401)), text)
+                self.assertEqual(self.rejected(body), text)
+
+    def test_an_http_error_without_json_errors_is_raised_unchanged(self):
+        for body, code in ((b"<html>502 Bad Gateway</html>", 502), (b"", 401), (b'{"data": null}', 400), (b'["errors"]', 400)):
+            with self.subTest(body=body):
+                err = self.http(body, code)
+                with self.assertRaises(urllib.error.HTTPError) as e:
+                    self.gql(err)
+                self.assertIs(e.exception, err)
+                self.assertNotIn(KEY, str(e.exception))
+
+    def test_200_replies_behave_as_today(self):
+        self.assertEqual(self.gql(b'{"data": {"viewer": {"id": "u1"}}}'), {"viewer": {"id": "u1"}})
+        self.assertEqual(self.rejected(b'{"errors": [{"message": "a"}, {"message": "b"}]}'), "a; b")
 
 
 if __name__ == "__main__":
