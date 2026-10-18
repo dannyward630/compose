@@ -55,7 +55,17 @@ def state_and_labels(team, a):
     return out
 
 def replace_section(body, heading, text):
-    raise NotImplementedError
+    text = text.strip()
+    if text.split("\n")[0] == heading:
+        text = text[len(heading):].strip()
+    section = heading + "\n\n" + text + "\n"
+    lines = body.split("\n")
+    if heading not in lines:
+        return body.rstrip("\n") + "\n\n" + section
+    i = lines.index(heading)
+    end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+    head = "\n".join(lines[:i]) + "\n" if i else ""
+    return head + section + ("\n" + "\n".join(lines[end:]) if end < len(lines) else "")
 
 def verb_project(a):
     p = linear_project(a.repo)
@@ -120,7 +130,29 @@ def verb_create(a):
     print(f"created {issue['identifier']}")
 
 def verb_update(a):
-    raise NotImplementedError
+    if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
+        sys.exit("update takes one of --section, --append, --description")
+    issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
+                                 {"id": a.target[0]})["issue"]
+    in_scope(issue, a)
+    inp = {}
+    if a.title:
+        inp["title"] = a.title
+    if a.parent:
+        inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
+    inp.update(state_and_labels(issue["team"], a))
+    if a.section or a.append or a.description:
+        body, old = read_body(a), issue["description"] or ""
+        if a.section:
+            inp["description"] = replace_section(old, a.section, body)
+        elif a.append:
+            inp["description"] = old.rstrip("\n") + "\n\n" + body.strip() + "\n"
+        else:
+            inp["description"] = body
+    fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
+    if a.blocked_by is not None:
+        fc_linear.linear_blocked_by(issue, a.blocked_by.split(","))
+    print(f"updated {issue['identifier']}")
 
 def verb_comment(a):
     raise NotImplementedError
