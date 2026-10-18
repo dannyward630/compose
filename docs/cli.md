@@ -3,6 +3,7 @@
 This page lists every `compose` command and its flags.
 The team lead runs them for you, and you run them yourself only in manual mode.
 
+Run `compose` with no command on a terminal outside herdr to open the herdr session `compose` ([herdr.md](herdr.md)).
 Every command takes `--repo <path>` (default `.`) and `--project <name>`.
 `--project` works from any checkout of the repository.
 You can leave it out when the repo has one project.
@@ -44,7 +45,9 @@ These commands create, list, and clean up projects.
 
 | Command | Does |
 |---|---|
-| `doctor` | Checks every tool and skill file `compose` depends on (herdr, treehouse, trail, gh, gh stack, claude, npx, pi, bp, the `framelink-figma` MCP server and its token file, and the herdr, i-have-adhd, and writing-plans skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old one and exits 1 when a required one is missing; pi, bp, treehouse, and trail only warn, as does a gh that is installed but not logged in (`gh auth login`), and Framelink warns as `needed for the designer`. `init` runs the same check first and stops before creating anything, and `designer` checks Framelink first and stops before printing a brief |
+| `setup` | Installs and configures everything `compose` needs ([new-machine.md](new-machine.md)). On a terminal it opens the guided Textual setup; `--yes`, or no terminal, takes every default through a plain path and never prompts. It exits 1 when Claude Code is missing, a key rule is unmet, or the model probe fails |
+| `update` | Pulls the checkout with `--ff-only`, relinks the CLI, the skill, and `bp`, and runs `doctor`. It stops when the checkout has local changes |
+| `doctor` | Checks every setup step (the tools, links, keys by presence only, pi's provider, the herdr config, the skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old step and exits 1 when a required one is missing; the default-on steps print `- optional`, and the designer rows print one `designer extras not set up` line. While `claude` is missing, the steps that need it share one `waiting on Claude Code` line. It also warns about a key still in `config.json` or `.env`, and about a gh that is not logged in. `init` runs the same check first and stops before creating anything only when a required tool is missing, and `designer` checks Framelink first and stops before printing a brief |
 | `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s |
@@ -109,7 +112,7 @@ One command lists, switches, and manages workspaces.
 
 | Command | Does |
 |---|---|
-| `workspace [<name>\|add\|key\|remove]` | Lists, switches, or manages workspaces ([workspaces.md](workspaces.md)) |
+| `workspace [<name>\|add\|key\|remove]` | Lists, switches, or manages workspaces ([workspaces.md](workspaces.md)). `key <name>` sets the OpenRouter key; `--linear` sets the Linear key and `--typesafe` the TypeSafe key. Keys go to `~/.compose/auth.json` |
 
 ## Results
 

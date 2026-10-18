@@ -75,7 +75,8 @@ Run `/compose <what you want>` and each feature moves through the same life cycl
 11. **Pull requests.**
     Passed tickets become one gh stack, and when you say so, each layer becomes a draft pull request for your reviewers to read and merge.
 
-Inside herdr, every agent works in its own pane, and you can type into any of them.
+Every agent works in its own herdr pane, and you can type into any of them.
+`compose` with no command opens the herdr session for you.
 Nothing is pushed until you say so, and `compose` never merges anything.
 
 ## Start a planner or designer directly
@@ -134,12 +135,26 @@ The figures in this README come from small benchmarks and one prototype, and the
 
 ## Quick start
 
-1. Install the tools listed in [docs/requirements.md](docs/requirements.md), or follow [docs/new-machine.md](docs/new-machine.md) step by step on a fresh machine.
-2. From this repo, install `compose` with `ln -s "$PWD" ~/.claude/skills/compose` and `ln -s "$PWD/bin/compose" ~/.local/bin/`.
-   Run `compose doctor` to confirm every tool and skill file it needs is there; each missing one prints with its install command.
-3. In the target repo, check out the branch the feature belongs on and open Claude Code.
-4. Run `/compose <what you want>` and answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
-5. Review the task list, say go, and read the stack it builds.
+1. On a Mac, run the one install command:
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/prodoxx/compose/main/bin/install.sh | sh
+   ```
+   It clones `compose` into `~/.compose/src` (`COMPOSE_INSTALL_DIR` picks another place), links `compose` and the Claude skill, installs uv when it is missing, and starts `compose setup`.
+2. Answer `compose setup`.
+   On a terminal it is a guided Textual screen: pick the steps, enter the keys, skip what you don't need.
+   With `--yes`, or when there is no terminal, it takes every default through a plain path, never prompts, and ends by listing what is still missing.
+   It installs the tools `compose` needs, links the CLI and the skill, and saves your keys in `~/.compose/auth.json` (mode 600).
+   It sets up herdr with the notification settings `compose` needs, declares pi's OpenRouter provider, writes the default model choices, and ends with a model probe.
+   Claude Code is not installed for you: setup runs the steps that do not need it, then prints the install line and asks you to run `compose setup` again.
+   [docs/new-machine.md](docs/new-machine.md) lists every step.
+3. Run `compose` in a terminal.
+   It opens the herdr session `compose`.
+   Run `claude` in a pane, then type `/compose <what you want>`.
+   Answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
+4. Review the task list, say go, and read the stack it builds.
+
+Running the install command again is the upgrade, and so is `compose update`.
+`compose doctor` checks every step and prints one `MISSING` line per gap with its fix.
 
 ## When to use it
 
@@ -158,7 +173,9 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
 |---|---|
-| `compose doctor` | Checks every tool and skill file `compose` depends on and prints the install command for each missing one; `init` runs it first |
+| `compose setup [--yes]` | Installs and configures everything `compose` needs: the guided setup on a terminal, the plain path with `--yes` or no terminal |
+| `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |
+| `compose doctor` | Checks every setup step and prints the fix for each missing one; `init` runs it first |
 | `compose init --project <name> [--branch <branch>]` | Creates the project's branch (`compose/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
 | `compose tasks --project <name>` | Shows the task list for you to review before dispatch |
 | `compose run --project <name>` | Dispatches the tasks to parallel implementers |
@@ -168,7 +185,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose resume --project <name>` | Continues after a billing halt |
 | `compose clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
 | `compose yolo --project <name> [--push] [words]\|--clear-words\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
-| `compose workspace [<name>]` | Lists or switches billing workspaces |
+| `compose workspace [<name>]` | Lists or switches billing workspaces; `workspace key` sets a key in `~/.compose/auth.json` |
 
 Every command is documented in [docs/cli.md](docs/cli.md).
 
@@ -177,7 +194,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | Page | Read it for |
 |---|---|
 | [requirements.md](docs/requirements.md) | Tools, accounts, keys, and files outside the repo |
-| [new-machine.md](docs/new-machine.md) | Setting `compose` up on a new machine, step by step |
+| [new-machine.md](docs/new-machine.md) | The install command and what `compose setup` does |
 | [how-it-works.md](docs/how-it-works.md) | The loop, changing course, projects, Linear levels, and model choices |
 | [cli.md](docs/cli.md) | Every command, manual mode, and flags |
 | [herdr.md](docs/herdr.md) | Watching and steering every agent inside herdr |
@@ -190,7 +207,8 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 Run the CLI tests with `python3 -m unittest discover -s tests`.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
 Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
-`bin/compose` uses only the Python standard library, `jev/` is its own uv project, and `bp/` is one Node file with no dependencies.
+The CLI core is stdlib; `setup/` and `jev/` are uv projects, and `bp/` is one Node file with no dependencies.
+Run the setup app's tests with `uv run --locked --project setup python -m unittest discover -s setup/tests`.
 
 ## Credits
 

@@ -1,6 +1,6 @@
 # Workspaces
 
-Setting up a workspace takes a few commands and one config file.
+Setting up a workspace takes a few commands, one config file, and one key file.
 When you finish, every OpenRouter call bills the account you chose, and each teammate role runs the model you picked for it.
 
 A workspace is one OpenRouter account and its settings.
@@ -14,6 +14,7 @@ compose workspace                         # list (* = active, keys as their last
 compose workspace personal                # switch; run and verify print `workspace <name>` first
 pbpaste | compose workspace add client-x  # create one with the key on the clipboard
 pbpaste | compose workspace key client-x  # set or rotate its key; add --linear for its Linear key
+pbpaste | compose workspace key default --typesafe  # the TypeSafe key, one for every workspace
 compose workspace remove client-x         # delete; removing the active one switches to default
 ```
 
@@ -22,13 +23,22 @@ The slash command never asks for a key in chat.
 Type `! pbpaste | compose workspace key <name>` instead.
 
 - Keys come from piped stdin or a hidden prompt, and never from an argument.
+  They are stored in `~/.compose/auth.json`, not in the config.
 - A workspace added without a key stops every command while it is active, so nothing bills another account.
 - Names are letters, digits, `-`, and `_`.
   The names `add`, `key`, `remove`, and `default` are reserved.
 
+## Keys
+
+`~/.compose/auth.json` holds every key, at mode 600 in a directory of mode 700.
+Its shape is `{"workspaces": {"default": {"openrouter": ..., "linear": ...}, "<name>": {...}}, "typesafe": ...}`.
+A workspace without its own OpenRouter key bills `default`'s, unless it was added with an empty key.
+The first `compose` command after an upgrade moves any key still in `config.json` or `~/.compose/.env` into `auth.json` and prints one line per key.
+Keys reach pi, OpenCode, and jev through the environment, never through a command line.
+
 ## Config
 
-The commands edit `~/.compose/config.json` (mode 600).
+The commands edit `~/.compose/config.json` (mode 600), which holds no keys.
 The active workspace is merged over the top level:
 
 ```json
@@ -38,10 +48,10 @@ The active workspace is merged over the top level:
             "crew": {"planner": {"model": "pi:openai/gpt-6-astra", "effort": "high",
                                  "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
- "env": {"TYPESAFE_API_KEY": "<any env var the CLI and its tools read>"},
+ "env": {"SOME_VAR": "<any env var the CLI and its tools read>"},
  "parallel": 20,
- "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
-                "personal": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_..."}}}
+ "workspaces": {"work": {},
+                "personal": {"models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"}}}}
 ```
 
 The workspace key reaches pi, OpenCode, the Mercury review, and jev, so every OpenRouter call bills that account.
@@ -86,7 +96,7 @@ A value that is not a whole number of 1 or more stops every command.
 
 ## Linear key
 
-A workspace's `linear_api_key` lets the CLI keep Linear's states true.
+A workspace's Linear key (`compose workspace key <name> --linear`) lets the CLI keep Linear's states true.
 It moves tasks to In Progress and In Review, rolls up the stories and the feature, and moves the feature to In Review on verify PASS.
 Without the key, the CLI prints one `linear skipped` line and carries on.
 A Linear error never stops a run.
