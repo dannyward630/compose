@@ -2,7 +2,7 @@
 import re
 import subprocess
 
-DESIGNER = ("linear", "figma", "framelink-figma")
+DESIGNER = ("figma", "framelink-figma")
 
 ROLE_MCP = {
     "toolsmith": (),
@@ -21,7 +21,7 @@ COVERS = {
 def servers_for(role):
     if re.fullmatch(r"design-\d+", role) or role in ("designer", "design-review"):
         return DESIGNER
-    return ROLE_MCP.get(role, ("linear",))
+    return ROLE_MCP.get(role, ())
 
 
 def keeps_skills(role):
