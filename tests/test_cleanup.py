@@ -47,6 +47,27 @@ class TestCrewWorktrees(unittest.TestCase):
             fc.fc_crew.write_report(self.proj, f"p-tests-{tid}", state, "test ready: x")
         return wt
 
+    def writer_branches(self):
+        return self.run("branch", "--list", "--format=%(refname:short)", "*tests-*").stdout.split()
+
+    def test_testcrews_puts_writers_on_the_project_branch_name(self):
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "team/p"}))
+        self.run("branch", "fast/pq/001")  # another project's legacy branch leaves this one on new names
+        self.start_writers([])
+        self.assertEqual(self.writer_branches(), ["team/p-tests-001", "team/p-tests-002"])
+
+    def test_a_project_with_legacy_branches_keeps_its_writers_on_them(self):
+        self.run("branch", "fast/p/001")
+        self.crew_commits("001", "a_test.go", "a\n")
+        self.assertEqual(self.writer_branches(), ["fast/p/tests-001"])
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertTrue((self.repo / "a_test.go").exists())
+        self.assertEqual(self.writer_branches(), [])
+
+    def test_a_recorded_task_prefix_names_the_writer_branch(self):
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "compose/p", "task_prefix": "team/p-"}))
+        self.assertEqual(fc.fc_briefs.test_branch(self.proj, "007"), "team/p-tests-007")
+
     def add_task(self, tid, protected, after=""):
         f = self.proj / "results" / "tasks.json"
         task = {"id": tid, "title": tid, "files": [], "protected": [protected], "test": "true", "body": tid, "after": after}
@@ -77,7 +98,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual(self.run("log", "--format=%s", "-3", cwd=wt).stdout.split("\n")[:3], ["Test a_test.go", "Test b_test.go", "Test a_test.go"])
         fc.fc_briefs.collect_tests(self.proj)
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
-        self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
+        self.assertEqual(self.writer_branches(), [])
 
     def test_collect_skips_a_writer_that_has_not_reported_test_ready(self):
         fc.fc_crew.write_report(self.proj, "p-tests-001", "working", "started")
@@ -89,7 +110,7 @@ class TestCrewWorktrees(unittest.TestCase):
             fc.fc_briefs.collect_tests(self.proj)
         self.assertIn("tests-001 skipped", out.getvalue())
         self.assertTrue(wt.exists())  # its worktree and branch stay for the writer still in it
-        self.assertEqual(self.run("branch", "--list", "--format=%(refname:short)", "fast/p/tests-*").stdout.strip(), "fast/p/tests-001")
+        self.assertEqual(self.writer_branches(), ["compose/p-tests-001"])
         self.assertTrue((self.repo / "b_test.go").exists())
 
     def test_each_crew_has_its_own_branch_and_collect_lands_them_in_order(self):
@@ -100,7 +121,7 @@ class TestCrewWorktrees(unittest.TestCase):
         log = self.run("log", "--format=%s", "-3").stdout.split("\n")
         self.assertEqual(log[:2], ["Test b_test.go", "Test a_test.go"])  # 001 first, then 002
         self.assertTrue((self.repo / "a_test.go").exists() and (self.repo / "b_test.go").exists())
-        self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
+        self.assertEqual(self.writer_branches(), [])
         self.assertFalse((self.proj / "worktrees" / "tests-001").exists())
 
     def test_run_collects_finished_test_crews_and_waits_for_busy_ones(self):
@@ -123,7 +144,7 @@ class TestCrewWorktrees(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             fc.fc_briefs.collect_tests(self.proj)
         self.assertIn("tests-001", str(e.exception))
-        self.assertEqual(self.run("branch", "--list", "--format=%(refname:short)", "fast/p/tests-*").stdout.strip(), "fast/p/tests-001")
+        self.assertEqual(self.writer_branches(), ["compose/p-tests-001"])
         self.assertTrue((self.repo / "b_test.go").exists())  # the writers after it are still collected, their worktrees freed
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")  # the cherry-pick was aborted cleanly
 
@@ -138,18 +159,18 @@ class TestCrewWorktrees(unittest.TestCase):
         self.crew_commits("002", "b_test.go", "b\n")
         self.main_commits("t.py", "import a, b, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n", "another task's test")
         with self.assertRaises(subprocess.CalledProcessError):
-            self.run("cherry-pick", "fast/p/tests-001")  # the team lead picks it by hand and resolves the conflict
+            self.run("cherry-pick", "compose/p-tests-001")  # the team lead picks it by hand and resolves the conflict
         (self.repo / "t.py").write_text("import a, b, c, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n\ndef two():\n    pass\n")
         self.run("add", "t.py"); self.run("-c", "core.editor=true", "cherry-pick", "--continue")
         trimmed = "import a, b, c, d\n\ndef one():\n    pass\n\ndef three():\n    pass\n"
         self.main_commits("t.py", trimmed, "Drop test two")  # then edits it on the branch: a replay would bring it back
-        self.run("cherry-pick", "fast/p/tests-002")  # a clean hand pick: same patch
+        self.run("cherry-pick", "compose/p-tests-002")  # a clean hand pick: same patch
         self.crew_commits("003", "c_test.go", "c\n")
         fc.fc_briefs.collect_tests(self.proj)
         self.assertEqual((self.repo / "t.py").read_text(), trimmed)
         self.assertEqual(self.run("log", "--format=%s", "-2").stdout.split("\n")[:2], ["Test c_test.go", "Test b_test.go"])
         self.assertEqual(self.run("status", "--porcelain").stdout.strip(), "")
-        self.assertEqual(self.run("branch", "--list", "fast/p/tests-*").stdout.strip(), "")
+        self.assertEqual(self.writer_branches(), [])
 
     def test_brief_states_the_line_budget(self):
         tasks = fc.fc_tasks.load_tasks(self.proj)

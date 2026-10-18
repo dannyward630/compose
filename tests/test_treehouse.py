@@ -52,7 +52,7 @@ class Treehouse(unittest.TestCase):
         wt, proj = self.init()
         (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
         slot = fc.fc_briefs.test_worktree(proj, "001")
-        self.assertEqual(self.git("branch", "--show-current", cwd=slot), "fast/p/tests-001")
+        self.assertEqual(self.git("branch", "--show-current", cwd=slot), "compose/p-tests-001")
         (slot / "t_test.txt").write_text("t\n")
         self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
         fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
