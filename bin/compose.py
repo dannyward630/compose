@@ -87,7 +87,7 @@ def main():
                             ("bench", fc_bench.cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", fc_status.cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
-                            ("sync", fc_linear.cmd_sync, "store the feature and its tasks: --from-linear reads them from Linear, else JSON on stdin"),
+                            ("sync", fc_linear.cmd_sync, "store the feature and its tasks, read from Linear with the workspace key; --stdin reads them as JSON instead"),
                             ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | labels | project | doc"),
                             ("tasks", fc_spec.cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("spec-check", fc_spec.cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
@@ -135,7 +135,7 @@ def main():
         if name == "setup":
             s.add_argument("--yes", action="store_true", help="take every default, skip every key, never prompt")
         if name == "sync":
-            s.add_argument("--from-linear", action="store_true", help="read the feature, stories, and tasks from Linear with the workspace key (read-only) instead of stdin")
+            s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of Linear")
         if name == "linear":
             s.add_argument("action", choices=("get", "list", "create", "update", "comment", "labels", "project", "doc"))
             s.add_argument("target", nargs="*")

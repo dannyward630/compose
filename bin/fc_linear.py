@@ -25,20 +25,20 @@ def linear_sync_payload(proj):
     if not link.get("feature"):
         sys.exit(f'{proj / "linear.json"}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
     if not fc_config.LINEAR_KEY:
-        sys.exit(f"sync --from-linear needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear; "
-                 f"or pipe the JSON on stdin to `compose sync --project {proj.name}` ({fc_tasks.SYNC_SHAPE})")
+        sys.exit(f"sync needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear; "
+                 f"or pipe the JSON to compose sync --stdin --project {proj.name} ({fc_tasks.SYNC_SHAPE})")
     stories = set(link.get("stories") or [])
     try:
         feature = linear_gql(LINEAR_FEATURE, {"id": link["feature"]})["issue"]
         if not feature:
-            sys.exit(f"sync --from-linear: Linear has no issue {link['feature']}")
+            sys.exit(f"sync: Linear has no issue {link['feature']}")
         issues = []
         for child in linear_children(link["feature"]):
             if stories and child["identifier"] not in stories:
                 continue
             issues += [child, *linear_children(child["identifier"])]
     except (RuntimeError, OSError) as e:  # urllib errors name the status, never the key
-        sys.exit(f"sync --from-linear: Linear failed ({str(e)[:200]}); the stdin form still works ({fc_tasks.SYNC_SHAPE})")
+        sys.exit(f"sync: Linear failed ({str(e)[:200]}); compose sync --stdin still works ({fc_tasks.SYNC_SHAPE})")
     return {"feature": {"id": feature["identifier"], "title": feature["title"], "description": feature["description"] or ""},
             "issues": [{"id": i["identifier"], "title": i["title"], "description": i["description"] or "", "status": i["state"]["name"],
                         "parentId": i["parent"]["identifier"] if i["parent"] else None,
@@ -252,15 +252,15 @@ def linear_reconcile(proj, verified=False):
 
 
 def cmd_sync(a):
-    """Store the feature and its tasks, read from Linear (--from-linear) or piped in as JSON, and list them."""
+    """Store the feature and its tasks, read from Linear with the workspace key or piped in as JSON (--stdin), and list them."""
     proj = fc_core.project_dir(a)
-    if a.from_linear:
-        data = linear_sync_payload(proj)
-    else:
+    if a.stdin:
         try:
             data = json.load(sys.stdin)
         except json.JSONDecodeError as e:
             sys.exit(f"sync: stdin is not JSON ({e}); expected {fc_tasks.SYNC_SHAPE}")
+    else:
+        data = linear_sync_payload(proj)
     tasks = fc_tasks.sync_tasks(proj, data)
     f = fc_tasks.linear_cache(proj)["feature"]
     print(f"{f['id']} {f['title']}: {len(tasks)} task(s) synced")
