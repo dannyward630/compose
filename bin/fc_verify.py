@@ -365,7 +365,10 @@ def cmd_verify(a):
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     t0 = time.time()
-    fc_tasks.load_tasks(proj, required=True)  # acceptance criteria and the plan come from the Linear sync
+    # Review, acceptance, and a fixer read the plan, the criteria, and the protected files from the Linear sync; checks and
+    # e2e read only verify.json, so groundwork proves them before planning with --skip-review --fix 0.
+    fc_tasks.load_tasks(proj, required=not a.skip_review or a.fix > 0,
+                        hint=f"; checks and e2e alone run without one: `compose verify --project {proj.name} --skip-review --fix 0`")
     fc_core.say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
     root, base, wt = verify_root(repo, proj, cfg)

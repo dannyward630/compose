@@ -1,6 +1,7 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, os, shutil, tempfile, time, unittest
+import importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, time, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -167,6 +168,34 @@ class CheckoutBp(unittest.TestCase):
         self.assertFalse(Path(CHECKOUT_BP).resolve().is_relative_to(Path(__file__).resolve().parents[1]))
         self.assertEqual(os.listdir(CHECKOUT_BP), ["bp"])
         self.assertTrue(os.access(Path(CHECKOUT_BP) / "bp", os.X_OK))
+
+
+class BeforePlanning(unittest.TestCase):
+    """Groundwork writes checks and e2e cases before any task exists; verify runs them without a sync when nothing reads the tasks."""
+    def verify(self, **flags):
+        repo = Path(tempfile.mkdtemp())
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
+            subprocess.run(["git", *args], cwd=repo, check=True)
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        (proj / "verify.json").write_text(json.dumps({"checks": [f"touch {repo}/checked"], "review": False, "jev_acceptance": False,
+                                                      "e2e": [{"name": "probe", "driver": f"touch {repo}/driven"}]}))
+        a = SimpleNamespace(**{"repo": str(repo), "project": "p", "skip_e2e": False, "skip_review": False, "fix": 2, **flags})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), self.assertRaises(SystemExit) as cm:
+            fc.fc_verify.cmd_verify(a)
+        return cm.exception.code, repo
+
+    def test_checks_and_e2e_run_unsynced_with_no_review_and_no_fixer(self):
+        code, repo = self.verify(skip_review=True, fix=0)
+        self.assertEqual(code, 0)
+        self.assertTrue((repo / "checked").exists() and (repo / "driven").exists())
+
+    def test_a_verify_that_reviews_or_fixes_still_needs_the_sync_and_names_the_way_without(self):
+        for flags in ({}, {"skip_review": True}, {"fix": 0}):
+            code, repo = self.verify(**flags)
+            self.assertIn("no tasks synced for p", str(code), flags)
+            self.assertIn("--skip-review --fix 0", str(code), flags)
+            self.assertFalse((repo / "checked").exists(), flags)
 
 
 if __name__ == "__main__":

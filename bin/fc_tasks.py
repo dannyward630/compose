@@ -83,11 +83,11 @@ def linear_cache(proj):
     path = proj / "results" / "tasks.json"
     return json.loads(path.read_text()) if path.exists() else {"feature": {}, "tasks": []}
 
-def load_tasks(proj, required=False):
+def load_tasks(proj, required=False, hint=""):
     """The tasks as the team lead last synced them from Linear. Commands that act on tasks require a sync."""
     if required and not (proj / "results" / "tasks.json").exists():
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
-                 f"`compose sync --project {proj.name}` (JSON {SYNC_SHAPE})")
+                 f"`compose sync --project {proj.name}` (JSON {SYNC_SHAPE}){hint}")
     return linear_cache(proj)["tasks"]
 
 def linear_done(meta):
