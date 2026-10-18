@@ -466,6 +466,15 @@ class Timed(unittest.TestCase):
             other.kill()
             other.wait()
 
+    def test_timed_runs_several_arguments_as_given_and_one_as_a_shell_line(self):
+        import subprocess as sp
+        timed = lambda *cmd: sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", *cmd],
+                                    capture_output=True, text=True)
+        r = timed("python3", "-c", "import sys; print(sys.argv[1:])", "a b", "$HOME", "'q'")
+        self.assertEqual((r.returncode, r.stdout), (0, "['a b', '$HOME', \"'q'\"]\n"), r.stderr)
+        r = timed("echo one && echo two")
+        self.assertEqual((r.returncode, r.stdout), (0, "one\ntwo\n"), r.stderr)
+
 
 class JevLeash(unittest.TestCase):
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):

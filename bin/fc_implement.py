@@ -1,4 +1,4 @@
-import json, os, re, signal, subprocess, sys, time
+import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
 import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers
 
@@ -225,10 +225,12 @@ def run_test(meta, wt):
     return timed(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT), env=fc_core.clean_env())
 
 def cmd_timed(argv):
-    """`compose timed <seconds> -- <command>`: what teammates run tests and commands through, so a hang fails fast."""
+    """`compose timed <seconds> -- <command>`: what teammates run tests and commands through, so a hang fails fast.
+    One argument is a shell line; several are the command's own arguments, quoted so sh passes each through unchanged."""
     if len(argv) < 3 or argv[1] != "--":
         sys.exit("usage: compose timed <seconds> -- <command>")
-    r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]), env=fc_core.clean_env())
+    cmd = argv[2] if len(argv) == 3 else shlex.join(argv[2:])
+    r = timed(cmd, os.getcwd(), int(argv[0]), env=fc_core.clean_env())
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 
