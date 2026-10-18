@@ -213,3 +213,53 @@ class ScreenKeys(unittest.IsolatedAsyncioTestCase):
         for stage in (KeysScreen, FinishScreen):
             with self.subTest(stage.__name__):
                 self.assertEqual(await self.visit(stage, ("s", "c", "r")), await self.visit(stage, ()))
+
+
+class LateCheck(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):  # every startup check passes, but only once self.checks is set
+        AppFixes.setUp(self)
+        self.checks, self.running = threading.Event(), threading.Event()
+        self.addCleanup(self.checks.set); self.addCleanup(self.running.set)
+        def run_step(row, checkout, yes, claude, terminal):
+            if row[0] == "held": self.running.wait(10)
+            return {"broke": ("failed", "boom line")}.get(row[0], ("done", ""))
+        for p in (mock.patch.object(fc_steps, "check", lambda row, c: (self.checks.wait(10), "")),
+                  mock.patch.object(fc_steprun, "run_step", run_step)):
+            p.start(); self.addCleanup(p.stop)
+
+    def rows(self, *spec):
+        p = mock.patch.object(fc_steps, "STEPS", tuple((n, lambda c: (False, ""), "true", level, False, "run") for n, level in spec))
+        p.start(); self.addCleanup(p.stop)
+
+    def shows(self, app, name, state):
+        return any(re.search(rf"\b{name}\b.*\b{state}\b", l) for l in lines(app))
+
+    async def release(self, app, pilot, late):  # pass the checks; only the rows in late may change
+        before = lines(app); self.checks.set()
+        await until(pilot, lambda: all(self.shows(app, n, "ok") for n in late)); await pilot.pause(0.2)
+        after = lines(app)
+        self.assertEqual(len(before), len(after), (before, after))
+        changed = [(b, a) for b, a in zip(before, after) if b != a]
+        self.assertTrue(changed and all(any(n in a for n in late) for b, a in changed), (before, after))
+
+    async def test_skipped_and_chosen_rows_keep_their_state(self):
+        self.rows(("gh", "required"), ("figma", "designer"), ("token", "designer"), ("uv", "default"))
+        app = setup_app.SetupApp(ROOT)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(); await pilot.press(key(app, "skip"), "down", key(app, "choose")); await pilot.pause()
+            self.assertTrue(self.shows(app, "gh", "skipped") and self.shows(app, "figma", "chosen"))
+            await self.release(app, pilot, ("token", "uv"))  # pending and unchosen rows still turn ok
+            self.assertTrue(self.shows(app, "gh", "skipped") and self.shows(app, "figma", "chosen"))
+
+    async def test_running_done_and_failed_rows_keep_their_state_and_results(self):
+        self.rows(("fine", "required"), ("broke", "default"), ("held", "default"), ("last", "default"))
+        app = setup_app.SetupApp(ROOT)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(); await pilot.press(key(app, "start"))
+            await until(pilot, lambda: self.shows(app, "held", "running"))
+            await self.release(app, pilot, ("last",))
+            for name, state in (("fine", "done"), ("broke", "failed"), ("held", "running")): self.assertTrue(self.shows(app, name, state), lines(app))
+            self.assertIn("boom line", "\n".join(lines(app)))
+            self.running.set(); await until(pilot, lambda: isinstance(app.screen, KeysScreen))
+            app.screen.dismiss(([], [])); await until(pilot, lambda: isinstance(app.screen, FinishScreen))
+            self.assertEqual(app.screen.results, [("fine", "done"), ("broke", "failed"), ("held", "done"), ("last", "done")])
