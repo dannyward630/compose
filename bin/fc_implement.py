@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers
+import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -103,7 +103,7 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
         elif skip != "learning":
             skip = None
             lines.append(l)
-    return "\n".join(lines).strip()[:12000]
+    return "\n".join(lines).strip()[:cap]
 
 def branch_budget(wt, base, allowed=None, delete=()):
     """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
@@ -291,11 +291,15 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
         return result
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
-    pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo)
+    words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
+    section = fc_libapi.section(wt, meta["files"], words)
+    pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo, cap=12000 - len(section))
     fc_readguard.write_guard(wt, meta["files"] + meta["protected"], pack)
     context = (f"CONTEXT PACK from the repo's trail graph (exact file:line, with source). Use it instead of exploring. "
                f"If you need more, run `trail ask \"<question>\"` or `trail callers <symbol>`; do not open unrelated files.\n{pack}\n\n"
                if pack else "")
+    if section:
+        context += section + "\n\n"
     root = str(wt.resolve())
     abs_files = ", ".join(str(wt.resolve() / f) for f in meta["files"]) or "files under the root as needed"
     abs_protected = ", ".join(str(wt.resolve() / f) for f in meta["protected"]) or "none"
