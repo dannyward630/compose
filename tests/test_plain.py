@@ -12,7 +12,7 @@ PATH_LINE = 'export PATH="$HOME/.local/bin:$PATH"'
 
 
 class Plain(unittest.TestCase):
-    """run_plain walks every row without prompting, then herdr's config, the PATH line, and finish; it returns finish's code."""
+    """run_plain walks every row without prompting, then finish; it returns finish's code."""
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -40,12 +40,8 @@ class Plain(unittest.TestCase):
     def test_order_states_and_code(self):
         got, lines = self.run_plain(["done", "claude", "skipped"], yes=False)
         self.assertEqual(got, 7)
-        for line, (state, name) in zip(lines, [("done", "gh"), ("claude", "superpowers"), ("skipped", "OpenRouter key")]):
-            self.assertTrue(line.startswith(state) and name in line, line)
-        rest = "\n".join(lines[3:])
-        self.assertLess(rest.index("herdr: set ui.toast.delivery"), rest.index(PATH_LINE))
+        self.assertEqual([l for l in lines if not l.startswith(" ")][:3], ["done gh", "claude superpowers", "skipped OpenRouter key"])
         self.assertEqual(lines[-2:], ["ready", "next: compose init"])
-        self.herdr.assert_called_once_with(self.home / ".config/herdr/config.toml", self.checkout / "setup" / "herdr.toml")
         self.finish.assert_called_once_with([("gh", "done"), ("superpowers", "claude"), ("OpenRouter key", "skipped")], False)
         self.assertEqual({s[1:] for s in self.steps}, {(self.checkout, False, False, False)})
 
@@ -57,6 +53,51 @@ class Plain(unittest.TestCase):
     def test_second_run_writes_nothing(self):
         for _ in range(2):
             got, lines = self.run_plain(["ok"] * 3, herdr=("ok", []), path=None, code=0)
-        self.assertEqual((got, [l.split()[0] for l in lines[:3]]), (0, ["ok"] * 3))
+        self.assertEqual((got, [l.split()[0] for l in lines if not l.startswith(" ")][:3]), (0, ["ok"] * 3))
         self.assertNotIn(PATH_LINE, "\n".join(lines))
         self.assertEqual(sorted(p.name for p in self.tmp.rglob("*")), ["bin"])
+
+
+class PlainSteps(unittest.TestCase):
+    """Designer rows are skipped with or without yes; each step prints once; herdr and PATH come only from finish."""
+    maxDiff = None
+    def setUp(self):
+        Plain.setUp(self)
+        claude = self.tmp / "bin" / "claude"
+        claude.write_text(f'#!/bin/sh\necho "$@" >> {self.tmp}/claude.calls\n'), claude.chmod(stat.S_IRWXU)
+        req = lambda n, m: (n, lambda c: (False, ""), "true", "required", False, m)
+        des = lambda n, m: (n, lambda c: (False, ""), f"touch {self.tmp}/ran; claude mcp add -s user x", "designer", True, m)
+        self.rows = (req("gh", "run"), des("framelink-figma", "run"), req("git", "manual"), req("pi", "run"),
+                     des("framelink-figma token", "key"), req("npx", "run"))
+        self.details = {"gh": "gh: ok", "git": "run: xcode-select --install", "pi": "boom\nexit 3", "npx": ""}
+
+    def run_plain(self, yes):
+        self.steps, states = [], {"gh": "ok", "git": "manual", "pi": "failed", "npx": "done"}
+        def run_step(row, checkout, yes, claude, terminal):
+            self.steps.append(row[0])
+            return states.get(row[0], "done"), self.details.get(row[0], "claude mcp add ran")
+        lines = [PATH_LINE, "herdr: set ui.toast.delivery", "ready"]
+        with mock.patch.object(fc_steps, "STEPS", self.rows), mock.patch.object(fc_steprun, "run_step", run_step), \
+             mock.patch.object(fc_herdrconf, "apply_herdr_config", return_value=("edited", lines[1:2])) as self.herdr, \
+             mock.patch.object(fc_links, "path_line", return_value=PATH_LINE) as self.path, \
+             mock.patch.object(fc_finish, "finish", autospec=True, return_value=(lines, 5)) as self.finish, \
+             redirect_stdout(io.StringIO()) as out:
+            got = fc_plain.run_plain(self.checkout, yes)
+        return got, out.getvalue().splitlines()
+
+    def test_steps_print_once_and_designer_rows_run_nothing(self):
+        for yes in (True, False):
+            with self.subTest(yes=yes):
+                got, lines = self.run_plain(yes)
+                self.assertEqual(lines, [
+                    "ok gh", "  gh: ok",
+                    "skipped framelink-figma", "  designer extra, skipped",
+                    "manual git", "  run: xcode-select --install",
+                    "failed pi", "  boom", "  exit 3",
+                    "skipped framelink-figma token", "  designer extra, skipped",
+                    "done npx",
+                    PATH_LINE, "herdr: set ui.toast.delivery", "ready"])
+                self.assertEqual((got, self.steps), (5, ["gh", "git", "pi", "npx"]))
+                self.assertFalse((self.tmp / "ran").exists() or (self.tmp / "claude.calls").exists())
+                self.herdr.assert_not_called(), self.path.assert_not_called()
+                self.assertIs(self.finish.call_args.args[1], yes)
