@@ -1,4 +1,4 @@
-import re, sys, unittest
+import contextlib, re, sys, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
@@ -169,3 +169,45 @@ class KeysKeyboard(unittest.IsolatedAsyncioTestCase):
             await pilot.press(*"x")
             self.assertEqual([i.value for i in self.inputs(app).values()], ["x", "", "", ""])
         await self.drive((True, True, False, True), steps)
+
+
+class WarningsInView(unittest.IsolatedAsyncioTestCase):
+    async def warn(self, status=(False,) * 4, skip=None, workspace="default", whole=True):
+        patches = [mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))),
+                   mock.patch.object(fc_keys, "linear_connected", return_value=False), mock.patch.object(fc_keys, "linear_state", return_value="key" if status[2] else "missing"),
+                   mock.patch.object(fc_keys, "save_key", side_effect=AssertionError("nothing to save"))]
+        missing = [k for k in LABELS if k in REQUIRED and not dict(zip(LABELS, status))[k]]
+        texts = [(skip or fc_keys.skipped_line)(k, workspace) for k in missing] + ["Press Continue again to go on without the missing keys."]
+        with contextlib.ExitStack() as stack:
+            for p in patches + ([mock.patch.object(fc_keys, "skipped_line", side_effect=skip)] if skip else []): stack.enter_context(p)
+            app = Host(workspace)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                button = app.screen.query_one("#continue", Button)
+                await pilot.click(button); await pilot.pause(); await pilot.pause()
+                self.assertIsNone(app.result)
+                body = app.screen.query_one("#keys-body")
+                view = body.scrollable_content_region
+                shown = {t: next(w for w in body.query(Static) if t in str(w.render())) for t in texts}
+                for t in texts if whole else texts[-1:]:
+                    self.assertTrue(view.contains_region(shown[t].region), (t, shown[t].region, view, body.scroll_y))
+                self.assertEqual(body.scroll_y, body.max_scroll_y)
+                r = button.region
+                self.assertTrue(r.x >= 0 and r.y >= 0 and r.right <= 80 and r.bottom <= 24 and not r.overlaps(view), (r, view))
+                self.assertIs(app.screen.get_widget_at(r.x + r.width // 2, r.y + r.height // 2)[0], button)
+                await pilot.click(button); await pilot.pause()
+        self.assertEqual((app.result[0], set(app.result[1])), ([], set(missing)))
+        return body
+
+    async def test_every_real_warning_and_continue_again_line_in_view(self):
+        await self.warn()
+
+    async def test_long_workspace_name_still_shows_every_warning(self):
+        await self.warn(workspace="client-acme-mobile-checkout-redesign")
+
+    async def test_single_missing_key_shows_its_warning_and_the_last_line(self):
+        await self.warn((True, False, True, False))
+
+    async def test_warnings_taller_than_the_body_scroll_it_to_the_end(self):
+        body = await self.warn(skip=lambda k, w: f"skip-{k}-{w}" + "\nmore" * 12, whole=False)
+        self.assertGreater(body.max_scroll_y, 0)
