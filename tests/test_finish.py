@@ -7,6 +7,7 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import fc_finish as F
+import fc_herdrconf, fc_links
 ALL = {"workspaces": {"default": {"openrouter": "sk-or-test", "linear": "lin-test"}}, "typesafe": "ts-test"}
 READY, NOT_DONE = ["compose is ready", "next: run compose to open herdr"], "setup is not finished"
 SKIPS = lambda lines: [l for l in lines if l.startswith("skipped")]
@@ -17,9 +18,11 @@ class Finish(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp()); self.cfg, self.auth = tmp / "config.json", tmp / "auth.json"
         self.cfg.write_text(json.dumps({"workspaces": {"w": {"target": "x"}}, "models": {"implementer": "pi:mine"}}))
         self.probe, self.claude, self.connected = mock.Mock(return_value=(True, ["probe passed"])), True, False
+        self.herdr, self.path = mock.Mock(return_value=("ok", [])), None
         for p in (mock.patch.object(F.fc_config, "CONFIG_PATH", self.cfg), mock.patch.object(F.fc_config, "AUTH_PATH", self.auth),
                   mock.patch.object(F.fc_config, "ENV_FILE", tmp / ".env"), mock.patch.object(F.fc_steps, "FRAMELINK_ENV", tmp / "figma.env"),
                   mock.patch.object(F.fc_defaults, "probe_implementer", self.probe),
+                  mock.patch.object(fc_herdrconf, "apply_herdr_config", self.herdr), mock.patch.object(fc_links, "path_line", lambda: self.path),
                   mock.patch.object(F.fc_keys, "linear_connected", lambda: self.connected),
                   mock.patch.object(F.fc_keys, "skipped_line", lambda kind, ws: f"skipped {kind}"),
                   mock.patch.object(F.shutil, "which", lambda n, *a, **k: None if n == "claude" and not self.claude else f"/bin/{n}")):
@@ -61,3 +64,45 @@ class Finish(unittest.TestCase):
         self.claude = False
         lines, code = self.run_finish(ALL, yes=True)
         self.assertEqual((code, lines[-1], self.probe.call_count), (1, CLAUDE, 1))  # yes skips the probe
+
+
+EXPORT = 'export PATH="$HOME/.local/bin:$PATH"'
+PATH_LINES = ["~/.local/bin is not on your PATH; add this line to your shell profile:", EXPORT]
+ROWS = [(n, lambda c: (True, ""), "true", "required", False, m) for n, m in
+        [("apple", "run"), ("berry", "manual"), ("cherry", "run"), ("date", "run"), ("elder", "run"), ("fig", "run"), ("grape", "run"), ("kiwi", "key"), ("lime", "key")]]
+NAMES = [r[0] for r in ROWS]
+
+class Outcome(unittest.TestCase):
+    def setUp(self):
+        Finish.setUp(self)
+        p = mock.patch.object(F.fc_steps, "STEPS", tuple(ROWS)); p.start(); self.addCleanup(p.stop)
+        self.auth.write_text(json.dumps(ALL))
+
+    def named(self, line, prefix):
+        self.assertTrue(line.startswith(prefix), line)
+        return sorted((n for n in NAMES if n in line), key=line.find)
+
+    def test_groups_in_steps_order_then_herdr_then_path_then_the_old_lines(self):
+        F.finish([("elder", "ok")], False); tail, code = F.finish([("elder", "ok")], False)  # second call: models already merged
+        self.assertEqual(tail[-2:], READY)
+        self.assertFalse(any(l.startswith(("failed", "waiting", "run by hand", "skipped:", "~/")) for l in tail))
+        self.herdr.reset_mock(); self.herdr.return_value, self.path = ("written", ["herdr: wrote config.toml"]), EXPORT
+        results = [("fig", "failed"), ("lime", "failed"), ("cherry", "claude"), ("grape", "done"), ("apple", "failed"),
+                   ("kiwi", "skipped"), ("berry", "manual"), ("date", "skipped"), ("elder", "ok")]
+        lines, code2 = F.finish(results, False)
+        self.assertEqual([self.named(l, p) for l, p in zip(lines, ["failed: ", "waiting on Claude Code: ", "run by hand: ", "skipped: "])],
+                         [["apple", "fig"], ["cherry"], ["berry"], ["date"]])
+        self.assertEqual((lines[4:], code2), (["herdr: wrote config.toml", *PATH_LINES, *tail], code))
+        home, checkout = Path(os.environ["HOME"]), Path(F.__file__).resolve().parents[1]
+        self.herdr.assert_called_once()
+        self.assertEqual([str(a) for a in self.herdr.call_args.args], [str(home / ".config/herdr/config.toml"), str(checkout / "setup/herdr.toml")])
+
+    def test_symlinked_config_gets_manual_lines_and_nothing_else_is_added(self):
+        F.finish([], False); quiet, _ = F.finish([], False)
+        self.herdr.return_value = ("manual", ["set by hand in config.toml: a = 1", "b = 2"])
+        lines, _ = F.finish([("apple", "done"), ("kiwi", "failed"), ("lime", "skipped")], False)
+        self.assertEqual(lines, ["set by hand in config.toml: a = 1", "b = 2", *quiet])
+        self.assertEqual(self.herdr.call_count, 3)  # once per call
+        self.path = EXPORT; lines, code = F.finish([("berry", "manual")], True)
+        self.assertEqual((self.named(lines[0], "run by hand: "), lines[1:5], code),
+                         (["berry"], ["set by hand in config.toml: a = 1", "b = 2", *PATH_LINES], 0))
