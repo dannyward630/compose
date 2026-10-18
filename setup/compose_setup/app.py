@@ -1,5 +1,6 @@
 """SetupApp: the steps screen, the herdr config, KeysScreen, then FinishScreen."""
 import shutil
+import sys
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -11,6 +12,11 @@ from .keys import KeysScreen
 from textual.widgets import Footer, Label, ListItem, ListView
 
 
+HEADER = (
+    "compose setup installs and configures what compose needs.\n"
+    "Move with ↑/↓, skip with s, choose with c, start with r.\n"
+    "required: needed  default: on unless skipped  designer: only if you choose it"
+)
 STATE_TEXT = {"claude": "waiting on Claude Code"}
 
 
@@ -33,29 +39,47 @@ class SetupApp(App[int]):
         self.chosen: Set[int] = set()
         self._lines: Dict[int, str] = {}
         self._labels: List[Label] = []
+        self._details: List[Label] = []
 
     def compose(self) -> ComposeResult:
-        yield Label(f"compose setup: {len(self.rows)} steps", id="title")
+        yield Label(HEADER, id="title")
         with ListView(id="steps"):
             for i, row in enumerate(self.rows):
                 state = "unchosen" if row[3] == "designer" else "pending"
                 label = Label(self._row_text(i, state), classes=f"row {state}")
                 self._labels.append(label)
+                detail = Label("", classes="detail")
+                detail.display = False
+                self._details.append(detail)
                 with ListItem():
                     yield label
+                    yield detail
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#steps", ListView).focus()
+        self.run_worker(self._check_rows, thread=True, group="check")
+
+    def _check_rows(self) -> None:
+        for i, row in enumerate(self.rows):
+            if fc_steps.check(row, self.checkout)[0]:
+                self.call_from_thread(self._mark_ok, i)
+
+    def _mark_ok(self, i: int) -> None:
+        if i not in self.skipped:
+            self._set_row(i, "ok")
 
     def _row_text(self, i: int, state: str, line: str = "") -> str:
         name, level = self.rows[i][0], self.rows[i][3]
         text = f"{name:<28}{level:<9}{STATE_TEXT.get(state, state)}"
-        return f"{text}\n  {line}" if line else text
+        return text
 
     def _set_row(self, i: int, state: str, line: str = "") -> None:
         self._labels[i].update(self._row_text(i, state, line))
         self._labels[i].set_classes(f"row {state}")
+        self._details[i].update(line)
+        self._details[i].set_classes(f"detail {state}")
+        self._details[i].display = bool(line)
         if state == "running":
             self.query_one("#steps", ListView).index = i
 
@@ -111,7 +135,13 @@ class SetupApp(App[int]):
 
     def _run_interactive(self, row, claude: bool):
         with self.suspend():
-            return fc_steprun.run_step(row, self.checkout, False, claude, True)
+            sys.stdout.write(f"\x1b[2J\x1b[H{row[0]}: {row[2]}\n")
+            sys.stdout.flush()
+            try:
+                return fc_steprun.run_step(row, self.checkout, False, claude, True)
+            finally:
+                sys.stdout.write("\x1b[2J\x1b[H")
+                sys.stdout.flush()
 
     def _show_keys(self, results: List[Tuple[str, str]]) -> None:
         self.results = results
