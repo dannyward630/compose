@@ -429,6 +429,36 @@ class FakeLinear:
         return [self.issues[i]["state"] for i in idents]
 
 
+class LocallyMergedLayers(unittest.TestCase):
+    """main fast-forwarded to a layer built locally: the layer holds copies of the task commits, and no layers.json says whose."""
+    def test_clean_counts_tasks_whose_patches_are_in_main_merged_and_moves_linear(self):
+        r, run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        def commit(f, cwd=wt):
+            (cwd / f).parent.mkdir(exist_ok=True); (cwd / f).write_text(f"{f}\n")
+            run("add", f, cwd=cwd); run("commit", "-qm", f, cwd=cwd)
+            return run("rev-parse", "HEAD", cwd=cwd).stdout.strip()
+        tests = [commit("tests/t001.txt"), commit("tests/t002.txt")]
+        run("checkout", "-q", "-b", "fast/p/001", cwd=wt); one = commit("src001.txt")
+        run("checkout", "-q", "-b", "fast/p/002", cwd=wt); two = commit("src002.txt")
+        run("checkout", "-q", "compose/p", cwd=wt)
+        run("checkout", "-q", "-b", "fast/p/layer-01")  # each task's test sits next to it, so every pick is a new commit
+        for c in (tests[0], one, tests[1], two):
+            run("cherry-pick", c)
+        run("checkout", "-q", "main"); run("merge", "-q", "--ff-only", "fast/p/layer-01")
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "linear": l, "after": ""} for t, l in (("001", "ENG-3"), ("002", "ENG-4"))]
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2"))
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True)
+        self.assertEqual(run("branch", "--format=%(refname:short)").stdout.split(), ["main"])
+        self.assertFalse(wt.exists())
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
+
+
 class SquashMergedLayers(unittest.TestCase):
     """Layers are squash-merged by PR: task branches were never PRs and ancestry is rewritten, so the merged layer that held a task proves it."""
     def setUp(self):

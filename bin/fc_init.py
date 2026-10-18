@@ -205,13 +205,18 @@ def cmd_init(a):
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
 
 def merge_evidence(repo, branch, targets, has_remote):
-    """Why a branch counts as merged, or None. Two independent signals, either suffices:
-    git ancestry (fast-forward and merge-commit merges), or a merged pull request for the branch on GitHub (covers squash
-    and rebase merges, where the commits are rewritten and ancestry says nothing). Any doubt means not merged."""
+    """Why a branch counts as merged, or None. Three independent signals, any suffices:
+    git ancestry (fast-forward and merge-commit merges), every commit's patch in the target (`git cherry`: a target
+    fast-forwarded to a layer built locally, which holds cherry-picked copies), or a merged pull request for the branch on
+    GitHub (covers squash and rebase merges, where the commits are rewritten and ancestry says nothing). Any doubt means not merged."""
     for t in targets:
-        if fc_core.sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode == 0 \
-                and fc_core.sh(["git", "merge-base", "--is-ancestor", branch, t], repo, check=False).returncode == 0:
+        if fc_core.sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode:
+            continue
+        if fc_core.sh(["git", "merge-base", "--is-ancestor", branch, t], repo, check=False).returncode == 0:
             return f"contained in {t}"
+        p = fc_core.sh(["git", "cherry", t, branch], repo, check=False)
+        if p.returncode == 0 and p.stdout.strip() and all(l.startswith("-") for l in p.stdout.splitlines()):
+            return f"contained in {t} by patch"
     if has_remote:
         p = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "merged", "--json", "number,mergedAt", "--limit", "1"],
                            cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
