@@ -660,6 +660,66 @@ class CleanLinearLine(unittest.TestCase):
         self.assertEqual(self.lines("ENG-1", [], True, linear=linear), ["linear ENG-1 -> Done"])
 
 
+class MergeChangesNothing(unittest.TestCase):
+    """A branch whose merge into a target leaves the target's tree as it is counts as merged, whatever its patches say."""
+    def test_a_merge_that_changes_nothing_proves_a_branch_merged_after_the_earlier_proofs(self):
+        r, run = repo()
+        def branch(name, text, extra=None):
+            run("checkout", "-q", "-b", name, "main"); (r / "a.txt").write_text(text)
+            if extra: (r / "b.txt").write_text(extra)
+            run("add", "-A"); run("commit", "-qm", name)
+        branch("b", "base\nx\n"); branch("same", "base\nx\n", "y\n"); branch("conf", "base\nz\n")  # same: b's change in another patch
+        run("checkout", "-q", "-b", "pick", "main"); run("cherry-pick", "-x", "b")  # -x: a new commit, never b itself
+        why = lambda b, *t: fc.fc_init.merge_evidence(r, b, list(t), False)
+        self.assertEqual(why("b", "nope", "conf", "same"), "merging it into same changes nothing")
+        self.assertEqual(why("main", "same"), "contained in same")
+        self.assertEqual(why("b", "pick", "same"), "contained in pick by patch")
+        self.assertEqual(why("b", "same", "pick"), "merging it into same changes nothing")  # targets in order
+        self.assertIsNone(why("b", "main", "conf"))  # a real change, then a conflict
+
+    GH = """#!/usr/bin/env python3
+import json, subprocess, sys; from pathlib import Path
+git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+a = sys.argv[1:]
+if a[:2] == ["stack", "--version"]: sys.exit(print("gh stack (fake)"))
+f = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "fake-gh-stack.json"; s = json.loads(f.read_text()) if f.exists() else None
+if a[:2] == ["stack", "init"]: f.write_text(json.dumps({"trunk": a[a.index("--base") + 1], "branches": [{"name": b} for b in a[4:]]}))
+elif a[:2] == ["stack", "view"] and s and git("branch", "--show-current") in [b["name"] for b in s["branches"]]: print(json.dumps(s))
+elif a[:2] == ["stack", "unstack"]: f.unlink(missing_ok=True)
+else: sys.exit(1)
+"""
+
+    def test_clean_removes_a_stack_recut_on_a_moved_main_once_it_lands_and_moves_linear(self):
+        r, run = repo()
+        bin_ = Path(tempfile.mkdtemp()).resolve(); (bin_ / "gh").write_text(self.GH); (bin_ / "gh").chmod(0o755)
+        env = {**os.environ, **ENV, "PATH": f"{bin_}:{os.environ['PATH']}"}
+        pins = 'M = {\n    "core": ("now",),\n    "keys": ("key_status", "linear_connected", "save_key"),\n    "steps": ("FLOORS",),\n    "worktree": ("task_prefix", "task_branch"),\n}\n'
+        (r / "pins.py").write_text(pins); run("add", "-A"); run("commit", "-qm", "pins")
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(r)], check=True, capture_output=True, env=env)
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        def commit(f, text, msg, cwd=wt):
+            (cwd / f).parent.mkdir(parents=True, exist_ok=True); (cwd / f).write_text(text)
+            run("add", "-A", cwd=cwd); run("commit", "-qm", msg, cwd=cwd)
+        commit("pins.py", pins.replace('"linear_connected", ', ""), "groundwork")
+        commit("tests/t001.txt", "t\n", "test 001"); commit("tests/t002.txt", "t\n", "test 002")
+        tasks = [{"id": t, "title": t, "files": [f"src{t}.txt"], "protected": [f"tests/t{t}.txt"], "linear": l, "after": "", "test": "true"} for t, l in (("001", "ENG-3"), ("002", "ENG-4"))]
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks})); (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        for t in ("001", "002"):
+            run("checkout", "-q", "-b", f"compose/p-{t}", "compose/p", cwd=wt); commit(f"src{t}.txt", "s\n", f"build {t}")
+            run("checkout", "-q", "compose/p", cwd=wt)
+        commit("pins.py", pins.replace('("task_prefix", "task_branch")', '("task_prefix", "rename", "task_branch")'), "main moves", cwd=r)  # inside the groundwork's diff context
+        subprocess.run([CLI, "stack", "--repo", str(wt), "--project", "p"], check=True, capture_output=True, text=True, env=env)
+        run("merge", "-q", "--ff-only", run("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").stdout.split()[-1])
+        linear, out = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2")), io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True)
+        left = run("branch", "--format=%(refname:short)").stdout.split()
+        self.assertEqual([b for b in left if b in ("compose/p", "compose/p-001", "compose/p-002")], [], out.getvalue())
+        self.assertFalse(wt.exists())
+        self.assertNotIn("UNMERGED", out.getvalue()); self.assertNotIn("kept unmerged", out.getvalue())
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
+
 
 if __name__ == "__main__":
     unittest.main()
