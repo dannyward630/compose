@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -45,6 +45,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
+    fc_proc.HOOKS[name] = lambda: (fc_herdr.herdr("agent", "send-keys", session["name"], "esc"), fc_herdr.herdr("pane", "close", session["pane"]))
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -341,6 +342,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             return True
         return False
     while attempt < attempts:
+        if fc_proc.STOP.is_set():
+            raise fc_proc.Stopped
         attempt += 1
         t0 = time.time()
         try:
@@ -366,6 +369,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             time.sleep(wait)
             continue
         except subprocess.TimeoutExpired:
+            if fc_proc.STOP.is_set():
+                raise fc_proc.Stopped
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
             fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}; fresh session")
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
@@ -379,6 +384,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "payment_required"
             break
         except Exception as e:  # noqa: BLE001
+            if fc_proc.STOP.is_set():
+                raise fc_proc.Stopped
             fc_core.say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
             if fall():  # a fresh session on the same model until the fallback takes over
