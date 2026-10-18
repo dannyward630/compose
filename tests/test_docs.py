@@ -698,6 +698,34 @@ class HowItWorksStackBase(unittest.TestCase):
         self.assertRegex(line, r"\b(stack|sit)s?\b[^.]*\breview base\b")
 
 
+class SetupTestLine(unittest.TestCase):
+    LINE = "Run the setup app's tests with `uv run --locked --project setup python -m unittest discover -s setup/tests -t setup`."
+
+    def setUp(self):
+        self.lines = read("README.md").splitlines()
+
+    def test_line_211_runs_the_setup_tests_with_setup_as_the_top_level(self):
+        self.assertEqual(self.lines[210], self.LINE)
+        self.assertEqual(read("README.md").count("-s setup/tests"), 1, "the command appears once")
+
+    def test_no_other_line_changes(self):
+        self.assertEqual(len(self.lines), 220)
+        self.assertEqual(self.lines[204], "## Development")
+        self.assertEqual(
+            self.lines[209],
+            "The CLI core is stdlib; `setup/` and `jev/` are uv projects, and `bp/` is one Node file with no dependencies.",
+        )
+        self.assertEqual(self.lines[211:213], ["", "## Credits"])
+
+    def test_the_discover_paths_exist_from_the_repo_root(self):
+        cmd = re.search(r"`([^`]*)`", self.lines[210]).group(1).split()
+        self.assertIn("-t", cmd, "no top-level directory, so discover imports from the repo root")
+        start, top = cmd[cmd.index("-s") + 1], cmd[cmd.index("-t") + 1]
+        self.assertTrue((ROOT / start).is_dir(), start)
+        self.assertTrue((ROOT / start).resolve().is_relative_to((ROOT / top).resolve()), (start, top))
+        self.assertEqual(cmd[cmd.index("--project") + 1], top)
+
+
 
         self.assertNotIn("trunk is the project branch", line)
         self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
