@@ -109,14 +109,14 @@ class KeySave(unittest.TestCase):
 
     def test_skipped_lines(self):
         fix = "pbpaste | compose workspace key acme"
-        for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change", "compose setup"]),
+        for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change", fix + " --typesafe"]),
                             ("linear", ["linear", "sync --from-linear", fix + " --linear", "claude.ai", "connector"]),
                             ("figma", ["designer", "compose setup"])]:
             line = fc_keys.skipped_line(kind, "acme")
             for word in words: self.assertIn(word, line if " " in word else line.lower())
         self.assertNotIn("--linear", fc_keys.skipped_line("openrouter", "acme"))
         self.assertNotIn("connector", fc_keys.skipped_line("openrouter", "acme").lower())
-        for kind in ("typesafe", "figma"): self.assertNotIn("workspace key", fc_keys.skipped_line(kind, "acme"))
+        self.assertNotIn("workspace key", fc_keys.skipped_line("figma", "acme"))
 
 
 class KeyLines(unittest.TestCase):
@@ -157,11 +157,35 @@ class KeyLines(unittest.TestCase):
             fix = f"  pbpaste | compose workspace key {ws}"
             for kind, word, tail in [("openrouter", "run", [fix]),
                                      ("linear", "linear", [fix + " --linear", "  or connect the claude.ai Linear connector"]),
-                                     ("typesafe", "verify", ["  compose setup"]), ("figma", "designer", ["  compose setup"])]:
+                                     ("typesafe", "verify", [fix + " --typesafe"]), ("figma", "designer", ["  compose setup"])]:
                 lines = fc_keys.skipped_line(kind, ws).splitlines()
                 self.assertEqual(lines[-len(tail):], tail, kind)
-                if kind in ("typesafe", "figma"): self.assertTrue(lines[-2].endswith("Add one later, on a terminal:"), lines)
+                if kind == "figma": self.assertTrue(lines[-2].endswith("Add one later, on a terminal:"), lines)
                 self.assertIn(word, lines[0].lower())
                 self.assertFalse(lines[0].startswith(" ") or "pbpaste" in lines[0] or "compose setup" in lines[0], lines)
                 self.assertNotIn("sk-or-test", "\n".join(lines))
                 self.assertNotIn("acme" if ws != "acme" else "team-b", "\n".join(lines))
+
+
+class TypeSafeLine(unittest.TestCase):
+    """A skipped TypeSafe key names compose workspace key --typesafe; the other kinds' lines stay as they are."""
+    OTHERS = {
+        "openrouter": "No OpenRouter key: without it run and verify have no model. Add one later:\n  pbpaste | compose workspace key {}",
+        "linear": "No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. Add one later:\n"
+                  "  pbpaste | compose workspace key {} --linear\n  or connect the claude.ai Linear connector",
+        "figma": "No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n  compose setup",
+    }
+
+    def test_typesafe(self):
+        for ws in ("default", "acme", "team-b2"):
+            line = fc_keys.skipped_line("typesafe", ws)
+            self.assertEqual(line, "No TypeSafe key: without it verify and change cannot check your code. Add one later:\n"
+                                   f"  pbpaste | compose workspace key {ws} --typesafe")
+            self.assertNotIn("compose setup", line)
+            self.assertNotIn("on a terminal", line)
+
+    def test_others_unchanged(self):
+        for ws in ("default", "team-b2"):
+            for kind, text in self.OTHERS.items():
+                self.assertEqual(fc_keys.skipped_line(kind, ws), text.format(ws), kind)
+            self.assertNotIn("--typesafe", "".join(fc_keys.skipped_line(k, ws) for k in self.OTHERS))
