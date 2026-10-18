@@ -108,9 +108,10 @@ Both can be set at the top level or in one workspace, like `parallel`.
 
 ## Linear key
 
-A workspace's Linear key (`compose workspace key <name> --linear`) lets the CLI keep Linear's states true.
+A workspace's Linear key (`compose workspace key <name> --linear`) is required: every `compose linear` command and the CLI's own Linear writes use it, and compose uses no Linear MCP.
+It lets the CLI keep Linear's states true.
 It moves tasks to In Progress and In Review, rolls up the stories and the feature, and moves the feature to In Review on verify PASS.
-Without the key, the CLI prints one `linear skipped` line and carries on.
+Without the key, `compose doctor` fails and `compose linear` stops with the line that stores one.
 A Linear error never stops a run.
 
 ## Crew models

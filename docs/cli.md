@@ -25,7 +25,7 @@ You review the plan, the task list, and the stack.
 2. On Linear, write the feature issue (its description is the plan) and one task issue per task.
    End each task issue with a [`compose` block](tasks.md).
 3. Write `{"feature": "ENG-123"}` to `.compose/my-feature/linear.json`, write each task's test, and commit.
-4. Run `compose sync --project my-feature < issues.json`, and run it again after any Linear edit ([shape](tasks.md#sync)).
+4. Run `compose sync --project my-feature`, and run it again after any Linear edit ([shape](tasks.md#sync)).
 5. Run `compose run --project my-feature`, then `compose verify --project my-feature`.
 
 When you ask, `compose stack --project my-feature --submit` pushes and opens one draft PR per layer.
@@ -60,7 +60,8 @@ These commands load the tasks, dispatch them, and steer the run.
 
 | Command | Does |
 |---|---|
-| `sync` | Stores the feature and its task issues: `--from-linear` reads them from Linear, else JSON on stdin |
+| `sync` | Stores the feature and its task issues, read from Linear with the workspace's key; `--stdin` reads JSON from stdin instead |
+| `linear <verb>` | Reads and writes Linear with the workspace's key and prints compact lines: `get <id> [--body] [--comments]`, `list --parent <id>` or `--search "<terms>"` (with `--state`, `--label`), `create --title ... [--parent] [--label] [--state] [--blocked-by]`, `update <id>` (`--title`, `--state`, `--parent`, `--label`, `--blocked-by`, and `--section "## <heading>"`, `--append`, or `--description` for the body), `comment <id>`, `labels [--create <name>]`, `project`, and `doc create --title ...` or `doc get <id>`. Bodies come from `--file <path>` or stdin. `list` and `create` use the project in `.compose/linear.json`; `get`, `update`, and `comment` refuse an issue in another project unless `--any-project`. `--json` prints the raw fields |
 | `tasks` | Prints the task list to review, with files, `after`, and tests. It warns on shared files |
 | `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel N` (default `parallel` in the config, else 3), `--redo`, `--no-stack`, and `--trunk <branch>` |
 | `done` | Records tasks finished by hand with `--only <ids> --note <why>` and moves them In Review on Linear |

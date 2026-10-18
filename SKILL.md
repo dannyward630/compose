@@ -23,17 +23,20 @@ Everything that would be a ticket lives on Linear, never as files in the repo: t
 Read `.compose/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
 If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another) in the user's checkout, and never commit it.
 `compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else, and copies this file into the project worktree.
-You create and edit issues and write judgment comments through the Linear MCP tools (`save_issue`, `get_issue`, `list_issues`, `save_comment`); the CLI moves task, story, and feature states and writes the routine run comments with the workspace's Linear key.
-Every `list_issues` call passes `fields` (`id`, `title`, `status`, and more only when the body is needed): the default reply carries whole descriptions and costs about ten times the tokens.
-Confirm the file points at a real project before any other Linear call: `get_project` with its URL must return a project on its team.
+You create and edit issues and write judgment comments with `compose linear` (`get <id> [--body] [--comments]`, `list --parent <id> | --search "<terms>"`, `create`, `update <id>`, `comment <id>`, `labels`, `project`, `doc`), never a Linear MCP tool; the CLI moves task, story, and feature states and writes the routine run comments, all with the workspace's Linear key.
+The Linear key is required: without it `compose doctor` fails and `compose linear` stops with the line that stores one.
+`get` and `list` print one compact line per issue (`<id> <state> <label> <title>`); add `--body` or `--comments` to `get` only when you need them.
+Write bodies come from `--file <path>` or stdin, never from the command line.
+`list` and `create` default to the project and team in the file; `get`, `update`, and `comment` refuse an issue in another project unless `--any-project`.
+Confirm the file points at a real project before any other Linear call: `compose linear project` must print a project on its team.
 Scope every Linear read, search, and write to that project and team; when a project is in play, its feature comes from `.compose/<slug>/linear.json`.
 Stop and ask the user, never guess, when any of these happen:
-- a Linear MCP call fails (auth, connection, timeout): say which call and its error, and wait; do not carry on as if Linear were empty
+- a `compose linear` call fails (auth, connection, timeout): say which call and its error, and wait; do not carry on as if Linear were empty
 - the file's project or team is not found, or the user hands you an issue that lives in another project
 - you cannot tell which epic, feature, story, or ticket the work belongs to, or a search returns more than one plausible match
 
 ### 0i. The levels: project, epic, feature, story, task
-Linear has projects, issues, sub-issues, and labels; these five levels are how compose uses them. Labels `Epic`, `Feature`, `Story`, `Task` live on the Engineering team (`Feature` exists; create the others once with `create_issue_label` if `list_issue_labels` does not show them).
+Linear has projects, issues, sub-issues, and labels; these five levels are how compose uses them. Labels `Epic`, `Feature`, `Story`, `Task` live on the Engineering team (`Feature` exists; create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them).
 
 | level | in Linear | in compose | holds |
 |---|---|---|---|
@@ -68,7 +71,7 @@ A parent's state rolls up from its children; set it in the same step as the chil
 | epic | its first feature is In Progress | every feature is In Review or Done | every feature is Done |
 A Backlog or Todo parent with an In Progress child is a bug: fix it the moment you see it.
 Canceled children do not count. A re-opened child (a failed fix round, a new task) moves its parents back to In Progress.
-Checkpoints, each followed by a reconcile of the whole tree (`list_issues` with the feature as parent, then its stories' children, compared against this table and `compose status`): the end of planning (step 3b), right before and after every `run`, after every `verify`, after `clean`, and at session start (0r).
+Checkpoints, each followed by a reconcile of the whole tree (`compose linear list --parent <feature>`, then `--parent` each story, compared against this table and `compose status`): the end of planning (step 3b), right before and after every `run`, after every `verify`, after `clean`, and at session start (0r).
 
 ### 0h. Inside herdr, the fleet is visible and steerable: read sections/0h.md
 

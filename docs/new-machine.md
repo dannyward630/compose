@@ -28,7 +28,7 @@ Without `claude` on the PATH it runs every step that does not need it, skips the
 | herdr | required | installs herdr with its own installer and the herdr skill file | no |
 | pi | required | installs pi with `npm install -g --ignore-scripts`, and declares its `openrouter-fast` provider in `~/.pi/agent/models.json` with no key in it | no |
 | Links | required | links `compose` into `~/.local/bin` and the skill into `~/.claude/skills`; reports when `~/.local/bin` is not on your PATH | no |
-| Keys | required | saves the OpenRouter key, the TypeSafe key, and the Linear key into `~/.compose/auth.json` | the Linear connector check only |
+| Keys | required | saves the OpenRouter key, the TypeSafe key, and the Linear key into `~/.compose/auth.json` | no |
 | i-have-adhd skill | required | adds the marketplace | yes |
 | Homebrew, uv, jev | default | installs Homebrew when missing, uv, and the `jev/` environment | no |
 | trail, treehouse | default | installs `@trailhq/trail-code` and treehouse | no |

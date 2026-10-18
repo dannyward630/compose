@@ -260,7 +260,7 @@ class PlannerReadsWritingPlans(unittest.TestCase):
     SKILLS_OFF = "The planner session starts with skills off, so every skill it needs is read as a file."
     RUN = [
         "Read all of it.",
-        f"Then read the writing-plans skill file (the newest of {LS}) for how to write the plan, but not where: the plan is a `## Plan` section in the feature issue's description (`save_issue`), never a file.",
+        f"Then read the writing-plans skill file (the newest of {LS}) for how to write the plan, but not where: the plan is a `## Plan` section in the feature issue's description (`compose linear update <feature> --section \"## Plan\" --file <path>`), never a file in the repo.",
         "Writing-plans' own save path does not apply.",
         SKILLS_OFF,
     ]
@@ -320,20 +320,71 @@ class Frame0OptIn(unittest.TestCase):
             self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
-class LinearFields(unittest.TestCase):
-    SENTENCE = "Every `list_issues` call passes `fields` (`id`, `title`, `status`, and more only when the body is needed): the default reply carries whole descriptions and costs about ten times the tokens."
-    LEAD = "You create and edit issues and write judgment comments through the Linear MCP tools"
+class LinearCommands(unittest.TestCase):
+    LEAD = "You create and edit issues and write judgment comments with `compose linear`"
+    PROJECT = "Confirm the file points at a real project before any other Linear call: `compose linear project` must print a project on its team."
 
-    def test_sentence_once_in_section_0_right_after_the_mcp_line(self):
+    def section0(self):
         text = read("SKILL.md")
-        self.assertEqual(text.count(self.SENTENCE), 1)
-        section = text.split("\n### 0. ", 1)[1].split("\n### 0i. ", 1)[0]
-        lines = section.splitlines()
-        self.assertIn(self.SENTENCE, lines, "the sentence is its own line inside section 0")
-        lead = [i for i, l in enumerate(lines) if l.startswith(self.LEAD)]
+        return text.split("\n### 0. ", 1)[1].split("\n### 0i. ", 1)[0].splitlines()
+
+    def test_section_0_names_the_verbs_and_the_required_key(self):
+        lines = self.section0()
+        lead = [l for l in lines if l.startswith(self.LEAD)]
         self.assertEqual(len(lead), 1)
-        self.assertEqual(lines[lead[0] + 1], self.SENTENCE)
-        self.assertIn("`list_issues`", lines[lead[0]], "the MCP tools line itself is unchanged")
+        for verb in ("get <id> [--body] [--comments]", "list --parent <id> | --search", "create", "update <id>", "comment <id>", "labels", "project", "doc"):
+            self.assertIn(verb, lead[0])
+        self.assertIn("never a Linear MCP tool", lead[0])
+        self.assertIn("The Linear key is required: without it `compose doctor` fails and `compose linear` stops with the line that stores one.", lines)
+        self.assertIn("Write bodies come from `--file <path>` or stdin, never from the command line.", lines)
+        self.assertIn(self.PROJECT, lines)
+        self.assertNotIn("fields", "\n".join(lines), "the compact lines replace the fields rule")
+
+    def test_a_failing_call_is_a_compose_linear_call(self):
+        self.assertIn("- a `compose linear` call fails (auth, connection, timeout)", read("SKILL.md"))
+
+    def test_labels_and_the_reconcile_use_the_verbs(self):
+        text = read("SKILL.md")
+        self.assertIn("create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them", text)
+        self.assertIn("`compose linear list --parent <feature>`, then `--parent` each story", text)
+
+    def test_sync_reads_linear_and_the_mcp_recipe_is_gone(self):
+        two = read("sections/2.md")
+        self.assertIn("Run `compose sync --repo <wt> --project <slug>`: it reads the feature, its stories, and their tasks from Linear", two)
+        self.assertIn("`--stdin` reads the same JSON from stdin instead", two)
+        self.assertNotIn("--from-linear", two)
+        tasks = read("docs/tasks.md")
+        self.assertIn("`compose sync` reads the feature, its stories, and their tasks from Linear", tasks)
+        self.assertIn("`compose sync --stdin` takes JSON of this shape instead", tasks)
+        self.assertIn("The team lead writes everything else on Linear with `compose linear`.", tasks)
+        self.assertNotIn("--from-linear", read("docs/cli.md"))
+
+    def test_manager_session_line_and_the_key_requirement_in_the_docs(self):
+        self.assertIn("Compose itself uses no Linear MCP, and this session should prefer `compose linear` too.", read("sections/0h.md").splitlines())
+        self.assertNotIn("connector", read("docs/new-machine.md").split("| Keys |", 1)[1].splitlines()[0])
+        requirements = [l for l in read("docs/requirements.md").splitlines() if l.startswith("| Linear |")]
+        self.assertEqual(len(requirements), 1)
+        self.assertNotIn("connector", requirements[0])
+
+    def test_docs_describe_the_verbs(self):
+        cli = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `linear <verb>`")]
+        self.assertEqual(len(cli), 1)
+        for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project"):
+            self.assertIn(word, cli[0])
+
+
+class NoLinearMcpToolName(unittest.TestCase):
+    NAMES = ("save_issue", "get_issue", "list_issues", "save_comment", "get_project", "list_issue_labels", "create_issue_label",
+             "save_document", "mcp__claude_ai_Linear")
+
+    def test_no_shipped_text_names_a_linear_mcp_tool(self):
+        files = [ROOT / "SKILL.md", ROOT / "README.md"]
+        for rel, pattern in (("sections", "*.md"), ("commands", "*.md"), ("docs", "*.md"), ("bin", "*.py"), ("setup/compose_setup", "*.py")):
+            files += sorted((ROOT / rel).glob(pattern))
+        self.assertGreater(len(files), 40)
+        hits = [f"{f.relative_to(ROOT)}: {n}" for f in files for n in self.NAMES if n in f.read_text()]
+        self.assertEqual(hits, [])
+
 
     def test_size_and_one_pointer_per_moved_section(self):
         text = read("SKILL.md")
@@ -387,15 +438,15 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("not the cards", line)
 
     def test_lead_saves_linear_in_few_patches_near_its_reporting_rule(self):
-        hits = [i for i, l in enumerate(self.lines) if "save_issue" in l]
-        self.assertEqual(len(hits), 1, "one save_issue sentence")
+        hits = [i for i, l in enumerate(self.lines) if "compose linear update --section" in l]
+        self.assertEqual(len(hits), 1, "one compose linear update --section sentence")
         line = self.lines[hits[0]]
         self.assertLessEqual(abs(hits[0] - self.report), 2, "near the reporting rule")
-        for words in ("team lead drafts", "Decisions", "Plan", "one per section", "task issues", "whole issue"):
+        for words in ("team lead drafts", "Decisions", "Plan", "one per section", "task issues"):
             self.assertIn(words, line)
 
     def test_new_lines_are_plain_and_the_older_sentences_stay(self):
-        new = [l for l in self.lines if self.ONE_LINE in l or "save_issue" in l or "<card id>" in l]
+        new = [l for l in self.lines if self.ONE_LINE in l or "compose linear update --section" in l or "<card id>" in l]
         self.assertTrue(new)
         for line in new:
             self.assertNotRegex(line, r"[.!?] [A-Z]", line)
@@ -472,7 +523,7 @@ class PlannerSavesInPatches(unittest.TestCase):
         self.assertRegex(rule, r"drafts? the whole plan")
         self.assertIn("decisions", rule)
         self.assertRegex(rule, r"before (it )?sav")
-        self.assertRegex(rule, r"few `?save_issue`? patches")
+        self.assertRegex(rule, r"few `compose linear update --section` writes")
         self.assertIn("one per section", rule)
 
     def test_task_detail_goes_on_task_issues_and_no_reread(self):
@@ -480,14 +531,12 @@ class PlannerSavesInPatches(unittest.TestCase):
         self.assertIn("task issues", rule)
         self.assertRegex(rule, r"never re-?reads? an issue it just wrote")
 
-    def test_reason_is_that_each_save_echoes_the_whole_issue(self):
-        rule = self.rule()
-        self.assertRegex(rule, r"echoes the whole issue")
-        self.assertIn("355k", rule)
+    def test_no_reread_because_an_update_prints_only_its_id(self):
+        self.assertIn("`compose linear update` prints only `updated <id>`", self.rule())
 
     def test_rule_is_stated_once_and_earlier_text_stays(self):
         text = read("sections/1.md")
-        self.assertEqual(len(re.findall(r"(?i)echoes the whole issue", text)), 1)
+        self.assertEqual(text.count("prints only `updated <id>`"), 1)
         flat = " ".join(text.split())
         self.assertIn(" ".join(PlannerReadsWritingPlans.RUN[:3]), flat)
         self.assertIn(PlannerReadsWritingPlans.SKILLS_OFF, flat)

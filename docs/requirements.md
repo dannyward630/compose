@@ -19,7 +19,7 @@ This page says what each piece is for, and which pieces setup treats as required
 | i-have-adhd skill | the skill file `doctor` requires | setup adds its marketplace (needs Claude Code) |
 | OpenRouter key | implementers, fixers, Mercury review | see [Keys](#keys) |
 | TypeSafe key | Jev acceptance checks, every jev e2e step, and the decision screen (`reflect`) | see [Keys](#keys) |
-| Linear | the plan, stories, tasks, and decisions | a Linear API key per [workspace](workspaces.md), or the `claude.ai Linear` connector shown as Connected in `claude mcp list`; one of the two is enough |
+| Linear | the plan, stories, tasks, and decisions | a Linear API key per [workspace](workspaces.md); required |
 | macOS userland | `lsof`, `ps`, `pgrep`, `kill`, `open`: cleanup and launching Frame0 | ships with macOS |
 
 `~/.local/bin` must be on your PATH, because the links setup makes live there.

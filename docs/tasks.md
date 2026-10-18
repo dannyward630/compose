@@ -75,9 +75,8 @@ If you cannot write the test, it is not a task yet.
 
 ## Sync
 
-`compose sync --from-linear` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.
-Without a key, the team lead reads the feature and every issue under it with its Linear MCP tools and pipes this JSON to `compose sync`.
-The JSON has this shape:
+`compose sync` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.
+`compose sync --stdin` takes JSON of this shape instead, for scripts and tests:
 
 ```json
 {"feature": {"id": "ENG-123", "title": "...", "description": "<the feature's description, plan included>"},
@@ -88,7 +87,7 @@ The JSON has this shape:
 `run`, `verify`, `resume`, `bench`, and `tasks` read what was last synced, so the team lead syncs right before each.
 
 The CLI writes to Linear only to keep states true, and only when the active workspace has a Linear key.
-The team lead writes everything else on Linear through the Linear MCP.
+The team lead writes everything else on Linear with `compose linear`.
 
 `.compose/<project>/` holds only the CLI's files.
 Those are `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.
