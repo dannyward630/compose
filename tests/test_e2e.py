@@ -206,7 +206,7 @@ class BeforePlanning(unittest.TestCase):
         a = SimpleNamespace(**{"repo": str(repo), "project": "p", "skip_e2e": False, "skip_review": False, "fix": 2, **flags})
         self.out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_linear, "linear_reconcile") as self.lr, \
-                mock.patch.object(fc.fc_verify, "verify_failed"), contextlib.redirect_stdout(self.out), self.assertRaises(SystemExit) as cm:
+                mock.patch.object(fc.fc_verify, "verify_failed") as self.vf, contextlib.redirect_stdout(self.out), self.assertRaises(SystemExit) as cm:
             fc.fc_verify.cmd_verify(a)
         return cm.exception.code, repo
 
@@ -252,6 +252,26 @@ class BeforePlanning(unittest.TestCase):
             self.assertIn("no tasks synced for p", str(code), flags)
             self.assertIn("--skip-review --fix 0", str(code), flags)
             self.assertFalse((repo / "checked").exists(), flags)
+
+    def test_a_smoke_fail_skips_the_failure_screen_and_keeps_its_record_line_and_exit(self):
+        for kw, label in (({"skip_review": True}, "no tasks, no review"), ({"tasks": []}, "no tasks"),
+                          ({"tasks": [self.TASK], "skip_e2e": True}, "no e2e"), ({"tasks": [self.TASK], "skip_review": True, "last": '{"passed": true}'}, "no review")):
+            code, smoke = self.smoke(f"FAIL ({label})", checks=["false"], fix=0, **kw)
+            self.assertEqual((code, smoke["passed"], self.vf.call_count), (1, False, 0), kw)
+
+    def test_a_full_verify_fail_still_screens_its_rounds_and_findings(self):
+        code, _ = self.verify(tasks=[self.TASK], checks=["false"], fix=0, last='{"passed": true}')
+        record = json.loads((self.proj / "results" / "verify.json").read_text())
+        self.assertEqual((code, record["passed"], self.vf.call_count), (1, False, 1))
+        proj, rounds, findings = self.vf.call_args.args
+        self.assertEqual((proj, len(rounds), rounds[0]["checks"]), (self.proj, 1, record["rounds"][0]["checks"]))
+        self.assertIn("Command failed: false", findings)
+        self.assertIn("verify FAIL", self.out.getvalue())
+
+    def test_a_passing_run_never_reaches_the_failure_screen(self):
+        for kw in ({"tasks": [self.TASK]}, {"tasks": []}, {"skip_review": True, "fix": 0}):
+            code, _ = self.verify(**kw)
+            self.assertEqual((code, self.vf.call_count), (0, 0), kw)
 
 
 T = 1_760_000_000  # fixed mtimes: the other record is 3 hours off, so its HH:MM never matches
