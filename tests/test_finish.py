@@ -51,13 +51,13 @@ class Finish(unittest.TestCase):
         for self.connected, linear in ((True, []), (False, ["linear"]), (None, ["linear"])):
             skipped = [f"skipped {k}" for k in ["openrouter", "typesafe", *linear]]
             lines, code = self.run_finish(bare)
-            self.assertEqual((code, lines[-1], SKIPS(lines)), (1, NOT_DONE, skipped)); self.assertNotIn(READY[0], lines)
+            self.assertEqual((code, lines[-1], SKIPS(lines)), (1, f"{NOT_DONE}: missing OpenRouter, TypeSafe" + (", Linear" if linear else ""), skipped)); self.assertNotIn(READY[0], lines)
             lines, code = self.run_finish(bare, yes=True)
             fix = next(r[2] for r in F.fc_steps.STEPS if r[0] == "OpenRouter key")
             self.assertEqual((code, lines[-3:], SKIPS(lines)), (0, [HEAD, f"  OpenRouter key: {fix}", FOOT], skipped))
         self.probe.assert_not_called()  # no OpenRouter key, or yes
         lines, code = self.run_finish({"workspaces": {"default": {"openrouter": "sk-or-test"}}, "typesafe": "ts-test"})
-        self.assertEqual((code, lines[-1], SKIPS(lines)), (1, NOT_DONE, ["skipped linear"]))
+        self.assertEqual((code, lines[-1], SKIPS(lines)), (1, NOT_DONE + ": missing Linear", ["skipped linear"]))
 
     def test_probe_failure_and_missing_claude(self):
         self.probe.return_value = (False, ["provider: no endpoints", "make the preset"])
