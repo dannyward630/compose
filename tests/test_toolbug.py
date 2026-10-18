@@ -179,7 +179,8 @@ class FileCommand(unittest.TestCase):
                 status, out = self.run_cmd(state, url=url, entry=self.AT)
                 path = self.draft(out, None if state == "no-gh" else "alice9")
                 self.assertEqual(status, 1 if url is None else 0); self.m["record_issue"].assert_not_called()
-                self.assertIn(f'--project shop --entry "{self.AT}" --body {path} --approved', out); self.assertNotIn("not recorded", out)
+                [line] = [l for l in out.splitlines() if "--approved" in l]; self.assertNotIn("not recorded", out)
+                for part in (f'--entry "{self.AT}"', "--project shop", f"--body {path}", "--approved"): self.assertIn(part, line)
 
     def test_matches_are_listed_and_exit_2_without_posting(self):
         status, out = self.run_cmd("maintainer", matches=[{"number": 7, "title": "crew start hangs", "url": "https://x/7"}], entry=self.AT)
