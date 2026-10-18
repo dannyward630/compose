@@ -306,32 +306,49 @@ def layer_note(l, budget):
                 else f"; over the {budget}-line budget, a {'commit' if l['tasks'] == ['groundwork'] else 'task'} is never split" if len(l["tasks"]) == 1 else "")
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
 
+TITLE_CHARS = 72  # a PR title's length before its ` (i/n)` suffix, the Jira-key prefix included
+
+def clip(text, room):
+    """text in at most `room` characters: whole when it fits, else cut at a word boundary and ending in `...`."""
+    if len(text) <= room:
+        return text
+    head = text[:room - 2]
+    return (head.rsplit(" ", 1)[0] if " " in head else head[:-1]).rstrip(" ,;:-") + "..."
+
 def layer_title(repo, proj, l, n, metas):
     """A layer's PR title names its change: the feature's title for a one-PR stack, the story's for a layer that holds every
-    task of one story and no other story's, else its one commit's subject, or its first task's title or first commit's subject
-    plus ` and N more`. With the Jira-key prefix, and the ` (i/n)` suffix only when the stack has more than one PR."""
+    task of one story and no other story's, `Groundwork for <feature title>` for a layer of groundwork only, else its one
+    commit's subject, its stories' titles (`<story>; <story>`) when its tasks span several and they fit, or its first task's
+    title or first commit's subject plus ` and N more tasks` (`commits`). With the Jira-key prefix, at most TITLE_CHARS
+    characters (cut at a word boundary, ending in `...`), and the ` (i/n)` suffix only when the stack has more than one PR."""
     cache = fc_tasks.linear_cache(proj)
     feature, issues = cache.get("feature") or {}, cache.get("issues") or {}
     held = {m["id"] for m in metas if m["id"] in l["tasks"]}
-    stories = {story_of(issues, m) for m in metas if m["id"] in held}
+    stories = list(dict.fromkeys(story_of(issues, m) for m in metas if m["id"] in held))
     whole = len(stories) == 1 and None not in stories and all(m["id"] in held for m in metas if story_of(issues, m) in stories)
+    named = [title_text(issues[s].get("title") or "") for s in stories if s]
+    tasks = [t for t in l["tasks"] if t != "groundwork"]
     subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
-    if n == 1 and feature.get("title"):
-        first, more = title_text(feature["title"]), 0
-    elif whole and issues[next(iter(stories))].get("title"):
-        first, more = title_text(issues[next(iter(stories))]["title"]), 0
-    elif len(subjects) == 1:
-        first, more = subjects[0], 0
-    else:
-        tasks = [t for t in l["tasks"] if t != "groundwork"]
-        if tasks:
-            names = {m["id"]: commit_message(m) for m in metas}
-            first, more = names.get(tasks[0], tasks[0]), len(tasks) - 1
-        else:
-            first, more = subjects[0], len(subjects) - 1
     key = re.match(r"([A-Za-z]+-\d+)-", fc_core.project_config(proj).get("branch") or "")
+    prefix = key.group(1).upper() + ": " if key else ""
+    room = TITLE_CHARS - len(prefix)
+    if n == 1 and feature.get("title"):
+        text = clip(title_text(feature["title"]), room)
+    elif whole and named[0]:
+        text = clip(named[0], room)
+    elif not tasks and feature.get("title"):
+        text = clip(f"Groundwork for {title_text(feature['title'])}", room)
+    elif len(subjects) == 1:
+        text = clip(subjects[0], room)
+    elif len(stories) > 1 and None not in stories and all(named) and len("; ".join(named)) <= room:
+        text = "; ".join(named)
+    else:
+        names = {m["id"]: commit_message(m) for m in metas}
+        first, more, unit = (names.get(tasks[0], tasks[0]), len(tasks) - 1, "task") if tasks else (subjects[0], len(subjects) - 1, "commit")
+        tail = f" and {more} more {unit}{'s' if more > 1 else ''}" if more else ""
+        text = clip(first, room - len(tail)) + tail
     idx = int(l["branch"].rsplit("layer-", 1)[1])
-    return f"{key.group(1).upper() + ': ' if key else ''}{first}{f' and {more} more' if more else ''}{f' ({idx}/{n})' if n > 1 else ''}"
+    return f"{prefix}{text}{f' ({idx}/{n})' if n > 1 else ''}"
 
 WHY_CHARS = 400
 GITHUB_ISSUE_RE = re.compile(r"https?://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)|(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)")

@@ -886,7 +886,7 @@ class PrTextDocs(unittest.TestCase):
     def test_each_pr_is_titled_from_its_commits(self):
         self.assertTrue(self.pushed[0].startswith("Nothing is pushed."), self.pushed[0])
         self.assertRegex(self.text, r"\btitles?\b[^.]*\bcommits\b")
-        for word in ("subject", "`and N more`", "groundwork", "Jira", "`(i/n)`", "feature's title for a one-PR stack", "one whole story", "more than one PR"):
+        for word in ("subject", "`and N more tasks`", "`Groundwork for <feature title>`", "72 characters", "groundwork", "Jira", "`(i/n)`", "feature's title for a one-PR stack", "one whole story", "more than one PR"):
             self.assertIn(word, self.text)
 
     def test_the_body_has_four_sections_in_order_from_issues_and_results_with_no_model(self):

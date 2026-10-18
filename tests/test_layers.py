@@ -457,7 +457,8 @@ class StackLimit(unittest.TestCase):
 
 
 class PrTitle(unittest.TestCase):
-    """A layer's PR is titled from its commits: one commit's subject, else its first task's title or first commit's subject and N more."""
+    """A layer's PR is titled from its commits: one commit's subject, else its first task's title or first commit's subject and N more
+    tasks or commits, never past TITLE_CHARS before its (i/n)."""
     setUp, git, write, commit, stack = Layers.setUp, Layers.git, Layers.write, Layers.commit, Layers.stack
     METAS = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}, {"id": "003", "title": "Add the menu"}]
 
@@ -482,17 +483,17 @@ class PrTitle(unittest.TestCase):
 
     def test_a_one_commit_layer_is_its_subject_and_a_groundwork_layer_its_first_subject_and_n_more(self):
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "Ignore build output (1/2)")
-        self.assertEqual(self.title(["groundwork"] * 3, ["Ignore build output", "Pin the toolchain", "Add a lint step"]), "Ignore build output and 2 more (1/2)")
+        self.assertEqual(self.title(["groundwork"] * 3, ["Ignore build output", "Pin the toolchain", "Add a lint step"]), "Ignore build output and 2 more commits (1/2)")
 
     def test_a_task_layer_is_its_first_tasks_title_and_n_more_counting_only_its_other_tasks(self):
         subjects = ["test 001", "toggle work", "test 002", "panel work", "menu work"]
-        self.assertEqual(self.title(["001", "002", "003"], subjects, 4, "compose/p-layer-02"), "Add the toggle and 2 more (2/4)")
+        self.assertEqual(self.title(["001", "002", "003"], subjects, 4, "compose/p-layer-02"), "Add the toggle and 2 more tasks (2/4)")
         self.assertEqual(self.title(["001"], ["test 001", "toggle work"]), "Add the toggle (1/2)")
-        self.assertEqual(self.title(["groundwork", "002", "003"], ["Ignore build output", "panel work", "menu work"]), "Add the panel and 1 more (1/2)")
+        self.assertEqual(self.title(["groundwork", "002", "003"], ["Ignore build output", "panel work", "menu work"]), "Add the panel and 1 more task (1/2)")
 
     def test_a_jira_key_on_the_project_branch_prefixes_the_title(self):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
-        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more (3/4)")
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more task (3/4)")
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
         self.linear()
         self.assertEqual(self.title(["001", "002", "003"], ["toggle work", "panel work", "menu work"], 1), "JS-2888: Stacked [PRs]")
@@ -504,7 +505,7 @@ class PrTitle(unittest.TestCase):
         self.METAS = [{**m, "linear": f"NEB-{i}"} for i, m in enumerate(PrTitle.METAS, 1)]
 
     def test_a_one_pr_stack_is_titled_by_its_feature_and_has_no_count(self):
-        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 1), "Add the toggle and 1 more")  # no feature title known
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 1), "Add the toggle and 1 more task")  # no feature title known
         self.linear()
         self.assertEqual(self.title(["001", "002", "003"], ["test 001", "toggle work", "panel work", "menu work"], 1), "Stacked [PRs]")
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"], 1), "Stacked [PRs]")
@@ -514,7 +515,27 @@ class PrTitle(unittest.TestCase):
         self.assertEqual(self.title(["groundwork", "001", "002"], ["Ignore build output", "toggle work", "panel work"]), "Users flip the toggle (1/2)")
         self.assertEqual(self.title(["003"], ["test 003", "menu work"], 3, "compose/p-layer-03"), "Open the menu (3/3)")
         self.assertEqual(self.title(["001"], ["test 001", "toggle work"]), "Add the toggle (1/2)")  # part of a story: its task
-        self.assertEqual(self.title(["002", "003"], ["panel work", "menu work"]), "Add the panel and 1 more (1/2)")  # two stories
+        self.assertEqual(self.title(["002", "003"], ["panel work", "menu work"]), "Users flip the toggle; Open the menu (1/2)")  # two stories, named
+
+    def test_a_groundwork_layer_is_groundwork_for_the_feature(self):
+        self.linear()
+        self.assertEqual(self.title(["groundwork"] * 2, ["Test that the briefs read the section " * 5, "Add the stubs"]), "Groundwork for Stacked [PRs] (1/2)")
+        self.assertEqual(self.title(["groundwork"], ["Add the stubs"], 3), "Groundwork for Stacked [PRs] (1/3)")
+
+    def test_a_title_past_the_cap_is_cut_at_a_word_and_keeps_its_prefix_and_count(self):
+        long = "Test that the wayfinder, change, and explore briefs read the section with linear get, then write the whole section back"
+        self.assertEqual(self.title(["groundwork"], [long]), "Test that the wayfinder, change, and explore briefs read the section... (1/2)")
+        self.METAS = [{"id": "001", "title": long}, *PrTitle.METAS[1:]]
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"]), "Test that the wayfinder, change, and explore briefs... and 1 more task (1/2)")
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
+        self.assertEqual(self.title(["groundwork"], [long]), "JS-2888: Test that the wayfinder, change, and explore briefs read the... (1/2)")
+        self.assertEqual(self.title(["groundwork"], ["x" * 100]), "JS-2888: " + "x" * 60 + "... (1/2)")
+        self.linear()
+        self.assertEqual(self.title(["001"], ["test 001", "toggle work"], 1), "JS-2888: Stacked [PRs]")
+        issues = json.loads((self.proj / "results" / "tasks.json").read_text())
+        issues["issues"]["NEB-20"]["title"] = "Open the menu from anywhere in the app, with the keyboard or the pointer"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(issues))
+        self.assertEqual(self.title(["002", "003"], ["panel work", "menu work"]), "JS-2888: Add the panel and 1 more task (1/2)")  # the stories do not fit
 
 
 class PrBody(unittest.TestCase):
