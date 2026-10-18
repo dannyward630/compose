@@ -1,6 +1,6 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, tempfile, unittest, urllib.error
-from contextlib import redirect_stdout
+import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest, urllib.error
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -188,11 +188,21 @@ class SyncFromLinear(unittest.TestCase):
         more = start + len(chunk) < len(ids)
         return {"issue": {"children": {"pageInfo": {"hasNextPage": more, "endCursor": str(start + 2)}, "nodes": nodes}}}
 
-    def sync(self):
+    def sync(self, stdin=False):
         out = io.StringIO()
         with redirect_stdout(out), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
-            fc.fc_linear.cmd_sync(SimpleNamespace(from_linear=True))
+            fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin))
         return out.getvalue()
+
+    def fails(self, gql=None):
+        """The exit text of a sync from Linear, with linear_gql answering by `gql` when given; it never holds the key."""
+        err = io.StringIO()
+        with redirect_stderr(err), mock.patch.object(fc.fc_linear, "linear_gql", gql or self.gql), self.assertRaises(SystemExit) as e:
+            self.sync()
+        code = e.exception.code
+        text = (code if isinstance(code, str) else "") + err.getvalue()
+        self.assertEqual(1 if isinstance(code, str) else code, 1); self.assertNotIn(KEY, text)
+        return text
 
     def test_payload_is_the_stdin_shape_with_every_page(self):
         data = fc.fc_linear.linear_sync_payload(self.proj)
@@ -212,12 +222,40 @@ class SyncFromLinear(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-3"]}))
         self.assertEqual([i["id"] for i in fc.fc_linear.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
 
-    def test_no_key_points_to_stdin_and_prints_no_key(self):
-        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
-            fc.fc_linear.linear_sync_payload(self.proj)
-        self.assertIn("pipe the JSON on stdin", str(e.exception))
-        self.assertNotIn(KEY, str(e.exception))
+    def test_no_key_names_the_workspace_and_the_stdin_form(self):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "WORKSPACE", "work"):
+            text = self.fails()
+        self.assertIn("sync needs a Linear key for workspace 'work': pbpaste | compose workspace key work --linear; "
+                      "or pipe the JSON to compose sync --stdin --project ", text)
+        self.assertIn(f" ({fc.fc_tasks.SYNC_SHAPE})", text)
+        self.assertEqual(self.queries, [])
 
+    def test_missing_feature_and_linear_failures_exit_and_store_nothing(self):
+        self.assertIn("sync: Linear has no issue ENG-1", self.fails(lambda q, v: {"issue": None}))
+        for err, first in ((RuntimeError("boom"), True), (OSError("boom"), False)):  # on the feature, or while paging its children
+            def gql(q, v, err=err, first=first):
+                if first or "children" in q:
+                    raise err
+                return self.gql(q, v)
+            with self.subTest(err=repr(err)):
+                self.assertIn(f"sync: Linear failed (boom); compose sync --stdin still works ({fc.fc_tasks.SYNC_SHAPE})", self.fails(gql))
+        self.assertFalse((self.proj / "results" / "tasks.json").exists())
+
+    def test_stdin_reads_the_json_and_never_linear(self):
+        payload = json.dumps(fc.fc_linear.linear_sync_payload(self.proj))
+        self.queries.clear()
+        with mock.patch("sys.stdin", io.StringIO(payload)):
+            self.assertIn("3 task(s) synced", self.sync(stdin=True))
+        self.assertEqual(self.queries, [])
+
+    def test_cli_takes_stdin_and_rejects_from_linear(self):
+        def run(flag):
+            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "sync", flag, "--project", "x",
+                                   "--repo", str(self.proj)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        old = run("--from-linear")
+        self.assertEqual(old.returncode, 2); self.assertIn("--from-linear", old.stderr)
+        new = run("--stdin")
+        self.assertNotEqual(new.returncode, 2); self.assertNotIn("unrecognized arguments", new.stderr)
 
 class LinearErrors(unittest.TestCase):
     """linear_gql with urlopen faked: an HTTP error whose body holds Linear's `errors` gives the text a 200 reply gives."""
