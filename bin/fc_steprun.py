@@ -1,7 +1,6 @@
 """Run one setup step: the plain path and the Textual app both go through run_step."""
 import subprocess
-from pathlib import Path
-import fc_config, fc_checks, fc_keys, fc_steps, fc_links, fc_pi
+import fc_core, fc_config, fc_checks, fc_keys, fc_steps, fc_links, fc_pi
 
 
 # The write rows' writers: each compose link row makes its own owned link, pi gets its openrouter-fast provider, the .env its TEXT_MODEL lines.
@@ -25,7 +24,7 @@ def run_step(row, checkout, yes, claude, terminal):
     an empty line but a write row keeps its writer's line, and a failed run or interactive row ends with the install to
     run by hand after the last error line, or failed; every line shows ~/ wherever the home directory followed by / appears in it."""
     state, line = _run_step(row, checkout, yes, claude, terminal)
-    return state, line.replace(str(Path.home()) + "/", "~/")
+    return state, fc_core.tilde(line)
 
 def _run_step(row, checkout, yes, claude, terminal):
     name, _, install, level, needs_claude, mode = row

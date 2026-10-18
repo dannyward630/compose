@@ -3,7 +3,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-import fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links, fc_steps
+import fc_core, fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links, fc_steps
 
 CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://claude.ai/install.sh | bash, log in, then run compose setup again"
 
@@ -11,7 +11,7 @@ CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://cla
 def finish(results, yes):
     """(lines, code) from _finish, with ~/ for the home directory followed by / in every line; code 0 when compose is ready, else 1."""
     lines, code = _finish(results, yes)
-    return [line.replace(str(Path.home()) + "/", "~/") for line in lines], code
+    return [fc_core.tilde(line) for line in lines], code
 
 
 def _finish(results, yes):

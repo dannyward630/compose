@@ -32,9 +32,7 @@ def owned_link(name, checkout):
     if state == "dangling":
         return False, f"dangling link {link} -> {seen}"
     if state == "missing":
-        home = str(Path.home())
-        shown = "~" + str(link)[len(home):] if str(link).startswith(home) else str(link)
-        return False, f"{shown} is missing"
+        return False, f"{fc_core.tilde(link)} is missing"
     if state == "ok":
         rel = Path(target).relative_to(Path(checkout))
         seen = Path(seen)

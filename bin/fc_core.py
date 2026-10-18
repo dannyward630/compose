@@ -235,3 +235,10 @@ def project_after(proj):
     cfg = project_config(proj)
     base = cfg.get("review_base", "")
     return cfg.get("after") or (base.removeprefix("compose/") if base.startswith("compose/") else None)
+
+
+# ---------- showing paths ----------
+
+def tilde(text):
+    """text (a path or a line) with the home directory followed by / shown as ~/."""
+    return str(text).replace(str(Path.home()) + "/", "~/")
