@@ -7,6 +7,10 @@
     padding: 0 1;
 }
 
+#steps > ListItem.-highlight {
+    background: $surface-lighten-2;
+}
+
 #steps .pending {
     color: $text-muted;
 }
@@ -35,7 +39,7 @@
 }
 
 #steps .skipped {
-    color: $secondary;
+    color: #a6ccf5;
 }
 
 #steps .claude {
@@ -49,7 +53,7 @@
 }
 
 #steps .failed {
-    color: $error;
+    color: #ffa3b5;
     text-style: bold;
 }
 
