@@ -57,7 +57,7 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         color: $text-muted;
     }
     KeysScreen .skipped {
-        color: $error;
+        color: $text-error;
     }
     KeysScreen #keys-title {
         text-style: bold;
@@ -118,7 +118,8 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
             self.warned = True
             warnings = [Static(fc_keys.skipped_line(kind, self.workspace), classes="skipped") for kind in missing]
             warnings.append(Static("Press Continue again to go on without the missing keys.", classes="skipped"))
-            self.query_one("#keys-body").mount(*warnings)
-            warnings[0].scroll_visible()
+            body = self.query_one("#keys-body")
+            body.mount(*warnings)
+            self.call_after_refresh(body.scroll_end, animate=False)
             return
         self.dismiss((self.saved, missing))
