@@ -16,7 +16,7 @@
 }
 
 #steps .unchosen {
-    color: $text-disabled;
+    color: #b4a7d6;
     text-style: italic;
 }
 
