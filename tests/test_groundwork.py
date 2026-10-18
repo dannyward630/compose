@@ -248,6 +248,23 @@ class Triage(unittest.TestCase):
             self.assertEqual(len(calls), len(contents))
             self.assertTrue(len(calls) == 1 or "exactly one JSON object" in calls[1])
 
+    def test_a_reply_cut_off_at_its_token_budget_is_asked_again_with_a_bigger_one(self):
+        full = '{"verdict": "flag", "reason": "`retries := 3`"}'
+        for cut, need in ((full[:20], 1000), ("", 1000), (full[:20], 10 ** 6)):  # cut mid-object, or before any text
+            budgets = []
+            def http(req, provider, timeout=90, cut=cut, need=need):  # the whole reply needs `need` tokens
+                budgets.append(json.loads(req.data)["max_tokens"])
+                short = budgets[-1] < need
+                return {"choices": [{"message": {"content": cut if short else full}, "finish_reason": "length" if short else "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "say"):
+                verdict, reason = fc.fc_run.triage(self.repo, self.proj, ["001"])["001"]
+            self.assertEqual(len(budgets), 2)
+            self.assertGreaterEqual(budgets[1], 4 * budgets[0])
+            if need < 10 ** 6:
+                self.assertEqual((verdict, reason), ("flag", "`retries := 3`"), cut)
+            else:
+                self.assertEqual((verdict, reason), ("unknown", f"triage failed: reply cut off at max_tokens={budgets[1]}"))
+
 
 class CondenseFailure(unittest.TestCase):
     def test_short_output_keyless_or_failing_calls_add_nothing(self):

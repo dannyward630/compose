@@ -346,12 +346,21 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
     out = http_json(req, "openrouter (Mercury review)", timeout=timeout)
     u = out.get("usage", {})
     fc_core.LEDGER.add("openrouter", u.get("prompt_tokens", 0), u.get("completion_tokens", 0), u.get("cost"))
-    content = ((out.get("choices") or [{}])[0].get("message") or {}).get("content")
-    if not content or not str(content).strip():
-        raise EmptyReply("model returned an empty reply")
-    return lenient_json(str(content))
+    choice = (out.get("choices") or [{}])[0]
+    content, cut = (choice.get("message") or {}).get("content"), choice.get("finish_reason") == "length"
+    try:
+        if not content or not str(content).strip():
+            raise EmptyReply("model returned an empty reply")
+        return lenient_json(str(content))
+    except (EmptyReply, ValueError):
+        if cut:  # the budget ran out before the object closed; a whole object followed by cut-off prose still parses above
+            raise CutOff(f"reply cut off at max_tokens={max_tokens}")
+        raise
 
 class EmptyReply(Exception):
+    pass
+
+class CutOff(Exception):
     pass
 
 class BadReply(Exception):
@@ -360,12 +369,13 @@ class BadReply(Exception):
 def fast_object(env, system, user, shape, key, max_tokens=1500, timeout=90):
     """fast_json for a caller that needs one JSON object holding `key`, described to the model as `shape`. The model sometimes
     wraps the object in a list, so a one-element list is unwrapped; a reply that is not valid JSON or not such an object is
-    retried once with a stricter instruction, then raises BadReply saying what was wrong with it."""
+    retried once with a stricter instruction and four times the token budget (a reply cut off at the budget would be cut
+    again), then raises BadReply saying what was wrong with it."""
     strict = system + f" Reply with exactly one JSON object {shape} and nothing else: no list, no prose."
-    for sysmsg in (system, strict):
+    for sysmsg, budget in ((system, max_tokens), (strict, max_tokens * 4)):
         try:
-            v = fast_json(env, sysmsg, user, max_tokens=max_tokens, timeout=timeout)
-        except EmptyReply as e:
+            v = fast_json(env, sysmsg, user, max_tokens=budget, timeout=timeout)
+        except (EmptyReply, CutOff) as e:
             why = str(e)
             continue
         except ValueError as e:
