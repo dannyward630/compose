@@ -247,6 +247,7 @@ def main():
             ex.add_argument("--new", action="store_true", help="open a new issue instead of searching the open issues")
             s.add_argument("--approved", action="store_true", help="post although this machine is not the maintainer's")
             s.add_argument("--body", required=True, help="file holding the raw report")
+            s.add_argument("--entry", help="the `at` of the tool-bugs.jsonl entry the posted URL is recorded on")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")

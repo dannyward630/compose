@@ -98,28 +98,10 @@ def post(title, body, comment=None):
     out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
     return out[-1] if out else None
 
-def record_issue(project, url):
-    """Set `issue` on the project's newest tool-bugs.jsonl entry; False when the project has none."""
-    import json
-    from pathlib import Path
-    path = Path(fc_crew.TOOL_BUGS)
-    if not path.exists():
-        return False
-    lines = path.read_text().splitlines(keepends=True)
-    def project_of(line):
-        try:
-            d = json.loads(line)
-        except ValueError:
-            return None
-        return d.get("project") if isinstance(d, dict) else None
-    hits = [i for i, l in enumerate(lines) if project_of(l) == project]
-    if not hits:
-        return False
-    entry = json.loads(lines[hits[-1]])
-    entry["issue"] = url
-    lines[hits[-1]] = json.dumps(entry) + "\n"
-    path.write_text("".join(lines))
-    return True
+def record_issue(project, url, at):
+    """Set `issue` on the project's last tool-bugs.jsonl entry whose `at` is `at`, only when it has none yet; the URL that entry
+    holds afterwards (the new one or the kept one), None when no entry of the project has that `at`."""
+    return None
 
 def cmd_tool_bug(a):
     """`tool-bug file --body <file> [--comment N | --new] [--approved]`: scrub, then post on the maintainer's machine or with
