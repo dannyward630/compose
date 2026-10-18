@@ -119,3 +119,53 @@ class KeysLook(unittest.IsolatedAsyncioTestCase):
             skip = (lambda k, w: f"skip-{k}-{w}" + "\nmore" * 6) if long else (lambda k, w: f"skip-{k}-{w}")
             result = await self.look((False,) * 4, check, skip, presses=1)
             self.assertTrue(result and result[0] == [] and REQUIRED <= set(result[1]), result)
+
+
+class KeysKeyboard(unittest.IsolatedAsyncioTestCase):
+    async def drive(self, status, steps):
+        saved = []
+        with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))), \
+             mock.patch.object(fc_keys, "linear_connected", return_value=False), mock.patch.object(fc_keys, "linear_state", return_value="key" if status[2] else "missing"), \
+             mock.patch.object(fc_keys, "save_key", side_effect=lambda k, v, w, f: saved.append((k, v)) or "saved"), \
+             mock.patch.object(fc_keys, "skipped_line", side_effect=lambda k, w: f"skip-{k}-{w}"):
+            app = Host("default")
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                await steps(self, app, pilot, saved)
+        return app.result, saved
+
+    def inputs(self, app):
+        return {kind: app.screen.query_one(f"#{kind}", Input) for kind in LABELS}
+
+    async def test_opens_on_openrouter_and_enter_walks_kinds_to_continue(self):
+        async def steps(self, app, pilot, saved):
+            inputs = self.inputs(app)
+            self.assertIs(app.focused, inputs["openrouter"])
+            await pilot.press(*"sk-or-test")
+            self.assertEqual([i.value for i in inputs.values()], ["sk-or-test", "", "", ""])
+            for kind in ("typesafe", "linear", "figma"):
+                await pilot.press("enter"); await pilot.pause()
+                self.assertIs(app.focused, inputs[kind])
+            await pilot.press("enter"); await pilot.pause()
+            self.assertTrue(isinstance(app.focused, Button) and "Continue" in str(app.focused.label))
+            self.assertEqual((saved, app.result), ([], None))
+            await pilot.press("enter"); await pilot.pause()
+            text = "\n".join(str(w.render()) for w in app.screen.query(Static))
+            self.assertEqual((saved, app.result, [k for k in LABELS if f"skip-{k}-default" in text]), ([("openrouter", "sk-or-test")], None, ["typesafe", "linear"]))
+            self.assertNotIn("sk-or-test", text)
+            await pilot.press("enter"); await pilot.pause()
+            self.assertEqual((app.result[0], set(app.result[1])), (["openrouter"], {"typesafe", "linear"}))
+        await self.drive((False,) * 4, steps)
+
+    async def test_enter_from_a_clicked_input_and_a_new_screen_refocuses(self):
+        async def steps(self, app, pilot, saved):
+            inputs = self.inputs(app)
+            await pilot.click(inputs["linear"]); await pilot.press(*"lin-test", "enter"); await pilot.pause()
+            self.assertIs(app.focused, inputs["figma"])
+            await pilot.press("enter", "enter"); await pilot.pause()
+            self.assertEqual((saved, app.result), ([("linear", "lin-test")], (["linear"], [])))
+            app.push_screen(KeysScreen("default")); await pilot.pause()
+            self.assertIs(app.focused, self.inputs(app)["openrouter"])
+            await pilot.press(*"x")
+            self.assertEqual([i.value for i in self.inputs(app).values()], ["x", "", "", ""])
+        await self.drive((True, True, False, True), steps)
