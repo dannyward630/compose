@@ -3,7 +3,7 @@
 Inside [herdr](https://herdr.dev) you can see every agent in the fleet and steer any of them.
 `compose` with no command, run on a terminal outside herdr, opens the herdr session `compose` for you: `herdr session attach compose`, which creates the session when it is missing.
 It prints one hint line first, then you run `claude` in a pane and type `/compose`.
-`COMPOSE_NO_HERDR=1` turns that off.
+`COMPOSE_NO_HERDR=1` turns that off, and inside herdr it keeps every command headless too: no space, tab, pane, or agent.
 Every subcommand runs headless as before, and a team lead started outside herdr works in one session.
 
 ## Roles

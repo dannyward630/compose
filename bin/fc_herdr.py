@@ -12,7 +12,8 @@ HERDR_SPACES = {}  # project name -> workspace id, filled by herdr_space
 PI_HERDR_EXT = Path.home() / ".pi" / "agent" / "extensions" / "herdr-agent-state.ts"
 
 def herdr_env():
-    return os.environ.get("HERDR_ENV") == "1" and bool(os.environ.get("HERDR_SOCKET_PATH"))
+    """Inside herdr, unless COMPOSE_NO_HERDR asks for the headless path anyway."""
+    return os.environ.get("HERDR_ENV") == "1" and bool(os.environ.get("HERDR_SOCKET_PATH")) and not os.environ.get("COMPOSE_NO_HERDR")
 
 PANE_MAKERS = (("tab", "create"), ("pane", "split"), ("workspace", "create"))
 def herdr_argv(args):
