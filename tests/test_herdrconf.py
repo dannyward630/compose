@@ -61,3 +61,39 @@ class HerdrConfig(unittest.TestCase):
             self.assertEqual((state, ro.read_text(), target.read_text()), ("manual", LOUD, LOUD))
             text = "\n".join(lines)  # the two lines to set, and where
             self.assertTrue(all(w in text for w in ("delivery", '"off"', "enabled", "false")) and (str(p) in text or str(p.resolve()) in text))
+
+class EditKeepsLines(unittest.TestCase):
+    def edit(self, text, want):
+        path = Path(tempfile.mkdtemp()) / "config.toml"
+        path.write_text(text)
+        self.assertEqual(fc_herdrconf.apply_herdr_config(path, SHIPPED)[0], "edited")
+        self.assertEqual(path.read_text(), want)
+        self.assertEqual(fc_herdrconf.apply_herdr_config(path, SHIPPED)[0], "ok")  # a rerun changes nothing
+        self.assertEqual(path.read_text(), want)
+
+    def test_replaced_lines_keep_indent_and_inline_comment(self):
+        cases = [
+            ('[ui.sound]\nenabled = true # on\n[ui.toast]\ndelivery = "system"  # loud\n',
+             '[ui.sound]\nenabled = false # on\n[ui.toast]\ndelivery = "off"  # loud\n'),
+            ('# top\n[ui.sound]\n  enabled = true\t# tab # twice\n\n[ui.toast]\n    delivery = "toast"\n# delivery = "toast"\n',
+             '# top\n[ui.sound]\n  enabled = false\t# tab # twice\n\n[ui.toast]\n    delivery = "off"\n# delivery = "toast"\n'),
+        ]
+        for text, want in cases:
+            with self.subTest(text=text):
+                self.edit(text, want)
+
+    def test_appended_section_gets_exactly_one_blank_line(self):
+        tail = '\n[ui.sound]\nenabled = false\n'
+        cases = [
+            ('[ui.toast]\ndelivery = "toast"\n', '[ui.toast]\ndelivery = "off"\n' + tail),
+            ('[ui.toast]\ndelivery = "toast"\n\n', '[ui.toast]\ndelivery = "off"\n' + tail),
+            ('[ui.toast]\ndelivery = "toast" # t', '[ui.toast]\ndelivery = "off" # t\n' + tail),  # no final newline
+        ]
+        for text, want in cases:
+            with self.subTest(text=text):
+                self.edit(text, want)
+
+    def test_inserted_key_and_untouched_lines_stay_as_today(self):
+        text = '[keys]\nprefix = "ctrl+b"  # mine\n\n[ui.sound]\nvolume = 3\n[ui.toast]\ndelivery = "toast" # t\n'
+        want = '[keys]\nprefix = "ctrl+b"  # mine\n\n[ui.sound]\nenabled = false\nvolume = 3\n[ui.toast]\ndelivery = "off" # t\n'
+        self.edit(text, want)
