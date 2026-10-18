@@ -17,6 +17,21 @@ _spec.loader.exec_module(fc)
 DETACHED = "python3 -c \"import os,subprocess; subprocess.Popen(['python3','-m','http.server',os.environ['E2E_CLIENT_PORT']],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\""
 
 
+FAKE_CHROMIUM = """#!/usr/bin/env python3
+# Chromium's debug port alone: /json/version answers on --remote-debugging-port, headless when launched with --headless
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+port = next(int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--remote-debugging-port="))
+browser = ("HeadlessChrome" if any(a.startswith("--headless") for a in sys.argv) else "Chrome") + "/150.0.0.0"
+class Version(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"Browser": browser, "User-Agent": f"Mozilla/5.0 {browser}"}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", port), Version).serve_forever()
+"""
+
+
 class E2eLifecycle(unittest.TestCase):
     """An e2e stage ends everything it started, so no server or browser answers the next round."""
     def stage(self, cfg):
@@ -57,6 +72,9 @@ class E2eLifecycle(unittest.TestCase):
         self.assertEqual(len(set(seen)), 2)
 
     def test_the_stage_launches_and_ends_its_own_browser(self):
+        chromium = Path(os.environ["HOME"]) / "chromium"  # the fake stands in for Playwright's Chromium, which bp launches
+        chromium.write_text(FAKE_CHROMIUM); chromium.chmod(0o755)
+        self.enterContext(mock.patch.dict(os.environ, {"BP_CHROME": str(chromium)}))
         out = Path(self.dir) / "cdp"
         ua = Path(self.dir) / "ua"
         ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version > {ua} && echo $BU_CDP_URL $BU_NAME > {out}"}]})
