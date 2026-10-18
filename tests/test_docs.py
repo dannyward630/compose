@@ -662,28 +662,43 @@ class StackBaseDocs(unittest.TestCase):
 class HowItWorksStackBase(unittest.TestCase):
     def setUp(self):
         self.lines = read("docs/how-it-works.md").splitlines()
+        self.assertFalse([l for l in self.lines if "\u2014" in l], "em dash")
+
+    def box(self):
+        # The flow box: from the line above its top border (`compose run│`) through the bottom border.
+        run = next(i for i, l in enumerate(self.lines) if "compose run" in l)
+        top = next(i for i in range(run, len(self.lines)) if "┌" in self.lines[i])
+        end = next(i for i in range(top, len(self.lines)) if self.lines[i].startswith("  └"))
+        return self.lines[top - 1], self.lines[top : end + 1]
 
     def test_the_box_commits_on_the_project_branch_name(self):
-        line = self.lines[21]
-        self.assertRegex(line, r"^  │ +format, commit on <project branch>-NNN +│$")
-        self.assertFalse([l for l in self.lines[12:23] if "fast/" in l], "a fast/ branch in the box")
+        _, box = self.box()
+        self.assertFalse([l for l in box if "fast/" in l], "a fast/ branch in the box")
+        self.assertEqual(len([l for l in box if re.fullmatch(r"  │ +format, commit on <project branch>-NNN +│", l)]), 1)
 
     def test_every_box_line_has_the_same_width_and_right_border(self):
-        box = self.lines[12:23]
+        above, box = self.box()
         self.assertEqual({len(l) for l in box}, {len(box[1])}, [len(l) for l in box])
-        self.assertEqual({l[-1] for l in box}, {"┐", "│", "┘"})
-        self.assertEqual({l[-1] for l in box[1:-1]}, {"│"})
+        self.assertEqual([l[-1] for l in box], ["┐"] + ["│"] * (len(box) - 2) + ["┘"])
         # The run arrow still drops into the box under the `compose run│` line above it.
-        self.assertEqual(box[0].index("▼"), self.lines[11].rindex("│"))
-        self.assertRegex(box[4], r"^  │        yes ─▶ implement \(edits only\) ─▶ CLI runs test, protected untouched, ≤350 lines +│$")
+        self.assertEqual(box[0].index("▼"), above.rindex("│"))
+        line = r"  │        yes ─▶ implement \(edits only\) ─▶ CLI runs test, protected untouched, ≤350 lines +│"
+        self.assertEqual(len([l for l in box if re.fullmatch(line, l)]), 1)
 
     def test_the_stack_sits_on_the_review_base_and_merges_all_or_nothing(self):
-        line = self.lines[152]
-        self.assertTrue(line.startswith("- "), line)
+        self.assertFalse([l for l in self.lines if "trunk is the project branch" in l or "one final PR" in l])
+        # The bullet just before the untouched `init --after` bullet, with any continuation lines.
+        after = self.lines.index("- `init --after <other>` branches from another project's branch when the feature needs its code.")
+        at = max(i for i in range(after) if self.lines[i].startswith("- "))
+        self.assertEqual(self.lines[at - 1], "  `init` git-ignores it, `graft/`, and `.trail/` first.")
+        line = " ".join(self.lines[at:after])
         for word in ("main", "`review_base`", "`gh stack merge`", "no final PR"):
             self.assertIn(word, line)
         self.assertRegex(line, r"all.or.nothing")
         self.assertRegex(line, r"\b(stack|sit)s?\b[^.]*\breview base\b")
+
+
+
         self.assertNotIn("trunk is the project branch", line)
         self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
 
