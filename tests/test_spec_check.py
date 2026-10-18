@@ -95,10 +95,12 @@ class SpecCheck(unittest.TestCase):
         (root / "001_test.go").write_text("")
         r = check([task("ENG-3", "001"), task("ENG-4", "002", files="x.go, y.go, z.go"), task("ENG-5", "003", crit="- a\n" * 6),
                    task("ENG-6", "004", files=""), task("ENG-7", "005", protected=""), task("ENG-8", "006", protected="gone_test.go"),
+                   task("ENG-9", "007", crit="- prints the line\n\nSignatures and exact lines come from the contract."),
                    {**STORY, "id": "ENG-10"}, {**STORY, "id": "ENG-11", "description": "## Acceptance criteria\n\nTBD"}], root=root)
         self.assertEqual((r["ENG-1"][0], r["ENG-2"][0], r["ENG-3"][:2]), (True, True, (True, "task")))
         for i, *kws in (("ENG-4", "owns 3 files"), ("ENG-5", "Acceptance criteria"), ("ENG-6", "files"), ("ENG-7", "protected"),
-                        ("ENG-8", "gone_test.go", "protected"), ("ENG-10", "task"), ("ENG-11", "Acceptance criteria")):
+                        ("ENG-8", "gone_test.go", "protected"),
+                        ("ENG-9", "implementers never see"), ("ENG-10", "task"), ("ENG-11", "Acceptance criteria")):
             self.assertTrue(not r[i][0] and has(r[i][2], *kws), (i, r[i]))
         self.assertTrue(check([{**STORY, "id": "ENG-10"}])["ENG-10"][0])  # no issue has parentId: a story needs no task
         bare, marked = {**STORY, "id": "ENG-12"}, {**STORY, "id": "ENG-13", "description": STORY["description"] + "\n\nGroundwork: dependency bump"}

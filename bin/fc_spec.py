@@ -121,6 +121,8 @@ def spec_check(data, root=None):
                 gaps.append("empty `files:`")
             if not meta["protected"]:
                 gaps.append("empty `protected:`")
+            if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):
+                gaps.append("the brief points at the contract, which implementers never see: state its signatures and exact lines in the brief")
             if root:
                 for p in meta["protected"]:
                     if not (root / p).exists():

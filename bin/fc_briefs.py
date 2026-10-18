@@ -45,6 +45,8 @@ Write {contract} (outside the repo; never commit it) with exactly what a test wr
 - every stub's exact signature, and which task implements it
 - the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
 - per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
+Signatures and exact lines are copied from the briefs, never added: implementers see the brief and the code, never the contract.
+A test that would need a value, line, or rule no brief states is `blocked "<task>: brief lacks <what>"`, for the planner to add.
 Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the team lead says so.
 """
 
@@ -120,8 +122,9 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    4. Every criterion maps to a file or symbol via `trail ask` or `trail callers` in the worktree; new files are listed as new.
    5. The test command is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
    6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
-   7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers. Name the test paths and say in
-      the brief that signatures come from the contract.
+   7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers, and implementers never see it.
+      Name the test paths, and state in the brief every signature, export name, and exact line its test asserts; never point
+      the brief at the contract.
    Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
    recommendation) under Not yet specified on the map first, with a card id per card; then report one line per issue:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
@@ -318,6 +321,8 @@ def test_brief(meta, contract, budget=None, conv=None):
             "implement the brief.\n"
             "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
             "(report `blocked` naming what is missing instead).\n"
+            "Assert only what the TASK BRIEF states or the code already shows: its implementer gets the brief, the stubs, and your test, "
+            "never the contract, so a line or value only the contract gives is not asserted.\n"
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
             "no CSS values, no tooling tests: never a test that asserts dependency lists, lint or tool configuration, or the contents of a config file; test behavior only.\n"
             f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"

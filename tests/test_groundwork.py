@@ -61,6 +61,7 @@ class Groundwork(unittest.TestCase):
         self.assertIn("Node package in client with yarn", brief)
         self.assertIn(str(self.proj / "results" / "contract.md"), brief)
         self.assertIn("$E2E_CLIENT_PORT", brief)
+        self.assertIn("copied from the briefs, never added", brief)  # implementers never see the contract
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
     def test_wayfinder_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
@@ -131,6 +132,7 @@ class Groundwork(unittest.TestCase):
         self.assertIn("===== tests-002", text); self.assertNotIn("tests-001", text)
         self.assertIn("client/src/Form.test.js", text)
         self.assertIn("Store is a value type", text)
+        self.assertIn("Assert only what the TASK BRIEF states", text)
         self.assertIn("## Goal\nShow the form.", text)
 
     def test_test_crews_commit_only_their_file_and_never_rewrite_the_shared_branch(self):
@@ -382,6 +384,11 @@ class PlannerRules(unittest.TestCase):
         self.assertNotRegex(self.brief, r"\bgraft (ask|callers|map|skeleton|grep)\b")
         self.assertIn("as new", self.brief)
         self.assertIn("verify.json", self.brief)
+
+    def test_briefs_state_what_the_test_asserts_instead_of_deferring_to_the_contract(self):
+        self.assertNotIn("come from the contract", self.brief)  # implementers never see contract.md
+        self.assertIn("implementers never see it", self.brief)
+        self.assertIn("exact line its test asserts", self.brief)
 
     def test_gaps_are_routed_to_the_chain_or_to_teammates(self):
         for s in ("decision gap", "fact gap", "1, 3, 6", "2, 4, 5"):
