@@ -61,11 +61,13 @@ def cmd_tasks(a):
         print("\n  WARNING TASK TOO BIG: split it before `run`; a task is one tiny change a fast model finishes in one short turn:")
         for tid, why in big:
             print(f"    {tid}: {why}")
-    waves = run_waves(open_tasks)
+    # Waves are what `run` still dispatches: an unmerged passed layer can still clash above, but it never runs again.
+    to_run = [m for m in open_tasks if not fc_tasks.task_finished(proj, m)]
+    waves = run_waves(to_run)
     if waves:
         print(f"\n  run waves (each wave in parallel): {'  then  '.join(', '.join(w) for w in waves)}")
-    if len(open_tasks) >= 3 and len(waves) > len(open_tasks) / 2:
-        print(f"\n  WARNING SERIAL CHAIN: {len(open_tasks)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
+    if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
+        print(f"\n  WARNING SERIAL CHAIN: {len(to_run)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
               "(blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.")
 
 
@@ -102,9 +104,10 @@ def spec_check(data, root=None):
     if clashes:
         detail = "; ".join(f"{f}: {', '.join(ids)}" for f, ids in clashes.items())
         gaps.append(f"two tasks own the same file (they must be one task, or one must be `after:` the other): {detail}")
-    waves = run_waves(tasks)
-    if len(tasks) >= 3 and len(waves) > len(tasks) / 2:
-        gaps.append(f"serial chain: {len(tasks)} tasks run in {len(waves)} waves, mostly one after another")
+    to_run = [t for t in tasks if (t["linear_state"] or "").lower() not in ("in review", "done")]  # a passed or merged layer never runs again
+    waves = run_waves(to_run)
+    if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
+        gaps.append(f"serial chain: {len(to_run)} tasks run in {len(waves)} waves, mostly one after another")
     out.append((not gaps, data["feature"]["id"], "feature", gaps))
     story_task = any("parentId" in i for i in data["issues"])
     for i in issues:

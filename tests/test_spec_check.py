@@ -133,6 +133,27 @@ class SpecCheck(unittest.TestCase):
         self.assertTrue("a.go: 001, 002" in g and "b.go: 003, 004" in g, g)
         self.assertEqual(g.count(g[:min(g.index("a.go"), g.index("b.go"))]), 1, g)  # the explanation leads, once
 
+    def test_serial_chain_counts_only_tasks_left_to_run(self):
+        chain = [{**task("ENG-3", "001"), "status": "In Review"}, {**task("ENG-4", "002", ["ENG-3"]), "status": "Done"},
+                 task("ENG-5", "003", ["ENG-4"])]
+        self.assertTrue(check(chain)["ENG-1"][0], check(chain)["ENG-1"])
+        repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "init")
+        proj = repo / ".compose" / "p"
+        (proj / "results").mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.fc_tasks.sync_tasks(proj, data([task("ENG-3", "001"), task("ENG-4", "002", ["ENG-3"]), task("ENG-5", "003", ["ENG-4"])]))
+        for tid in ("001", "002"):  # passed layers, their branches not merged yet
+            git("branch", f"fast/p/{tid}", git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", tid))
+            (proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+            fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+        self.assertIn("run waves (each wave in parallel): 003\n", out.getvalue())
+        self.assertNotIn("SERIAL CHAIN", out.getvalue())
+
     def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
         clash = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"), task("ENG-5", "003", ["ENG-3"], files="b.go")]
         repo = Path(tempfile.mkdtemp())
