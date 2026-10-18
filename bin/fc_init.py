@@ -234,17 +234,19 @@ def own_commits(repo, branch):
     return not log or log[-1] != fc_core.sh(["git", "rev-parse", f"refs/heads/{branch}"], repo, check=False).stdout.strip()
 
 def live_crew(proj):
-    """Why the project still has people working: teammates whose last report is not done, or agents alive in its herdr space.
-    The team lead (orchestrator) is the one running the post-merge clean, so it does not count."""
+    """Why the project still has people working: teammates whose last report is not done and whose tab is not closed, or agents
+    alive in its herdr space. The team lead (orchestrator) is the one running the post-merge clean, so it does not count."""
     lead, why = fc_herdr.agent_name(proj.name, "orchestrator"), []
+    listed = fc_herdr.herdr("agent", "list")
+    agents = None if listed is None else listed.get("agents", [])
     for f in sorted(fc_crew.crew_dir(proj).glob("*.json")):
         c = json.loads(f.read_text())
         last = (fc_crew.crew_reports(proj, c["name"]) or [{}])[-1]
-        if c["name"] != lead and not c.get("closed") and last.get("state") != "done":
+        if c["name"] != lead and not c.get("closed") and last.get("state") != "done" and not fc_crew.tab_closed(c, agents):
             why.append(f"{c['name']} last reported {last.get('state', 'nothing')}")
     space = fc_herdr.herdr_project_space(proj) if fc_herdr.herdr_env() else None
     tabs = {t["tab_id"] for t in fc_herdr.herdr_project_tabs(proj, space)} if space else set()  # a shared space's other agents are not this project's
-    why += [f"{ag.get('name')} is alive in its herdr space" for ag in fc_herdr.live_agents() if ag.get("tab_id") in tabs and ag.get("name") != lead]
+    why += [f"{ag.get('name')} is alive in its herdr space" for ag in agents or [] if ag.get("tab_id") in tabs and ag.get("name") != lead]
     return why
 
 def close_space(proj, name):

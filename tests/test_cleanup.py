@@ -303,6 +303,17 @@ class SharedSpaceClean(unittest.TestCase):
             return {"agents": [{"name": "manager", "tab_id": "t1", "workspace_id": "w7"}, {"name": "cart-orchestrator", "tab_id": "t4", "workspace_id": "w7"}]}
         return {}
 
+    def test_a_teammate_whose_tab_closed_while_working_is_not_live_crew(self):
+        wt = Path(tempfile.mkdtemp()); proj = wt / ".compose" / "shop"
+        crew = proj / "results" / "crew"; crew.mkdir(parents=True)
+        fc.fc_herdr.space_record(proj).write_text(json.dumps({"space": "w7"}))
+        for n in ("shop-tests-002", "manager"):  # herdr lists no shop-tests-002: its session ended after it reported
+            (crew / f"{n}.json").write_text(json.dumps({"name": n, "agent": n, "title": n, "space": "w7", "tab": "t9"}))
+            (crew / f"{n}.status").write_text(json.dumps({"state": "working", "message": "test ready"}) + "\n")
+        self.calls = []
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True):
+            self.assertEqual(fc.fc_init.live_crew(proj), ["manager last reported working"])
+
     def test_clean_closes_the_projects_tabs_and_counts_only_its_agents(self):
         wt = Path(tempfile.mkdtemp()); proj = wt / ".compose" / "shop"
         (proj / "results").mkdir(parents=True)
