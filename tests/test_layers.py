@@ -230,16 +230,6 @@ class Layers(unittest.TestCase):
         self.stack(branch="compose/p")
         self.assertEqual(len(self.layers()), 3)
 
-    def test_a_layers_pr_is_titled_from_its_tasks_and_the_jira_key(self):
-        (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
-        metas = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}]
-        l = {"branch": "js-2888-react-beside-vue-layer-01", "tasks": ["001", "002"], "lines": 230, "generated": {}}
-        title, body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 4, 300, metas)
-        self.assertEqual(title, "JS-2888: Add the toggle, Add the panel (1/4)")
-        self.assertEqual(body, "- Add the toggle\n- Add the panel\n\ntask 001, 002: 230 lines")
-        (self.proj / "verify.json").write_text("{}")
-        self.assertEqual(fc.fc_layers.layer_pr(self.repo, self.proj, {**l, "branch": "fast/p/layer-02"}, 4, 300, metas)[0], "Add the toggle, Add the panel (2/4)")
-
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
         self.assertEqual(len(self.layers()), 4)
@@ -389,6 +379,46 @@ class StackLimit(unittest.TestCase):
             cfg.write_text(json.dumps({"max_stack_prs": 5, "workspace": "w", "workspaces": {"w": {"max_stack_prs": 4}}}))
             self.assertEqual(count(), 4)
             self.assertEqual(count(max_stack_prs=3), 3)
+
+
+class PrTitle(unittest.TestCase):
+    """A layer's PR is titled from its commits: one commit's subject, else its first task's title or first commit's subject and N more."""
+    setUp, git, write, commit, stack = Layers.setUp, Layers.git, Layers.write, Layers.commit, Layers.stack
+    METAS = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}, {"id": "003", "title": "Add the menu"}]
+
+    def title(self, tasks, subjects, n=2, branch="compose/p-layer-01"):
+        commits = []
+        for s in subjects:
+            self.git("commit", "-q", "--allow-empty", "-m", s); commits.append(self.git("rev-parse", "HEAD"))
+        l = {"branch": branch, "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": commits}
+        with mock.patch.object(fc.fc_layers, "layer_body", return_value=""):  # the body is not this title's concern
+            return fc.fc_layers.layer_pr(self.repo, self.proj, l, n, 300, self.METAS)[0]
+
+    def test_each_layer_records_the_commits_it_cherry_picks_oldest_first(self):
+        real, built = fc.fc_layers.build_layers, []
+        with mock.patch.object(fc.fc_layers, "build_layers", lambda *a, **k: built.append(real(*a, **k)) or built[-1]):
+            self.stack()
+        below = "main"
+        for l in built[0]:
+            self.assertEqual([self.git("log", "-1", "--format=%s", c) for c in l["commits"]], self.git("log", "--reverse", "--format=%s", f"{below}..{l['branch']}").splitlines())
+            below = l["branch"]
+        self.assertEqual(built[0][0]["commits"], self.git("rev-list", "--reverse", f"main..{built[0][0]['branch']}").split())
+        self.assertEqual(len(built[0][1]["commits"]), 4)  # test 001, task 001, test 002, task 002
+
+    def test_a_one_commit_layer_is_its_subject_and_a_groundwork_layer_its_first_subject_and_n_more(self):
+        self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "Ignore build output (1/2)")
+        self.assertEqual(self.title(["groundwork"] * 3, ["Ignore build output", "Pin the toolchain", "Add a lint step"]), "Ignore build output and 2 more (1/2)")
+
+    def test_a_task_layer_is_its_first_tasks_title_and_n_more_counting_only_its_other_tasks(self):
+        subjects = ["test 001", "toggle work", "test 002", "panel work", "menu work"]
+        self.assertEqual(self.title(["001", "002", "003"], subjects, 4, "compose/p-layer-02"), "Add the toggle and 2 more (2/4)")
+        self.assertEqual(self.title(["001"], ["test 001", "toggle work"]), "Add the toggle (1/2)")
+        self.assertEqual(self.title(["groundwork", "002", "003"], ["Ignore build output", "panel work", "menu work"]), "Add the panel and 1 more (1/2)")
+
+    def test_a_jira_key_on_the_project_branch_prefixes_the_title(self):
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more (3/4)")
+        self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
 
 
 if __name__ == "__main__":
