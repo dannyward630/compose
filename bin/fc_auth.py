@@ -52,53 +52,49 @@ def old_keys(config_path, env_path):
     return found
 
 def move_keys(config_path, env_path, auth_path):
-    """Move every old key into auth.json and out of config.json and .env; one line per key moved, never a value."""
+    """Move every old key into auth.json and out of config.json and .env; one line per key moved, never a value.
+    The first key moved for a slot wins (or the one auth.json already holds): an old key equal to its slot's key is
+    removed with its line, one that differs stays exactly where it is with no line, so old_keys and doctor still see it."""
     config_path, env_path = Path(config_path), Path(env_path)
     cfg = json.loads(config_path.read_text()) if config_path.exists() else {}
     env_lines = env_path.read_text().splitlines(keepends=True) if env_path.exists() else []
     auth, lines, dirty_cfg = read_auth(auth_path), [], False
-    top_openrouter, top_typesafe = "openrouter_api_key" in cfg, "TYPESAFE_API_KEY" in cfg.get("env", {})
 
     def store(workspace, kind, value, name, path):
+        """Claim the slot for value unless a different key already holds it; True when name is recorded as moved out."""
         nonlocal auth
         held = auth.get("typesafe") if kind == "typesafe" else auth.get("workspaces", {}).get(workspace, {}).get(kind)
+        if held and held != value:
+            return False
         if not held:
             set_key(auth_path, workspace, kind, value)
             auth = read_auth(auth_path)
         lines.append(f"{name} out of {path}")
+        return True
 
     for k, kind in (("openrouter_api_key", "openrouter"), ("linear_api_key", "linear")):
-        if k in cfg:
-            store("default", kind, cfg[k], k, config_path)
+        if k in cfg and store("default", kind, cfg[k], k, config_path):
             del cfg[k]
             dirty_cfg = True
-    if top_typesafe:
-        store(None, "typesafe", cfg["env"]["TYPESAFE_API_KEY"], "env.TYPESAFE_API_KEY", config_path)
+    if "TYPESAFE_API_KEY" in cfg.get("env", {}) and store(None, "typesafe", cfg["env"]["TYPESAFE_API_KEY"], "env.TYPESAFE_API_KEY", config_path):
         del cfg["env"]["TYPESAFE_API_KEY"]
         dirty_cfg = True
     for name, ws in cfg.get("workspaces", {}).items():
         for k, kind in (("openrouter_api_key", "openrouter"), ("linear_api_key", "linear")):
-            if k in ws:
-                store(name, kind, ws[k], f"workspaces.{name}.{k}", config_path)
+            if k in ws and store(name, kind, ws[k], f"workspaces.{name}.{k}", config_path):
                 del ws[k]
                 dirty_cfg = True
-    moved, kept = [], []
+    new_env, env_dirty = [], False
     for line in env_lines:
-        if line.split("=", 1)[0].strip() in ("TYPESAFE_API_KEY", "TEXT_MODEL_API_KEY"):
-            moved.append(line)
-        else:
-            kept.append(line)
-    for line in moved:
-        name, _, value = line.partition("=")
-        name = name.strip()
-        if name == "TEXT_MODEL_API_KEY" and not top_openrouter:
-            store("default", "openrouter", value.strip(), name, env_path)
-        elif name == "TYPESAFE_API_KEY" and not top_typesafe:
-            store(None, "typesafe", value.strip(), name, env_path)
-        else:
-            lines.append(f"{name} out of {env_path}")
-    if moved:
-        fc_core.atomic_write(env_path, "".join(kept), keep_secrets=True)  # the user's own lines stay as they are
+        name = line.split("=", 1)[0].strip()
+        if name in ("TYPESAFE_API_KEY", "TEXT_MODEL_API_KEY"):
+            ws, kind = ("default", "openrouter") if name == "TEXT_MODEL_API_KEY" else (None, "typesafe")
+            if store(ws, kind, line.partition("=")[2].strip(), name, env_path):
+                env_dirty = True
+                continue
+        new_env.append(line)
+    if env_dirty:
+        fc_core.atomic_write(env_path, "".join(new_env), keep_secrets=True)  # the user's own lines stay as they are
     if dirty_cfg:
         fc_core.atomic_write(config_path, json.dumps(cfg, indent=2) + "\n", keep_secrets=True)
         os.chmod(config_path, 0o600)
