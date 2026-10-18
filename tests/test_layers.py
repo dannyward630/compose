@@ -216,12 +216,6 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
 
-    def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
-        out = self.stack(branch="compose/p")
-        self.assertEqual(self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
-        self.assertEqual(self.layers(), [])
-        self.assertTrue(any(l.startswith("layer  layer-01") for l in out))
-
     def test_a_project_with_layer_branches_already_keeps_their_names(self):
         self.git("branch", "fast/p/layer-09", "main")  # an earlier stack, before the stored branch named layers
         self.stack(branch="compose/p")
@@ -235,10 +229,6 @@ class Layers(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "main")
         self.stack(branch="compose/p")
         self.assertEqual(len(self.layers()), 3)
-
-    def test_the_first_build_records_the_names_it_chose(self):
-        self.stack(branch="compose/p")
-        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "compose/p-")
 
     def test_a_layers_pr_is_titled_from_its_tasks_and_the_jira_key(self):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
@@ -287,6 +277,68 @@ class Layers(unittest.TestCase):
         data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(data["trunk"], "main")
         self.assertEqual([b["name"] for b in data["branches"]], self.layers())
+
+
+class LayerNames(unittest.TestCase):
+    """The Layers project with its task branches under the task prefix: the layers and the chain take their names from it."""
+    setUp, git, write, commit, stack, changed = Layers.setUp, Layers.git, Layers.write, Layers.commit, Layers.stack, Layers.changed
+
+    def rename(self, prefix):
+        for t in ("001", "002", "003"):
+            self.git("branch", "-m", f"fast/p/{t}", f"{prefix}{t}")
+
+    def layers(self, prefix="compose/p-"):
+        return self.git("branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)").split()
+
+    def test_a_new_project_cuts_its_task_branches_into_layers_named_from_its_branch(self):
+        self.rename("compose/p-")
+        out = self.stack()
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
+        self.assertTrue(any(l.startswith("layer  layer-01") for l in out))
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "compose/p-")
+        before = self.git("rev-parse", *self.layers())
+        self.stack()  # the layer branches share the task prefix, and are never taken for tasks
+        self.assertEqual(self.git("rev-parse", *self.layers()), before)
+
+    def test_a_task_whose_tip_holds_another_sits_above_it(self):
+        self.rename("compose/p-")
+        self.git("checkout", "-q", "-B", "compose/p-001", "compose/p-003")
+        self.write("001.src", "c\n" * 100); self.commit("task 001 on 003")
+        self.git("checkout", "-q", "compose/p")
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t001.test", "001.src"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-001"), "")
+
+    def test_a_replaced_tip_is_dropped_from_the_layer_above_and_its_ref_deleted(self):
+        self.rename("compose/p-")
+        self.git("checkout", "-q", "-B", "compose/p-003", "compose/p-002")
+        self.write("003.src", "c\n" * 150); self.commit("task 003 on 002")
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "compose/p-002")
+        self.git("checkout", "-q", "-b", "compose/p-002", "compose/p")
+        self.write("002.src", "d\n" * 120); self.commit("task 002 again")
+        self.git("checkout", "-q", "compose/p")
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.git("show", "compose/p-layer-03:002.src"), "d\n" * 119 + "d")
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
+        self.assertEqual(self.git("for-each-ref", "refs/compose/replaced/"), "")
+
+    def test_a_legacy_project_keeps_fast_names_unless_a_prefix_is_recorded(self):
+        self.stack(branch="compose/p")
+        self.assertEqual(self.layers("fast/p/"), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast/p/")
+        self.stack(branch="compose/p", layer_prefix="review/p-")
+        self.assertEqual(self.layers("review/p-"), ["review/p-layer-01", "review/p-layer-02", "review/p-layer-03"])
+
+    def test_a_recorded_task_prefix_names_the_layers(self):
+        self.rename("feat/p-")
+        self.stack(task_prefix="feat/p-")
+        self.assertEqual(self.layers("feat/p-"), ["feat/p-layer-01", "feat/p-layer-02", "feat/p-layer-03"])
+        self.assertEqual(self.git("diff", "feat/p-layer-03", "feat/p-003"), "")
 
 
 if __name__ == "__main__":
