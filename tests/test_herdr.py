@@ -170,6 +170,13 @@ class CallerEnv(unittest.TestCase):
         for env in json.loads((d / "panes.json").read_text()).values():  # the status tab, an implementer pane (crew tabs too), a space's shell
             self.assertEqual((env["COMPOSE_CONFIG"], env["HOME"]), (caller["COMPOSE_CONFIG"], caller["HOME"]))
 
+    def test_the_pane_id_stays_right_after_pane_split(self):
+        # herdr 0.9.5 reads `pane split`'s pane id only as its first argument: `pane split --env K=V w4:p5 ...` is "unknown option: w4:p5"
+        with mock.patch.dict(os.environ, {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home"}):
+            self.assertEqual(fc.fc_herdr.herdr_argv(["pane", "split", "w4:p5", "--direction", "down", "--no-focus"]),
+                             ["herdr", "pane", "split", "w4:p5", "--direction", "down", "--no-focus",
+                              "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home"])
+
 
 class AgentStartRace(unittest.TestCase):
     def test_a_busy_pane_is_retried_until_it_is_ready(self):
