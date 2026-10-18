@@ -10,6 +10,28 @@ const pw = `${process.env.HOME}/Library/Caches/ms-playwright`;
 const v = existsSync(pw) && readdirSync(pw).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => b.slice(9) - a.slice(9))[0];
 const CHROME = process.env.BP_CHROME || `${pw}/${v}/chrome-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
 const bp = (args, env = {}, cwd = tmpdir()) => spawnSync(process.execPath, [BP, ...args], { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+// Chrome writes its profile while it shuts down, so the profile is removed only once it has exited (SIGKILL after `grace` ms).
+const stopChrome = async (chrome, profile, grace = 5000) => {
+  if (chrome.exitCode === null && chrome.signalCode === null) {
+    const exited = new Promise((r) => chrome.once('exit', r));
+    chrome.kill();
+    const timer = setTimeout(() => chrome.kill('SIGKILL'), grace);
+    await exited; clearTimeout(timer);
+  }
+  rmSync(profile, { recursive: true, force: true });
+};
+
+test('stopChrome removes the profile only after the browser exits, and SIGKILLs one that ignores SIGTERM', async () => {
+  // Stand-ins for Chrome: one writes into its profile when told to stop, the other ignores SIGTERM.
+  for (const [trap, grace, status] of [['touch "$0/Preferences"; exit 0', 10000, [0, null]], ['', 500, [null, 'SIGKILL']]]) {
+    const profile = mkdtempSync(path.join(tmpdir(), 'bp-stop-'));
+    const chrome = spawn('/bin/sh', ['-c', `trap '${trap}' TERM; touch "$0/ready"; while :; do sleep 0.05; done`, profile], { stdio: 'ignore' });
+    while (!existsSync(path.join(profile, 'ready'))) await new Promise((r) => setTimeout(r, 20));
+    await stopChrome(chrome, profile, grace);
+    assert.deepEqual([chrome.exitCode, chrome.signalCode], status);
+    assert.ok(!existsSync(profile), 'the profile was left behind');
+  }
+});
 
 test('--help and -h print usage and exit 0 without running any command', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bp-help-'));
@@ -34,7 +56,7 @@ test('type focuses the --selector element, even inside a shadow root, before typ
   const port = '59872'; const env = { BP_PORT: port };
   const profile = mkdtempSync(path.join(tmpdir(), 'bp-type-'));
   const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-first-run', `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
-  t.after(() => { chrome.kill(); rmSync(profile, { recursive: true, force: true }); });
+  t.after(() => stopChrome(chrome, profile));
   for (let i = 0; i < 40; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await new Promise((r) => setTimeout(r, 250)); } }
   // Focus starts on another input, so typing without focusing the target lands in the wrong field.
   const html = `<title>typetest</title><input id=other autofocus><div id=host></div><script>document.getElementById('host').attachShadow({mode:'open'}).innerHTML='<textarea></textarea>'</script>`;
