@@ -353,6 +353,14 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
             raise CutOff(f"reply cut off at max_tokens={max_tokens}")
         raise
 
+CUT_RETRY = 4  # a reply cut off at its budget is asked again with this many times the budget; the same budget would cut it again
+def fast_json_whole(env, system, user, max_tokens=1500, timeout=90):
+    """fast_json, asked once more with CUT_RETRY times the budget when the reply was cut off at it."""
+    try:
+        return fast_json(env, system, user, max_tokens=max_tokens, timeout=timeout)
+    except CutOff:
+        return fast_json(env, system, user, max_tokens=max_tokens * CUT_RETRY, timeout=timeout)
+
 class EmptyReply(Exception):
     pass
 
@@ -365,10 +373,9 @@ class BadReply(Exception):
 def fast_object(env, system, user, shape, key, max_tokens=1500, timeout=90):
     """fast_json for a caller that needs one JSON object holding `key`, described to the model as `shape`. The model sometimes
     wraps the object in a list, so a one-element list is unwrapped; a reply that is not valid JSON or not such an object is
-    retried once with a stricter instruction and four times the token budget (a reply cut off at the budget would be cut
-    again), then raises BadReply saying what was wrong with it."""
+    retried once with a stricter instruction and CUT_RETRY times the token budget, then raises BadReply saying what was wrong with it."""
     strict = system + f" Reply with exactly one JSON object {shape} and nothing else: no list, no prose."
-    for sysmsg, budget in ((system, max_tokens), (strict, max_tokens * 4)):
+    for sysmsg, budget in ((system, max_tokens), (strict, max_tokens * CUT_RETRY)):
         try:
             v = fast_json(env, sysmsg, user, max_tokens=budget, timeout=timeout)
         except (EmptyReply, CutOff) as e:

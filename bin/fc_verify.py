@@ -31,7 +31,7 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
     def one(name):
         try:
-            out = fc_models.fast_json(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
+            out = fc_models.fast_json_whole(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
                             user + (f"\n\nDOCS:\n{docs_text[:20000]}" if name == "docs" else ""))
             # Small models sometimes return the issues array bare, or something else entirely; never let that crash the stage.
             issues = out.get("issues", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])

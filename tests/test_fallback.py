@@ -275,6 +275,19 @@ class FixScope(unittest.TestCase):
         self.assertIn("hardening", confirm[0])
         self.assertIn("THE PLAN", confirm[1])
 
+    def test_a_review_cut_off_at_its_token_budget_is_asked_again_with_a_bigger_one(self):
+        full = json.dumps({"issues": [{"file": "a.go", "severity": "low", "note": "n"}]})
+        for need, found in ((3000, "n"), (10 ** 6, "did not return usable findings")):  # tokens the whole reply needs
+            budgets = []
+            def http(req, provider, timeout=90, need=need):
+                budgets.append(json.loads(req.data)["max_tokens"])
+                short = budgets[-1] < need
+                return {"choices": [{"message": {"content": full[:20] if short else full}, "finish_reason": "length" if short else "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["spec"]}, "diff", "plan", "", True)
+            self.assertEqual(budgets, [1500, 1500 * fc.fc_models.CUT_RETRY])
+            self.assertIn(found, rv["issues"][0]["note"])
+
     def test_review_drops_a_confirmation_whose_quote_is_not_in_the_code(self):
         def review(evidence, cfg=None):
             fj = lambda env, system, user, **kw: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
