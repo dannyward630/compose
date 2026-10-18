@@ -429,7 +429,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                       main_repo, check=False).stdout  # its change-of-course and replaced-tip records: nothing left to undo or replay
             if refs.strip():
                 subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)
-            line += f"; project branch {why}: removed worktree {wt} and branch {pbranch}"
+            line += f"; project branch {pbranch}: {why}; removed worktree {wt} and branch {pbranch}"
         elif "no commits of its own" not in line:
             line += f"; project branch {pbranch} not merged yet" + (
                 f" (layers not merged: {', '.join(lb for lb in held if lb not in layer_why)})" if held else " (no recorded layers to prove it)"
