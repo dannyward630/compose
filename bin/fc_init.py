@@ -263,7 +263,17 @@ def merged_into(repo, branch, targets, has_remote=False):
 
 def first_unmatched(repo, branch, targets):
     """The first commit on the branch with no patch in the first target that resolves, as a line for clean's kept output, or None."""
-    return None
+    for t in targets:
+        if fc_core.sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode == 0:
+            break
+    else:
+        return None
+    plus = [l for l in fc_core.sh(["git", "cherry", "-v", t, branch], repo, check=False).stdout.splitlines() if l.startswith("+")]
+    if not plus:
+        return None
+    _, sha, subject = plus[0].split(" ", 2)
+    short = fc_core.sh(["git", "rev-parse", "--short", sha], repo).stdout.strip()
+    return f"first unmatched commit {short} {subject}" + (f" and {len(plus) - 1} more" if len(plus) > 1 else "")
 
 def own_commits(repo, branch):
     """False when the branch never got a commit of its own: it still sits where it was created (an empty or design-only project),
@@ -337,6 +347,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             shutil.rmtree(w, ignore_errors=True)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
+    review = fc_core.project_config(proj).get("review_base")
+    targets = list(dict.fromkeys([*([review, f"origin/{review}"] if review else []), *targets]))
     kept, merged = [], []  # merged: the tasks whose branches this clean proved merged
     link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
     metas = {m["id"]: m for m in fc_tasks.load_tasks(proj) if m.get("linear")}  # read now: a merged project's files go with its worktree
@@ -373,6 +385,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 merged.append(b.removeprefix(fc_worktree.task_prefix(repo, proj)))
         else:
             kept.append(b)
+            fu = first_unmatched(repo, b, targets)
+            print(f"clean  {b}: kept unmerged" + (f", {fu}" if fu else ""))
     merged += [t for t in metas if t not in merged and any(t in ts for ts in held.values())
                and all(lb in layer_why for lb, ts in held.items() if t in ts)]
     if (proj / "verify.json").exists() and "layer_prefix" in fc_core.project_config(proj) \
@@ -384,7 +398,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     pbranch, project_merged = fc_core.project_branch(proj), False
     if wt != main_repo and not kept and trunk == pbranch:
         on = [fc_core.project_config(proj)["review_base"]] if fc_core.project_after(proj) else []  # merged into the project it was built on counts
-        why = merge_evidence(main_repo, pbranch, [*on, "main", "origin/main", "master", "origin/master", fc_core.current_branch(main_repo)], has_remote)
+        ptargets = [*on, "main", "origin/main", "master", "origin/master", fc_core.current_branch(main_repo)]
+        why = merge_evidence(main_repo, pbranch, ptargets, has_remote)
         if why and not own_commits(main_repo, pbranch) and not (explicit or delete_unmerged):
             line += f"; project branch {pbranch} has no commits of its own (empty or design-only), so nothing was merged: kept; name it with --project {name} to remove it"
             why = None
@@ -416,6 +431,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             line += f"; project branch {pbranch} not merged yet" + (
                 f" (layers not merged: {', '.join(lb for lb in held if lb not in layer_why)})" if held else " (no recorded layers to prove it)"
             ) + f": worktree kept; --delete-unmerged removes it anyway"
+            fu = first_unmatched(main_repo, pbranch, ptargets)
+            print(f"clean  {pbranch}: kept unmerged" + (f", {fu}" if fu else ""))
     print(line)
     fc_linear.linear_merged(link.get("feature"), [metas[t] for t in merged], project_merged)
 
