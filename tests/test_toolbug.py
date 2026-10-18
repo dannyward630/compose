@@ -110,19 +110,29 @@ sys.exit(code)
         self.fake_gh({"issue create": [1, "https://github.com/prodoxx/compose/issues/3\n"]})
         self.assertIsNone(fc.fc_toolbug.post("t", "b"))
 
-    def test_record_issue_marks_the_projects_newest_entry(self):
-        self.assertFalse(fc.fc_toolbug.record_issue("shop", "u"))
-        self.log.parent.mkdir(parents=True); lines = ['{"project": "shop", "message": "old"}\n', '{"project":"shop","message":"new"}\n', '{"project": "blog",  "message": "x"}\n']
+    def test_record_issue_marks_only_the_projects_last_entry_with_that_at(self):
+        url, at = "https://github.com/prodoxx/compose/issues/2", "2026-10-17 15:30:00"
+        self.assertIsNone(fc.fc_toolbug.record_issue("shop", url, at)); self.assertFalse(self.log.exists())
+        self.log.parent.mkdir(parents=True)
+        lines = ['{"at": "2026-10-17 09:00:00", "project": "shop", "message": "old"}\n', '{"at":"2026-10-17 15:30:00","project":"shop","message":"a"}\n',
+                 '{"at": "2026-10-17 15:30:00", "project": "blog",  "message": "x"}\n', '{"at":"2026-10-17 15:30:00","project":"shop","message":"b"}\n',
+                 '{"at": "2026-10-17 18:00:00", "project": "shop", "message": "c"}\n', '{"at":"2026-10-17 18:00:00","project":"shop","issue":"https://kept/1"}\n']
         self.log.write_text("".join(lines))
-        self.assertTrue(fc.fc_toolbug.record_issue("shop", "https://github.com/prodoxx/compose/issues/2"))
+        self.assertEqual(fc.fc_toolbug.record_issue("shop", url, at), url)
         got = self.log.read_text().splitlines(keepends=True)
-        self.assertEqual((got[0], got[2]), (lines[0], lines[2]))
-        self.assertEqual(json.loads(got[1]), {"project": "shop", "message": "new", "issue": "https://github.com/prodoxx/compose/issues/2"})
-        self.assertFalse(fc.fc_toolbug.record_issue("cafe", "u"))
+        self.assertEqual(got[:3] + got[4:], lines[:3] + lines[4:])
+        self.assertEqual(json.loads(got[3]), {"at": at, "project": "shop", "message": "b", "issue": url})
+        recorded = self.log.read_text()
+        # a linked entry keeps its link, even when an older entry with the same at has none; no match records nothing
+        for project, at, want in (("shop", at, url), ("shop", "2026-10-17 18:00:00", "https://kept/1"), ("blog", "2026-10-17 09:00:00", None), ("cafe", at, None)):
+            with self.subTest(project, at=at):
+                self.assertEqual(fc.fc_toolbug.record_issue(project, "https://other/9", at), want)
+                self.assertEqual(self.log.read_text(), recorded)
 
 
 class FileCommand(unittest.TestCase):
     """cmd_tool_bug: post on the maintainer's machine or with --approved, else save a draft; search before every create."""
+    AT = "2026-10-17 15:30:00"
     RAW, URL = "# crew start: hangs at alice9 prompt\n## Summary\n\nIt hangs. token ghp_abcdefghijklmnopqrstuvwx\n", "https://github.com/prodoxx/compose/issues/2"
 
     def setUp(self):
@@ -133,11 +143,11 @@ class FileCommand(unittest.TestCase):
                   mock.patch.object(fc.fc_toolbug, "environment", return_value="- OS: test")):
             p.start(); self.addCleanup(p.stop)
 
-    def run_cmd(self, state, raw=RAW, matches=(), url=URL, **kw):
+    def run_cmd(self, state, raw=RAW, matches=(), url=URL, recorded=URL, **kw):
         (self.home / "b.md").write_text(raw)
-        a = SimpleNamespace(**{**dict(repo=".", project="shop", action="file", body=str(self.home / "b.md"), comment=None, new=False, approved=False), **kw})
+        a = SimpleNamespace(**{**dict(repo=".", project="shop", action="file", body=str(self.home / "b.md"), comment=None, new=False, approved=False, entry=None), **kw})
         self.m = {n: mock.patch.object(fc.fc_toolbug, n, return_value=v).start() for n, v in dict(
-            gh_status=(state, None if state == "no-gh" else "alice9"), open_matches=list(matches), post=url, record_issue=True).items()}
+            gh_status=(state, None if state == "no-gh" else "alice9"), open_matches=list(matches), post=url, record_issue=recorded).items()}
         self.addCleanup(mock.patch.stopall)
         status = 0
         with mock.patch("sys.stdout", io.StringIO()) as out:
@@ -159,26 +169,47 @@ class FileCommand(unittest.TestCase):
                 status, out = self.run_cmd(state, **kw)
                 self.assertEqual(status, 0); self.m["post"].assert_not_called()
                 path = self.draft(out, None if state == "no-gh" else "alice9")
-                self.assertIn(f"--body {path} --approved", out); self.assertEqual("gh auth login" in out, state == "no-gh")
+                self.assertIn(f"--project shop --body {path} --approved", out); self.assertEqual("gh auth login" in out, state == "no-gh")
+                self.assertNotIn("--entry", out)
+
+    def test_the_draft_and_retry_commands_carry_the_entry_and_record_nothing(self):
+        for state, url in (("reporter", self.URL), ("no-gh", self.URL), ("maintainer", None)):
+            with self.subTest(state, url=url):
+                for f in self.drafts.glob("*.md"): f.unlink()
+                status, out = self.run_cmd(state, url=url, entry=self.AT)
+                path = self.draft(out, None if state == "no-gh" else "alice9")
+                self.assertEqual(status, 1 if url is None else 0); self.m["record_issue"].assert_not_called()
+                self.assertIn(f'--project shop --entry "{self.AT}" --body {path} --approved', out); self.assertNotIn("not recorded", out)
 
     def test_matches_are_listed_and_exit_2_without_posting(self):
-        status, out = self.run_cmd("maintainer", matches=[{"number": 7, "title": "crew start hangs", "url": "https://x/7"}])
-        self.assertEqual(status, 2); self.m["post"].assert_not_called()
+        status, out = self.run_cmd("maintainer", matches=[{"number": 7, "title": "crew start hangs", "url": "https://x/7"}], entry=self.AT)
+        self.assertEqual(status, 2); self.m["post"].assert_not_called(); self.m["record_issue"].assert_not_called()
+        self.assertNotIn("not recorded", out)
         self.assertIn("#7 crew start hangs https://x/7", out); self.assertIn("--comment", out); self.assertIn("--new", out)
 
     def test_post_prints_and_records_the_url(self):
         for state, kw, comment in (("maintainer", {}, None), ("maintainer", {"new": True}, None), ("reporter", {"approved": True, "comment": 3}, 3)):
             with self.subTest(**kw):
-                status, out = self.run_cmd(state, matches=[{"number": 7, "title": "t", "url": "u"}] if kw else [], **kw)
-                self.assertEqual(status, 0); self.assertIn(self.URL, out)
+                status, out = self.run_cmd(state, matches=[{"number": 7, "title": "t", "url": "u"}] if kw else [], entry=self.AT, **kw)
+                self.assertEqual((status, out.splitlines()), (0, [self.URL]))
                 title, body = fc.fc_toolbug.issue_text(self.RAW, "alice9")
                 self.assertEqual((self.m["post"].call_args.args[:2], self.m["post"].call_args.kwargs.get("comment")), ((title, body), comment))
-                self.m["record_issue"].assert_called_once_with("shop", self.URL)
+                self.m["record_issue"].assert_called_once_with("shop", self.URL, self.AT)
                 if comment: self.m["open_matches"].assert_not_called()
+
+    def test_a_post_that_records_nothing_says_why_in_one_line(self):
+        for entry, recorded, why in ((None, self.URL, "--entry"), (self.AT, None, self.AT), (self.AT, "https://kept/1", "https://kept/1")):
+            with self.subTest(entry=entry, recorded=recorded):
+                status, out = self.run_cmd("maintainer", entry=entry, recorded=recorded)
+                self.assertEqual((status, out.splitlines()[0], len(out.splitlines())), (0, self.URL, 2))
+                self.assertIn("not recorded", out.splitlines()[1]); self.assertIn(why, out.splitlines()[1])
+                if entry is None: self.m["record_issue"].assert_not_called()
+                else: self.m["record_issue"].assert_called_once_with("shop", self.URL, entry)
 
     def test_a_failed_post_saves_the_draft_and_exits_1(self):
         status, out = self.run_cmd("maintainer", url=None)
-        self.assertEqual(status, 1); self.draft(out); self.m["record_issue"].assert_not_called()
+        self.assertEqual(status, 1); self.m["record_issue"].assert_not_called()
+        self.assertIn(f"retry with: compose tool-bug file --project shop --body {self.draft(out)} --approved", out)
 
     def test_a_body_without_a_title_line_exits_1(self):
         self.assertEqual(self.run_cmd("maintainer", raw="no title\n")[0], 1); self.m["post"].assert_not_called()
@@ -197,10 +228,10 @@ class Cli(unittest.TestCase):
     def test_tool_bug_passes_its_arguments(self):
         bug, smith = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--comment", "3")
         a = bug.call_args.args[0]
-        self.assertEqual((a.action, a.project, a.body, a.comment, a.new, a.approved), ("file", "shop", "b.md", 3, False, False))
+        self.assertEqual((a.action, a.project, a.body, a.comment, a.new, a.approved, a.entry), ("file", "shop", "b.md", 3, False, False, None))
         smith.assert_not_called()
-        a = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--new", "--approved")[0].call_args.args[0]
-        self.assertEqual((a.comment, a.new, a.approved), (None, True, True))
+        a = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--new", "--approved", "--entry", "2026-10-17 15:30:00")[0].call_args.args[0]
+        self.assertEqual((a.comment, a.new, a.approved, a.entry), (None, True, True, "2026-10-17 15:30:00"))
 
     def test_tool_bug_usage_errors(self):
         self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md")[0].assert_called_once()
