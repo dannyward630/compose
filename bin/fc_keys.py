@@ -1,7 +1,5 @@
-"""Key presence (never values), the Linear rule (an API key or the claude.ai Linear connector), and saving entered keys."""
+"""Key presence (never values), and saving entered keys."""
 import os
-import shutil
-import subprocess
 from pathlib import Path
 import fc_core, fc_auth, fc_config
 
@@ -15,29 +13,6 @@ def key_status(auth, workspace, framelink_env):
         lines = []
     keys["figma"] = any(line.startswith("FIGMA_API_KEY=") and line[len("FIGMA_API_KEY="):].strip() for line in lines)
     return keys
-
-def linear_connected():
-    """True when `claude mcp list` shows the claude.ai Linear line Connected, False when missing or another status, None without claude."""
-    if not shutil.which("claude"):
-        return None
-    # A HOME where Claude Code never ran: `claude mcp list` would create ~/.claude.json and ~/.claude/backups, so skip the call.
-    if not (Path.home() / ".claude.json").exists():
-        return False
-    # The health checks spawn the servers' own commands: os.defpath keeps the system dirs reachable even on a minimal caller PATH.
-    out = subprocess.run(["claude", "mcp", "list"], capture_output=True, text=True,
-                         env={**os.environ, "PATH": os.environ.get("PATH", "") + os.pathsep + os.defpath}).stdout
-    for line in out.splitlines():
-        if line.startswith("claude.ai Linear"):
-            return "Connected" in line.rsplit(" - ", 1)[-1]
-    return False
-
-def linear_state(status, connected):
-    """"key", "connector", "unknown", or "missing" from key_status's dict and linear_connected's value."""
-    if status["linear"]:
-        return "key"
-    if connected:
-        return "connector"
-    return "unknown" if connected is None else "missing"
 
 def save_key(kind, value, workspace, framelink_env):
     """Store one entered key (auth.json at fc_config.AUTH_PATH, or FIGMA_API_KEY in framelink_env); a line naming it, never its value."""
@@ -60,9 +35,8 @@ def skipped_line(kind, workspace):
         return (f"No OpenRouter key: without it run and verify have no model. Add one later:\n"
                 f"  {later}")
     if kind == "linear":
-        return (f"No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. Add one later:\n"
-                f"  {later} --linear\n"
-                f"  or connect the claude.ai Linear connector")
+        return (f"No Linear key: without it compose linear, sync, and the CLI's Linear moves cannot run. Add one later:\n"
+                f"  {later} --linear")
     if kind == "typesafe":
         return (f"No TypeSafe key: without it verify and change cannot check your code. Add one later:\n"
                 f"  {later} --typesafe")
