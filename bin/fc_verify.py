@@ -519,7 +519,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     if ok and not left_out:
         fc_linear.linear_reconcile(proj, verified=True)
     fc_core.say(fc_core.LEDGER.line())
-    if not ok:
+    if not ok and not left_out:  # a smoke run is a sign of life only; its findings never reach the reflect screen
         print("\nUnresolved after the fix budget. Escalate to the team lead with the confirmed findings above.")
         verify_failed(proj, rounds, findings)
     sys.exit(0 if ok else 1)
