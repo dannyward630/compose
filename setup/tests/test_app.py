@@ -180,3 +180,36 @@ class StepsLook(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(skipped and failed and error); self.assertNotIn(skipped.color, (failed.color, error.color))
         before, run, after = self.tty.read_text().partition("<RUN>")
         self.assertTrue(run); self.assertRegex(before, rf"(?s){CLEAR}.*brew[^\n]*fetch-tool --now"); self.assertRegex(after, CLEAR)
+
+
+class ScreenKeys(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        AppFixes.setUp(self)
+        rows = tuple((n, lambda c: (False, ""), "true", level, False, "run") for n, level in (("gh", "required"), ("uv", "default"), ("figma", "designer")))
+        self.run_step = mock.Mock(return_value=("done", ""))
+        for p in (mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_steprun, "run_step", self.run_step)):
+            p.start(); self.addCleanup(p.stop)
+
+    async def visit(self, stage, keys):  # choose figma and start with c and r, press keys on stage, return the steps screen's lines
+        app = setup_app.SetupApp(ROOT)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(); await pilot.press("down", "down", "c", "r")
+            await until(pilot, lambda: isinstance(app.screen, KeysScreen))
+            self.assertEqual([c.args[0][0] for c in self.run_step.call_args_list[-3:]], ["gh", "uv", "figma"])
+            if stage is FinishScreen: app.screen.dismiss(([], [])); await until(pilot, lambda: isinstance(app.screen, FinishScreen) and app.screen.query(Button))
+            app.screen.query(Button).first().focus(); await pilot.pause()
+            screen, calls = app.screen, self.run_step.call_count
+            await pilot.press(*keys); await app.workers.wait_for_complete(); await pilot.pause()
+            self.assertIs(app.screen, screen); self.assertEqual(self.run_step.call_count, calls)
+            self.assertFalse({"s", "c", "r"} & set(app.active_bindings))
+            footer = " ".join(b.binding.description or "" for b in app.active_bindings.values()) + lines(app)[-1]
+            self.assertNotRegex(footer.lower(), r"skip|choose|start")
+            while len(app.screen_stack) > 1: app.pop_screen()
+            await pilot.pause(); steps = lines(app)
+            await pilot.press("s"); self.assertNotEqual(lines(app), steps)  # back on the steps screen s skips figma again
+            return steps
+
+    async def test_s_c_r_act_only_on_the_steps_screen(self):
+        for stage in (KeysScreen, FinishScreen):
+            with self.subTest(stage.__name__):
+                self.assertEqual(await self.visit(stage, ("s", "c", "r")), await self.visit(stage, ()))
