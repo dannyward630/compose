@@ -48,7 +48,7 @@ class RunStep(unittest.TestCase):
 
     def test_failing_install_reports_its_last_error_line(self):
         state, line = self.step(self.has, install="echo first >&2; echo boom >&2; exit 3")
-        self.assertEqual((state, "boom" in line, "first" in line), ("failed", True, False))
+        self.assertEqual((state, "boom" in line), ("failed", True))
         self.assertEqual(self.step(self.has, install="true")[0], "failed")  # the install exits 0 but the check still fails
 
     def test_write_rows_call_their_writers_then_recheck(self):
@@ -56,8 +56,58 @@ class RunStep(unittest.TestCase):
             self.assertEqual(self.step(self.has, install="compose setup", mode="write", name="compose CLI link")[0], "done")
         with mock.patch.object(fc_links, "relink_owned", return_value=["linked"]) as relink, mock.patch.object(fc_pi, "declare_provider", return_value="declared") as declare, \
              mock.patch.object(fc_pi, "write_text_model", return_value="written") as text:
-            for name in ("bp link", "pi openrouter-fast provider", "TEXT_MODEL lines"):
+            for name in ("pi openrouter-fast provider", "TEXT_MODEL lines"):
                 self.assertEqual(self.step(lambda c: (False, ""), install="compose setup", mode="write", name=name)[0], "failed")
-        relink.assert_called_once_with(self.tmp)
+        relink.assert_not_called()
         declare.assert_called_once_with(fc_pi.PI_MODELS)
         text.assert_called_once_with(fc_config.ENV_FILE)
+
+
+class StepLines(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.ran, self.has = self.tmp / "ran", lambda c: (self.ran.exists(), "")
+        self.enterContext(mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)))
+        for f in ("bin/compose", "bp/bin/bp.mjs"):
+            (self.tmp / f).parent.mkdir(parents=True, exist_ok=True)
+            (self.tmp / f).write_text("")
+        home = Path.home()
+        self.links = {"compose CLI link": (home / ".local/bin/compose", self.tmp / "bin/compose"),
+                      "compose skill link": (home / ".claude/skills/compose", self.tmp), "bp link": (home / ".local/bin/bp", self.tmp / "bp/bin/bp.mjs")}
+
+    def step(self, check, install=None, mode="run", terminal=False, name="pi"):
+        return fc_steprun.run_step((name, check, install or f"touch {self.ran}", "required", False, mode), self.tmp, False, True, terminal)
+
+    def test_ok_and_done_rows_have_no_line(self):
+        for mode in ("run", "interactive", "write", "manual", "key"):
+            self.assertEqual(self.step(lambda c: (True, ""), mode=mode), ("ok", ""))
+        self.assertEqual(self.step(self.has), ("done", ""))
+        self.ran.unlink()
+        self.assertEqual(self.step(self.has, mode="interactive", terminal=True, name="Homebrew"), ("done", ""))
+
+    def test_write_row_done_returns_its_writers_line(self):
+        with mock.patch.dict(fc_steprun.WRITERS, {"TEXT_MODEL lines": lambda c: self.ran.touch() or "wrote TEXT_MODEL lines"}):
+            self.assertEqual(self.step(self.has, "compose setup", "write", name="TEXT_MODEL lines"), ("done", "wrote TEXT_MODEL lines"))
+
+    def test_failed_rows_name_the_command_to_run_by_hand(self):
+        boom = "echo first >&2; echo boom >&2; exit 3"
+        self.assertEqual(self.step(self.has, boom), ("failed", f"pi: boom; by hand: {boom}"))
+        self.assertEqual(self.step(self.has, "true", name="gh stack"), ("failed", "gh stack: failed; by hand: true"))
+        self.assertEqual(self.step(self.has, "exit 1", "interactive", True, "gh auth"), ("failed", "gh auth: failed; by hand: exit 1"))
+
+    def test_each_link_row_makes_only_its_own_link(self):
+        for name, (link, target) in self.links.items():
+            others = [l for n, (l, _) in self.links.items() if n != name]
+            for l in [link] + others:
+                l.unlink(missing_ok=True)
+            elsewhere = self.tmp / "elsewhere"
+            if name == "compose CLI link":  # a stale link is repointed, a dangling sibling is left alone
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(elsewhere)
+                others[1].symlink_to(elsewhere)
+            check = lambda c, link=link, target=target: (link.is_symlink() and link.resolve() == target, "")
+            state, line = self.step(check, "compose setup", "write", name=name)
+            self.assertEqual((state, "\n" in line, ";" in line, str(link) in line), ("done", False, False, True))
+            self.assertFalse(any(str(l) in line for l in others))
+            self.assertFalse(others[0].is_symlink())
+            self.assertEqual(others[1].is_symlink() and os.readlink(others[1]), name == "compose CLI link" and str(elsewhere))
