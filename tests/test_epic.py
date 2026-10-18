@@ -52,6 +52,36 @@ class InitAfter(unittest.TestCase):
         self.assertIn("contained in compose/a", self.fc("clean", "--project", "b").stdout)
         self.assertFalse(b_wt.exists())
 
+    def test_after_on_an_existing_project_moves_it_when_empty_and_refuses_otherwise(self):
+        self.fc("init", "--project", "a")
+        a_wt, b_wt = self.repo.parent / "compose-a", self.repo.parent / "compose-b"
+        git = lambda wt, *a: subprocess.run(["git", *a], cwd=wt, check=True, capture_output=True, text=True, env=ENV).stdout
+        (a_wt / "feature_a.txt").write_text("a\n")
+        git(a_wt, "add", "-A"); git(a_wt, "commit", "-qm", "a")
+        self.fc("init", "--project", "b")
+        vfile = b_wt / ".compose" / "b" / "verify.json"
+        (b_wt / "dirty.txt").write_text("x\n")
+        p = self.fc("init", "--project", "b", "--after", "a", check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("uncommitted changes", p.stderr)
+        self.assertEqual(json.loads(vfile.read_text())["review_base"], "main")
+        (b_wt / "dirty.txt").unlink()
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertTrue((b_wt / "feature_a.txt").exists())
+        self.assertEqual({k: json.loads(vfile.read_text())[k] for k in ("review_base", "after")}, {"review_base": "compose/a", "after": "a"})
+        self.assertEqual(git(b_wt, "rev-parse", "HEAD"), git(a_wt, "rev-parse", "HEAD"))
+        self.fc("init", "--project", "b", "--after", "a")  # the same --after again changes nothing
+        (b_wt / "feature_b.txt").write_text("b\n")
+        git(b_wt, "add", "-A"); git(b_wt, "commit", "-qm", "b")
+        self.fc("init", "--project", "c")
+        c_wt = self.repo.parent / "compose-c"
+        (c_wt / "feature_c.txt").write_text("c\n")
+        git(c_wt, "add", "-A"); git(c_wt, "commit", "-qm", "c")
+        p = self.fc("init", "--project", "c", "--after", "a", check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("1 commit of its own", p.stderr)
+        self.assertEqual(json.loads((c_wt / ".compose" / "c" / "verify.json").read_text())["review_base"], "main")
+
     def test_after_an_unknown_project_refuses(self):
         p = self.fc("init", "--project", "b", "--after", "nope", check=False)
         self.assertNotEqual(p.returncode, 0)
