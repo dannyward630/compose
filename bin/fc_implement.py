@@ -107,17 +107,25 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
 
 def branch_budget(wt, base, allowed=None, delete=()):
     """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
-    All three are hard limits for an implementer: size, no documents, and scope."""
+    All three are hard limits for an implementer: size, no documents, and scope. A file deleted whole counts one line, as
+    does each `delete:` path; files under a `delete:` path count nothing and are never stray."""
     fc_core.sh(["git", "add", "-A"], wt, check=False)
-    lines = 0
+    del_paths = {d.rstrip("/") for d in delete}
+    gone = set(fc_core.sh(["git", "diff", "--cached", "--diff-filter=D", "--name-only", base], wt, check=False).stdout.split())
+    lines = len(del_paths)
     for row in fc_core.sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
         a, d, f = row.split("\t", 2)
-        if not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
+        if any(f == p or f.startswith(p + "/") for p in del_paths):
+            continue
+        if f in gone:
+            lines += 1
+        elif not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
             lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
     changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     new_docs = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
                 if fc_config.DOC_RE.search(f)]
-    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs]
+    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs
+             and not any(f == p or f.startswith(p + "/") for p in del_paths)]
     return lines, new_docs, stray
 
 def task_base(repo, proj, meta):
