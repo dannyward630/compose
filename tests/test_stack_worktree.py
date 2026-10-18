@@ -49,6 +49,55 @@ class StackWorktree(unittest.TestCase):
         self.assertEqual((wt / "node_modules" / "seen").read_text(), "top\n")  # installed once, against the top layer's lockfile
 
 
+class BranchNames(unittest.TestCase):
+    setUp, git = StackWorktree.setUp, StackWorktree.git
+
+    def prefix(self, verify=None, *refs):
+        (self.proj / "verify.json").unlink(missing_ok=True)
+        if verify is not None:
+            (self.proj / "verify.json").write_text(json.dumps(verify))
+        for r in refs:
+            self.git("update-ref", r, "HEAD")
+        return fc.fc_worktree.task_prefix(self.repo, self.proj)
+
+    def test_the_prefix_comes_from_the_record_legacy_branches_or_the_project_branch(self):
+        self.assertEqual(self.prefix(), "compose/p-")
+        self.assertEqual((self.prefix({"branch": "compose/p"}), fc.fc_worktree.task_branch(self.repo, self.proj, "001")), ("compose/p-", "compose/p-001"))
+        self.assertEqual((self.prefix({"branch": "p"}), fc.fc_worktree.task_branch(self.repo, self.proj, "001")), ("p-", "p-001"))
+        self.assertEqual(self.prefix({"branch": "p"}, "refs/heads/fast/p-2/001", "refs/heads/fast/pp/001"), "p-")  # another project's legacy branches
+        self.assertEqual(self.prefix({"task_prefix": "x/"}, "refs/remotes/origin/fast/p/001"), "x/")  # the record wins
+        self.assertEqual(self.prefix({"branch": "p"}), "fast/p/")  # only a remote-tracking legacy ref
+        self.assertEqual(self.prefix(None, "refs/heads/fast/p/001"), "fast/p/")
+        self.assertFalse((self.proj / "verify.json").exists())  # recorded only into an existing file
+        self.prefix({"branch": "p"})
+        self.git("update-ref", "-d", "refs/heads/fast/p/001"); self.git("update-ref", "-d", "refs/remotes/origin/fast/p/001")
+        self.assertEqual(fc.fc_worktree.task_prefix(self.repo, self.proj), "fast/p/")
+        self.assertEqual(json.loads((self.proj / "verify.json").read_text()), {"branch": "p", "task_prefix": "fast/p/"})
+
+    def test_own_branches_are_task_bench_and_test_writer_branches_only(self):
+        for b in ("compose/p", "compose/p-001", "compose/p-002-bench-x", "compose/p-tests-001", "compose/p-layer-01", "compose/p-2-001", "compose/p-0001"):
+            self.git("branch", b)
+        self.git("update-ref", "refs/remotes/origin/compose/p-003", "HEAD")
+        self.assertEqual(set(fc.fc_worktree.own_branches(self.repo, self.proj)), {"compose/p-001", "compose/p-002-bench-x", "compose/p-tests-001"})
+
+    def test_task_branches_and_the_stack_order_use_the_new_names(self):
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "after": "002"}, {"id": "002"}]}))
+        (self.proj / "results" / "001.json").write_text(json.dumps({"base": "compose/p-002"}))
+        for b in ("compose/p-002", "compose/p-001", "compose/p-tests-001", "compose/p-layer-01", "compose/p-2-001"):
+            self.git("checkout", "-q", "-b", b); self.git("commit", "-q", "--allow-empty", "-m", b)
+        self.git("checkout", "-q", "main")
+        self.assertEqual(fc.fc_worktree.task_branches(self.repo, self.proj), {"compose/p-001": "compose/p-002", "compose/p-002": None})
+        self.assertEqual(fc.fc_worktree.stack_order(self.repo, self.proj), ["compose/p-002", "compose/p-001"])
+
+    def test_a_replaced_tip_maps_back_to_its_new_name(self):
+        for verify, b in (({}, "compose/p-001"), ({"branch": "p"}, "p-001")):
+            (self.proj / "verify.json").write_text(json.dumps(verify)); self.git("branch", b); tip = self.git("rev-parse", b)
+            fc.fc_worktree.replace_branch(self.repo, self.proj, b)
+            self.assertEqual(fc.fc_worktree.replaced_tips(self.repo, self.proj), [(b, tip)])
+            self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/compose/replaced/"), f"refs/compose/replaced/p/001/{tip}")
+            self.git("update-ref", "-d", f"refs/compose/replaced/p/001/{tip}")
+
+
 class ReviewGate(unittest.TestCase):
     def test_confirmed_review_findings_fail_verify(self):
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
