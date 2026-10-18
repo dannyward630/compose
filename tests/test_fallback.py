@@ -778,6 +778,66 @@ class RunnerReadGuard(unittest.TestCase):
 
 class ReadGuardWiring(unittest.TestCase):
     """Task 009 (NEB-946): run_task writes the guard, herdr pi loads it, refusals are counted per attempt."""
+    USAGE = {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+
+    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}, pack="", stale=0):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        (proj / "worktrees").mkdir(); (proj / "worktrees" / "001.refused").write_text("{}\n" * stale)  # a previous run's refusals
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in files.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
+
+    def test_the_guard_beside_the_clone_allows_files_protected_tests_and_the_pack_before_the_turn(self):
+        files = {"a.txt": "no\n", "t.sh": "x\n", "lib/x.py": "y\n"}
+        for pack, allowed in [("1. f · function\n   lib/x.py:L1-L2\n   t.sh:L3-L4", {"a.txt", "t.sh", "lib/x.py"}), ("", {"a.txt", "t.sh"})]:
+            seen = []
+            def impl(cwd, *a, **k):
+                g = Path(cwd).parent / "001.guard.json"
+                seen.append(g.exists() and json.loads(g.read_text()))
+                (Path(cwd) / "a.txt").write_text("yes\n")
+                return ("s", "", 1, self.USAGE)
+            _, _, proj = self.run_one(impl, {"protected": ["t.sh"]}, files=files, pack=pack)
+            wt = proj / "worktrees" / "001"
+            self.assertTrue(seen[0], "no guard file beside the clone when the turn started")
+            self.assertEqual(set(seen[0]["allow"]), {os.path.realpath(wt / f) for f in allowed}, pack)
+
+    def test_each_attempt_counts_only_its_own_refusals_in_the_result_and_the_run_log(self):
+        def impl(cwd, *a, **k):
+            first = not (Path(cwd).parent / "turned").exists(); (Path(cwd).parent / "turned").touch()
+            with open(Path(cwd).parent / "001.refused", "a") as f:
+                f.write('{"tool": "read", "args": {}}\n' * (2 if first else 1))
+            (Path(cwd) / "a.txt").write_text("no\n" if first else "yes\n")
+            return ("s", "", 1, self.USAGE)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result, _, proj = self.run_one(impl, stale=5)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual([e.get("refused") for e in json.loads((proj / "results" / "001.json").read_text())["log"]], [2, 1])
+        self.assertRegex(out.getvalue(), r"001 attempt 1 fail .*lines=\d+\s+refused=2\b")
+        self.assertRegex(out.getvalue(), r"001 attempt 2 pass .*lines=\d+\s+refused=1\b")
+
+    def test_herdr_pi_loads_the_extension_and_the_guard_command_only_with_a_guard_file(self):
+        for guard in (True, False):
+            root = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, root, True); (root / "wt").mkdir(); g = root / "wt.guard.json"
+            if guard:
+                g.write_text(json.dumps({"root": str(root / "wt"), "allow": [], "log": str(root / "wt.refused")}))
+            panes, starts = [], []
+            task = {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"}
+            with mock.patch.object(fc.fc_herdr, "herdr", return_value={}), \
+                    mock.patch.object(fc.fc_herdr, "herdr_agent_start", lambda *a: starts.append(list(a)) or (_ for _ in ()).throw(KeyboardInterrupt)), \
+                    mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), \
+                    mock.patch.object(fc.fc_readguard, "command", lambda f: f"guard {f}"), self.assertRaises(KeyboardInterrupt):
+                fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, task)
+            pairs = [starts[0][i:i + 2] for i in range(len(starts[0]))]
+            self.assertEqual(["-e", str(fc.fc_readguard.PI_EXT)] in pairs, guard)
+            self.assertEqual(panes[0].get("COMPOSE_READGUARD"), f"guard {g}" if guard else None)
 
 
 class LibrarySection(unittest.TestCase):
