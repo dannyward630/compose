@@ -198,7 +198,10 @@ def record_layers(proj, layers):
 def group_by_record(proj, units, budget, max_prs=None):
     """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork, or
     groundwork above that task), and
-    units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap).
+    units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap): while the
+    groups outnumber it, the adjacent unrecorded pair of the same kind (both all-groundwork, or both holding tasks) with the
+    fewest combined lines folds, the lower pair on a tie, else the adjacent pair of any kind with the fewest; recorded layers
+    never fold.
     [(recorded branch or None, units, folded)]."""
     rec_file = Path(proj) / "layers.json"
     rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
@@ -208,7 +211,16 @@ def group_by_record(proj, units, budget, max_prs=None):
         seen.update(held)
         if held:
             groups.append((b, [units[i] for i in held], False))
-    return groups + [(None, g, False) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
+    groups += [(None, g, False) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
+    kind = lambda g: "groundwork" if all(u["name"] == "groundwork" for u in g[1]) else "task"
+    while max_prs is not None and len(groups) > max_prs:
+        pairs = [(0 if kind(a) == kind(b) else 1, sum(u["lines"] for u in a[1]) + sum(u["lines"] for u in b[1]), i)
+                 for i, (a, b) in enumerate(zip(groups, groups[1:])) if a[0] is None and b[0] is None]
+        if not pairs:
+            break
+        i = min(pairs)[2]
+        groups[i:i + 2] = [(None, groups[i][1] + groups[i + 1][1], True)]
+    return groups
 
 def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
@@ -250,7 +262,10 @@ def layer_note(l, budget):
     names = [t for t in l["tasks"] if t != "groundwork"]
     held = ([f"groundwork x{l['tasks'].count('groundwork')}"] if "groundwork" in l["tasks"] else []) + ([f"task {', '.join(names)}"] if names else [])
     gen = "".join(f"; generated, not counted: {f} ({n} lines)" for f, n in l["generated"].items())
-    over = f"; over the {budget}-line budget, a task is never split" if l["lines"] > budget and len(l["tasks"]) == 1 else ""
+    over = ""
+    if l["lines"] > budget:
+        over = (f"; over the {budget}-line budget to stay within {l['fold_cap']} PRs" if l.get("fold_cap")
+                else f"; over the {budget}-line budget, a task is never split" if len(l["tasks"]) == 1 else "")
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
 
 def layer_title(repo, proj, l, n, metas):
@@ -310,7 +325,8 @@ def register_stack(repo, proj, trunk, submit=False):
     if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
         base = trunk
     budget = int(cfg.get("review_layer_lines") or REVIEW_LAYER_LINES)
-    layers = build_layers(repo, proj, base, trunk, linear, wt, budget)
+    cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
+    layers = build_layers(repo, proj, base, trunk, linear, wt, budget, cap)
     stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)
     # A stack from an earlier wave is rebuilt with the grown chain: every existing stack that holds any of these branches is
     # unstacked locally (GitHub side untouched), then one init registers the whole chain.
