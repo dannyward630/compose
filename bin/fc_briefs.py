@@ -89,7 +89,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside
    `prompt`), not as a data field. If the poll is interrupted, or your Bash call ends first (Claude stops a call at 10 minutes),
    run it again at once, as often as it takes: queued answers wait for you.
-5. Record each answer in the map's Decisions so far as it arrives: one line each, a `compose linear update <id> --section "## Decisions so far"` patch append, never a whole-description write.
+5. Record each answer in the map's Decisions so far as it arrives: one line each. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path>`; never a whole-description write.
 6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
    are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
@@ -220,7 +220,7 @@ The screen that raised it: {reflect}
    this pane. Never background or kill it, never reopen a session the product owner ended. Answers arrive in the poll's `text`
    column (and as JSON after "Context data:" inside `prompt`), not as a data field. If the poll is interrupted, or your Bash call
    ends first (Claude stops a call at 10 minutes), run it again at once: queued answers wait for you.
-5. Record each answer as it arrives, a `compose linear update <id> --section "## Decisions so far"` patch, never a whole-description write. A line that changes is struck through
+5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path>`; never a whole-description write. A line that changes is struck through
    and tagged, with the new line right after it:
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
@@ -241,8 +241,7 @@ Write a codebase brief of at most 40 lines:
 - existing patterns and helpers to reuse instead of rewriting
 - test setup: frameworks, where tests live, the exact commands
 - risks and unknowns the plan must settle
-Append it to the feature's description under Notes as `### Codebase brief` (a `compose linear update <id> --section "## Notes"`
-patch append, never a whole-description write), then report `done "<one-line summary>"`.
+Read the Notes section with `compose linear get <id> --body`, then write the whole section back, its lines plus the brief as `### Codebase brief`, with `compose linear update <id> --section "## Notes" --file <path>`; never a whole-description write. Then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
