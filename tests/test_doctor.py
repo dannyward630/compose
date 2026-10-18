@@ -437,9 +437,6 @@ class InitGate(unittest.TestCase):
         self.assert_init(self.TOOLS + (git, uv[:3] + ("default",) + uv[4:]), stops=False)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class SummaryFix(unittest.TestCase):
     """doctor's summary says run compose setup only when a missing required row is one setup fixes: any mode but manual."""
     setUp, fake, herdr_config, doctor = Doctor.setUp, Doctor.fake, Doctor.herdr_config, DoctorWarnings.doctor
@@ -479,3 +476,7 @@ class SummaryFix(unittest.TestCase):
         self.fake("git", "git version 2.50.0")
         code, lines = self.doctor((self.GIT, ("pi auth.json override",) + self.LOCAL[1:3] + ("default", False, "manual")), self.OLD)
         self.assertEqual((code, lines[-1], sum(l.startswith("WARNING:") for l in lines)), (0, DoctorWarnings.READY, 2), lines)
+
+
+if __name__ == "__main__":
+    unittest.main()

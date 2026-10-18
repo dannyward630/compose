@@ -60,10 +60,6 @@ class PiSession(unittest.TestCase):
             fc.fc_models.parse_pi_session(f, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Watch(unittest.TestCase):
     def snap(self, **tasks):
         return {"tasks": {k: {"state": v, "attempts": 1, "cost": 0.01, "note": "", "linear": "ENG-7", "title": "T"} for k, v in tasks.items()},
@@ -412,3 +408,7 @@ class BareUsage(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("usage: compose tasks", err)
         self.assertIn("unrecognized arguments: --bogus", err)
+
+
+if __name__ == "__main__":
+    unittest.main()

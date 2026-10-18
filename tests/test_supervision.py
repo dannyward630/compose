@@ -433,10 +433,6 @@ class Detach(unittest.TestCase):
         self.assertTrue(any(line.startswith("event run=live") for line in out), out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestHang(unittest.TestCase):
     def test_a_hanging_test_fails_fast_with_a_reason(self):
         import tempfile, time
@@ -489,3 +485,7 @@ class JevLeash(unittest.TestCase):
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

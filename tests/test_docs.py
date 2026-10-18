@@ -499,10 +499,6 @@ class PlannerSavesInPatches(unittest.TestCase):
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
     """A planner or designer the engineering manager starts itself reports to it, and its one watch reports them: no second watch."""
 
@@ -617,3 +613,7 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("  `init` git-ignores it, `graft/`, and `.trail/` first.", how)
         # The step table holds the trail and treehouse install row.
         self.assertIn("| trail, treehouse | default | installs `@trailhq/trail-code` and treehouse | no |", machine)
+
+
+if __name__ == "__main__":
+    unittest.main()
