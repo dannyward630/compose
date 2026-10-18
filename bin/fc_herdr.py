@@ -158,6 +158,15 @@ def agent_name(slug, tid):
         s = "fc-" + s
     return f"{s[:32 - len(tid) - 1]}-{tid}"
 
+def agent_id(slug, name):
+    """The id `agent_name(slug, id)` built `name` from, else None: a cut name no longer starts with the whole slug.
+    The shortest id wins: `clean-recut-branche-orchestrator` is `orchestrator`, not `recut-branche-orchestrator` on a 5-character cut."""
+    return next((name[i + 1:] for i in range(len(name) - 1, -1, -1) if name[i] == "-" and agent_name(slug, name[i + 1:]) == name), None)
+
+def agent_ref(slug, ref):
+    """The registered agent a command names: a role, the name herdr holds, or `<slug>-<role>` spelled out in full."""
+    return agent_name(slug, agent_id(slug, ref) or ref.removeprefix(agent_name(slug, "")))
+
 def herdr_main_repo(wt):
     common = fc_core.sh(["git", "rev-parse", "--git-common-dir"], wt, check=False).stdout.strip()
     return str(Path(wt, common).resolve().parent) if common else str(wt)

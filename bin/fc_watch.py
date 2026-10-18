@@ -32,7 +32,7 @@ def watch_snapshot(repo, proj):
     agents = None if listed is None else listed.get("agents", [])
     for ag in agents or []:
         n = ag.get("name") or ""
-        if n.startswith(fc_herdr.agent_name(proj.name, "")[:-1]):
+        if fc_herdr.agent_id(proj.name, n):
             snap["agents"][n] = ag.get("agent_status")
     records = [json.loads(f.read_text()) for f in sorted((proj / "results" / "crew").glob("*.json"))]
     snap["closed"] = [c["name"] for c in records if fc_crew.tab_closed(c, agents)]  # whatever their last report says, not working
@@ -203,8 +203,7 @@ def cmd_watch(a, rewake=False):
     Each role's watcher (COMPOSE_ROLE, else manager; --from only filters what is printed) remembers what it last
     reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    sources = [fc_herdr.agent_name(proj.name, x.strip()) if not x.strip().startswith(fc_herdr.agent_name(proj.name, "")) else x.strip()
-               for x in (a.from_ or "").split(",") if x.strip()]
+    sources = [fc_herdr.agent_ref(proj.name, x.strip()) for x in (a.from_ or "").split(",") if x.strip()]
     key = os.environ.get("COMPOSE_ROLE") or "manager"
     direct = lambda: fc_crew.crew_reporting_to(proj, key) if key == "manager" else ()  # the engineering manager's own teammates pass whatever --from says
     if a.now:

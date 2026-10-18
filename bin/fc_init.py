@@ -179,6 +179,9 @@ def cmd_init(a):
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
         sys.exit(f"no branch {after}: `compose init --project {a.after}` that project first")
     existing = fc_core.all_projects(here).get(name)
+    if not existing and not fc_herdr.agent_name(name, "orchestrator").startswith(fc_herdr.agent_name(name, "")):
+        sys.exit(f"project name {name!r} is too long: herdr agent names stop at 32 characters, so its team lead could not be "
+                 f"{name}-orchestrator; pick a name of at most 19 characters")
     if existing:
         wt, proj = existing
         print(f"project {name} already exists at {wt}")

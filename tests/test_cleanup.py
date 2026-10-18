@@ -377,6 +377,14 @@ class ProjectBranch(unittest.TestCase):
                 self.assertEqual(self.run("branch", "--show-current", cwd=wt).stdout.strip(), want)
                 self.assertEqual(json.loads((wt / ".compose" / "p" / "verify.json").read_text())["branch"], want)
 
+    def test_init_refuses_a_name_that_would_cut_the_team_leads_agent_name(self):
+        with self.assertRaises(subprocess.CalledProcessError) as e:
+            self.cli("init", "--project", "clean-recut-branches")
+        self.assertIn("at most 19 characters", e.exception.stderr)
+        self.assertFalse((self.r.parent / "compose-clean-recut-branches").exists())
+        self.cli("init", "--project", "clean-recut-branche")
+        self.assertTrue((self.r.parent / "compose-clean-recut-branche").exists())
+
     def test_after_a_project_with_no_record_builds_on_its_prefixed_branch(self):
         self.config({"branch_prefix": "team/"})
         self.run("branch", "team/x")
