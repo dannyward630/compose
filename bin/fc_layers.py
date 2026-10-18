@@ -55,7 +55,8 @@ def linearize(repo, proj, trunk, wt):
 
 def _linearize(repo, proj, trunk, wt):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
-    worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
+    worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported, and STACK_STOP
+    says where: a caller that acts on the stack top (verify, top, the stack) refuses the partial chain then."""
     global STACK_STOP
     STACK_STOP = ""
     chain = chain_order(repo, proj)
@@ -86,9 +87,10 @@ def _linearize(repo, proj, trunk, wt):
             fc_core.sh(["git", "checkout", "-q", b], wt)
             r = fc_core.sh(["git", "rebase", "-q", "--onto", prev, upstream], wt, check=False)
             if r.returncode:
+                files = ", ".join(fc_core.sh(["git", "diff", "--name-only", "--diff-filter=U"], wt, check=False).stdout.split()) or "no file git names"
                 fc_core.sh(["git", "rebase", "--abort"], wt, check=False)
                 fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-                STACK_STOP = (f"{b} conflicts when rebased onto {prev}; the layers below it are kept. Resolve by hand: "
+                STACK_STOP = (f"{b} conflicts when rebased onto {prev} in {files}; the layers below it are kept. Resolve by hand: "
                               f"git checkout {b} && git rebase --onto {prev} {upstream} ({source}), then re-run")
                 fc_core.say(f"stack  STOP  {STACK_STOP}")
                 break

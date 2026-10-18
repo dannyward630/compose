@@ -172,6 +172,8 @@ def cmd_top(a):
         print(f"{wt} detached at {trunk}")
         return
     chain = fc_layers.linearize(repo, proj, trunk, wt)
+    if fc_layers.STACK_STOP:
+        sys.exit(1)  # the STOP line already said why and what to do
     if not chain:
         sys.exit("no unmerged layers; the trunk already is the top")
     fc_core.sh(["git", "checkout", "-q", "--detach", chain[-1]], wt)

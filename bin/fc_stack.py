@@ -264,7 +264,7 @@ def write_pr_text(proj, wt, b, before, title, body):
 def register_stack(repo, proj, trunk, submit=False, preview=False):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
-    stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
+    stops the chain there, is reported, and nothing is built or registered). The stack itself is review layers on the real base (`review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
     too, so the project branch carries nothing the layers do not; when they cannot be built (build_layers' STOP), the layers and
     the registered stack stay as they were. Nothing is pushed unless submit=True; preview=True prints each layer's
@@ -292,7 +292,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     linear = fc_layers.linearize(repo, proj, trunk, wt)
-    if not linear:
+    if not linear or fc_layers.STACK_STOP:  # a stack of the layers below the stop would leave the rest out of review
         return []
     budget = int(cfg.get("review_layer_lines") or fc_layers.REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
