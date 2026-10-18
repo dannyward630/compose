@@ -53,11 +53,14 @@ test('--help and -h print usage and exit 0 without running any command', () => {
 });
 
 test('type focuses the --selector element, even inside a shadow root, before typing', { skip: !existsSync(CHROME) && 'Playwright Chromium not installed' }, async (t) => {
-  const port = '59872'; const env = { BP_PORT: port };
   const profile = mkdtempSync(path.join(tmpdir(), 'bp-type-'));
-  const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-first-run', `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
+  // Port 0: Chrome listens on a free port and writes it to DevToolsActivePort, so runs that overlap never share a browser.
+  const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--remote-debugging-port=0', 'about:blank'], { stdio: 'ignore' });
   t.after(() => stopChrome(chrome, profile));
-  for (let i = 0; i < 40; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await new Promise((r) => setTimeout(r, 250)); } }
+  const portFile = path.join(profile, 'DevToolsActivePort'); let port;
+  for (let i = 0; i < 40 && !port; i++) { await new Promise((r) => setTimeout(r, 250)); port = existsSync(portFile) && readFileSync(portFile, 'utf8').match(/^\d+/)?.[0]; }
+  assert.ok(port, 'Chrome wrote no DevToolsActivePort');
+  const env = { BP_PORT: port };
   // Focus starts on another input, so typing without focusing the target lands in the wrong field.
   const html = `<title>typetest</title><input id=other autofocus><div id=host></div><script>document.getElementById('host').attachShadow({mode:'open'}).innerHTML='<textarea></textarea>'</script>`;
   assert.equal(bp(['open', 'data:text/html,' + encodeURIComponent(html), '--wait', '1000'], env).status, 0);
