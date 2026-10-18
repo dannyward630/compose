@@ -129,5 +129,51 @@ class JsApi(unittest.TestCase):
         self.assertEqual((cut.rstrip("\n"), len(cut) <= cap), ("\n".join(lines[:-1]), True), cut)
 
 
+class TopLevelFromRecord(unittest.TestCase):
+    """Task 017: a distribution without top_level.txt maps to its modules through its file list (RECORD)."""
+
+    @classmethod
+    def setUpClass(cls):
+        wt = cls.wt = Path(tempfile.mkdtemp()).resolve()
+        cls.addClassCleanup(shutil.rmtree, wt, True)
+        subprocess.run(["python3", "-m", "venv", "--without-pip", str(wt / ".venv")], check=True)
+        purelib = "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+        site = Path(subprocess.run([str(wt / ".venv" / "bin" / "python"), "-c", purelib], check=True, capture_output=True,
+                                   text=True).stdout.strip())
+        dists = (("rich-widgets", "0.4.1", None,
+                  ["richw/__init__.py", "solo.py", "rich_widgets-0.4.1.dist-info/METADATA", "../../../bin/rw"]),
+                 ("tagged", "2.0", "alpha", ["alpha/__init__.py", "beta.py"]),  # top_level.txt wins over RECORD
+                 ("mixed", "1.0", None, ["nested/inner/core.py", "mixed-1.0.dist-info/METADATA", "../../../bin/mx"]),
+                 ("nopy", "1.0", None, ["extra/data.json", "__pycache__/zed.cpython-39.pyc", "nopy-1.0.data/scripts/x.py"]),
+                 ("bare", "3.0", None, None))  # neither top_level.txt nor RECORD
+        for dist, ver, top, record in dists:
+            info = site / f"{dist.replace('-', '_')}-{ver}.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {dist}\nVersion: {ver}\n")
+            if top:
+                (info / "top_level.txt").write_text(top + "\n")
+            if record is not None:
+                (info / "RECORD").write_text("".join(f"{p},,\n" for p in record))
+        files = {site / "richw" / "__init__.py": 'def paint(color, width=1):\n    """Paint it."""\n',
+                 site / "solo.py": 'def ping():\n    """Ping once."""\n',
+                 site / "alpha" / "__init__.py": 'def a():\n    """A."""\n', site / "beta.py": 'def b():\n    """B."""\n',
+                 site / "nested" / "inner" / "core.py": 'def go():\n    """Go."""\n', site / "extra" / "data.json": "{}\n",
+                 site / "bare.py": 'def x():\n    """X."""\n',
+                 wt / "app" / "main.py": "from richw import paint\nfrom solo import ping\n",
+                 wt / "app" / "other.py": "from alpha import a\nfrom beta import b\nfrom nested.inner.core import go\n"
+                                          "from extra import data\nfrom bare import x\n"}
+        for path, text in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+    def test_a_distribution_without_top_level_maps_the_py_files_its_record_lists(self):
+        self.assertEqual(fc.fc_libapi.python_api(self.wt, ["app/main.py"], ""),
+                         ["rich-widgets 0.4.1\npaint(color, width=1) - Paint it.\nping() - Ping once."])
+
+    def test_top_level_still_wins_and_record_paths_that_are_no_module_give_nothing(self):
+        blocks = fc.fc_libapi.python_api(self.wt, ["app/other.py"], "")
+        self.assertEqual(sorted(blocks), ["mixed 1.0\ngo() - Go.", "tagged 2.0\na() - A."])
+
+
 if __name__ == "__main__":
     unittest.main()
