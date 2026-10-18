@@ -109,6 +109,34 @@ class Groundwork(unittest.TestCase):
             self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
 
+    MCP_TOOLS = ("save_issue", "get_issue", "list_issues", "save_comment", "get_project", "list_issue_labels", "create_issue_label",
+                 "save_document", "mcp__claude_ai_Linear")
+
+    def printed(self, cmd, **kw):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        out = io.StringIO()
+        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
+            cmd(SimpleNamespace(repo=str(self.repo), project="p", extra=None, **kw))
+        return " ".join(out.getvalue().split())
+
+    def test_briefs_name_compose_linear_verbs_and_no_linear_mcp_tool(self):
+        b = fc.fc_briefs
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_wayfinder, {}), (b.cmd_planner, {"issue": None}),
+                                                         (b.cmd_explore, {}))]
+        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
+        for brief in printed + consts:
+            self.assertEqual([t for t in self.MCP_TOOLS if t in brief], [], brief[:60])
+        _, wayfinder, planner, explore = printed
+        self.assertIn('compose linear list --search', wayfinder)
+        self.assertRegex(wayfinder, r'compose linear update[^`]*--section "## Decisions so far"')
+        self.assertRegex(planner, r'compose linear update[^`]*--section "## Plan"')
+        self.assertIn("compose linear create", planner)
+        self.assertIn("`compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says", planner)
+        self.assertRegex(explore, r'compose linear update[^`]*--section "## Notes"')
+        for s in ("patch append", "### Codebase brief", "NEB-9"):
+            self.assertIn(s, explore)
+        self.assertRegex(" ".join(b.CHANGE_BRIEF.split()), r"compose linear update[^`]*--section")
+
     def test_planner_issue_overrides_the_feature_and_dash_reads_notes_from_stdin(self):
         brief = self.planner(issue="NEB-12", extra="-", stdin="Story NEB-12 only.\n")
         self.assertIn("NEB-12", brief)

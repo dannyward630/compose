@@ -349,6 +349,13 @@ class FigmaConnectorBriefs(unittest.TestCase):
         self.assertIn("the repo's tokens through trail (`trail ask \"<question>\" --source`)", designer)
         self.assertNotRegex(designer, r"(?<![\w/.@-])graft(?![\w/-])")  # no graft command or word left anywhere in the brief
 
+    def test_designer_searches_linear_through_compose_linear_and_no_mcp_tool(self):
+        designer = " ".join(fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd").split())
+        self.assertRegex(designer, r'compose linear list --search[^.;]*"design system", "tokens", "Figma"')
+        tools = ("save_issue", "get_issue", "list_issues", "save_comment", "get_project", "list_issue_labels", "create_issue_label",
+                 "save_document", "mcp__claude_ai_Linear")
+        self.assertEqual([t for t in tools if t in designer], [])
+
 
 if __name__ == "__main__":
     unittest.main()
