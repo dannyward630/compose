@@ -173,8 +173,9 @@ class PlannerChain(unittest.TestCase):
             fc.fc_crew.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (cached for the day now)
         self.assertIn("--model", str(e.exception))
 
-    def test_headless_claude_runs_carry_no_compose_env(self):
-        lead = {"COMPOSE_ROLE": "orchestrator", "COMPOSE_PROJECT": "p", "COMPOSE_REPO": "/r"}  # the team lead's tab
+    def test_headless_claude_runs_carry_no_compose_or_anthropic_env(self):
+        lead = {"COMPOSE_ROLE": "orchestrator", "COMPOSE_PROJECT": "p", "COMPOSE_REPO": "/r",  # the team lead's tab
+                "ANTHROPIC_API_KEY": "sk-ant", "ANTHROPIC_AUTH_TOKEN": "t", "ANTHROPIC_BASE_URL": "https://openrouter.ai/api", "ANTHROPIC_MODEL": "m"}
         done = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
         with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run:
             fc.fc_models.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
@@ -182,6 +183,7 @@ class PlannerChain(unittest.TestCase):
         for call in run.call_args_list:
             env = call.kwargs.get("env") or os.environ
             self.assertEqual([k for k in env if k.startswith("COMPOSE_") and k != "COMPOSE_CONFIG"], [])
+            self.assertEqual([k for k in env if k.startswith("ANTHROPIC_")], [])  # the subscription pays, never a key or a proxy
             self.assertNotEqual(env["COMPOSE_CONFIG"], str(fc.fc_config.CONFIG_PATH))  # its tools run project code: a scratch config
 
     def test_the_probe_runs_once_a_day(self):

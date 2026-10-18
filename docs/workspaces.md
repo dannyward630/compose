@@ -53,6 +53,7 @@ If an id or preset is wrong, the run stops with the provider's message.
 A rate limit switches at once.
 `test_reader` reads each failed test run and writes the implementer's fix brief.
 It must be a `claude:` model, since it runs in Claude Code with read-only tools.
+It bills to the Claude Code subscription, never an API key or OpenRouter: every headless Claude call the CLI makes drops `ANTHROPIC_*` (key, auth token, base URL, model overrides) from its environment.
 `null` sends the raw test output alone.
 It is not probed first: when it fails, the raw output goes back instead.
 
