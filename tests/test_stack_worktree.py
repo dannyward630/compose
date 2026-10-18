@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -36,6 +36,34 @@ class StackWorktree(unittest.TestCase):
         self.assertTrue((wt / ".compose" / "p" / "e2e" / "assert.sh").exists())
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
+
+    def test_a_recorded_slot_of_another_repository_is_dropped_never_used(self):
+        # a clone or copy that carries the project's results/slots.json rebuilt the original's branches in its stack worktree,
+        # and clean wiped the tool folders in its slots
+        other = Path(tempfile.mkdtemp()) / "other"
+        subprocess.run(["git", "clone", "-q", str(self.repo), str(other)], check=True)
+        theirs = other.parent / "stackroot"
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(theirs)], cwd=other, check=True, capture_output=True)
+        (theirs / ".trail").mkdir()
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "their trunk moved"], cwd=other, check=True)
+        head = lambda p: subprocess.run(["git", "rev-parse", "HEAD"], cwd=p, capture_output=True, text=True).stdout
+        before = head(theirs)
+        mine = Path(tempfile.mkdtemp()) / "mine"
+        self.git("worktree", "add", "-q", "--detach", str(mine))
+        recorded = {"stackroot": str(theirs), "tests-001": str(theirs), "tests-002": str(mine), "tests-003": str(other / "gone")}
+        (self.proj / "results" / "slots.json").write_text(json.dumps(recorded))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "main")
+        common = lambda p: subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=p, capture_output=True, text=True).stdout
+        self.assertEqual(common(wt), common(self.repo))
+        self.assertEqual(head(theirs), before)
+        self.assertEqual(fc.fc_worktree.slots(self.proj), {"tests-002": str(mine), "tests-003": str(other / "gone")})
+        self.assertEqual(json.loads((self.proj / "results" / "slots.json").read_text()), {"tests-002": str(mine), "tests-003": str(other / "gone")})
+        for role in ("stackroot", "tests-001"):
+            self.assertIn(f"{role} {theirs}", out.getvalue())
+        fc.fc_init.clean_project(self.repo, "p", self.repo, self.proj)
+        self.assertTrue((theirs / ".trail").is_dir())
 
     def test_verify_installs_in_the_worktree_at_the_stack_top(self):
         (self.repo / ".gitignore").write_text("node_modules/\n.compose/\n")

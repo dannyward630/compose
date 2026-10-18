@@ -199,10 +199,26 @@ def release_slot(repo, path):
             shutil.rmtree(t, ignore_errors=True)
     treehouse(repo, "return", "--force", str(path), check=False)
 
+def common_dir(path):
+    """The git common dir of the checkout at `path`, None when it is not in one: every worktree of a repository shares it."""
+    p = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False) if Path(path).is_dir() else None
+    return Path(p.stdout.strip()).resolve() if p and p.returncode == 0 else None
+
 def slots(proj, update=None):
-    """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them."""
+    """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them.
+    A recorded slot that exists but is no checkout of the project's repository is dropped and named: a clone or copy that
+    carries the file would otherwise rebuild the original's branches in its stack worktree and clean out its slots."""
     f = Path(proj) / "results" / "slots.json"
     have = json.loads(f.read_text()) if f.exists() else {}
+    if have:
+        mine = common_dir(proj)
+        foreign = {k: v for k, v in have.items() if Path(v).exists() and (mine is None or common_dir(v) != mine)}
+        for role, path in foreign.items():
+            theirs = common_dir(path)
+            fc_core.say(f"slots  dropped {role} {path}: a checkout of {theirs.parent if theirs else 'no repository'}, "
+                        f"not of {mine.parent if mine else proj}; a new slot is used instead")
+        if foreign:
+            update = {**{k: None for k in foreign}, **(update or {})}
     if update is not None:
         have = {k: v for k, v in {**have, **update}.items() if v}
         f.parent.mkdir(parents=True, exist_ok=True)
