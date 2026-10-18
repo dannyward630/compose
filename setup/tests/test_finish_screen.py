@@ -162,3 +162,38 @@ class FinishWrap(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((buttons, app.return_value), ({"Done"}, 0))
 
     test_long_ending_keeps_focus_a_scrollbar_and_keyboard_scrolling = FinishLook.test_long_ending_has_focus_a_scrollbar_and_scrolls_from_the_keyboard
+
+
+LOGIN = "Use /login to log into a provider via OAuth or API key."
+SENTENCE = "pi says: set retries = 3 in settings.json before the next run"
+
+
+class LineKinds(unittest.IsolatedAsyncioTestCase):
+    maxDiff = None
+    finish = FinishScreenTest.finish
+
+    def test_kind_follows_what_the_line_says(self):
+        kinds = {
+            LOGIN: "", SENTENCE: "", "Set your API key in pi, then run it again": "",
+            "  pbpaste | compose workspace key default --linear": "", "Now pi is linked": "",
+            "a = b is what the docs say": "",
+            "No OpenRouter key: the implementer cannot run": "error", "No TypeSafe key: x": "error",
+            "setup is not finished: add the keys": "error", "pi is missing": "error",
+            "enabled = false": "warning", 'delivery = "off"': "warning", "  openrouter-fast.model = glm": "warning",
+            "[ui.sound]": "warning", 'export PATH="$HOME/.local/bin:$PATH"': "warning",
+            "waiting on Claude Code: superpowers": "warning", "failed: pi": "failed",
+            "compose is ready": "success", "implementer glm ok": "success",
+        }
+        self.assertEqual({line: FinishScreen._kind(line) for line in kinds}, kinds)
+
+    async def test_rendered_styles_follow_the_kind(self):
+        def check(app):
+            plain, err, warn = (style_at(app, t) for t in ("plain line", "setup is not finished", "enabled = false"))
+            self.assertEqual([style_at(app, t[:30]) for t in (LOGIN, SENTENCE)], [plain, plain])
+            self.assertEqual([style_at(app, t) for t in ("No OpenRouter key", "pi is missing")], [err, err])
+            self.assertEqual(style_at(app, 'delivery = "off"'), warn)
+            self.assertNotIn(warn, (plain, err))
+            self.assertNotEqual(plain, err)
+        lines = [LOGIN, SENTENCE, "plain line", "No OpenRouter key: add one later", "pi is missing",
+                 "enabled = false", 'delivery = "off"', "setup is not finished"]
+        await self.finish(lines, 1, "Quit", check)
