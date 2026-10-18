@@ -178,10 +178,11 @@ class PlannerChain(unittest.TestCase):
         lead = {"COMPOSE_ROLE": "orchestrator", "COMPOSE_PROJECT": "p", "COMPOSE_REPO": "/r",  # the team lead's tab
                 "ANTHROPIC_API_KEY": "sk-ant", "ANTHROPIC_AUTH_TOKEN": "t", "ANTHROPIC_BASE_URL": "https://openrouter.ai/api", "ANTHROPIC_MODEL": "m"}
         done = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
-        with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run:
+        with mock.patch.dict(os.environ, lead), mock.patch.object(subprocess, "run", return_value=done) as run, mock.patch.object(fc.fc_proc, "run", return_value=done) as turn:
             fc.fc_models.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
             fc.fc_claude.claude_once(".", "hi")
-        for call in run.call_args_list:
+        self.assertEqual((run.call_count, turn.call_count), (1, 1))  # the probe stays on subprocess.run, the turn goes through fc_proc.run
+        for call in run.call_args_list + turn.call_args_list:
             env = call.kwargs.get("env") or os.environ
             self.assertEqual([k for k in env if k.startswith("COMPOSE_") and k != "COMPOSE_CONFIG"], [])
             self.assertEqual([k for k in env if k.startswith("ANTHROPIC_")], [])  # the subscription pays, never a key or a proxy
@@ -369,6 +370,25 @@ class ProbeCache(unittest.TestCase):
 
 class ClaudeProcGroup(unittest.TestCase):
     """Task 002 (NEB-919): claude_once starts through fc_proc.run; timeout and stop."""
+    def setUp(self):
+        self.addCleanup(fc.fc_proc.STOP.clear); self.addCleanup(fc.fc_proc.HOOKS.clear); self.addCleanup(fc.fc_proc.RUNNING.clear)
+
+    def test_claude_once_starts_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
+        d = tempfile.mkdtemp(); (Path(d) / "AGENTS.md").write_text("Keep it short.\n")
+        with mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")) as run, \
+                mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
+            self.assertEqual(fc.fc_claude.claude_once(d, "hi", timeout=9)[1], "ok")
+        (argv,), kw = run.call_args
+        self.assertEqual((argv[:3], argv[-2], kw["cwd"], kw["timeout"]), (["claude", "-p", "hi"], "--append-system-prompt", d, 9))
+        self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in fc.fc_claude.headless_env().items() if k != "COMPOSE_CONFIG"})
+
+    def test_after_the_stop_claude_never_starts(self):
+        d = Path(tempfile.mkdtemp()); (d / "bin").mkdir(); fake = d / "bin" / "claude"
+        fake.write_text(f"#!/bin/sh\ntouch {d / 'started'}\necho '{{\"is_error\": false, \"result\": \"ok\"}}'\n"); fake.chmod(0o755)
+        fc.fc_proc.STOP.set()
+        with mock.patch.dict(os.environ, {"PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}"}), self.assertRaises(fc.fc_proc.Stopped):
+            fc.fc_claude.claude_once(str(d), "hi")
+        self.assertFalse((d / "started").exists(), "claude started after the stop")
 
 
 class ClaudeReadGuard(unittest.TestCase):

@@ -427,7 +427,8 @@ class Workspaces(unittest.TestCase):
                           "metadata": {"presetErrorCode": "preset_not_found", "presetSlug": "glm-5-3-flash-fast"}})
         end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"404: {err}"}})
         run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="Warning: No project session found with id 'x'; creating a new session\n", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.object(fc.fc_config, "WORKSPACE", "work"), self.assertRaises(RuntimeError) as cm:
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")), \
+                mock.patch.object(fc.fc_config, "WORKSPACE", "work"), self.assertRaises(RuntimeError) as cm:
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
         self.assertIn("404", str(cm.exception))
         self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
@@ -449,7 +450,7 @@ class PiKeyFromEnv(unittest.TestCase):
 
     def pi_turn(self, environ):
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
-        with mock.patch.object(subprocess, "run", run), mock.patch.dict(os.environ, environ, clear=True):
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")), mock.patch.dict(os.environ, environ, clear=True):
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "openrouter/x/y", "hi")
         return run.call_args[0][0], run.call_args[1]["env"]
 
@@ -708,6 +709,39 @@ class RetryMessage(unittest.TestCase):
 
 class ProcGroupTurns(unittest.TestCase):
     """Task 002 (NEB-919): pi_turn and opencode start through fc_proc.run; timeout and stop."""
+    def setUp(self):
+        self.addCleanup(fc.fc_proc.STOP.clear); self.addCleanup(fc.fc_proc.HOOKS.clear); self.addCleanup(fc.fc_proc.RUNNING.clear)
+        self.d = Path(tempfile.mkdtemp()); (self.d / "bin").mkdir(); (self.d / "wt").mkdir(); self.wt = str(self.d / "wt"); self.addCleanup(shutil.rmtree, self.d, True)
+
+    def fake(self, body):
+        for f in (self.d / "bin" / "pi", self.d / "bin" / "opencode"): f.write_text(f"#!/bin/sh\n{body}\n"); f.chmod(0o755)
+        p = mock.patch.dict(os.environ, {"PATH": f"{self.d / 'bin'}{os.pathsep}{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
+
+    def test_both_turns_start_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
+        for name, turn, timeout, want, out in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}'),
+                                               ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}')):
+            with self.subTest(name), mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
+                    mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
+                turn(self.wt, "openrouter/x/y", "hi", timeout=timeout)
+                (argv,), kw = run.call_args
+                self.assertEqual((argv[0], argv[-3:], kw["cwd"], kw["timeout"]), (name, ["--model", "openrouter/x/y", "hi"], self.wt, want))
+                self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in fc.fc_core.clean_env().items() if k != "COMPOSE_CONFIG"})
+
+    def test_a_turn_past_its_timeout_raises_and_its_whole_group_is_gone(self):
+        self.fake("sleep 31.7 >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
+        left = lambda: subprocess.run(["pgrep", "-f", "sleep 31.7( |$)"], capture_output=True, text=True).stdout.split()
+        self.addCleanup(lambda: [os.kill(int(p), 9) for p in left()])
+        with self.assertRaises(subprocess.TimeoutExpired):
+            fc.fc_models.pi_turn(self.wt, "openrouter/x/y", "hi", timeout=1)
+        for _ in range(30): left() and time.sleep(0.1)  # up to 3 s for the killed group to exit
+        self.assertEqual(left(), [], "the turn's tool child outlived its timeout")
+
+    def test_after_the_stop_no_turn_starts(self):
+        self.fake(f"touch {self.d / 'started'}; echo '{{\"type\":\"tool_execution_start\"}}'; echo '{{\"type\":\"text\",\"sessionID\":\"s\",\"part\":{{\"text\":\"ok\"}}}}'")
+        fc.fc_proc.STOP.set()
+        self.assertRaises(fc.fc_proc.Stopped, fc.fc_models.pi_turn, self.wt, "openrouter/x/y", "hi")
+        self.assertRaises(fc.fc_proc.Stopped, fc.fc_models.opencode, self.wt, "openrouter/x/y", "hi")
+        self.assertFalse((self.d / "started").exists(), "a turn started after the stop")
 
 
 class RunnerReadGuard(unittest.TestCase):
