@@ -14,12 +14,21 @@ PI_HERDR_EXT = Path.home() / ".pi" / "agent" / "extensions" / "herdr-agent-state
 def herdr_env():
     return os.environ.get("HERDR_ENV") == "1" and bool(os.environ.get("HERDR_SOCKET_PATH"))
 
+PANE_MAKERS = (("tab", "create"), ("pane", "split"), ("workspace", "create"))
+def herdr_argv(args):
+    """The herdr command line for `args`. A new pane gets the herdr server's env, not ours, so a call that makes one passes the
+    caller's COMPOSE_CONFIG and HOME on: a scratch config stays scratch in the CLI, agent, or teammate that pane runs."""
+    args = [str(a) for a in args]
+    if tuple(args[:2]) in PANE_MAKERS:
+        args[2:2] = [x for k in ("COMPOSE_CONFIG", "HOME") if os.environ.get(k) for x in ("--env", f"{k}={os.environ[k]}")]
+    return ["herdr", *args]
+
 def herdr(*args, check=False, timeout=120):
     """One herdr CLI call. Returns the JSON `result`, or None when not inside herdr or the call failed (raises if check)."""
     if not herdr_env():
         return None
     try:
-        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        p = subprocess.run(herdr_argv(args), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
         if check:
             raise RuntimeError(f"herdr {' '.join(map(str, args[:2]))}: {e}")
@@ -36,7 +45,7 @@ def herdr(*args, check=False, timeout=120):
 
 def herdr_error(*args, timeout=120):
     """Like herdr() but returns the error code string on failure ("timeout", "agent_blocked", ...) instead of None."""
-    p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    p = subprocess.run(herdr_argv(args), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     try:
         out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -50,7 +59,7 @@ def herdr_text(*args, timeout=30):
     if not herdr_env():
         return ""
     try:
-        p = subprocess.run(["herdr", *map(str, args)], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        p = subprocess.run(herdr_argv(args), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return p.stdout if p.returncode == 0 else ""

@@ -131,6 +131,46 @@ class Tabs(unittest.TestCase):
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
 
 
+FAKE_HERDR = """#!{py}
+import json, os, subprocess, sys
+state, args = {state!r}, sys.argv[1:]
+panes = json.load(open(state)) if os.path.exists(state) else {{}}
+def env_of(a):
+    return dict(a[i + 1].split("=", 1) for i in range(len(a) - 1) if a[i] == "--env")
+if args[:2] == ["tab", "list"]:
+    print(json.dumps({{"result": {{"tabs": []}}}}))
+elif args[:2] in (["tab", "create"], ["pane", "split"], ["workspace", "create"]):
+    pane = f"w1:p{{len(panes) + 1}}"; panes[pane] = env_of(args); json.dump(panes, open(state, "w"))
+    print(json.dumps({{"result": {{"root_pane": {{"pane_id": pane}}, "pane": {{"pane_id": pane}}, "workspace": {{"workspace_id": "w1"}}}}}}))
+elif args[:2] == ["pane", "run"]:  # the pane's shell has the server's env plus what its creation passed, never the caller's
+    subprocess.run(["sh", "-c", args[3]], env={{"PATH": os.environ["PATH"], "HOME": {server_home!r}, **panes[args[2]]}})
+    print(json.dumps({{"result": {{}}}}))
+else:
+    print(json.dumps({{"result": {{}}}}))
+"""
+
+
+class CallerEnv(unittest.TestCase):
+    """A pane compose opens through herdr gets the herdr server's env, not the caller's: a scratch COMPOSE_CONFIG and HOME
+    must travel with it, or the CLI it runs there works on the real ~/.compose."""
+    def test_a_scratch_config_and_home_reach_the_panes_command(self):
+        d = Path(tempfile.mkdtemp()); (d / "bin").mkdir()
+        herdr = d / "bin" / "herdr"
+        herdr.write_text(FAKE_HERDR.format(py=sys.executable, state=str(d / "panes.json"), server_home=str(d / "real-home")))
+        me = d / "compose"  # stands in for the CLI the status pane runs: records the env it got
+        me.write_text(f"#!{sys.executable}\nimport json, os\nopen({str(d / 'seen.json')!r}, 'w').write(json.dumps([os.environ.get('COMPOSE_CONFIG'), os.environ['HOME']]))\n")
+        herdr.chmod(0o755); me.chmod(0o755)
+        caller = {"PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}", "HERDR_ENV": "1", "HERDR_SOCKET_PATH": str(d / "sock"),
+                  "COMPOSE_CONFIG": str(d / "scratch" / "config.json"), "HOME": str(d / "scratch-home")}
+        with mock.patch.dict(os.environ, caller), mock.patch.object(sys, "argv", [str(me)]):
+            fc.fc_herdr.herdr_status_tab("w1", d, "demo")
+            fc.fc_herdr.herdr_implementer_pane("w1", d, {"K": "v"})
+            fc.fc_herdr.herdr("workspace", "create", "--cwd", str(d), "--label", "demo")
+        self.assertEqual(json.loads((d / "seen.json").read_text()), [caller["COMPOSE_CONFIG"], caller["HOME"]])
+        for env in json.loads((d / "panes.json").read_text()).values():  # the status tab, an implementer pane (crew tabs too), a space's shell
+            self.assertEqual((env["COMPOSE_CONFIG"], env["HOME"]), (caller["COMPOSE_CONFIG"], caller["HOME"]))
+
+
 class AgentStartRace(unittest.TestCase):
     def test_a_busy_pane_is_retried_until_it_is_ready(self):
         answers = iter([(None, "agent_pane_busy"), (None, "agent_pane_busy"), ({"agent": {"name": "a"}}, None)])
