@@ -129,6 +129,29 @@ sys.exit(code)
                 self.assertEqual(fc.fc_toolbug.record_issue(project, "https://other/9", at), want)
                 self.assertEqual(self.log.read_text(), recorded)
 
+    def test_record_issue_skips_lines_that_are_not_json_objects(self):
+        url, at = "https://github.com/prodoxx/compose/issues/2", "2026-10-17 15:30:00"
+        bad = ['{"at": "2026-10-17 15:30:00", "project": "shop"\n', "\n", "   \n", '[{"at":"2026-10-17 15:30:00","project":"shop"}]\n',
+               '"shop"\n', "42\n", "null\n", "not json at all\n"]
+        self.log.parent.mkdir(parents=True)
+        for case, after in (("only bad lines", '{"at"'), ("bad lines last, no newline", '[1, 2]')):
+            with self.subTest(case):
+                self.log.write_text("".join(bad) + after)
+                self.assertIsNone(fc.fc_toolbug.record_issue("shop", url, at))
+                self.assertEqual(self.log.read_text(), "".join(bad) + after)
+        entry, kept = '{"at":"2026-10-17 15:30:00","project":"shop","message":"b"}\n', '{"at": "2026-10-17 18:00:00", "project": "shop", "issue": "https://kept/1"}\n'
+        lines = bad[:4] + [entry, kept] + bad[4:] + ["{]"]
+        self.log.write_text("".join(lines))
+        self.assertEqual(fc.fc_toolbug.record_issue("shop", url, at), url)
+        got = self.log.read_text().splitlines(keepends=True)
+        self.assertEqual(got[:4] + got[5:], lines[:4] + lines[5:])
+        self.assertEqual(json.loads(got[4]), {"at": at, "project": "shop", "message": "b", "issue": url})
+        recorded = self.log.read_text()
+        for project, at, want in (("shop", "2026-10-17 18:00:00", "https://kept/1"), ("shop", "2026-10-17 09:00:00", None), ("blog", at, None)):
+            with self.subTest(project, at=at):
+                self.assertEqual(fc.fc_toolbug.record_issue(project, "https://other/9", at), want)
+                self.assertEqual(self.log.read_text(), recorded)
+
 
 class FileCommand(unittest.TestCase):
     """cmd_tool_bug: post on the maintainer's machine or with --approved, else save a draft; search before every create."""
