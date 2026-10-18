@@ -221,13 +221,55 @@ class DoctorNotes(unittest.TestCase):
             code, lines = self.doctor(self.ROWS[:2], keys)
             self.assertEqual((self.old.call_args, lines[-1]), (mock.call(cfg, env), Doctor.READY))
             warn = [l for l in lines if l.startswith("WARNING:")]
-            self.assertEqual((code, len(warn)), (0, 1), lines)
-            self.assertTrue(all(str(x) in warn[0] for k in keys for x in k) and "auth.json" in warn[0], warn)
+            self.assertEqual((code, warn), (0, [ClashLines.line(n, "~/" + f.name) for n, f in keys]), lines)
             self.assertFalse({"sk-or-test", "lin-test", "ts-test"} & set(re.findall(r"[\w-]+", "\n".join(lines))))
             self.herdr_config('[ui.toast]\ndelivery = "system"\n')
             code, lines = self.doctor(self.ROWS[:2] + tuple(r for r in fc_steps.STEPS if r[0] == "herdr config"), keys)
             self.assertEqual(([l for l in lines if l.startswith("WARNING:")], [l for l in lines if l.startswith("MISSING: herdr config: ")]),
                              (warn, ["MISSING: herdr config: ui.toast.delivery=system, ui.sound.enabled=true (install: compose setup) - optional"]))
+
+class ClashLines(unittest.TestCase):
+    """Each key old_keys keeps gets its own WARNING line, in old_keys order, with the home directory at the start of its
+    path shown as ~; nothing else doctor prints changes, and no key value is printed."""
+    setUp, fake, herdr_config, doctor = Doctor.setUp, Doctor.fake, Doctor.herdr_config, DoctorNotes.doctor
+    ROWS = DoctorNotes.ROWS[:2]  # claude and gh, both ok
+
+    @staticmethod
+    def line(name, shown):
+        return f"WARNING: {name} in {shown} differs from the key auth.json holds, so it was kept: remove the one you do not want"
+
+    def clash(self, keys, rows=ROWS):  # (code, the key lines, every other line)
+        code, lines = self.doctor(rows, keys)
+        self.assertEqual(self.old.call_args, mock.call(fc.fc_config.CONFIG_PATH, fc.fc_config.ENV_FILE))
+        warn = [l for l in lines if "auth.json" in l]
+        return code, warn, [l for l in lines if l not in warn]
+
+    def test_one_line_per_key_in_old_keys_order_with_home_as_tilde(self):
+        (self.home / ".compose").mkdir()
+        cfg, env = self.home / ".compose" / "config.json", self.home / ".compose" / ".env"
+        cfg.write_text(json.dumps({"openrouter_api_key": "sk-or-test", "workspaces": {"w": {"linear_api_key": "lin-test"}}}))
+        env.write_text("TEXT_MODEL_API_KEY=sk-tm-test\nTYPESAFE_API_KEY=ts-test\n")
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc.fc_config, "ENV_FILE", env):
+            for rows in (self.ROWS, self.ROWS + (DoctorWarnings.MISS[0],)):  # ready, and a required miss that exits 1
+                with self.subTest(rows=[r[0] for r in rows]):
+                    base = self.clash([], rows)
+                    self.assertEqual(base[1], [])  # no kept key: no line about keys
+                    self.assertEqual(self.clash([("TEXT_MODEL_API_KEY", env)], rows),
+                                     (base[0], [self.line("TEXT_MODEL_API_KEY", "~/.compose/.env")], base[2]))
+                    keys = [("TYPESAFE_API_KEY", env), ("workspaces.w.linear_api_key", cfg), ("openrouter_api_key", cfg)]
+                    code, warn, rest = self.clash(keys, rows)
+                    self.assertEqual((code, warn, rest), (base[0], [self.line("TYPESAFE_API_KEY", "~/.compose/.env"),
+                        self.line("workspaces.w.linear_api_key", "~/.compose/config.json"), self.line("openrouter_api_key", "~/.compose/config.json")], base[2]))
+                    words = set(re.findall(r"[\w-]+", "\n".join(warn + rest)))
+                    self.assertFalse({"sk-or-test", "lin-test", "sk-tm-test", "ts-test"} & words)
+
+    def test_a_path_outside_home_prints_as_it_is(self):
+        out = Path(tempfile.mkdtemp()) / "conf" / "config.json"
+        twin = Path(str(self.home) + "x") / ".env"  # shares home's prefix, but is not under it
+        deep = self.home / "a" / "b" / ".env"
+        keys = [("openrouter_api_key", out), ("TEXT_MODEL_API_KEY", twin), ("TYPESAFE_API_KEY", deep)]
+        self.assertEqual(self.clash(keys)[1], [self.line("openrouter_api_key", str(out)), self.line("TEXT_MODEL_API_KEY", str(twin)),
+                                               self.line("TYPESAFE_API_KEY", "~/a/b/.env")])
 
 class DoctorWarnings(unittest.TestCase):
     """doctor prints every line (gh, old keys, herdr config) before a required miss exits 1, and ends with one summary;
@@ -260,11 +302,8 @@ class DoctorWarnings(unittest.TestCase):
                      "MISSING: gh auth: not logged in (install: compose setup)", "MISSING: uv: not on PATH (install: brew install uv) - optional"):
             self.assertIn(line, lines)
         self.assertEqual([l for l in lines if l.startswith("WARNING: herdr") or "every tool" in l], [])
-        warn = [l for l in lines if "openrouter_api_key" in l]
-        self.assertEqual(len(warn), 1, lines)
-        self.assertTrue(all(str(x) in warn[0] for k in keys for x in k), warn)
-        self.assertTrue("differ" in warn[0] and "auth.json" in warn[0] and "remove the one you do not want" in warn[0], warn)
-        self.assertNotIn("next time", warn[0])
+        self.assertEqual([l for l in lines if "_API_KEY" in l or "_api_key" in l],
+                         [ClashLines.line("openrouter_api_key", "~/config.json"), ClashLines.line("TYPESAFE_API_KEY", "~/.env")])
 
     def test_herdr_config_row_quiet_absent_and_sound_only(self):
         self.assertEqual(self.doctor(self.OK), (0, [Doctor.GH_WARNING, self.READY]))  # quiet: no herdr line at all
