@@ -226,6 +226,65 @@ class DoctorNotes(unittest.TestCase):
             code, lines = self.doctor(self.ROWS[:2], keys)
             self.assertEqual(sorted(l.startswith("WARNING: herdr") for l in lines if l.startswith("WARNING:")), [False, True])
 
+class InitGate(unittest.TestCase):
+    """init stops only on a missing required tool row, one whose check is a command, a command list, or a file under home;
+    a required row checked by a function prints its MISSING line and init goes on. doctor exits 1 on either."""
+    fake = Doctor.fake
+    SKILL = ".claude/skills/herdr/SKILL.md"
+    TOOLS = (("npx", "npx", "brew install node", "required", False, "run"),
+             ("gh stack", ["gh", "stack", "--version"], "gh extension install github/gh-stack", "required", False, "run"),
+             ("herdr skill", SKILL, "herdr --skill", "required", False, "run"))
+    NOT_TOOLS = tuple((n, lambda c: (False, ""), "compose setup", "required", False, m) for n, m in (
+        ("gh auth", "interactive"), ("compose CLI link", "write"), ("~/.local/bin on PATH", "manual"), ("OpenRouter key", "key")))
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.repo = self.tmp / "bin", self.tmp / "home", self.tmp / "repo"
+        for d in (self.bin, (self.home / self.SKILL).parent, self.repo):
+            d.mkdir(parents=True)
+        (self.home / self.SKILL).write_text("# skill")
+        self.fake("npx", "11.19.0"), self.fake("gh", "gh version 2.94.0", body='[ "$1" = stack ] || exit 1')  # gh auth fails
+        env = mock.patch.dict(os.environ, {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home), "HERDR_ENV": "",
+                                           "COMPOSE_CONFIG": str(self.home / ".compose" / "config.json"), "COMPOSE_NO_TREEHOUSE": "1", "COMPOSE_NO_TRAIL": "1"})
+        env.start(), self.addCleanup(env.stop)
+        [os.environ.pop(k, None) for k in ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "OPENCODE_CONFIG_CONTENT", "TYPESAFE_API_KEY")]
+        subprocess.run("git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m i", shell=True, cwd=self.repo, check=True)
+
+    def run_cmd(self, cmd, rows):
+        out, code = io.StringIO(), 0
+        a = mock.Mock(repo=str(self.repo), project="p", branch=None, here=False, after=None)
+        with mock.patch.object(fc_steps, "STEPS", rows), mock.patch("sys.stdout", out):
+            try:
+                cmd(a)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue()
+
+    def assert_init(self, rows, stops):
+        code, out = self.run_cmd(fc.fc_init.cmd_init, rows)
+        created = (self.tmp / "compose-p" / ".compose" / "p" / "verify.json").exists()
+        self.assertEqual(("init stopped" in str(code), created), (stops, not stops), out)
+        if stops:  # before anything is created: no worktree, no branch
+            self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["bin", "home", "repo"])
+            self.assertEqual(subprocess.run(["git", "branch", "--list", "compose/p"], cwd=self.repo, capture_output=True, text=True).stdout, "")
+        self.assertEqual(self.run_cmd(fc.fc_init.cmd_doctor, rows)[0], 1)
+        return out
+
+    def test_required_rows_checked_by_a_function_never_stop_init(self):
+        out = self.assert_init(self.TOOLS + self.NOT_TOOLS, stops=False)
+        self.assertEqual([n for n, *_ in self.NOT_TOOLS if f"MISSING: {n} (" not in out], [])
+
+    def test_each_kind_of_missing_tool_row_stops_init(self):
+        for i, check in enumerate(("no-such-tool", ["gh", "no-such-extension"], ".claude/skills/none/SKILL.md")):
+            with self.subTest(check=check):
+                self.assert_init(self.TOOLS[:i] + ((self.TOOLS[i][0], check) + self.TOOLS[i][2:],) + self.TOOLS[i + 1:] + self.NOT_TOOLS, stops=True)
+
+    def test_the_check_kind_and_level_decide_not_the_name(self):
+        uv = ("uv", "uv", "brew install uv", "required", False, "run")  # a default row in the real table, made required here
+        self.assert_init(self.TOOLS + (uv,), stops=True)
+        git = ("git", lambda c: (False, ""), "xcode-select --install", "required", False, "manual")
+        self.assert_init(self.TOOLS + (git, uv[:3] + ("default",) + uv[4:]), stops=False)
+
 
 if __name__ == "__main__":
     unittest.main()
