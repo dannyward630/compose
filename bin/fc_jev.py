@@ -142,8 +142,10 @@ def jev_e2e(case, repo):
         r["stderr"] = f"JEV_GAVE_UP: jev did not reach its goal within {limit}s\n" + r["stderr"]
     if m:
         r["run"] = json.loads(m.group(1))
+        r["assert_exit"] = p.returncode
         if r["run"].get("status") != "done":
             r["stderr"] = f"JEV_GAVE_UP: jev ended {r['run'].get('status')} after {r['run'].get('steps')} steps\n" + r["stderr"]
+            r["exit"] = r["assert_exit"] or 1
         u = r["run"]["usage"]
         prices = case.get("prices") or {}
         ts_cost = u["typesafe_calls"] * prices["typesafe_per_call"] if "typesafe_per_call" in prices else None
