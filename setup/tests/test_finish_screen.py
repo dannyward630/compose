@@ -9,7 +9,10 @@ from unittest import mock
 from textual.app import App
 from textual.widgets import Button, LoadingIndicator
 
+from compose_setup.app import SetupApp
 from compose_setup.finish import FinishScreen
+from compose_setup.keys import KeysScreen
+import fc_finish, fc_herdrconf, fc_keys, fc_steprun, fc_steps
 
 RESULTS = [("pi", "done"), ("OpenRouter key", "skipped")]
 PRESET = "Create the preset glm-5-3-flash-fast at https://openrouter.ai/settings/presets " * 2 + "TAILWORD"
@@ -197,3 +200,60 @@ class LineKinds(unittest.IsolatedAsyncioTestCase):
         lines = [LOGIN, SENTENCE, "plain line", "No OpenRouter key: add one later", "pi is missing",
                  "enabled = false", 'delivery = "off"', "setup is not finished"]
         await self.finish(lines, 1, "Quit", check)
+
+
+STEPS = tuple((n, lambda c: (False, ""), "true", "required", False, "run") for n in ("gh", "pi"))
+FIRST, VERDICT = "first line of the ending", "setup is not finished: add the keys, then run compose setup again"
+
+
+def shows(app, text):
+    return any(text in strip.text for strip in app.screen._compositor.render_strips())
+
+
+class FinishVerdict(unittest.IsolatedAsyncioTestCase):  # SetupApp at 80x24: steps, start, keys, Continue twice with keys missing
+    async def walk(self, ending, code, test):
+        status = dict.fromkeys(("openrouter", "typesafe", "linear", "figma"), False)
+        with mock.patch.object(fc_steps, "STEPS", STEPS), mock.patch.object(fc_steprun, "run_step", return_value=("failed", "boom")), \
+                mock.patch.object(fc_herdrconf, "apply_herdr_config", return_value=("ok", [])), mock.patch.object(fc_keys, "key_status", return_value=status), \
+                mock.patch.object(fc_keys, "linear_connected", return_value=None), mock.patch.object(fc_finish, "finish", return_value=(ending, code)):
+            async with (app := SetupApp(Path(__file__).resolve().parents[2])).run_test(size=(80, 24)) as pilot:
+                await self.keys(pilot, "r"); await test(app, pilot)
+        return app.return_value
+
+    async def keys(self, pilot, *keys):
+        for key in keys: await pilot.press(key); await pilot.pause(0.3)
+
+    async def finish_screen(self, app, pilot):
+        for _ in range(2): await pilot.click("#continue"); await pilot.pause()
+        for _ in range(100):
+            if isinstance(app.screen, FinishScreen) and app.screen.query(Button): break
+            await pilot.pause(0.05)
+        await pilot.pause()
+        self.assertTrue(all(app.screen.region.contains_region(b.region) for b in app.screen.query(Button)))
+        return app.screen.query_one("#lines")
+
+    async def test_a_long_ending_opens_on_its_verdict_and_scrolls_from_the_keyboard(self):
+        async def test(app, pilot):
+            for _ in range(2):  # Back to keys, then Continue twice again, opens on the verdict again
+                area = await self.finish_screen(app, pilot)
+                self.assertEqual((area.scroll_y, shows(app, VERDICT), shows(app, FIRST)), (area.max_scroll_y, True, False))
+                seen, focus = [], []
+                for key in ("home", "down", "pagedown", "end", "up", "pageup"):
+                    await self.keys(pilot, key); seen.append(area.scroll_y)
+                    self.assertTrue(key != "home" or shows(app, FIRST))
+                self.assertTrue(seen[0] == 0 < seen[1] < seen[2] < seen[3] == area.max_scroll_y > seen[4] > seen[5], seen)
+                for key in ("tab", "tab", "tab", "shift+tab", "shift+tab"):
+                    await self.keys(pilot, key); focus.append(getattr(app.focused, "label", app.focused))
+                self.assertEqual(list(map(str, focus)), ["Back to keys", "Quit", str(area), "Quit", "Back to keys"])
+                await self.keys(pilot, "enter"); self.assertIsInstance(app.screen, KeysScreen)
+            await self.finish_screen(app, pilot); await self.keys(pilot, "shift+tab", "enter")
+        ending = [FIRST, LONG, SLASHES] + [f"step {i}" for i in range(60)] + ["No OpenRouter key: the implementer cannot run", VERDICT]
+        self.assertEqual(await self.walk(ending, 1, test), 1)
+
+    async def test_a_short_ending_stays_at_the_top_and_done_exits_0(self):
+        async def test(app, pilot):
+            area = await self.finish_screen(app, pilot); await self.keys(pilot, "end", "pagedown")
+            top = app.screen._compositor.render_strips()[area.scrollable_content_region.y].text
+            self.assertTrue(area.max_scroll_y == area.scroll_y == 0 and FIRST in top, top)
+            await self.keys(pilot, "shift+tab", "enter")
+        self.assertEqual(await self.walk([FIRST, "implementer glm ok", "compose is ready"], 0, test), 0)
