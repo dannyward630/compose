@@ -465,6 +465,58 @@ class PiKeyFromEnv(unittest.TestCase):
                 self.keyless(start)
 
 
+class ProbeKey(unittest.TestCase):
+    """A pi probe gets the process's OpenRouter key in its env, the way pi_turn does; a claude probe keeps headless_env()."""
+    KEY, PI, CLAUDE = "sk-or-test-probe", ("pi:openrouter-fast/z-ai/glm@preset/p", "pi:openrouter/x/y", "pi:x/y"), "claude:opus"
+    OTHERS = {"TEXT_MODEL_API_KEY": "sk-tm-test", "TYPESAFE_API_KEY": "ts-test", "OPENCODE_CONFIG_CONTENT": "oc-test"}
+
+    def setUp(self):
+        env = Path(tempfile.mkdtemp()) / ".env"
+        env.write_text('TEXT_MODEL_API_KEY="sk-or-dotenv"\n')
+        for p in (mock.patch.object(fc.fc_config, "ENV_FILE", env), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", "sk-or-workspace"),
+                  mock.patch.object(fc.fc_core, "scratch_config", return_value="/scratch/config.json")):
+            p.start(); self.addCleanup(p.stop)
+
+    def probe(self, model, environ):
+        """Runs probe_once under exactly `environ` (plus PATH and HOME). Returns (argv, env, expected headless_env, result)."""
+        out = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}'
+        run = mock.Mock(return_value=mock.Mock(stdout='{"is_error": false}' if model.startswith("claude:") else out, stderr="", returncode=0))
+        environ = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], **environ}
+        with mock.patch.object(subprocess, "run", run), mock.patch.dict(os.environ, environ, clear=True):
+            result, headless = fc.fc_models.probe_once(model, 5), fc.fc_claude.headless_env()
+        return run.call_args[0][0], run.call_args[1]["env"], headless, result
+
+    def keyless(self, argv):
+        self.assertFalse([x for x in argv if x == "--api-key" or "sk-" in str(x)], argv)
+
+    def test_pi_probe_gets_the_process_key_unchanged_and_no_other_secret(self):
+        for model in self.PI:
+            with self.subTest(model=model):
+                argv, env, headless, result = self.probe(model, {"OPENROUTER_API_KEY": self.KEY, **self.OTHERS})
+                self.assertEqual(env.get("OPENROUTER_API_KEY"), self.KEY)  # not the workspace key, not .env's
+                self.assertEqual(env, {**headless, "OPENROUTER_API_KEY": self.KEY})  # nothing else added or dropped
+                self.assertFalse(set(self.OTHERS) & set(env))
+                self.keyless(argv)
+                self.assertEqual(result, (True, "answered", False))
+
+    def test_pi_probe_without_the_process_key_has_none(self):
+        for environ in ({}, self.OTHERS):
+            with self.subTest(environ=list(environ)):
+                argv, env, headless, _ = self.probe(self.PI[0], environ)
+                self.assertFalse("OPENROUTER_API_KEY" in env)  # never print an env: it may hold keys
+                self.assertFalse("sk-" in json.dumps(env))
+                self.assertEqual(env, headless)
+                self.keyless(argv)
+
+    def test_claude_probe_env_is_headless_env_exactly(self):
+        for environ in ({"OPENROUTER_API_KEY": self.KEY, **self.OTHERS}, {}):
+            with self.subTest(with_key=bool(environ)):
+                argv, env, headless, _ = self.probe(self.CLAUDE, environ)
+                self.assertEqual(env, headless)
+                self.assertFalse("OPENROUTER_API_KEY" in env)
+                self.keyless(argv)
+
+
 class HerdrPiKey(unittest.TestCase):
     """The pi implementer started in a herdr pane gets the key from the process environment only: never in argv, never from .env."""
     def setUp(self):
