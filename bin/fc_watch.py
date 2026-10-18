@@ -98,11 +98,9 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     now_s = now_s or time.time()
     orch = fc_herdr.agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
-    if last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values()):
-        return []  # finished, or waiting on the product owner: silence is expected
+    closed = set(snap.get("closed", ()))
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
     on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
-    closed = set(snap.get("closed", ()))
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch and n not in closed]
     mem = watch_mem(proj, key)
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
@@ -120,21 +118,26 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         if key not in fired:
             fired.add(key)
             ev.append(f"event stall={what}; {tail}")
-    lt, what = snap.get("last") or (0, "")
-    if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
-        fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
-    tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
-    if tests and all(st == "done" or n in closed for n, (st, _) in tests.items()) and not snap["run"] and pending \
-            and all(snap["tasks"][t]["state"] == "pending" for t in pending):
-        done_at = max(t for _, t in tests.values())
-        if now_s - done_at >= limit:
-            fire(f"undispatched:{done_at}", f"undispatched{who} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
-    ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
-    if lead and ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
-        fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the team lead has not reported since")
-    since = seen[orch][1]
-    if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
-        fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
+    for n in snap.get("closed", ()):
+        r = snap.get("crew", {}).get(n) or []
+        if r and r[-1]["state"] != "done":
+            fire(f"ended:{n}:{r[-1]['at']}", f"ended agent={n} its tab closed with its last report {r[-1]['state']}")
+    if not (last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values())):  # finished, or waiting on the product owner: silence is expected
+        lt, what = snap.get("last") or (0, "")
+        if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
+            fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
+        tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
+        if tests and all(st == "done" or n in closed for n, (st, _) in tests.items()) and not snap["run"] and pending \
+                and all(snap["tasks"][t]["state"] == "pending" for t in pending):
+            done_at = max(t for _, t in tests.values())
+            if now_s - done_at >= limit:
+                fire(f"undispatched:{done_at}", f"undispatched{who} every test-writing teammate was done by {hm(done_at)} and nothing is dispatched")
+        ended = max(snap.get("run_end") or 0, (snap.get("verify") or (0,))[0])
+        if lead and ended and not snap["run"] and last.get(orch, ("", 0))[1] < ended and now_s - ended >= limit:
+            fire(f"after:{ended}", f"no-next-step agent={orch} the last run or verify ended at {hm(ended)} and the team lead has not reported since")
+        since = seen[orch][1]
+        if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
+            fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
     try:
         watch_save(proj, key, fired=sorted(fired), seen=seen)
     except OSError:
