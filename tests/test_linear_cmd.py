@@ -285,6 +285,13 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(rs("# Cart\n\n## Plan\nold\n", "## Plan", "new"), "# Cart\n\n## Plan\n\nnew\n")
         self.assertEqual(rs("# Cart\n\n## Planning\n\nx\n\n\n", "## Plan", "new\n"), "# Cart\n\n## Planning\n\nx\n\n## Plan\n\nnew\n")
 
+    def test_replace_section_renames_on_a_leading_heading_and_removes_on_an_empty_body(self):
+        rs, body = fc.fc_linear_cmd.replace_section, "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n"
+        self.assertEqual(rs(body, "## Plan", "## Stories\n\nnew\n"), "# Cart\n\n## Stories\n\nnew\n\n## Notes\n\nkeep\n")
+        self.assertEqual(rs(body, "## Notes", "## Later\nkept\n"), "# Cart\n\n## Plan\n\nold\n\n## Later\n\nkept\n")
+        self.assertEqual((rs(body, "## Plan", ""), rs(body, "## Notes", " \n")), ("# Cart\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nold\n"))
+        self.assertEqual((rs(body, "## Gone", ""), rs("## Plan\n\nold\n", "## Plan", "")), (body, ""))
+
     def test_fields_come_from_the_issue_team_and_the_parent(self):
         sent, issue, blocked = self.update(title="New", parent="ENG-1", state="in progress", label=["bug"])
         self.assertEqual(sent, {"title": "New", "parentId": "parent-id", "stateId": "s2", "labelIds": ["l1"]})
