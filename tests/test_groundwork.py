@@ -408,6 +408,13 @@ class DesignerBrief(unittest.TestCase):
         self.proj = self.wt / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         self.write({"feature": "ENG-1"})
+        home, bin_ = Path(os.environ["HOME"]), self.wt / "bin"  # the designer's rows ok: claude, Framelink at user scope, its token
+        bin_.mkdir(); (bin_ / "claude").write_text("#!/bin/sh\n"); (bin_ / "claude").chmod(0o755)
+        (home / ".claude.json").write_text(json.dumps({"mcpServers": {"framelink-figma": {}}}))
+        token = home / ".config" / "figma-context-mcp" / ".env"
+        token.parent.mkdir(parents=True); token.write_text("FIGMA_API_KEY=figd-test\n")
+        for p in (mock.patch.dict(os.environ, {"PATH": f"{bin_}:{os.environ['PATH']}"}), mock.patch.object(fc.fc_init.fc_steps, "FRAMELINK_ENV", token)):
+            p.start(); self.addCleanup(p.stop)
 
     def write(self, data):
         (self.proj / "linear.json").write_text(json.dumps(data))
