@@ -41,13 +41,9 @@ def owned_link(name, checkout):
     return False, f"{link} is not a link to {target}"
 
 def key_ok(kind):
-    """(ok, detail) for one key row: a non-empty key (Linear: or the Connected claude.ai connector); never a key value."""
+    """(ok, detail) for one key row: a non-empty key; never a key value."""
     status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), fc_config.WORKSPACE, FRAMELINK_ENV)
-    if status[kind]:
-        return True, ""
-    if kind == "linear":
-        return (True, "") if fc_keys.linear_connected() else (False, "no linear key, no Connected Linear connector")
-    return False, f"no {kind} key"
+    return (True, "") if status[kind] else (False, f"no {kind} key")
 
 def herdr_integration(agent):
     """(ok, detail) for one herdr integration: `herdr integration status` shows it current."""
@@ -97,7 +93,7 @@ STEPS = (  # the rows, in setup order
     ("~/.local/bin on PATH", lambda co: (fc_checks.local_bin_on_path(), ""), 'put `export PATH="$HOME/.local/bin:$PATH"` in your shell profile', "required", False, "manual"),
     ("OpenRouter key", lambda co: key_ok("openrouter"), "get one at openrouter.ai/keys; compose setup stores it", "required", False, "key"),
     ("TypeSafe key", lambda co: key_ok("typesafe"), "get one from TypeSafe; compose setup stores it", "required", False, "key"),
-    ("Linear key or connector", lambda co: key_ok("linear"), "get one at linear.app/settings/api, or connect claude.ai's Linear connector; compose setup stores it", "required", True, "key"),
+    ("Linear key", lambda co: key_ok("linear"), "get one at linear.app/settings/api; compose setup stores it", "required", False, "key"),
     ("uv", "uv", "curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh", "default", False, "run"),
     ("jev", lambda co: (fc_checks.jev_synced(co), ""), f"uv sync --locked --project {fc_config.JEV_DIR}", "default", False, "run"),
     ("trail", "trail", "npm i -g @trailhq/trail-code", "default", False, "run"),

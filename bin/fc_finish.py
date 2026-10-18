@@ -42,9 +42,7 @@ def _finish(results, yes):
     lines += fc_defaults.PRESET_STEPS
     ws, _ = fc_config.settings(cfg)
     status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), ws, fc_steps.FRAMELINK_ENV)
-    missing = [k for k in ("openrouter", "typesafe") if not status[k]]
-    if fc_keys.linear_state(status, fc_keys.linear_connected()) in ("missing", "unknown"):
-        missing.append("linear")
+    missing = [k for k in ("openrouter", "typesafe", "linear") if not status[k]]
     if not yes:
         lines += [fc_keys.skipped_line(k, ws) for k in missing]
     ready = not missing
