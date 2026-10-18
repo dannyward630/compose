@@ -659,5 +659,39 @@ class StackBaseDocs(unittest.TestCase):
             self.assertIn(word, line)
 
 
+class HowItWorksStackBase(unittest.TestCase):
+    def setUp(self):
+        self.lines = read("docs/how-it-works.md").splitlines()
+
+    def test_the_box_commits_on_the_project_branch_name(self):
+        line = self.lines[21]
+        self.assertRegex(line, r"^  │ +format, commit on <project branch>-NNN +│$")
+        self.assertFalse([l for l in self.lines[12:23] if "fast/" in l], "a fast/ branch in the box")
+
+    def test_the_edited_box_line_keeps_the_right_border_column(self):
+        above, line, below = self.lines[20:23]
+        self.assertEqual(len(line), len(above))
+        self.assertEqual(line.rindex("│"), above.rindex("│"))
+        self.assertEqual(below.rindex("┘"), line.rindex("│"))
+
+    def test_the_stack_sits_on_the_review_base_and_merges_all_or_nothing(self):
+        line = self.lines[152]
+        self.assertTrue(line.startswith("- "), line)
+        for word in ("main", "`review_base`", "`gh stack merge`", "no final PR"):
+            self.assertIn(word, line)
+        self.assertRegex(line, r"all.or.nothing")
+        self.assertRegex(line, r"\b(stack|sit)s?\b[^.]*\breview base\b")
+        self.assertNotIn("trunk is the project branch", line)
+        self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
+
+    def test_no_other_line_changes(self):
+        self.assertEqual(len(self.lines), 191)
+        self.assertFalse([l for l in self.lines if "—" in l], "em dash")
+        self.assertEqual(self.lines[20], "  │                                  ▼                                                      │")
+        self.assertTrue(self.lines[22].startswith("  └──────────────────────────────────┬"))
+        self.assertEqual(self.lines[151], "  `init` git-ignores it, `graft/`, and `.trail/` first.")
+        self.assertEqual(self.lines[153], "- `init --after <other>` branches from another project's branch when the feature needs its code.")
+
+
 if __name__ == "__main__":
     unittest.main()
