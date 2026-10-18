@@ -142,13 +142,14 @@ def cmd_init(a):
         sys.exit(f"init stopped: {', '.join(stop)} missing; install what is missing above, then run it again (`compose doctor` checks again)")
     here = Path(a.repo).resolve()
     name = a.project
-    branch = a.branch or f"compose/{name}"
+    prefix = fc_config.settings(fc_config.read_config())[1].get("branch_prefix", "compose/")
+    branch = a.branch or prefix + name
     if a.branch and fc_core.sh(["git", "check-ref-format", "--branch", a.branch], here, check=False).returncode != 0:
         sys.exit(f"{a.branch!r} is not a valid branch name")
     if a.branch and a.here:
         sys.exit("--branch names the project's own worktree branch; it does not combine with --here")
     other = fc_core.all_projects(here).get(a.after) if a.after else None
-    after = fc_core.project_branch(other[1]) if other else (f"compose/{a.after}" if a.after else None)
+    after = fc_core.project_branch(other[1]) if other else (prefix + a.after if a.after else None)
     if after and a.here:
         sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
@@ -197,7 +198,7 @@ def cmd_init(a):
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main",
-            **({"after": a.after} if a.after else {}), **({"branch": a.branch} if a.branch else {})}, indent=2))
+            **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
     if fc_herdr.herdr_space(proj):
         print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
@@ -299,24 +300,26 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 print(f"clean  deleted {remote}/{lb} on the remote: {layer_why[lb]}")
             else:
                 print(f"clean  could not delete {remote}/{lb} on the remote; left in place")
-    for b in fc_core.sh(["git", "branch", "--list", f"fast/{name}/*", f"{prefix}layer-*"], repo, check=False).stdout.split():
+    for b in [*fc_worktree.own_branches(repo, proj), *fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*"], repo, check=False).stdout.split()]:
         if "-bench-" in b:  # bench runs are measurements, never work to keep
             fc_core.sh(["git", "branch", "-D", b], repo, check=False)
             continue
         why = merge_evidence(repo, b, targets, has_remote)
-        holders = [lb for lb, tasks in held.items() if b.rsplit("/", 1)[-1] in tasks]
+        holders = [lb for lb, tasks in held.items() if b.removeprefix(fc_worktree.task_prefix(repo, proj)) in tasks]
         if not why and holders and all(lb in layer_why for lb in holders):
             why = f"held by {', '.join(holders)}, merged: {layer_why[holders[0]]}"
         if why or delete_unmerged:
             print(f"clean  {b}: {why if why else 'UNMERGED, deleted on --delete-unmerged; any PR on GitHub is unaffected'}")
             fc_core.sh(["git", "branch", "-D", b], repo, check=False)
-            if why and b.rsplit("/", 1)[-1] in metas:
-                merged.append(b.rsplit("/", 1)[-1])
+            if why and b.removeprefix(fc_worktree.task_prefix(repo, proj)) in metas:
+                merged.append(b.removeprefix(fc_worktree.task_prefix(repo, proj)))
         else:
             kept.append(b)
     if (proj / "verify.json").exists() and "layer_prefix" in fc_core.project_config(proj) \
             and not fc_core.sh(["git", "branch", "--list", f"{fc_core.project_config(proj)['layer_prefix']}layer-*"], repo, check=False).stdout.strip():
         fc_core.atomic_write(proj / "verify.json", json.dumps({k: v for k, v in fc_core.project_config(proj).items() if k != "layer_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
+    if (proj / "verify.json").exists() and "task_prefix" in fc_core.project_config(proj) and not fc_worktree.own_branches(repo, proj):
+        fc_core.atomic_write(proj / "verify.json", json.dumps({k: v for k, v in fc_core.project_config(proj).items() if k != "task_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
     line = f"clean  {name}: task branches " + (f"kept unmerged: {', '.join(kept)}" if kept else "all merged and removed")
     pbranch, project_merged = fc_core.project_branch(proj), False
     if wt != main_repo and not kept and trunk == pbranch:
