@@ -208,7 +208,7 @@ Run the CLI tests with `python3 -m unittest discover -s tests`.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
 Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
 The CLI core is stdlib; `setup/` and `jev/` are uv projects, and `bp/` is one Node file with no dependencies.
-Run the setup app's tests with `uv run --locked --project setup python -m unittest discover -s setup/tests`.
+Run the setup app's tests with `uv run --locked --project setup python -m unittest discover -s setup/tests -t setup`.
 
 ## Credits
 
