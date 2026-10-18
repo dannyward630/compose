@@ -814,6 +814,49 @@ class StackDocs(unittest.TestCase):
         self.assertEqual(cli[at + 1], "| `top` | Checks out the stack top for manual testing. `--detach` releases it |")
 
 
+class PrTextDocs(unittest.TestCase):
+    def setUp(self):
+        # sections/4.md's Lockfiles line and its closing `Nothing is pushed.` lines, held by their untouched neighbours.
+        self.lines = read("sections/4.md").splitlines()
+        at = self.index("Lockfiles (`package-lock.json`, `bun.lock`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`, any `*.lock`) are not counted, in a layer or in a task's 350 lines; ")
+        self.lockfiles = self.lines[at : self.index("The project branch is not a PR: its groundwork commits")]
+        self.pushed = self.lines[self.index("The CLI keeps Linear's state table true on the full path") + 1 :]
+        self.text = "\n".join(self.pushed)
+
+    def index(self, start):
+        found = [i for i, l in enumerate(self.lines) if l.startswith(start)]
+        self.assertEqual(len(found), 1, start)
+        return found[0]
+
+    def test_the_layer_line_is_the_size_line_under_what_changed(self):
+        line = " ".join(self.lockfiles)
+        self.assertNotIn("becomes the PR body", line)
+        self.assertIn("each `layer` line names them and their size", line)
+        self.assertRegex(line, r"`layer` line[^.]*\bsize line\b[^.]*## What changed")
+
+    def test_each_pr_is_titled_from_its_commits(self):
+        self.assertTrue(self.pushed[0].startswith("Nothing is pushed."), self.pushed[0])
+        self.assertRegex(self.text, r"\btitles?\b[^.]*\bcommits\b")
+        for word in ("subject", "`and N more`", "groundwork", "Jira", "`(i/n)`"):
+            self.assertIn(word, self.text)
+
+    def test_the_body_has_four_sections_in_order_from_issues_and_results_with_no_model(self):
+        at = [self.text.find(h) for h in ("## Why", "## What changed", "## How it was tested", "## Tickets")]
+        self.assertNotIn(-1, at)
+        self.assertEqual(at, sorted(at))
+        self.assertRegex(self.text, r"task issues?\b[^.]*\bresults\b")
+        self.assertRegex(self.text, r"\b(no|without( a| any)?|never( calls)?( a| any)?)\s+model\b")
+        self.assertFalse([l for l in self.lines if "size and generated files into the PR body" in l])
+
+    def test_the_submit_check_and_push_rule_stay_and_house_rules_hold(self):
+        for kept in ("`gh stack submit --auto`", "`submit PR #N on <base>`", "`NO PR for <branch>`"):
+            self.assertIn(kept, self.text)
+        self.assertIn("Run it only when the user has explicitly asked for that push.", self.pushed)
+        for l in self.lockfiles + self.pushed:
+            self.assertNotIn("—", l)
+            self.assertNotRegex(l, r"[a-z)`]\. [A-Z`]", l)
+
+
 class ConfigKeysDocs(unittest.TestCase):
     def setUp(self):
         self.text = read("docs/workspaces.md")
