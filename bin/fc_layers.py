@@ -1,4 +1,4 @@
-import json, os, re, subprocess, time
+import json, os, re, subprocess, tempfile, time
 from pathlib import Path
 import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree
 
@@ -138,15 +138,26 @@ def test_writers(proj, tasks):
             spans.append((t, min(ats), max(ats)))
     return sorted(spans, key=lambda s: -s[1])
 
+def applies_without(repo, c, drop, files):
+    """Whether commit c applies to its parent with the earlier commits `drop` taken out of `files` first: what a cherry-pick of c
+    meets in a layer below theirs. Checked on a scratch index, so the repo's own index and tree are untouched."""
+    with tempfile.TemporaryDirectory() as d:
+        env = {**os.environ, "GIT_INDEX_FILE": os.path.join(d, "index")}
+        git = lambda *a, patch=None: subprocess.run(["git", *a], cwd=repo, input=patch, capture_output=True, env=env).returncode == 0
+        diff = lambda x, *paths: subprocess.run(["git", "diff", "--binary", f"{x}^", x, "--", *paths], cwd=repo, capture_output=True, check=True).stdout
+        return git("read-tree", f"{c}^") and all(git("apply", "--cached", "-R", patch=diff(p, *sorted(files))) for p in reversed(drop)) \
+            and git("apply", "--cached", patch=diff(c))
+
 def review_units(repo, proj, base, trunk, chain):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; when its author date falls in the span of a test
     writer whose task protects its files, it is that writer's task's alone. The tests of a task not in the chain yet ride with
-    the last one. Every file's commits replay in the trunk's order, so the layers apply: a commit on a file an earlier commit
-    placed in a task's unit goes no lower than that. An owned one then goes to its writer's task, or without one to the first
-    task at or above that place that protects its files; one no task owns is a groundwork unit of its own right above that
-    task's unit, never inside it."""
+    the last one. The layers must apply: an owned commit goes to its writer's task, or without one to the first task that
+    protects its files, as long as it applies there without the earlier commits on its files placed higher (a test written in
+    its own part of a shared file skips them; one written on top of them does not). Else it goes no lower than the highest of
+    them, to the first task at or above it that protects its files; one no task owns is a groundwork unit of its own right
+    above the highest one's unit, never inside it."""
     protected = {m["id"]: set(m["protected"]) for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
     ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in chain]
     def unit(name, commits, key=None):
@@ -156,24 +167,26 @@ def review_units(repo, proj, base, trunk, chain):
             for f, n in g.items():
                 gen[f] = gen.get(f, 0) + n
         return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
-    # slot 2i is task i's unit, 2i+1 the groundwork right above it; last: file -> slot of the latest commit placed on it
-    ground, slots, last, writers = [], {}, {}, test_writers(proj, protected)
+    # slot 2i is task i's unit, 2i+1 the groundwork right above it; placed: (commit, slot, files) of each commit placed in one
+    ground, slots, placed, writers = [], {}, [], test_writers(proj, protected)
     for c, at in (l.split() for l in fc_core.sh(["git", "log", "--reverse", "--no-merges", "--format=%H %at", f"{base}..{trunk}"], repo).stdout.splitlines()):
         files = set(commit_facts(repo, c)[0])
         writer = next((t for t, a, b in writers if a <= int(at) <= b and files and files <= protected[t]), None)
         owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set()) and writer in (None, t)]
         if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
             owners = [len(ids) - 1]
-        floor = max((last[f] for f in files if f in last), default=None)
+        on = [(p, s) for p, s, f in placed if f & files]
+        floor = max((s for _, s in on), default=None)
+        fits = lambda slot: floor is None or slot >= floor or applies_without(repo, c, [p for p, s in on if s > slot], files)
         if owners:
-            slot = next((2 * i for i in owners if floor is None or 2 * i >= floor), floor)
+            slot = next((2 * i for i in owners if fits(2 * i)), floor)
         else:
             slot = None if floor is None else floor | 1
         if slot is None:
             ground.append(unit("groundwork", [c]))
         else:
             slots.setdefault(slot, []).append(c)
-            last.update(dict.fromkeys(files, slot))
+            placed.append((c, slot, files))
     units, prev = ground, trunk
     for i, (b, t) in enumerate(zip(chain, ids)):
         units.append(unit(t, slots.get(2 * i, []) + fc_core.sh(["git", "rev-list", "--reverse", "--no-merges", f"{prev}..{b}"], repo).stdout.split()))

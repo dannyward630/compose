@@ -216,6 +216,29 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
 
+    def test_a_test_commit_skips_an_earlier_one_on_its_file_it_does_not_build_on(self):
+        """Task 004 has not passed: the test its writer made rides in the top layer. 001's test comes after it on the same file, in
+        another part of it: it still lands in 001's layer. One that edits 004's test follows that test into the top layer."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test"], "files": ["003.src"], "after": ""},
+                 {"id": "004", "protected": ["t004.test", "shared.test"], "files": ["004.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        part = lambda a, b: f"class A\n{a}" + "-\n" * 8 + f"class B\n{b}"
+        self.write("shared.test", part("", "")); self.write("stub.txt", "s\n" * 21); self.commit("a part of the test file for each task")
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        (crew / f"{fc.fc_herdr.agent_name('p', 'tests-004')}.status").write_text("".join(json.dumps({"at": at, "state": "working", "message": m}) + "\n"
+            for at, m in (("2026-01-01 10:00:00", "started"), ("2026-01-01 10:05:00", "test ready: 1234567"))))
+        self.write("shared.test", part("", "b\n" * 5)); self.git("add", "-A"); self.git("commit", "-qm", "tests for 004", "--date", "2026-01-01T10:02:00")
+        self.write("shared.test", part("a\n" * 5, "b\n" * 5)); self.commit("tests for 001")
+        self.write("shared.test", part("a\n" * 5, "b\n" * 4 + "c\n")); self.commit("fix a test of 004")  # 001 owns it too
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test") + "\n", part("a\n" * 5, ""))
+        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
+
     def test_a_project_with_layer_branches_already_keeps_their_names(self):
         self.git("branch", "fast/p/layer-09", "main")  # an earlier stack, before the stored branch named layers
         self.stack(branch="compose/p")
