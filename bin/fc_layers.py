@@ -1,4 +1,4 @@
-import json, os, re, subprocess, tempfile, time
+import json, os, re, subprocess, sys, tempfile, time
 from pathlib import Path
 import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree
 
@@ -196,13 +196,15 @@ def review_units(repo, proj, base, trunk, chain):
 
 def cherry_pick_same(wt, c):
     """Cherry-pick keeping the original committer and date, so a layer rebuilt from unchanged commits gets the same hashes and
-    a resubmit pushes nothing new."""
+    a resubmit pushes nothing new. None when it applied, else the files it conflicts in (aborted, so the tree is as before)."""
     who = fc_core.sh(["git", "show", "-s", "--format=%cn%n%ce%n%cI", c], wt).stdout.splitlines()
     env = {**os.environ, "GIT_COMMITTER_NAME": who[0], "GIT_COMMITTER_EMAIL": who[1], "GIT_COMMITTER_DATE": who[2]}
     p = fc_core.sh(["git", "cherry-pick", "--allow-empty", c], wt, check=False, env=env)
-    if p.returncode:
-        fc_core.sh(["git", "cherry-pick", "--abort"], wt, check=False)
-    return p.returncode == 0
+    if p.returncode == 0:
+        return None
+    conflicts = fc_core.sh(["git", "diff", "--name-only", "--diff-filter=U"], wt, check=False).stdout.split()
+    fc_core.sh(["git", "cherry-pick", "--abort"], wt, check=False)
+    return conflicts
 
 def record_layers(proj, layers):
     """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it."""
@@ -238,24 +240,37 @@ def group_by_record(proj, units, budget, max_prs=None):
 def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
-    generated, commits, units}] (units: the commits of each entry of tasks, in order), or None when the layers do not add up to
-    the same tree as the task chain (the caller then stacks the tasks)."""
+    generated, commits, units}] (units: the commits of each entry of tasks, in order). The layers are built on a detached HEAD and
+    the layer branches move only once all of them are built and add up to the same tree as the task chain; else nothing is
+    changed, STACK_STOP says why, and it returns None."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs)
-    layers, prev, prefix = [], base, layer_prefix(repo, proj)
+    layers, tips, prev, prefix = [], [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
     if cfg_file.exists() and fc_core.project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
         fc_core.atomic_write(cfg_file, json.dumps({**fc_core.project_config(proj), "layer_prefix": prefix}, indent=2))
+    kept = "the layers and the stack are left as they were"
+    def stop(why):
+        global STACK_STOP
+        fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        STACK_STOP = why
+        fc_core.say(f"stack  STOP  {why}")
     for i, (rec_branch, g, folded) in enumerate(groups, 1):
         branch = rec_branch or f"{prefix}layer-{i:02d}"
-        fc_core.sh(["git", "checkout", "-q", "-B", branch, prev], wt)
+        fc_core.sh(["git", "checkout", "-q", "--detach", prev], wt)
         units = []
         for u in g:
             units.append([])
             for c in u["commits"]:
-                if not cherry_pick_same(wt, c):
-                    fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-                    fc_core.say(f"stack  STOP  {c[:7]} does not apply on layer {i}; stacking task branches as they are")
+                conflicts = cherry_pick_same(wt, c)
+                if conflicts is not None:
+                    files = ", ".join(conflicts) or "no file git names"
+                    if fc_core.sh(["git", "merge-base", "--is-ancestor", base, trunk], repo, check=False).returncode:  # trunk is behind base
+                        at = fc_core.sh(["git", "rev-parse", "--short", base], repo).stdout.strip()
+                        stop(f"{c[:7]} does not apply on layer {i}: {trunk} conflicts with {base} {at} in {files}; {kept}. "
+                             f"Rebase {trunk} onto {base}, then re-run")
+                    else:
+                        stop(f"{c[:7]} does not apply on layer {i} (conflicts in {files}); {kept}")
                     return None
                 units[-1].append(fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
         gen = {}
@@ -265,12 +280,16 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
         layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen,
                        "commits": [c for cs in units for c in cs], "units": units,
                        **({"fold_cap": max_prs} if folded else {})})
-        prev = branch
+        prev = fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip()
+        tips.append(prev)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
-    if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0 \
-            and fc_core.sh(["git", "diff", "--quiet", layers[-1]["branch"], chain[-1]], repo, check=False).returncode != 0:
-        fc_core.say(f"stack  STOP  the layers differ from {chain[-1]}; stacking task branches as they are")
-        return None
+    if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0:
+        differ = fc_core.sh(["git", "diff", "--name-only", prev, chain[-1]], repo).stdout.split()
+        if differ:
+            stop(f"the layers differ from {chain[-1]} in {', '.join(differ)}; {kept}")
+            return None
+    for l, tip in zip(layers, tips):
+        fc_core.sh(["git", "branch", "-f", l["branch"], tip], repo)
     for old in fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo).stdout.split():
         if old not in {l["branch"] for l in layers}:
             fc_core.sh(["git", "branch", "-D", old], repo, check=False)
@@ -455,7 +474,8 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
     stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
-    too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True; preview=True prints each layer's
+    too, so the project branch carries nothing the layers do not; when they cannot be built (build_layers' STOP), the layers and
+    the registered stack stay as they were. Nothing is pushed unless submit=True; preview=True prints each layer's
     PR title and body as submit would write them, with no gh call. A project whose fast/<project>/ branches were never pushed
     first moves onto the names a new project gets (fc_worktree.rename_legacy_branches)."""
     fc_worktree.rename_legacy_branches(repo, proj)
@@ -473,6 +493,8 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     budget = int(cfg.get("review_layer_lines") or REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
     layers = build_layers(repo, proj, base, trunk, linear, wt, budget, cap)
+    if layers is None:
+        return []
     stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)
     # A stack from an earlier wave is rebuilt with the grown chain: every existing stack that holds any of these branches is
     # unstacked locally (GitHub side untouched), then one init registers the whole chain.
@@ -518,4 +540,6 @@ def cmd_stack(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
     if not register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit):
+        if STACK_STOP:
+            sys.exit(1)  # the STOP line already said why and what to do
         print("stack  nothing to register: no unmerged task branches")

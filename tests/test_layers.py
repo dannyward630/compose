@@ -279,6 +279,38 @@ class Layers(unittest.TestCase):
         self.assertEqual(data["trunk"], "main")
         self.assertEqual([b["name"] for b in data["branches"]], self.layers())
 
+    def stop(self, breaks):
+        """Run `compose stack` after a first good build and `breaks`; return its STOP lines, having checked that it exits non-zero and
+        changes no layer branch, recorded layer or gh stack."""
+        self.stack()
+        breaks()
+        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": [b]} for b in self.layers()])
+        refs = lambda: self.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/compose/p-layer-*")
+        before = (refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text())
+        calls = (self.repo / ".git" / "fake-gh-calls").read_text()
+        out = []
+        with mock.patch.object(fc.fc_core, "say", out.append), self.assertRaises(SystemExit) as e:
+            fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+        self.assertTrue(e.exception.code)
+        self.assertEqual((refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text()), before)
+        self.assertEqual((self.repo / ".git" / "fake-gh-calls").read_text(), calls)
+        return [l for l in out if "STOP" in l]
+
+    def test_a_project_branch_behind_its_base_stops_the_stack_with_layers_and_gh_stack_untouched(self):
+        def main_moves_on():
+            self.git("checkout", "-q", "main"); self.write("setup.txt", "main\n"); self.commit("main moves on"); self.git("checkout", "-q", "compose/p")
+        stops = self.stop(main_moves_on)
+        main = self.git("rev-parse", "--short", "main")
+        self.assertEqual(len(stops), 1)
+        self.assertIn(f"compose/p conflicts with main {main} in setup.txt; the layers and the stack are left as they were. "
+                      "Rebase compose/p onto main, then re-run", stops[0])
+
+    def test_layers_that_do_not_add_up_to_the_chain_stop_the_stack_with_layers_and_gh_stack_untouched(self):
+        real, broken = fc.fc_layers.review_units, mock.patch.object(fc.fc_layers, "review_units", lambda *a: real(*a)[:-1])
+        stops = self.stop(broken.start)  # the top task's unit goes missing
+        broken.stop()
+        self.assertEqual(stops, ["stack  STOP  the layers differ from compose/p-003 in 003.src, t003.test; the layers and the stack are left as they were"])
+
     def test_stack_without_submit_prints_each_layers_pr_title_and_body_and_calls_no_gh_pr(self):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
         cache = json.loads((self.proj / "results" / "tasks.json").read_text())
