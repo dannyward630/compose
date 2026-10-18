@@ -44,15 +44,16 @@ def cmd_trail(a):
 TRAIL_INSTALL = "npm i -g @trailhq/trail-code"
 
 def check_deps(role=None):
-    """Print one `MISSING: <name>[ <detail>] (install: <command>)` line per setup step that is not ok, without any network call;
-    a dangling owned link puts its detail inside the parens, and a key row names the key and its fix, never a value. While `claude`
-    itself is missing, the rows that need it share one `waiting on Claude Code:` line instead of a MISSING line each (they still
-    count as missing when required). Returns the required steps that are missing: those stop `init`; the optional ones only warn.
-    With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
+    """Print one `MISSING: <name>[: <detail>] (install: <command>)` line per setup step that is not ok, without any network call;
+    a key row names the key and its fix, never a value. herdr's config is one more row (loud toasts or sounds are the detail),
+    optional, fixed by `compose setup`. While `claude` itself is missing, the rows that need it share one `waiting on Claude Code:`
+    line instead of a MISSING line each (they still count as missing when required). Returns the required steps that are missing:
+    those stop `init`; the optional ones only warn. With a role, only what that role needs is checked, and it is required
+    (Framelink stops the designer's start)."""
     bad, waiting = [], []
     checkout = Path(__file__).resolve().parents[1]
     claude = bool(shutil.which("claude"))
-    for row in fc_steps.STEPS:
+    for row in (*fc_steps.STEPS, ("herdr config", lambda co: herdr_loud(), "compose setup", "default", False, "run")):
         name, _, install, needed, needs_claude, mode = row
         if role and needed != role:
             continue
@@ -65,11 +66,8 @@ def check_deps(role=None):
                     bad.append(name)
                 continue
             note = "" if required else f" - needed for the {needed}" if needed == "designer" else " - optional"
-            why = "" if mode == "key" else f" {detail}" if detail else ""
-            if detail.startswith("dangling link "):
-                print(f"MISSING: {name} ({detail}; install: {install}){note}")
-            else:
-                print(f"MISSING: {name}{why} (install: {install}){note}")
+            why = "" if mode == "key" else f": {detail}" if detail else ""
+            print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
                 bad.append(name)
     if waiting:
@@ -92,33 +90,40 @@ def herdr_toml(path):
             vals[f"{section}.{m.group(1)}".lstrip(".")] = m.group(2).strip().strip("\"'")
     return vals
 
-def herdr_toast_warning():
-    """One line when herdr's own toasts or sounds are on, for the product owner to read: herdr then alerts them for every agent
-    that finishes or needs input, in every pane, while compose already sends the engineering manager's one alert itself
-    (desktop_notify). None when `[ui.toast] delivery` is off (herdr's default) and `[ui.sound] enabled` is false (not the default)."""
+def herdr_loud():
+    """(ok, detail) for the herdr config row: not ok when herdr's own toasts or sounds would reach the product owner from every
+    agent, with the loud keys as the detail; `[ui.toast] delivery` off is herdr's default, `[ui.sound] enabled` false is not, and an
+    absent file counts as the defaults."""
     cfg = herdr_toml(Path.home() / ".config" / "herdr" / "config.toml")
     loud = [(key, cfg.get(key, default)) for key, quiet, default in (("ui.toast.delivery", "off", "off"), ("ui.sound.enabled", "false", "true"))
             if cfg.get(key, default) != quiet]
-    if not loud:
+    return (False, ", ".join(f"{k}={v}" for k, v in loud)) if loud else (True, "")
+
+def herdr_toast_warning():
+    """One line when herdr's own toasts or sounds are on, for the product owner to read: herdr then alerts them for every agent
+    that finishes or needs input, in every pane, while compose already sends the engineering manager's one alert itself
+    (desktop_notify). None when quiet."""
+    ok, loud = herdr_loud()
+    if ok:
         return None
-    return ("WARNING: herdr alerts the product owner for every agent, not only the engineering manager ("
-            + ", ".join(f"{k}={v}" for k, v in loud) + '): set [ui.toast] delivery = "off" and [ui.sound] enabled = false in '
-            "~/.config/herdr/config.toml; compose sends the engineering manager's alert itself")
+    return ("WARNING: herdr alerts the product owner for every agent, not only the engineering manager (" + loud
+            + '): set [ui.toast] delivery = "off" and [ui.sound] enabled = false in ~/.config/herdr/config.toml; '
+            "compose sends the engineering manager's alert itself")
 
 def cmd_doctor(a):
-    """Check every tool and skill file compose depends on; exit 1 when a required one is missing. Warns, never stops, when
-    herdr's own agent toasts or sounds would reach the product owner from every agent, or when a key still sits in config.json
-    or .env (the next compose command moves it to auth.json)."""
-    if check_deps():
-        sys.exit(1)
+    """Check every tool and skill file compose depends on; print every line first, then exit 1 when a required one is missing.
+    Warns, never stops, when a key still sits in config.json or .env: it differs from the key auth.json holds, so it was left
+    there - remove the one you do not want. herdr's loud toasts or sounds are one optional row of check_deps, fixed by `compose setup`."""
+    bad = check_deps()
     if shutil.which("gh") and fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode != 0:
         print("WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)")
     if old := fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE):
         print("WARNING: " + ", ".join(f"{name} in {path}" for name, path in old)
-              + " still in the old places; the next compose command moves them to auth.json")
-    if warning := herdr_toast_warning():
-        print(warning)
-    print("every tool compose needs is installed")
+              + " still in the old places; each differs from the key auth.json holds, so it was kept: remove the one you do not want")
+    if bad:
+        print(f"{len(bad)} required step{'s' if len(bad) > 1 else ''} missing: run compose setup")
+        sys.exit(1)
+    print("every step compose needs is ready")
 
 def cmd_init(a):
     """Create the project's worktree `../compose-<name>` on its branch (`compose/<name>`, or --branch; from the branch the user is on,
@@ -126,8 +131,8 @@ def cmd_init(a):
     `.compose/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
     bad = check_deps()  # before anything is created: a missing required tool stops here
     tools = {row[0] for row in fc_steps.STEPS if not callable(row[1])}  # a tool row: command, command list, or file under home
-    if set(bad) & tools:
-        sys.exit("init stopped: install what is missing above, then run it again (`compose doctor` checks again)")
+    if stop := [n for n in bad if n in tools]:
+        sys.exit(f"init stopped: {', '.join(stop)} missing; install what is missing above, then run it again (`compose doctor` checks again)")
     here = Path(a.repo).resolve()
     name = a.project
     branch = a.branch or f"compose/{name}"
