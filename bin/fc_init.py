@@ -124,7 +124,9 @@ def cmd_init(a):
     """Create the project's worktree `../compose-<name>` on its branch (`compose/<name>`, or --branch; from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
     `.compose/<name>/` config beside it, ignored and never committed. The user's checkout is never touched again by this project."""
-    if check_deps():  # before anything is created: a missing required tool stops here
+    bad = check_deps()  # before anything is created: a missing required tool stops here
+    tools = {row[0] for row in fc_steps.STEPS if not callable(row[1])}  # a tool row: command, command list, or file under home
+    if set(bad) & tools:
         sys.exit("init stopped: install what is missing above, then run it again (`compose doctor` checks again)")
     here = Path(a.repo).resolve()
     name = a.project
