@@ -258,6 +258,7 @@ def cmd_timed(argv):
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
+    delete = meta.get("delete") or []
     if model:
         meta["model"] = model
     tid, branch = meta["id"], fc_worktree.task_branch(repo, proj, meta["id"]) + tag
@@ -298,6 +299,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
         return result
+    if delete:  # the task's own deletions, applied in the clone before any turn
+        fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
     section = fc_libapi.section(wt, meta["files"], words)
@@ -358,6 +361,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             switch(why, next_prompt)
             return True
         return False
+    only_delete = bool(delete) and not meta["files"]  # the deletion is the whole task: no model turn, one test run decides
     while attempt < attempts:
         if fc_proc.STOP.is_set():
             raise fc_proc.Stopped
@@ -365,8 +369,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         t0 = time.time()
         ref_before = fc_readguard.refused(wt)
         try:
-            session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
-                                                       timeout=fc_models.TURN_TIMEOUT)
+            if only_delete:
+                session, reply, tools, usage = None, "", 0, {"cost": 0.0}
+            else:
+                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
+                                                           timeout=fc_models.TURN_TIMEOUT)
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
             if fall():
@@ -421,7 +428,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         test = run_test(meta, wt)
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
-        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
+        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
         entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
                  "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
                  "refused": fc_readguard.refused(wt) - ref_before,
@@ -451,6 +458,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             break
         if verdict == "pass":
             status = "passed"
+            break
+        if only_delete:  # no turn can fix anything: the one attempt decides
             break
         problems = []
         if test.returncode != 0:
