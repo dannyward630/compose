@@ -1,4 +1,5 @@
 """FinishScreen: setup's ending from fc_finish.finish, run in a worker."""
+import re
 from typing import List, Tuple
 
 import fc_finish
@@ -28,10 +29,10 @@ class FinishScreen(Screen[str]):
         color: $success;
     }
     FinishScreen .error {
-        color: $error;
+        color: $text-error;
     }
     FinishScreen .failed {
-        color: $error;
+        color: $text-error;
         text-style: bold;
     }
     FinishScreen .warning {
@@ -61,14 +62,14 @@ class FinishScreen(Screen[str]):
             return "failed"
         if (
             line.startswith(("waiting on Claude Code: ", "run by hand: ", "skipped: ", "[", "export "))
-            or " = " in line
+            or re.fullmatch(r"\s*[\w.-]+ = \S+", line)
             or "set these lines by hand" in line
             or "add this line" in line
         ):
             return "warning"
         if line == "compose is ready" or line.startswith("implementer "):
             return "success"
-        if "not finished" in line or "missing" in line or " key" in line:
+        if line.startswith("No ") or "not finished" in line or "missing" in line:
             return "error"
         return ""
 
