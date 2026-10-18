@@ -18,6 +18,8 @@ HINTS = {"openrouter": "openrouter.ai/keys", "typesafe": "your TypeSafe account"
 class KeysScreen(Screen[Tuple[List[str], List[str]]]):
     """Keys for workspace; dismisses with (kinds saved, kinds skipped)."""
 
+    AUTO_FOCUS = "#openrouter"
+
     DEFAULT_CSS = """
     KeysScreen {
         padding: 1 2;
@@ -91,6 +93,11 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         if kind == "linear" and self.state == "connector":
             return "connector connected", "present"
         return "not set", "absent"
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        index = KINDS.index(event.input.id) + 1
+        target = KINDS[index] if index < len(KINDS) else "continue"
+        self.query_one(f"#{target}").focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         for kind in KINDS:
