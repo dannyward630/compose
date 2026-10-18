@@ -531,6 +531,43 @@ class JevLeash(unittest.TestCase):
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+        self.assertEqual(r["exit"], 124); self.assertNotIn("assert_exit", r); self.assertNotIn("run", r)
+
+    USAGE = {"typesafe_calls": 0, "typesafe_in": 0, "typesafe_out": 0, "text_calls": 0, "text_in": 0, "text_out": 0}
+
+    def jev(self, code, status):
+        """The fake's returncode stands for the assert's exit code: the real script ends with sys.exit(subprocess.call(assert))."""
+        stdout = "JEV_RESULT " + json.dumps({"status": status, "elapsed_ms": 413, "steps": 7, "url": "about:blank", "usage": self.USAGE}) + "\n"
+        with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
+             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", code, stdout, "")):
+            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": "true"}, Path(tempfile.mkdtemp()))
+
+    def test_a_blocked_jev_fails_the_case_even_when_its_assert_passes(self):
+        r = self.jev(0, "blocked")
+        self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
+        self.assertTrue(r["stderr"].startswith("JEV_GAVE_UP: jev ended blocked after 7 steps\n"))
+        self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+        self.assertEqual(r["run"]["status"], "blocked")
+
+    def test_a_blocked_jev_keeps_a_failing_asserts_code(self):
+        for code in (1, 3):
+            r = self.jev(code, "blocked")
+            self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
+
+    def test_any_status_but_done_fails_the_case(self):
+        r = self.jev(0, "max_steps")
+        self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
+        self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+
+    def test_a_done_jev_takes_the_asserts_code_as_its_verdict(self):
+        for code in (0, 3):
+            r = self.jev(code, "done")
+            self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
+            self.assertFalse(fc.fc_jev.tool_error(r["stderr"]))
+
+    def test_a_driver_case_has_no_assert_exit(self):
+        r = fc.fc_jev.jev_e2e({"name": "d", "driver": "true", "assert": "true"}, Path(tempfile.mkdtemp()))
+        self.assertEqual(sorted(r), ["exit", "name", "stderr", "stdout"]); self.assertEqual(r["exit"], 0)
 
 
 if __name__ == "__main__":
