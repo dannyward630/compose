@@ -77,6 +77,57 @@ class PythonApi(unittest.TestCase):
 class JsApi(unittest.TestCase):
     """Task 011 (NEB-931): js_api and section for JS/TS imports."""
 
+    WORDS = "Goal: spin the widget faster."
+    FILES = ["src/app.ts", "web/src/util.mjs", "web/old.cjs", "src/side.jsx", "notes.md", "src/new.tsx", "src/tool.py"]
+    WIDGET = ["export default function create(): Widget;", "export declare function makeWidget(size: number): Widget;",
+              "export declare class Widget {"]
+    CHUNK = "export declare function chunk(a: any[], n: number): any[][];"
+
+    def setUp(self):
+        wt = self.wt = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, wt, True)
+        pkg = lambda name, ver, **kv: json.dumps({"name": name, "version": ver, **kv})
+        files = {"src/app.ts": 'import create, { makeWidget, Widget } from "@acme/widgets/extra";\nimport { here } from "./local";\n'
+                               'import fs from "node:fs";\nimport gone from "missing-pkg";\nimport { bare } from "nodecl";\n',
+                 "web/src/util.mjs": 'import { chunk } from "lodashy/fp";\n', "web/old.cjs": 'const r = require("reqpkg");\n',
+                 "src/side.jsx": 'import "sidefx/register";\n', "notes.md": 'import { other } from "other";\n',
+                 "src/tool.py": "import toolkit\n", "node_modules/other/package.json": pkg("other", "1.0.0", types="o.d.ts"),
+                 "node_modules/other/o.d.ts": "export declare const other: number;\n",
+                 "node_modules/@acme/widgets/package.json": pkg("@acme/widgets", "2.0.1", types="dist/index.d.ts", main="lib/index.js"),
+                 "node_modules/@acme/widgets/dist/index.d.ts": "\n".join(self.WIDGET[1:] + [
+                     "    spin(speed: number): void;", "    stop(): void;", "}", self.WIDGET[0], "export declare const unused: number;\n"]),
+                 "node_modules/@acme/widgets/lib/index.d.ts": "export declare function makeWidget(): never;\n",  # types wins over main
+                 "node_modules/lodashy/package.json": pkg("lodashy", "4.1.0", main="lib/index.js"),  # web/node_modules is nearer
+                 "web/node_modules/lodashy/package.json": pkg("lodashy", "5.0.0", main="lib/index.js"),
+                 "web/node_modules/lodashy/lib/index.d.ts": self.CHUNK + "\n",
+                 "node_modules/reqpkg/package.json": pkg("reqpkg", "0.3.0", typings="types/r.d.ts"),
+                 "node_modules/reqpkg/types/r.d.ts": "export declare const r: number;\n",
+                 "node_modules/sidefx/package.json": pkg("sidefx", "1.1.0", types="index.d.ts"),
+                 "node_modules/sidefx/index.d.ts": "export {};\n",
+                 "node_modules/nodecl/package.json": pkg("nodecl", "1.0.0", main="index.js"),
+                 "node_modules/nodecl/index.js": "exports.bare = 1;\n"}
+        for rel, text in files.items():
+            (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+            (wt / rel).write_text(text)
+
+    def test_a_block_per_imported_package_with_its_version_export_lines_and_the_methods_words_name(self):
+        blocks = fc.fc_libapi.js_api(self.wt, self.FILES, self.WORDS)
+        self.assertEqual(sorted(b.split("\n")[0] for b in blocks), ["@acme/widgets 2.0.1", "lodashy 5.0.0", "reqpkg 0.3.0", "sidefx 1.1.0"])
+        by = {b.split("\n")[0]: b.split("\n")[1:] for b in blocks}
+        w = by["@acme/widgets 2.0.1"]
+        self.assertEqual((sorted(w[:3]), [l.strip() for l in w[3:]]), (sorted(self.WIDGET), ["spin(speed: number): void;"]), w)
+        self.assertEqual(by["lodashy 5.0.0"], [self.CHUNK])
+
+    def test_section_puts_the_js_blocks_after_the_python_ones_within_the_cap(self):
+        with mock.patch.object(fc.fc_libapi, "python_api", return_value=["py-kit 1.0\ndef f(x)"]):
+            full = fc.fc_libapi.section(self.wt, self.FILES, self.WORDS, cap=10 ** 6)
+            lines = full.rstrip("\n").split("\n")
+            cap = len("\n".join(lines[:-1])) + 3
+            cut = fc.fc_libapi.section(self.wt, self.FILES, self.WORDS, cap=cap)
+        self.assertTrue(full.startswith("LIBRARY API") and 0 < full.index("def f(x)") < full.index("@acme/widgets 2.0.1"), full)
+        self.assertTrue(full.index("def f(x)") < min(full.index(h) for h in ("lodashy 5.0.0", "reqpkg 0.3.0", "sidefx 1.1.0")), full)
+        self.assertEqual((cut.rstrip("\n"), len(cut) <= cap), ("\n".join(lines[:-1]), True), cut)
+
 
 if __name__ == "__main__":
     unittest.main()
