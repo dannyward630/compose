@@ -565,6 +565,55 @@ class HerdrPiKey(unittest.TestCase):
                 self.assertFalse(self.process_key)  # the fallback did not leak into the process either
 
 
+class TypeSafeKey(unittest.TestCase):
+    """`compose workspace key <name> --typesafe` stores the one TypeSafe key at auth.json's top level; the other paths are unchanged."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.auth = self.root / "auth.json"
+        (self.root / "config.json").write_text(json.dumps({"workspaces": {"work": {}}}))
+        self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test-d0d0"}, "work": {"linear": "lin-test-w0"}},
+                                         "typesafe": "ts-test-old"}))
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("HERDR_", "ANTHROPIC_"))} | {
+            "HOME": str(self.root), "COMPOSE_CONFIG": str(self.root / "config.json"), "NO_COLOR": "1"}
+
+    def key(self, *args, stdin):
+        p = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "workspace", "key", *args],
+                           input=stdin, capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertNotIn("-test-", p.stdout + p.stderr)  # never a key value, not even the old one
+        return p
+
+    def stored(self):
+        return json.loads(self.auth.read_text())
+
+    def test_stores_the_top_level_key_keeping_every_other_entry(self):
+        for name in ("work", "default"):  # a named workspace still writes the one shared key, never workspaces.<name>.typesafe
+            with self.subTest(name=name):
+                p = self.key(name, "--typesafe", stdin=f"  ts-test-{name}\n")
+                self.assertEqual(p.returncode, 0)
+                self.assertIn("TypeSafe key set (every workspace uses it)", p.stdout.splitlines())
+                self.assertTrue(self.stored() == {"workspaces": {"default": {"openrouter": "sk-or-test-d0d0"}, "work": {"linear": "lin-test-w0"}},
+                                                  "typesafe": f"ts-test-{name}"}, "auth.json differs")
+        self.assertNotIn("test", (self.root / "config.json").read_text())
+
+    def test_an_empty_read_exits_and_names_the_command(self):
+        p = self.key("work", "--typesafe", stdin="\n")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("no key read; copy it, then: pbpaste | compose workspace key work --typesafe", p.stderr)
+        self.assertTrue(self.stored()["typesafe"] == "ts-test-old", "the old key changed")
+
+    def test_typesafe_with_linear_is_not_allowed(self):
+        p = self.key("work", "--typesafe", "--linear", stdin="ts-test-x\n")
+        self.assertEqual(p.returncode, 2)
+        self.assertRegex(p.stderr, r"argument --(typesafe|linear): not allowed with argument --(typesafe|linear)")
+        self.assertTrue(self.stored()["typesafe"] == "ts-test-old", "the old key changed")
+
+    def test_openrouter_and_linear_paths_leave_the_typesafe_key_alone(self):
+        self.assertEqual(self.key("work", stdin="sk-or-test-w1\n").returncode, 0)
+        self.assertEqual(self.key("work", "--linear", stdin="lin-test-w2\n").returncode, 0)
+        self.assertTrue(self.stored() == {"workspaces": {"default": {"openrouter": "sk-or-test-d0d0"}, "work": {"openrouter": "sk-or-test-w1", "linear": "lin-test-w2"}},
+                                          "typesafe": "ts-test-old"}, "auth.json differs")
+
+
 class RetryMessage(unittest.TestCase):
     def run_three(self, summary="", backup=None, session="s", reader_cost=0.0):
         """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path);
