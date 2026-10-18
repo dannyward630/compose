@@ -173,6 +173,19 @@ class KeepFinishedLayers(unittest.TestCase):
                     go(cmd, flag, config)
         self.assertEqual(got, [3, 20, 7, 4, 20, 7])  # resume with neither keeps the halted run's own value
 
+    def test_resume_lists_only_the_tasks_it_runs(self):
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "test": "true", "body": "", "model": "m"} for t in ("002", "003", "004")]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        (self.proj / "results" / "003.json").write_text(json.dumps({"id": "003", "status": "passed"}))  # passed after the halt was saved
+        (self.proj / "results" / "resume.json").write_text(json.dumps({"command": "run", "remaining": ["002", "003", "004"], "halted_at": "x", "provider": "p",
+                                                                       "args": {"attempts": 3, "parallel": 3, "trunk": None, "no_stack": False}}))
+        said = []
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_core, "say", said.append), \
+             mock.patch.object(fc.fc_run, "run_tasks", lambda repo, proj, ts, a: None):
+            fc.fc_run.cmd_resume(mock.Mock(repo=str(self.repo), project="p"))
+        self.assertIn("resume 2 task(s): 002, 004", said)
+
 
 class RewrittenTrunk(unittest.TestCase):
     """The trunk itself was rebased onto a moved main: the chain still carries the trunk's old commits, which must not replay."""

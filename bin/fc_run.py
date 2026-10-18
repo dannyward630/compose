@@ -238,7 +238,7 @@ def cmd_resume(a):
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
         ns.parallel = getattr(a, "parallel", None) or fc_config.PARALLEL or getattr(ns, "parallel", None) or RUN_PARALLEL  # flag, config, the halted run's
-        fc_core.say(f"resume {len(tasks)} task(s): {', '.join(state['remaining'])}")
+        fc_core.say(f"resume {len(tasks)} task(s): {', '.join(m['id'] for m in tasks)}")
         run_tasks(repo, proj, tasks, ns)
     else:
         ns.fix, ns.skip_e2e, ns.skip_review = state["args"]["fix"], state["args"]["skip_e2e"], state["args"]["skip_review"]
