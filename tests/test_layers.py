@@ -197,6 +197,25 @@ class Layers(unittest.TestCase):
         self.assertIn("layer-03  groundwork x1: 2 lines", [l for l in out if l.startswith("layer ")][2])
         self.assertEqual(self.git("diff", "fast/p/layer-04", "fast/p/003"), "")
 
+    def test_a_test_commit_goes_to_the_task_its_test_writer_wrote_it_for(self):
+        """Tasks 001 and 003 both protect one test file. 003's test writer, teammate tests-003, commits its test on top of 001's
+        within the span of its reports: it lands in 003's layer, not in the first layer whose task protects the file."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test", "shared.test"], "files": ["003.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("shared.test", "a\n" * 5); self.commit("tests for 001")  # no writer's span holds it: the first task's
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        (crew / f"{fc.fc_herdr.agent_name('p', 'tests-003')}.status").write_text("".join(json.dumps({"at": at, "state": "working", "message": m}) + "\n"
+            for at, m in (("2026-01-01 10:00:00", "started"), ("2026-01-01 10:05:00", "test ready: 1234567"))))
+        self.write("shared.test", "a\n" * 5 + "b\n" * 5); self.git("add", "-A"); self.git("commit", "-qm", "tests for 003", "--date", "2026-01-01T10:02:00")
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
+        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test"), "a\n" * 4 + "a")
+        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
+
     def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
         out = self.stack(branch="compose/p")
         self.assertEqual(self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])

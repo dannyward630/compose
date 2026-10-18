@@ -1,6 +1,6 @@
-import json, os, re, subprocess
+import json, os, re, subprocess, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_worktree
+import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree
 
 
 CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
@@ -125,13 +125,27 @@ def group_units(units, budget):
             layers.append([u])
     return layers
 
+def test_writers(proj, tasks):
+    """(task id, first report, last report) of each task's test-writing teammate `tests-NNN`, in epoch seconds, the latest started
+    first: it made its commits between its first and last report. Writers of one test file never run at once, and a later one
+    starts only once the earlier one's commits are collected, so the latest whose span holds a commit's author date made it."""
+    spans = []
+    for t in tasks:
+        f = Path(proj) / "results" / "crew" / f"{fc_herdr.agent_name(proj.name, f'tests-{t}')}.status"
+        ats = [time.mktime(time.strptime(json.loads(l)["at"], "%Y-%m-%d %H:%M:%S")) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
+        if ats:
+            spans.append((t, min(ats), max(ats)))
+    return sorted(spans, key=lambda s: -s[1])
+
 def review_units(repo, proj, base, trunk, chain):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
-    is a task's when every file it touches is in that task's `protected:`; the tests of a task not in the chain yet ride with the
-    last one. Every file's commits replay in the trunk's order, so the layers apply: a commit on a file an earlier commit placed
-    in a task's unit goes no lower than that. An owned one then goes to the first task at or above that place that protects
-    its files; one no task owns is a groundwork unit of its own right above that task's unit, never inside it."""
+    is a task's when every file it touches is in that task's `protected:`; when its author date falls in the span of a test
+    writer whose task protects its files, it is that writer's task's alone. The tests of a task not in the chain yet ride with
+    the last one. Every file's commits replay in the trunk's order, so the layers apply: a commit on a file an earlier commit
+    placed in a task's unit goes no lower than that. An owned one then goes to its writer's task, or without one to the first
+    task at or above that place that protects its files; one no task owns is a groundwork unit of its own right above that
+    task's unit, never inside it."""
     protected = {m["id"]: set(m["protected"]) for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
     ids = [b.rsplit("/", 1)[1] for b in chain]
     def unit(name, commits, key=None):
@@ -142,10 +156,11 @@ def review_units(repo, proj, base, trunk, chain):
                 gen[f] = gen.get(f, 0) + n
         return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
     # slot 2i is task i's unit, 2i+1 the groundwork right above it; last: file -> slot of the latest commit placed on it
-    ground, slots, last = [], {}, {}
-    for c in fc_core.sh(["git", "rev-list", "--reverse", "--no-merges", f"{base}..{trunk}"], repo).stdout.split():
+    ground, slots, last, writers = [], {}, {}, test_writers(proj, protected)
+    for c, at in (l.split() for l in fc_core.sh(["git", "log", "--reverse", "--no-merges", "--format=%H %at", f"{base}..{trunk}"], repo).stdout.splitlines()):
         files = set(commit_facts(repo, c)[0])
-        owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set())]
+        writer = next((t for t, a, b in writers if a <= int(at) <= b and files and files <= protected[t]), None)
+        owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set()) and writer in (None, t)]
         if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
             owners = [len(ids) - 1]
         floor = max((last[f] for f in files if f in last), default=None)
