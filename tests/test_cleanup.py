@@ -779,5 +779,41 @@ class ReviewBaseFirst(unittest.TestCase):
         self.assertTrue(self.wt.exists())
 
 
+class ProjectBranchNamedFirst(unittest.TestCase):
+    """The summary line of a removed project branch names the branch first, then why clean removed it, whatever the why."""
+    def summary(self, branch, land, delete_unmerged=False):
+        """Init project p on `branch` with one commit of its own, let `land` move main, clean, and return clean's lines and the worktree."""
+        r, run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--branch", branch, "--repo", str(r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        (wt / "a.txt").write_text("base\nx\n"); run("commit", "-qam", "groundwork", cwd=wt)
+        land(r, run, proj)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out):
+            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True, delete_unmerged=delete_unmerged)
+        return out.getvalue().splitlines(), wt
+
+    def same_change_with_more(self, r, run, proj):  # main holds the groundwork's change inside a bigger patch
+        (r / "a.txt").write_text("base\nx\n"); (r / "b.txt").write_text("y\n"); run("add", "-A"); run("commit", "-qm", "more")
+
+    def layer_on_main(self, r, run, proj):  # main moves on its own; the one layer built from the branch sits in it
+        (r / "c.txt").write_text("c\n"); run("add", "-A"); run("commit", "-qm", "main moves")
+        run("branch", "compose/p-layer-01", "main"); (proj / "layers.json").write_text('{"compose/p-layer-01": ["001"]}')
+
+    def test_each_why_reads_after_the_branch_name(self):
+        for branch, land, why, delete_unmerged in (
+                ("compose/p", lambda r, run, proj: run("merge", "-q", "--ff-only", "compose/p"), "contained in main", False),
+                ("js-1-p", lambda r, run, proj: run("merge", "-q", "--ff-only", "js-1-p"), "contained in main", False),
+                ("compose/p", lambda r, run, proj: run("cherry-pick", "-x", "compose/p"), "contained in main by patch", False),
+                ("compose/p", self.same_change_with_more, "merging it into main changes nothing", False),
+                ("compose/p", self.layer_on_main, "every layer built from it is merged (compose/p-layer-01)", False),
+                ("compose/p", lambda r, run, proj: None, "UNMERGED, removed on --delete-unmerged", True)):
+            with self.subTest(why=why, branch=branch):
+                lines, wt = self.summary(branch, land, delete_unmerged)
+                want = f"clean  p: task branches all merged and removed; project branch {branch}: {why}; removed worktree {wt} and branch {branch}"
+                self.assertIn(want, lines, lines)
+                self.assertFalse(wt.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
