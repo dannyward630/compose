@@ -290,15 +290,34 @@ def layer_title(repo, proj, l, n, metas):
 
 def layer_body(repo, proj, l, budget, metas):
     """A layer's PR body: `## Why`, `## What changed`, `## How it was tested` and `## Tickets`, each left out when empty."""
-    raise NotImplementedError("layer_body")
+    res = Path(proj) / "results"
+    read = lambda name: json.loads((res / f"{name}.json").read_text()) if (res / f"{name}.json").exists() else {}
+    title = read("tasks").get("feature", {}).get("title", "")
+    by_id = {m["id"]: m for m in metas}
+    tasks = [by_id[t] for t in dict.fromkeys(l["tasks"]) if t in by_id]
+    subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
+    if tasks:
+        goals = [g.group(1).strip() for g in (re.search(r"## Goal\n(.*?)(?:\n## |\Z)", m["body"], re.S) for m in tasks) if g]
+        why = [title, *goals]
+    else:
+        why = [f"Groundwork for {title}.", *filter(None, (fc_core.sh(["git", "log", "-1", "--format=%b", c], repo).stdout.strip() for c in l["commits"]))]
+    how = [f"`{m['test']}`: passed, {read(m['id']).get('attempts', 0)} attempt(s)" for m in tasks]
+    added = {f for c in l["commits"] for f in fc_core.sh(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--diff-filter=A", c], repo).stdout.split()}
+    tests = sorted(added & {f for m in tasks for f in m["protected"]})
+    if tests:
+        how.append(f"tests added: {', '.join(tests)}")
+    verify = read("verify")
+    if verify:
+        n = len(verify.get("rounds", []))
+        how.append(f"verify passed in {n} round(s)" if verify.get("passed") else f"verify failed after {n} round(s)")
+    sections = [("Why", why), ("What changed", [f"- {x}" for x in [*subjects, layer_note(l, budget)]]), ("How it was tested", [f"- {x}" for x in how]),
+                ("Tickets", [m["linear"] for m in tasks])]
+    return "\n\n".join(f"## {h}\n" + "\n".join(lines) for h, lines in sections if lines)
 
 def layer_pr(repo, proj, l, n, budget, metas):
     """A layer's PR title and body. The title comes from the layer's commits (`JS-2888: ... (1/4)` when the project branch starts
     with a Jira key); the body lists the tasks and the layer's size."""
-    names = {m["id"]: commit_message(m) for m in metas}
-    held = [names.get(t, t) if t != "groundwork" else "groundwork" for t in l["tasks"]]
-    held = list(dict.fromkeys(held))
-    return layer_title(repo, proj, l, n, metas), "\n".join([*(f"- {h}" for h in held), "", layer_note(l, budget)])
+    return layer_title(repo, proj, l, n, metas), layer_body(repo, proj, l, budget, metas)
 
 def gh_pr_text(wt, b):
     """The title and body of the PR on branch b, or None when it has none."""
