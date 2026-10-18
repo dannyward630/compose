@@ -111,3 +111,37 @@ class StepLines(unittest.TestCase):
             self.assertFalse(any(str(l) in line for l in others))
             self.assertFalse(others[0].is_symlink())
             self.assertEqual(others[1].is_symlink() and os.readlink(others[1]), name == "compose CLI link" and str(elsewhere))
+
+
+class HomePaths(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.ran, self.has = self.tmp / "ran", lambda c: (self.ran.exists(), "")
+        self.enterContext(mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)))
+
+    def step(self, install, mode="run", name="pi", check=None):
+        return fc_steprun.run_step((name, check or self.has, install, "required", False, mode), self.tmp, False, True, False)
+
+    def test_write_row_line_shows_home_as_tilde(self):
+        h = str(Path.home())
+        line = f"linked {h}/.local/bin/compose -> {h}/.compose/src/bin/compose"
+        with mock.patch.dict(fc_steprun.WRITERS, {"compose CLI link": lambda c: self.ran.touch() or line}):
+            self.assertEqual(self.step("compose setup", "write", "compose CLI link"),
+                             ("done", "linked ~/.local/bin/compose -> ~/.compose/src/bin/compose"))
+
+    def test_failed_and_manual_lines_show_home_as_tilde(self):
+        h = str(Path.home())
+        boom = f"echo 'cannot write {h}/.npm/x' >&2; exit 3"
+        self.assertEqual(self.step(boom), ("failed", f"pi: cannot write ~/.npm/x; by hand: {boom.replace(h + '/', '~/')}"))
+        state, line = self.step(f"{h}/bin/fix", "manual", "git")
+        self.assertEqual((state in ("manual", "skipped"), "~/bin/fix" in line, h + "/" in line), (True, True, False))
+
+    def test_prefix_sharing_paths_and_plain_lines_are_left_alone(self):
+        home = self.tmp / "a.l"  # a dot so a regex-built match would also hit "aXl"
+        home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            for other in ("a.lex/f", "aXl/f"):
+                boom = f"echo 'no {self.tmp}/{other}' >&2; exit 3"
+                self.assertEqual(self.step(boom), ("failed", f"pi: no {self.tmp}/{other}; by hand: {boom}"))
+        self.assertEqual(self.step("echo boom >&2; exit 3"), ("failed", "pi: boom; by hand: echo boom >&2; exit 3"))
+        self.assertEqual(self.step("true", check=lambda c: (True, "")), ("ok", ""))
