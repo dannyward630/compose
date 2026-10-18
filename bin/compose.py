@@ -238,7 +238,9 @@ def main():
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")
-            s.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
+            g = s.add_mutually_exclusive_group()
+            g.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
+            g.add_argument("--typesafe", action="store_true", help="key: store the TypeSafe key (stdin); one key serves every workspace")
         if name == "clean":
             s.add_argument("--force", action="store_true", help="with --project: clean it although teammates are still working")
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")

@@ -160,11 +160,12 @@ def cmd_workspace(a):
         print(f"added {name}" + ("" if key else f"; no key yet: pbpaste | compose workspace key {name}"))
     elif action == "key":
         linear = getattr(a, "linear", False)
-        key = read_key(name, "Linear" if linear else "OpenRouter")
+        ts = getattr(a, "typesafe", False)
+        key = read_key(name, "TypeSafe" if ts else "Linear" if linear else "OpenRouter")
         if not key:
-            sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + (" --linear" if linear else ""))
-        fc_auth.set_key(AUTH_PATH, name, "linear" if linear else "openrouter", key)
-        print(f"{name}: {'Linear' if linear else 'OpenRouter'} key set")
+            sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + (" --typesafe" if ts else " --linear" if linear else ""))
+        fc_auth.set_key(AUTH_PATH, name, "typesafe" if ts else "linear" if linear else "openrouter", key)
+        print("TypeSafe key set (every workspace uses it)" if ts else f"{name}: {'Linear' if linear else 'OpenRouter'} key set")
     elif action == "remove":
         if name == "default":
             sys.exit("default always exists; clear its key in the config's top level instead")
