@@ -86,6 +86,20 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "twelve")
 
+    def test_a_task_built_on_a_low_layer_goes_to_its_own_place_and_moves_no_layer(self):
+        # 006 after 010 starts on 010, as a run bases it, so it counts as many commits as 011; its place is still after 005
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"].append({"id": "006", "after": "010"})
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        tips = {t: self.git("rev-parse", f"fast/p/{t}") for t in ("010", "011", "012", "005")}
+        base, _ = fc.fc_implement.task_base(self.repo, self.proj, {"id": "006", "after": "010"})
+        self.layer("006", base, "006.txt", "new\n")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005", "006")])
+        self.assertEqual({t: self.git("rev-parse", f"fast/p/{t}") for t in tips}, tips)
+        self.assertEqual(self.git("log", "--format=%s", "fast/p/005..fast/p/006"), "task 006")
+
 
 class KeepFinishedLayers(unittest.TestCase):
     """A plain `run` re-enters every task: a layer that passed, or that a teammate finished by hand on top of its pass, keeps its

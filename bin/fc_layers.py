@@ -28,14 +28,24 @@ def commit_message(meta, conv=None):
     return fc_core.typed(msg, kind, conv)
 
 
-def chain_order(repo, proj, trunk):
-    """Branches bottom to top. Ancestry wins: a branch whose history already contains another sits above it (a rebase can never
-    move a commit below history it contains). Ties, i.e. branches not on one line yet, follow stack_order (deps, then id)."""
+def chain_order(repo, proj):
+    """Branches bottom to top, in stack_order (deps, then id), except that ancestry wins: a branch whose tip already contains
+    another's sits above it (a rebase can never move a commit below history it contains). Only real ancestry counts: a task
+    based on a low layer has as many commits as the layer above its base, and is not on that layer's line."""
     order = fc_worktree.stack_order(repo, proj)
-    rank = {b: i for i, b in enumerate(order)}
-    def depth(b):
-        return int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{b}"], repo, check=False).stdout.strip() or 0)
-    return sorted(order, key=lambda b: (depth(b), rank[b]))
+    tip = {b: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip() for b in order}
+    below = {b: set() for b in order}  # b -> the other branches its tip contains; one at the same tip is no constraint
+    for a in order:
+        held = fc_core.sh(["git", "for-each-ref", "--contains", tip[a], "--format=%(refname)", f"refs/heads/fast/{proj.name}/"], repo).stdout.split()
+        for b in (r.removeprefix("refs/heads/") for r in held):
+            if b in below and tip[b] != tip[a]:
+                below[b].add(a)
+    out = []
+    while order:  # ancestry has no cycles, so some branch always has everything it contains placed
+        b = next(b for b in order if below[b] <= set(out))
+        out.append(b)
+        order.remove(b)
+    return out
 
 STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
@@ -48,7 +58,7 @@ def _linearize(repo, proj, trunk, wt):
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported."""
     global STACK_STOP
     STACK_STOP = ""
-    chain = chain_order(repo, proj, trunk)
+    chain = chain_order(repo, proj)
     linear, prev = [], trunk
     replaced = fc_worktree.replaced_tips(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
