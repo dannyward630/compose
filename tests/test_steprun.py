@@ -107,8 +107,9 @@ class StepLines(unittest.TestCase):
                 others[1].symlink_to(elsewhere)
             check = lambda c, link=link, target=target: (link.is_symlink() and link.resolve() == target, "")
             state, line = self.step(check, "compose setup", "write", name=name)
-            self.assertEqual((state, "\n" in line, ";" in line, str(link) in line), ("done", False, False, True))
-            self.assertFalse(any(str(l) in line for l in others))
+            tilde = lambda p: "~/" + str(p.relative_to(Path.home()))
+            self.assertEqual((state, "\n" in line, ";" in line, tilde(link) in line, str(Path.home()) in line), ("done", False, False, True, False))
+            self.assertFalse(any(tilde(l) in line for l in others))
             self.assertFalse(others[0].is_symlink())
             self.assertEqual(others[1].is_symlink() and os.readlink(others[1]), name == "compose CLI link" and str(elsewhere))
 
