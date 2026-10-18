@@ -34,7 +34,7 @@ def in_scope(issue, a):
     if a.any_project:
         return
     p = linear_project(a.repo)
-    if issue["project"]["id"] != p["id"]:
+    if (issue["project"] or {}).get("id") != p["id"]:
         sys.exit(f"{issue['identifier']} is not in project {p['name']}; pass --any-project to use it")
 
 def state_and_labels(team, a):
@@ -130,6 +130,8 @@ def verb_create(a):
     print(f"created {issue['identifier']}")
 
 def verb_update(a):
+    if not a.target:
+        sys.exit("update needs an issue id")
     if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
         sys.exit("update takes one of --section, --append, --description")
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
@@ -151,10 +153,12 @@ def verb_update(a):
             inp["description"] = body
     fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
     if a.blocked_by is not None:
-        fc_linear.linear_blocked_by(issue, a.blocked_by.split(","))
+        fc_linear.linear_blocked_by(issue, [x for x in a.blocked_by.split(",") if x])
     print(f"updated {issue['identifier']}")
 
 def verb_comment(a):
+    if not a.target:
+        sys.exit("comment needs an issue id")
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier project { id name } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
