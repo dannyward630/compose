@@ -66,6 +66,9 @@ A model id names its harness:
 | `claude` | Claude Code with its default model |
 | anything else | OpenCode |
 
+A Claude implementer and the test reader start lean, with `--safe-mode --strict-mcp-config`: no user CLAUDE.md, skills, plugins, hooks, or MCP servers, about 8K input tokens a turn instead of about 200K.
+That flag drops the repo's own `CLAUDE.md`, `.claude/CLAUDE.md`, and `AGENTS.md` too, so the CLI puts them back in the system prompt; `@` imports inside them are not followed.
+
 ## Parallel
 
 `parallel` is how many agents start at once.

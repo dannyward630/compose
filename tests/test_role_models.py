@@ -186,6 +186,31 @@ class PlannerChain(unittest.TestCase):
             self.assertEqual([k for k in env if k.startswith("ANTHROPIC_")], [])  # the subscription pays, never a key or a proxy
             self.assertNotEqual(env["COMPOSE_CONFIG"], str(fc.fc_config.CONFIG_PATH))  # its tools run project code: a scratch config
 
+    def test_a_claude_implementer_runs_lean_with_the_repos_own_instructions(self):
+        d = Path(tempfile.mkdtemp()); (d / "bin").mkdir(); repo = d / "repo"; (repo / ".claude").mkdir(parents=True)
+        fake = d / "bin" / "claude"  # records its argv and env, answers like `claude -p --output-format json`
+        fake.write_text(f"#!{sys.executable}\nimport json, os, sys\nopen({str(d / 'call.json')!r}, 'w').write(json.dumps([sys.argv[1:], dict(os.environ)]))\n"
+                        "print(json.dumps({'is_error': False, 'result': 'done', 'usage': {'input_tokens': 9}}))\n")
+        fake.chmod(0o755)
+        (repo / "CLAUDE.md").write_text("Use tabs.\n"); (repo / ".claude" / "CLAUDE.md").write_text("Run make.\n"); (repo / "AGENTS.md").write_text("Keep it short.\n")
+        env = {"PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}", "ANTHROPIC_API_KEY": "sk-ant", "COMPOSE_ROLE": "orchestrator"}
+        with mock.patch.dict(os.environ, env):
+            fc.fc_implement.implementer(str(repo), "claude:claude-haiku-5-5", "build it")
+        argv, seen = json.loads((d / "call.json").read_text())
+        tools = "Read,Edit,Write,Bash,Grep,Glob"
+        for flags in (["--safe-mode"], ["--strict-mcp-config"], ["--model", "claude-haiku-5-5"], ["--tools", tools], ["--allowedTools", tools],
+                      ["--settings", fc.fc_claude.NO_ATTRIBUTION]):
+            self.assertIn(flags, [argv[i:i + len(flags)] for i in range(len(argv))])
+        own = argv[argv.index("--append-system-prompt") + 1]  # --safe-mode drops every CLAUDE.md: the repo's own come back here, the user's do not
+        self.assertEqual([own.index(t) < own.index(u) for t, u in (("Use tabs.", "Run make."), ("Run make.", "Keep it short."))], [True, True])
+        self.assertEqual([k for k in seen if k.startswith("ANTHROPIC_") or k == "COMPOSE_ROLE"], [])
+        self.assertNotEqual(seen["COMPOSE_CONFIG"], str(fc.fc_config.CONFIG_PATH))
+        for f in ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"):
+            (repo / f).unlink()
+        with mock.patch.dict(os.environ, env):
+            fc.fc_implement.implementer(str(repo), "claude:claude-haiku-5-5", "build it")
+        self.assertNotIn("--append-system-prompt", json.loads((d / "call.json").read_text())[0])
+
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
             fc.fc_crew.crew_pick("wayfinder"); fc.fc_crew.crew_pick("wayfinder")

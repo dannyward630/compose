@@ -188,7 +188,7 @@ def read_failure(wt, meta, output, log_path):
               "Reply with at most 8 short lines and nothing else: each failing case, what it expected versus what it got, and the file:line "
               "to look at. No advice beyond that, no code.")
     try:
-        _, reply, _, usage = fc_claude.claude_once(wt, prompt, timeout=READER_TIMEOUT, model=fc_claude.claude_id(fc_config.TEST_READER), tools="Read,Grep,Glob", lean=True)
+        _, reply, _, usage = fc_claude.claude_once(wt, prompt, timeout=READER_TIMEOUT, model=fc_claude.claude_id(fc_config.TEST_READER), tools="Read,Grep,Glob")
     except Exception:  # noqa: BLE001 - a timeout or a refused call leaves the raw tail
         return "", None
     return reply.strip()[:1500], usage

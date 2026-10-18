@@ -31,12 +31,22 @@ def crew_settings(role, cwd):
     return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
                        "enabledPlugins": {k: False for k in enabled if not k.startswith("compose@") and not (keep and k.startswith("figma@"))}})
 
-def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bash,Grep,Glob", lean=False):
+REPO_INSTRUCTIONS = ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md")
+def repo_instructions(cwd):
+    """The repo's own instruction files at `cwd`, for a session started in --safe-mode, which drops every CLAUDE.md with the
+    user's: each one that exists, under its path, as one system-prompt addition, or None. `@` imports are not followed."""
+    found = [(name, (Path(cwd) / name).read_text(errors="replace").strip()) for name in REPO_INSTRUCTIONS if (Path(cwd) / name).is_file()]
+    return "\n\n".join(f"Contents of {name} (this repo's instructions):\n\n{text}" for name, text in found if text) or None
+
+def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bash,Grep,Glob"):
     """One-shot baseline through Claude Code on the subscription, with only `tools`. Marginal cost $0; the CLI's own cost figure is recorded for reference.
-    `lean` starts it without the user's CLAUDE.md, skills, plugins, hooks, and MCP servers, which cost ~200K input tokens a call."""
+    It starts lean, without the user's CLAUDE.md, skills, plugins, hooks, and MCP servers, which cost ~200K input tokens a call;
+    the repo's own CLAUDE.md and AGENTS.md go into its system prompt instead."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("COMPOSE_CLAUDE_MODEL", "claude-sonnet-5-5"),
-           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools] + (["--safe-mode", "--strict-mcp-config"] if lean else [])
+           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools, "--safe-mode", "--strict-mcp-config"]
+    if own := repo_instructions(cwd):
+        cmd += ["--append-system-prompt", own]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
     try:
         out = json.loads(p.stdout)

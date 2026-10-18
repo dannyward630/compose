@@ -279,14 +279,14 @@ class Triage(unittest.TestCase):
 class ReadFailure(unittest.TestCase):
     def test_haiku_writes_the_brief_read_only_and_failures_add_nothing(self):
         meta, calls = {"test": "pytest t.py", "files": ["a.py"]}, []
-        def once(cwd, prompt, timeout=900, model=None, tools=None, lean=False):
-            calls.append((model, tools, lean, prompt))
+        def once(cwd, prompt, timeout=900, model=None, tools=None):
+            calls.append((model, tools, prompt))
             return None, "\nt.py::test_x expected 2, got 1; look at a.py:3\n", 2, {"cost": 0.0, "reference_cost": 0.002}
         with mock.patch.object(fc.fc_claude, "claude_once", once):
             brief, usage = fc.fc_implement.read_failure(Path("/w"), meta, "FAIL test_x", Path("/w/001.test.log"))
         self.assertEqual((brief, usage["reference_cost"]), ("t.py::test_x expected 2, got 1; look at a.py:3", 0.002))
-        model, tools, lean, prompt = calls[0]
-        self.assertEqual((model, tools, lean), ("claude-haiku-5-5", "Read,Grep,Glob", True))
+        model, tools, prompt = calls[0]
+        self.assertEqual((model, tools), ("claude-haiku-5-5", "Read,Grep,Glob"))
         for part in ("FAIL test_x", "pytest t.py", "/w/001.test.log", "a.py", "file:line"):
             self.assertIn(part, prompt)
         with mock.patch.object(fc.fc_claude, "claude_once", side_effect=subprocess.TimeoutExpired("claude", 120)):
