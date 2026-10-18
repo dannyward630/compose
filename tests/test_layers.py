@@ -305,6 +305,25 @@ class Layers(unittest.TestCase):
         self.assertIn(f"compose/p conflicts with main {main} in setup.txt; the layers and the stack are left as they were. "
                       "Rebase compose/p onto main, then re-run", stops[0])
 
+    def test_a_chain_rebase_that_stops_stops_the_stack_verify_and_top_before_they_act_on_the_layers_below_it(self):
+        def task_003_conflicts_with_002():
+            self.git("checkout", "-q", "-B", "compose/p-003", "compose/p")
+            self.write("002.src", "other\n"); self.write("003.src", "c\n"); self.commit("task 003 redone"); self.git("checkout", "-q", "compose/p")
+        stops = self.stop(task_003_conflicts_with_002)
+        why = "compose/p-003 conflicts when rebased onto compose/p-002 in 002.src; the layers below it are kept. Resolve by hand: git checkout compose/p-003 && git rebase --onto compose/p-002 "
+        self.assertEqual(len(stops), 1); self.assertIn(why, stops[0])
+        a = argparse.Namespace(repo=str(self.repo), project="p", fix=0, skip_review=True, skip_e2e=True, detach=False)
+        said = {}
+        for cmd in (fc.fc_verify.cmd_verify, fc.fc_status.cmd_top):
+            out = said[cmd.__name__] = []
+            with self.subTest(cmd.__name__):
+                with mock.patch.object(fc.fc_core, "say", out.append), \
+                        mock.patch.object(fc.fc_verify, "run_stages", side_effect=AssertionError("a stage ran")), self.assertRaises(SystemExit) as e:
+                    cmd(a)
+                self.assertEqual(e.exception.code, 1)
+        self.assertTrue(said["cmd_verify"][-1].startswith("verify FAIL  nothing verified or recorded: " + why), said["cmd_verify"])
+        self.assertFalse((self.proj / "results" / "verify.json").exists())
+
     def test_layers_that_do_not_add_up_to_the_chain_stop_the_stack_with_layers_and_gh_stack_untouched(self):
         real, broken = fc.fc_layers.review_units, mock.patch.object(fc.fc_layers, "review_units", lambda *a: real(*a)[:-1])
         stops = self.stop(broken.start)  # the top task's unit goes missing

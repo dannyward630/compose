@@ -358,12 +358,16 @@ def run_stages(repo, proj, cfg, a):
 def verify_root(repo, proj, cfg):
     """Where verify runs. Task branches are never merged locally, so with unmerged layers verify runs in the CLI worktree
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
-    base is the trunk. With no open layers it runs on the user's checkout against `review_base`."""
+    base is the trunk. With no open layers it runs on the user's checkout against `review_base`. A chain whose rebase stopped
+    fails verify here, before any stage and with no result recorded."""
     trunk = fc_core.current_branch(repo)
     if not fc_worktree.stack_order(repo, proj):
         return repo, cfg.get("review_base", trunk), None
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     chain = fc_layers.linearize(repo, proj, trunk, wt)
+    if fc_layers.STACK_STOP:  # the top of a partial chain lacks every layer above the stop: a pass there would claim the feature
+        fc_core.say(f"verify FAIL  nothing verified or recorded: {fc_layers.STACK_STOP}")
+        sys.exit(1)
     if not chain:
         return repo, cfg.get("review_base", trunk), None
     fc_core.sh(["git", "checkout", "-q", chain[-1]], wt)
