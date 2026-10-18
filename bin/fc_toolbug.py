@@ -107,7 +107,12 @@ def record_issue(project, url, at):
         return None
     lines = log.read_text().splitlines(keepends=True)
     for i in range(len(lines) - 1, -1, -1):
-        e = json.loads(lines[i])
+        try:
+            e = json.loads(lines[i])
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
         if e.get("project") == project and e.get("at") == at:
             if "issue" in e:
                 return e["issue"]
