@@ -668,11 +668,14 @@ class HowItWorksStackBase(unittest.TestCase):
         self.assertRegex(line, r"^  │ +format, commit on <project branch>-NNN +│$")
         self.assertFalse([l for l in self.lines[12:23] if "fast/" in l], "a fast/ branch in the box")
 
-    def test_the_edited_box_line_keeps_the_right_border_column(self):
-        above, line, below = self.lines[20:23]
-        self.assertEqual(len(line), len(above))
-        self.assertEqual(line.rindex("│"), above.rindex("│"))
-        self.assertEqual(below.rindex("┘"), line.rindex("│"))
+    def test_every_box_line_has_the_same_width_and_right_border(self):
+        box = self.lines[12:23]
+        self.assertEqual({len(l) for l in box}, {len(box[1])}, [len(l) for l in box])
+        self.assertEqual({l[-1] for l in box}, {"┐", "│", "┘"})
+        self.assertEqual({l[-1] for l in box[1:-1]}, {"│"})
+        # The run arrow still drops into the box under the `compose run│` line above it.
+        self.assertEqual(box[0].index("▼"), self.lines[11].rindex("│"))
+        self.assertRegex(box[4], r"^  │        yes ─▶ implement \(edits only\) ─▶ CLI runs test, protected untouched, ≤350 lines +│$")
 
     def test_the_stack_sits_on_the_review_base_and_merges_all_or_nothing(self):
         line = self.lines[152]
@@ -688,7 +691,7 @@ class HowItWorksStackBase(unittest.TestCase):
         self.assertEqual(len(self.lines), 191)
         self.assertFalse([l for l in self.lines if "—" in l], "em dash")
         self.assertEqual(self.lines[20], "  │                                  ▼                                                      │")
-        self.assertTrue(self.lines[22].startswith("  └──────────────────────────────────┬"))
+        self.assertEqual(self.lines[22], "  └──────────────────────────────────┬──────────────────────────────────────────────────────┘")
         self.assertEqual(self.lines[151], "  `init` git-ignores it, `graft/`, and `.trail/` first.")
         self.assertEqual(self.lines[153], "- `init --after <other>` branches from another project's branch when the feature needs its code.")
 
