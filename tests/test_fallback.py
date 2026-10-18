@@ -300,6 +300,29 @@ class FixScope(unittest.TestCase):
         rv = review("lib output defaults to main.js")
         self.assertEqual((rv["confirmed"], rv["pass"]), ([], True))
 
+    def test_review_counts_only_well_formed_findings_and_prints_each_on_one_line(self):
+        # A reviewer that spent its JSON reply on its reasoning: the schema echoed back, then objects of loose thoughts.
+        reasoning = [{"file": "str", "line": "int|null", "severity": "high|medium|low", "note": "str}]}`.\n  *   Avoid repeating words."},
+                     {"severity": "high", "Analysis": "Seems to align with C1. C1:"}, {"issue": "then later", "line": "If the diff relies on it"},
+                     {"file": "a.py", "line": 2.5, "severity": "low", "note": "n"}, {"file": "", "severity": "low", "note": "n"}]
+        confirms = []
+        def fj(env, system, user, **kw):
+            if "strict code reviewer" in system:
+                return {"issues": reasoning + [{"file": "a.py", "line": 2, "severity": "high", "note": "add\n  subtracts"}]}
+            confirms.append(user)
+            return {"confirmed": True, "evidence": "return a - b"}
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}), \
+                mock.patch.object(fc.fc_verify, "review_inputs", return_value=("return a - b", "plan", "", [])), redirect_stdout(out):
+            ok, report, findings = fc.fc_verify.run_stages(proj, proj, {"perspectives": ["correctness"], "jev_acceptance": False},
+                                                           type("A", (), {"skip_e2e": True, "skip_review": False}))
+        self.assertEqual((ok, len(confirms), [i["file"] for i in report["review"]["issues"]]), (False, 1, ["a.py"]))
+        self.assertIn("1 confirmed of 1 raised, 5 malformed dropped", out.getvalue())
+        self.assertIn("confirmed [high/correctness] a.py:2: add subtracts\n", out.getvalue())
+        self.assertNotIn("Avoid", out.getvalue() + findings)
+        self.assertNotIn("Analysis", out.getvalue() + findings)
+
     def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
         code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})
         self.assertEqual((code, res["passed"]), (1, False))

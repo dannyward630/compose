@@ -17,6 +17,12 @@ PERSPECTIVES = {
             "and whether those docs were updated to match. Only flag real mismatches.",
 }
 
+def well_formed(i):
+    """A finding in the shape the reviewer is asked for. The reply is always valid JSON, so a model that spends it on its
+    reasoning returns objects of loose thoughts or the schema echoed back; those are not findings."""
+    return (isinstance(i, dict) and isinstance(i.get("file"), str) and i["file"].strip() != "" and i.get("severity") in ("high", "medium", "low")
+            and isinstance(i.get("note"), str) and i["note"].strip() != "" and (i.get("line") is None or type(i["line"]) is int))
+
 def llm_review(cfg, diff, plan, docs_text, tests_pass):
     """Parallel fast-model reviews, one per perspective, then a confirmation pass on each high or medium finding.
     Only confirmed findings count. Fails on any confirmed high."""
@@ -30,22 +36,26 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
     def one(name):
+        """(well-formed findings, how many other entries the reply held)."""
         try:
             out = fc_models.fast_json_whole(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
                             user + (f"\n\nDOCS:\n{docs_text[:20000]}" if name == "docs" else ""))
             # Small models sometimes return the issues array bare, or something else entirely; never let that crash the stage.
             issues = out.get("issues", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
-            issues = [i for i in issues if isinstance(i, dict)]
+            issues = issues if isinstance(issues, list) else []
+            kept = [i for i in issues if well_formed(i)]
+            malformed = len(issues) - len(kept)
         except fc_models.PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
             # A reviewer that fails to answer is a coverage gap to report, not a defect in the code under review.
-            issues = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}]
-        for i in issues:
+            kept, malformed = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}], 0
+        for i in kept:
             i["perspective"] = name
-        return issues
+        return kept, malformed
     with ThreadPoolExecutor(max_workers=len(wanted)) as ex:
-        raw = [i for batch in ex.map(one, wanted) for i in batch]
+        batches = list(ex.map(one, wanted))
+    raw, malformed = [i for kept, _ in batches for i in kept], sum(n for _, n in batches)
     # Confirmation pass: an independent call must reproduce the claim from the code, or it is dropped.
     def confirm(i):
         if i.get("confirmed") or i.get("severity") not in ("high", "medium"):
@@ -71,7 +81,7 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
         issues = list(ex.map(confirm, raw))
     confirmed = [i for i in issues if i["confirmed"]]
     errors = [i for i in issues if i.get("judge_error")]
-    return {"pass": not errors and not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed,
+    return {"pass": not errors and not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed, "malformed": malformed,
             **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
 
 # TypeSafe answers HTTP 400 max_tokens_exceeded for a state of about 35k characters of dense text (30k passes, 40k fails); the old 150k cap never fit.
@@ -303,10 +313,11 @@ def run_stages(repo, proj, cfg, a):
         if gate_review:
             ok &= rv["pass"]
         fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
-        fc_core.say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")
+        fc_core.say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
+                    + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
-            print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {i.get('note')}")
+            print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
         for i in rv["confirmed"] if gate_review else []:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
     if not a.skip_review and cfg.get("jev_acceptance", True):
