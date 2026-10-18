@@ -54,7 +54,7 @@ def herdr_integration(agent):
     except FileNotFoundError:
         return False, ""
     line = next((l for l in p.stdout.splitlines() if l.startswith(f"{agent}:")), "")
-    return ("current" in line, "" if not line or "current" in line else line.strip())
+    return ("current" in line, "" if not line or "current" in line else line[len(agent) + 1:].strip())
 
 def check(row, checkout):
     """(ok, detail) for one row: detail names a floor miss, a dangling link, or a key's absence, never a key value."""
@@ -102,12 +102,12 @@ STEPS = (  # the rows, in setup order
     ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, "default", False, "run"),
     ("bp link", lambda co: owned_link("bp link", co), "compose setup", "default", False, "write"),
     ("Chromium", lambda co: (fc_checks.chromium_installed(), ""), "npx playwright install chromium", "default", False, "run"),
-    ("superpowers", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin install superpowers@claude-plugins-official", "default", True, "run"),
+    ("superpowers", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin marketplace add anthropics/claude-plugins-official && claude plugin install superpowers@claude-plugins-official", "default", True, "run"),
     ("herdr pi integration", lambda co: herdr_integration("pi"), "herdr integration install pi", "default", False, "run"),
     ("herdr claude integration", lambda co: herdr_integration("claude"), "herdr integration install claude", "default", True, "run"),
     ("TEXT_MODEL lines", lambda co: (fc_pi.text_model_set(fc_config.ENV_FILE), ""), "compose setup", "default", False, "write"),
     ("git rerere", lambda co: (fc_checks.rerere_set(), ""), "git config --global rerere.enabled true", "default", False, "run"),
-    ("pi auth.json override", lambda co: (not fc_pi.pi_auth_overrides(fc_pi.PI_AUTH), ""), "remove the openrouter and openrouter-fast entries from pi's auth.json", "default", False, "manual"),
+    ("pi auth.json override", lambda co: (not fc_pi.pi_auth_overrides(fc_pi.PI_AUTH), ""), f"remove the openrouter and openrouter-fast entries from {fc_pi.PI_AUTH}: pi reads those entries before the workspace key, so they override the workspace key", "default", False, "manual"),
     ("framelink-figma", lambda co: ("framelink-figma" in user_mcp_servers(), ""), FRAMELINK_ADD, "designer", True, "run"),
     ("framelink-figma token", lambda co: key_ok("figma"), "put a Figma personal access token in ~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600", "designer", False, "key"),
 )
