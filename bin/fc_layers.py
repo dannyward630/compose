@@ -301,36 +301,107 @@ def layer_title(repo, proj, l, n, metas):
     idx = int(l["branch"].rsplit("layer-", 1)[1])
     return f"{key.group(1).upper() + ': ' if key else ''}{first}{f' and {more} more' if more else ''} ({idx}/{n})"
 
-def layer_body(repo, proj, l, budget, metas):
-    """A layer's PR body: `## Why`, `## What changed`, `## How it was tested` and `## Tickets`, each left out when empty."""
+WHY_CHARS = 400
+GITHUB_ISSUE_RE = re.compile(r"https?://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)|(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)")
+
+def plain(text):
+    """Linear markdown as plain text: its escapes (`r\\["x"\\]`) undone and links reduced to their text."""
+    text = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~\"'])", r"\1", text or "")
+    return re.sub(r"\[([^\]]*)\]\(<?[^)>]*>?\)", r"\1", text).strip()
+
+def sentence(text):
+    """A title as a sentence, without the decision cards it cites, as `(C3)` or `(C3, C4)`."""
+    text = re.sub(r"\s*\((?:C\d+[,/ ]*(?:and )?)+\)", "", plain(text)).strip()
+    return text + ("" if not text or text[-1] in ".!?" else ".")
+
+def first_sentence(desc, key):
+    """The first sentence of a description's opening prose that says something about the product, or "": nothing past the
+    first heading, no list or next-action line, and no sentence that cites a decision card (C3), a ticket (`<key>-12`), or an
+    issue it fixes, so no process text and no brief reaches a reader."""
+    cites = re.compile(r"\bC\d+\b|^(Fixes|Closes|Resolves|Card|Decisions?)\b" + (rf"|\b{re.escape(key)}-\d+\b" if key else ""))
+    for para in re.split(r"\n\s*\n", plain(desc)):
+        para = " ".join(para.split())
+        if para.startswith("#"):
+            break
+        if not para or re.match(r"([-*+]|\d+\.)\s|Next:", para):
+            continue
+        for s in re.split(r"(?<=[.!?])\s+", para):
+            if not cites.search(s) and not GITHUB_ISSUE_RE.search(s) and "github.com/" not in s:
+                return sentence(s)
+    return ""
+
+def issue_refs(text):
+    """The GitHub issues a text names, as `owner/repo#N`, in order: issue URLs and `owner/repo#N` references."""
+    return list(dict.fromkeys(f"{a or c}#{b or d}" for a, b, c, d in GITHUB_ISSUE_RE.findall(text or "")))
+
+def linear_url(proj, ident):
+    """A Linear issue's link, in the workspace of the repo's `.compose/linear.json` project; the bare id when that is unknown."""
+    f = Path(proj).parent / "linear.json"
+    m = re.match(r"https://linear\.app/([^/]+)/", json.loads(f.read_text()).get("project") or "" if f.exists() else "")
+    return f"[{ident}](https://linear.app/{m.group(1)}/issue/{ident})" if m else ident
+
+def layer_why(proj, l, metas, layers):
+    """A layer's `## Why`: what its stories are for, in at most three sentences (their titles, and for a one-story layer the
+    first sentence of its description; the feature's when its tasks sit under no story), then the GitHub issues they name:
+    `Fixes owner/repo#N` on the layer that holds the last of the issue's tasks, `Part of owner/repo#N` below it. An issue
+    belongs to the story that names it, else to the feature and all its tasks. A groundwork layer says what it prepares.
+    At most WHY_CHARS characters, the issue lines kept whole."""
+    cache = fc_tasks.linear_cache(proj)
+    feature, issues = cache.get("feature") or {}, cache.get("issues") or {}
+    if not any(t != "groundwork" for t in l["tasks"]):
+        return [sentence(f"Groundwork for {feature.get('title') or 'the tasks above'}")[:WHY_CHARS]]
+    story = lambda m: (issues.get(m["linear"]) or {}).get("parentId") if (issues.get(m["linear"]) or {}).get("parentId") in issues else None
+    stories = list(dict.fromkeys(story(m) for m in metas if m["id"] in l["tasks"]))
+    text = lambda s: issues[s] if s else feature
+    said = [sentence(text(s).get("title", "")) for s in stories]
+    if len(stories) == 1:
+        said.append(first_sentence(text(stories[0]).get("description", ""), (feature.get("id") or "").split("-")[0]))
+    owner = {}
+    for s in [*dict.fromkeys(story(m) for m in metas if story(m)), None]:
+        for ref in issue_refs(text(s).get("title", "") + "\n" + text(s).get("description", "")):
+            owner.setdefault(ref, s)
+    here = [x for x in layers if x["branch"] == l["branch"]]
+    landed = {t for x in layers[:layers.index(here[0]) + 1] for t in x["tasks"]} if here else set(l["tasks"])
+    later = {m["id"] for m in metas if m["id"] not in landed and not fc_tasks.linear_done(m)}
+    refs = []
+    for ref, s in owner.items():
+        held = {m["id"] for m in metas if s is None or story(m) == s}
+        if held & set(l["tasks"]):
+            refs.append(f"- {'Part of' if held & later else 'Fixes'} {ref}")
+    room, why = WHY_CHARS - sum(len(r) + 1 for r in refs), []
+    for s in filter(None, said[:3]):
+        if len(" ".join([*why, s])) <= room:
+            why.append(s)
+    if not why and said and room > 3:
+        why = [said[0][:room - 3].rsplit(" ", 1)[0] + "..."]
+    return [" ".join(why), *refs] if why else refs
+
+def layer_body(repo, proj, l, budget, metas, layers=()):
+    """A layer's PR body: `## Why` (layer_why), `## What changed` (its commit subjects and its size line), `## How it was tested`
+    (one line per test command, then verify) and `## Tickets` (its tasks' Linear links), each left out when empty. `layers` is
+    the whole stack, bottom first, so an issue's `Fixes` lands on the layer that completes it; without it, every task not in
+    this layer is still to come."""
     res = Path(proj) / "results"
     read = lambda name: json.loads((res / f"{name}.json").read_text()) if (res / f"{name}.json").exists() else {}
-    title = read("tasks").get("feature", {}).get("title", "")
     by_id = {m["id"]: m for m in metas}
     tasks = [by_id[t] for t in dict.fromkeys(l["tasks"]) if t in by_id]
     subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
-    if tasks:
-        goals = [g.group(1).strip() for g in (re.search(r"## Goal\n(.*?)(?:\n## |\Z)", m["body"], re.S) for m in tasks) if g]
-        why = [title, *goals]
-    else:
-        why = [f"Groundwork for {title}.", *filter(None, (fc_core.sh(["git", "log", "-1", "--format=%b", c], repo).stdout.strip() for c in l["commits"]))]
-    how = [f"`{m['test']}`: passed, {read(m['id']).get('attempts', 0)} attempt(s)" for m in tasks]
-    added = {f for c in l["commits"] for f in fc_core.sh(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--diff-filter=A", c], repo).stdout.split()}
-    tests = sorted(added & {f for m in tasks for f in m["protected"]})
-    if tests:
-        how.append(f"tests added: {', '.join(tests)}")
+    runs = {}  # test command -> attempts of each task it tests
+    for m in tasks:
+        runs.setdefault(m["test"], []).append(read(m["id"]).get("attempts", 0))
+    how = [f"`{t}`: passed, {n[0]} attempt(s)" if len(n) == 1 else f"`{t}`: passed for {len(n)} tasks, {sum(n)} attempt(s) in all" for t, n in runs.items()]
     verify = read("verify")
     if verify:
         n = len(verify.get("rounds", []))
         how.append(f"verify passed in {n} round(s)" if verify.get("passed") else f"verify failed after {n} round(s)")
-    sections = [("Why", why), ("What changed", [f"- {x}" for x in [*subjects, layer_note(l, budget)]]), ("How it was tested", [f"- {x}" for x in how]),
-                ("Tickets", [m["linear"] for m in tasks])]
+    sections = [("Why", layer_why(proj, l, metas, list(layers))), ("What changed", [f"- {x}" for x in [*subjects, layer_note(l, budget)]]),
+                ("How it was tested", [f"- {x}" for x in how]), ("Tickets", [f"- {linear_url(proj, m['linear'])}" for m in tasks])]
     return "\n\n".join(f"## {h}\n" + "\n".join(lines) for h, lines in sections if lines)
 
-def layer_pr(repo, proj, l, n, budget, metas):
+def layer_pr(repo, proj, l, n, budget, metas, layers=()):
     """A layer's PR title and body. The title comes from the layer's commits (`JS-2888: ... (1/4)` when the project branch starts
-    with a Jira key); the body lists the tasks and the layer's size."""
-    return layer_title(repo, proj, l, n, metas), layer_body(repo, proj, l, budget, metas)
+    with a Jira key); the body says why the layer exists, what changed, and how it was tested (layer_body)."""
+    return layer_title(repo, proj, l, n, metas), layer_body(repo, proj, l, budget, metas, layers)
 
 def gh_pr_text(wt, b):
     """The title and body of the PR on branch b, or None when it has none."""
@@ -408,7 +479,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
             fc_core.say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
             lay = next((l for l in layers or [] if l["branch"] == b), None)
             if pr and lay:
-                title, body = layer_pr(repo, proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
+                title, body = layer_pr(repo, proj, lay, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     return [stack]
