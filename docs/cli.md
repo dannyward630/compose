@@ -50,7 +50,7 @@ These commands create, list, and clean up projects.
 | `doctor` | Checks every setup step (the tools, links, keys by presence only, pi's provider, the herdr config, the skill files). It prints one `MISSING: <name> (install: <command>)` line per absent or too-old step and exits 1 when a required one is missing; the default-on steps print `- optional`, and the designer rows print one `designer extras not set up` line. While `claude` is missing, the steps that need it share one `waiting on Claude Code` line. It also warns about a key still in `config.json` or `.env`, and about a gh that is not logged in (`gh auth` is also a required step, so that is a `MISSING` line too). `init` runs the same check first and stops before creating anything only when a required tool is missing, and `designer` checks Framelink first and stops before printing a brief |
 | `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
-| `status` | Shows every project with every task. `--watch` redraws every 2 s |
+| `status` | Shows every project with every task. `--watch` redraws every 2 s, and asks git only when a result file or a branch changed |
 | `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
 | `trail` | Sets trail up again in the project's worktree |
 

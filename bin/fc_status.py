@@ -1,4 +1,4 @@
-import json, sys, time
+import json, os, sys, time
 from pathlib import Path
 import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear
 
@@ -12,14 +12,25 @@ def project_head(repo, proj):
             return r.stdout.strip()
     return ""
 
-def task_state(repo, proj, meta, trunk_head):
-    """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk."""
+def branch_facts(repo, proj, trunk_head):
+    """What git says about the project's task branches, in two calls for the whole project rather than two per task: the
+    task prefix, the branches that exist, and those merged into trunk_head."""
+    prefix = fc_worktree.task_prefix(repo, proj)
+    def refs(*opts):
+        out = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", *opts, f"refs/heads/{prefix}*"], repo, check=False).stdout
+        return {l.removeprefix("refs/heads/") for l in out.split()}
+    return {"prefix": prefix, "have": refs(), "merged": refs(f"--merged={trunk_head}") if trunk_head else set()}
+
+def task_state(repo, proj, meta, trunk_head, facts=None):
+    """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk
+    (`facts`: branch_facts for the whole project; computed here when a caller reads one task)."""
     tid = meta["id"]
     res = proj / "results" / f"{tid}.json"
     r = json.loads(res.read_text()) if res.exists() else {}
-    branch = fc_worktree.task_branch(repo, proj, tid)
-    has_branch = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode == 0
-    merged = has_branch and fc_core.sh(["git", "merge-base", "--is-ancestor", branch, trunk_head], repo, check=False).returncode == 0
+    facts = facts or branch_facts(repo, proj, trunk_head)
+    branch = facts["prefix"] + tid
+    has_branch = branch in facts["have"]
+    merged = has_branch and branch in facts["merged"]
     state = r.get("status") or "pending"
     if state == "pending" and fc_tasks.linear_done(meta):
         state = "merged"  # done on Linear (another story's task, or finished earlier): never run again, never a stall
@@ -37,16 +48,59 @@ def task_state(repo, proj, meta, trunk_head):
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
-            "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or meta.get("model", "")).split("/")[-1]}
+            "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or meta.get("model", "")).split("/")[-1],
+            "linear": str(meta.get("linear") or "")}
+
+_git_dirs = {}
+
+def git_dirs(repo):
+    """(git dir, common dir) of a checkout, asked once per process: the refs live in the common dir, HEAD in the git dir."""
+    repo = Path(repo).resolve()
+    if repo not in _git_dirs:
+        out = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], repo, check=False).stdout.split("\n")
+        _git_dirs[repo] = (Path(out[0]), Path(out[1])) if len(out) > 1 and out[0] else (repo / ".git", repo / ".git")
+    return _git_dirs[repo]
+
+def board_stamp(repo, proj):
+    """Everything the board is computed from, as stat results: the project's state files, whether its run is alive, and the
+    repository's refs. Git writes a ref by renaming a lock file into place, which changes its directory's mtime, so the
+    directories under refs/heads plus packed-refs and HEAD see every branch created, moved, or deleted."""
+    def st(p):
+        try:
+            s = os.stat(p)
+            return (s.st_mtime_ns, s.st_size)
+        except OSError:
+            return None
+    files = sorted((f.name, st(f)) for f in (*proj.glob("*.json"), *(proj / "results").glob("*.json")))
+    gitdir, common = git_dirs(repo)
+    refs = sorted((d, st(d)) for d, _, _ in os.walk(common / "refs" / "heads"))
+    return (tuple(files), fc_tasks.run_alive(proj), st(gitdir / "HEAD"), st(common / "packed-refs"), tuple(refs))
+
+_board = {}
+
+def board(repo, proj):
+    """The project's board: every task's row, the trunk, and the stack layers. Computed with git only when its stamp changed
+    since this process last read it: `status --watch` and every parked `watch` read it every two seconds, from many loops at
+    once, and while nothing changed that must cost no process."""
+    repo, proj = Path(repo).resolve(), Path(proj)
+    stamp = board_stamp(repo, proj)
+    hit = _board.get(proj)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    tasks = fc_tasks.load_tasks(proj)
+    trunk_head = project_head(repo, proj)
+    facts = branch_facts(repo, proj, trunk_head)
+    b = {"trunk": fc_core.current_branch(repo), "trunk_head": trunk_head,
+         "rows": [task_state(repo, proj, m, trunk_head, facts) for m in tasks],
+         "layers": {x: i + 1 for i, x in enumerate(fc_worktree.stack_order(repo, proj, tasks))}}
+    _board[proj] = (stamp, b)
+    return b
 
 def render_status(repo, projects):
     out = []
     for proj in projects:
-        tasks = fc_tasks.load_tasks(proj)
-        trunk = fc_core.current_branch(repo)
-        trunk_head = project_head(repo, proj)
-        rows = [task_state(repo, proj, m, trunk_head) for m in tasks]
-        layers = {b: i + 1 for i, b in enumerate(fc_worktree.stack_order(repo, proj))}
+        b = board(repo, proj)
+        trunk, rows, layers = b["trunk"], b["rows"], b["layers"]
         counts = {}
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
@@ -81,18 +135,17 @@ def render_status(repo, projects):
 
 def project_summary(repo, proj):
     """One line per project: name, the feature's title, task counts by state, trunk, last activity."""
-    tasks = fc_tasks.load_tasks(proj)
-    trunk_head = project_head(repo, proj)
+    rows = board(repo, proj)["rows"]
     counts = {}
-    for m in tasks:
-        st = task_state(repo, proj, m, trunk_head)["state"].split(" ")[0]
+    for r in rows:
+        st = r["state"].split(" ")[0]
         counts[st] = counts.get(st, 0) + 1
     title = fc_tasks.linear_cache(proj)["feature"].get("title", "") or "(not synced from Linear yet)"
     stamps = [f.stat().st_mtime for f in (proj / "results").glob("*.json")] if (proj / "results").exists() else []
     last = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(stamps))) if stamps else "never run"
     done = counts.get("merged", 0) + counts.get("passed", 0) + counts.get("hand_done", 0) + counts.get("already_green", 0)
     halted = (proj / "results" / "resume.json").exists()
-    return {"name": proj.name, "title": title, "tasks": len(tasks), "done": done, "counts": counts, "last": last, "halted": halted,
+    return {"name": proj.name, "title": title, "tasks": len(rows), "done": done, "counts": counts, "last": last, "halted": halted,
             "after": fc_core.project_after(proj)}
 
 

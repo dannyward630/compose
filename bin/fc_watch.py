@@ -8,14 +8,26 @@ YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo dec
 # ---------- watch ----------
 FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
 
-def watch_snapshot(repo, proj):
+AGENTS_INTERVAL = 10.0  # seconds between `herdr agent list` calls in one watch loop: a teammate's status moves at the pace of its turns
+
+class Agents:
+    """`herdr agent list` for one watch loop, asked at most once per AGENTS_INTERVAL: one process per poll from every parked watch is too many."""
+    def __init__(self):
+        self.at, self.listed = None, None
+
+    def __call__(self):
+        now = time.monotonic()
+        if self.at is None or now - self.at >= AGENTS_INTERVAL:
+            self.listed, self.at = fc_herdr.herdr("agent", "list"), now
+        return self.listed
+
+def watch_snapshot(repo, proj, agents=None):
     """Everything a team lead decides on: each task's state, each herdr agent's status, run and verify markers."""
     try:
-        tasks = fc_tasks.load_tasks(proj)
+        rows = fc_status.board(repo, proj)["rows"]
     except json.JSONDecodeError:  # a writer that is not ours caught mid-write: one more look, then the real error
         time.sleep(0.5)
-        tasks = fc_tasks.load_tasks(proj)
-    trunk_head = fc_status.project_head(repo, proj)
+        rows = fc_status.board(repo, proj)["rows"]
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
     snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "crashed": bool(fc_tasks.run_marker(proj)) and not fc_tasks.run_alive(proj), "verify": None, "halt": None,
             "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
@@ -25,10 +37,9 @@ def watch_snapshot(repo, proj):
         snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or [])]
     except (OSError, json.JSONDecodeError, KeyError):
         pass
-    for m in tasks:
-        r = fc_status.task_state(repo, proj, m, trunk_head)
-        snap["tasks"][m["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": str(m.get("linear") or ""), "title": r["title"]}
-    listed = fc_herdr.herdr("agent", "list")
+    for r in rows:
+        snap["tasks"][r["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": r["linear"], "title": r["title"]}
+    listed = agents() if agents else fc_herdr.herdr("agent", "list")
     agents = None if listed is None else listed.get("agents", [])
     for ag in agents or []:
         n = ag.get("name") or ""
@@ -233,11 +244,12 @@ def cmd_watch(a, rewake=False):
         except (OSError, json.JSONDecodeError):
             cfg_stall = None
         limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
+        agents = Agents()
         while True:
             time.sleep(a.interval)
             if rewake and os.getppid() != parent:
                 return  # the session that parked this hook is gone
-            after = watch_snapshot(repo, proj)
+            after = watch_snapshot(repo, proj, agents)
             ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources, direct()))
             if ev:
                 fc_crew.manager_attention(proj, ev)

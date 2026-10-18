@@ -41,7 +41,8 @@ def cmd_tasks(a):
         print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {linear:9} {owned or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
     # Only tasks still to run can clash; a later wave may legitimately touch a file an already-merged task owned.
     trunk_head = fc_status.project_head(repo, proj)
-    open_tasks = [m for m in tasks if fc_status.task_state(repo, proj, m, trunk_head)["state"].split(" ")[0] not in ("merged", "hand_done", "already_green")]
+    facts = fc_status.branch_facts(repo, proj, trunk_head)
+    open_tasks = [m for m in tasks if fc_status.task_state(repo, proj, m, trunk_head, facts)["state"].split(" ")[0] not in ("merged", "hand_done", "already_green")]
     clashes = file_clashes(open_tasks)
     if clashes:
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")

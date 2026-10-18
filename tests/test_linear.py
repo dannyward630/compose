@@ -248,7 +248,7 @@ class DesignTasks(unittest.TestCase):
 
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
-        state = lambda repo, proj, m, head: {"state": "merged" if m["id"] == "003" else "pending"}
+        state = lambda repo, proj, m, head, facts=None: {"state": "merged" if m["id"] == "003" else "pending"}
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_status, "task_state", side_effect=state), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
             fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))

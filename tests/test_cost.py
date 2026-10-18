@@ -74,6 +74,51 @@ class SessionUsage(unittest.TestCase):
         write(d / "a2.jsonl", [user("Your brief is the file /p/a.brief.md.", 50)], now - 10)
         self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a2.jsonl")
 
+    def test_usage_reads_only_what_a_log_gained_since(self):
+        """A live session's log grows every turn and reaches tens of MB; `status --watch` must not parse it whole every two seconds."""
+        log = self.home / "d.jsonl"
+        write(log, [asst("m1", input_tokens=1, output_tokens=2), asst("m2", input_tokens=3, output_tokens=4), asst("m3", input_tokens=5, output_tokens=6)], 1_000_000)
+        with mock.patch.object(fc_sessions.json, "loads", wraps=json.loads) as loads:
+            self.assertEqual(fc_sessions.usage(log)["turns"], 3)
+            n = loads.call_count
+            with log.open("a") as f:
+                f.write(json.dumps(asst("m4", input_tokens=10, output_tokens=20)) + "\n")
+            self.assertEqual(fc_sessions.usage(log), {"model": "claude-sonnet-5-5", "turns": 4, "input": 19, "cache_created": 0, "cache_read": 0, "output": 32})
+            self.assertEqual(loads.call_count, n + 1, "the whole log was parsed again for one new line")
+
+    def test_usage_waits_for_a_line_still_being_written(self):
+        log = self.home / "e.jsonl"
+        write(log, [asst("m1", input_tokens=1, output_tokens=2)], 1_000_000)
+        self.assertEqual(fc_sessions.usage(log)["turns"], 1)
+        half = json.dumps(asst("m2", input_tokens=3, output_tokens=4))
+        with log.open("a") as f:
+            f.write(half[:20])
+        self.assertEqual(fc_sessions.usage(log)["turns"], 1)
+        with log.open("a") as f:
+            f.write(half[20:] + "\n")
+        self.assertEqual(fc_sessions.usage(log), {"model": "claude-sonnet-5-5", "turns": 2, "input": 4, "cache_created": 0, "cache_read": 0, "output": 6})
+
+    def test_usage_starts_over_when_a_log_was_rewritten_shorter(self):
+        log = self.home / "f.jsonl"
+        write(log, [asst("m1", input_tokens=1, output_tokens=2), asst("m2", input_tokens=3, output_tokens=4)], 1_000_000)
+        self.assertEqual(fc_sessions.usage(log)["turns"], 2)
+        write(log, [asst("m9", input_tokens=7, output_tokens=8)], 1_000_001)
+        self.assertEqual(fc_sessions.usage(log), {"model": "claude-sonnet-5-5", "turns": 1, "input": 7, "cache_created": 0, "cache_read": 0, "output": 8})
+
+    def test_find_session_reads_the_log_directory_again_only_when_it_changes(self):
+        cwd, now = "/w/.t/y", time.time()
+        d = fc_sessions.log_dir(cwd)
+        write(d / "a.jsonl", [user("Your brief is the file /p/a.brief.md.", -60), asst("m1")], now - 40)
+        with mock.patch.object(fc_sessions, "_first_user", wraps=fc_sessions._first_user) as reads:
+            self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a.jsonl")
+            n = reads.call_count
+            self.assertGreater(n, 0)
+            self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a.jsonl")
+            self.assertEqual(reads.call_count, n, "the directory did not change, yet every log was opened again")
+            time.sleep(0.01)
+            write(d / "a2.jsonl", [user("Your brief is the file /p/a.brief.md.", 50)], now - 10)
+            self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a2.jsonl")
+
     def test_usage_parses_again_only_when_mtime_or_size_changes(self):
         log = self.home / "c.jsonl"
         write(log, [asst("m1", input_tokens=1, output_tokens=2)], 1_000_000)

@@ -13,20 +13,26 @@ def log_dir(cwd):
     return Path.home() / ".claude" / "projects" / slug
 
 
-_cache = {}
+_cache = {}  # path -> what was read so far: the offset after the last complete line, the ids seen, the running sums
 
 
 def usage(path):
+    """Turns, tokens, and model of a session log. A log is append-only and a live one grows every turn to tens of MB, so
+    only the bytes added since the last read are parsed; a log rewritten shorter is read from the start; a line still being
+    written (no newline yet) waits for the next read."""
     p = Path(path).resolve()
     st = os.stat(p)
-    hit = _cache.get(str(p))
-    if hit and hit[0] == st.st_mtime and hit[1] == st.st_size:
-        return hit[2]
-    sums = dict.fromkeys(KEYS.values(), 0)
-    model, turns = None, 0
-    seen = set()
-    with open(p) as f:
+    c = _cache.get(str(p))
+    if c and c["stat"] == (st.st_mtime, st.st_size):
+        return c["result"]
+    if not c or st.st_size < c["offset"]:
+        c = {"offset": 0, "seen": set(), "model": None, "turns": 0, "sums": dict.fromkeys(KEYS.values(), 0)}
+    with open(p, "rb") as f:
+        f.seek(c["offset"])
         for line in f:
+            if not line.endswith(b"\n"):
+                break
+            c["offset"] += len(line)
             try:
                 obj = json.loads(line)
             except ValueError:
@@ -35,17 +41,18 @@ def usage(path):
             if obj.get("type") != "assistant" or not isinstance(msg, dict):
                 continue
             mid = msg.get("id")
-            if mid in seen:
+            if mid in c["seen"]:
                 continue
-            seen.add(mid)
-            turns += 1
-            if model is None:
-                model = msg.get("model")
+            c["seen"].add(mid)
+            c["turns"] += 1
+            if c["model"] is None:
+                c["model"] = msg.get("model")
             for src, dst in KEYS.items():
-                sums[dst] += msg.get("usage", {}).get(src) or 0
-    result = dict(model=model, turns=turns, **sums)
-    _cache[str(p)] = (st.st_mtime, st.st_size, result)
-    return result
+                c["sums"][dst] += msg.get("usage", {}).get(src) or 0
+    c["result"] = dict(model=c["model"], turns=c["turns"], **c["sums"])
+    c["stat"] = (st.st_mtime, st.st_size)
+    _cache[str(p)] = c
+    return c["result"]
 
 
 def _first_user(path):
@@ -63,12 +70,27 @@ def _first_user(path):
     return None
 
 
+_found = {}
+
+
 def find_session(cwd, started_at, brief_file):
+    """The session log of the teammate started at started_at with brief_file, or None. The directory is read again only when
+    a log was added since (its mtime): `status --watch` asks for every teammate every two seconds."""
     d = log_dir(cwd)
     if not d.is_dir():
         return None
+    key = (str(d), started_at, str(brief_file))
+    stamp = os.stat(d).st_mtime_ns
+    hit = _found.get(key)
+    if hit and hit[0] == stamp and (hit[1] is None or hit[1].exists()):
+        return hit[1]
+    best = _find_session(d, started_at, str(brief_file))
+    _found[key] = (stamp, best)
+    return best
+
+
+def _find_session(d, started_at, brief):
     start = time.mktime(time.strptime(started_at, "%Y-%m-%d %H:%M:%S")) - 120
-    brief = str(brief_file)
     best = None
     for f in d.glob("*.jsonl"):
         line = _first_user(f)

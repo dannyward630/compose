@@ -84,11 +84,9 @@ def replaced_tips(repo, proj):
 
 def task_branches(repo, proj):
     """Unmerged task branches with their base branch: {branch: base}. Base is the task branch (if any) the branch was built on."""
-    head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     prefix = task_prefix(repo, proj)
-    branches = [b for b in fc_core.sh(["git", "branch", "--list", f"{prefix}*"], repo, check=False).stdout.split()
-                if re.fullmatch(rf"{re.escape(prefix)}\d+", b)  # task branches only, not bench tags
-                and fc_core.sh(["git", "merge-base", "--is-ancestor", b, head], repo, check=False).returncode != 0]
+    refs = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", "--no-merged=HEAD", f"refs/heads/{prefix}*"], repo, check=False).stdout.split()
+    branches = [b for b in (r.removeprefix("refs/heads/") for r in refs) if re.fullmatch(rf"{re.escape(prefix)}\d+", b)]  # task branches only, not bench tags
     out = {}
     for b in branches:
         tid = b.removeprefix(prefix)
@@ -97,12 +95,13 @@ def task_branches(repo, proj):
         out[b] = base if base in branches else None
     return out
 
-def stack_order(repo, proj):
+def stack_order(repo, proj, tasks=None):
     """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
     One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are synced, a
-    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone."""
+    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone.
+    `tasks`: the synced tasks when the caller holds them already, else they are read here."""
     bases = task_branches(repo, proj)
-    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
+    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj) if tasks is None else tasks)}
     synced = (proj / "results" / "tasks.json").exists()
     prefix = task_prefix(repo, proj)
     ids = sorted(t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced)
