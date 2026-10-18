@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_proc
+import fc_core, fc_config, fc_claude, fc_proc, fc_readguard
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -10,8 +10,16 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     # stdin must be closed: opencode run reads a piped stdin until EOF and hangs on an open one.
     # OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: its scan of ~/.claude/skills follows a symlink to a checkout holding .treehouse/ worktrees until ENAMETOOLONG, and the run never ends.
     env, key = {**fc_core.clean_env(), "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"}, fc_config.openrouter_key()
+    config = {}
     if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}})
+        config["provider"] = {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}
+    guard = fc_readguard.guard_file(cwd)  # the plugin asks the guard before each tool call; bash stays fenced to trail
+    if guard.exists():
+        config["plugin"] = [f"file://{fc_readguard.OC_PLUGIN}"]
+        config["permission"] = {"external_directory": "deny", "bash": {"*": "deny", "trail ask *": "allow", "trail callers *": "allow"}}
+        env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
+    if config:
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config)
     for attempt in range(4):
         p = fc_proc.run(cmd, cwd=cwd, env=env, timeout=timeout)
         # Parallel launches race on opencode's shared SQLite file. Back off and retry; nothing has run yet when this happens.
@@ -86,8 +94,13 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     env = fc_core.clean_env()  # no secret but the key pi bills to: pi's tools, the task's test among them, inherit its env
     if "OPENROUTER_API_KEY" in os.environ:  # pi's custom providers read the key from env
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+    guard = fc_readguard.guard_file(cwd)  # the extension asks the guard before each tool call
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
-           "--no-prompt-templates", "--thinking", "low", "--model", model, prompt]
+           "--no-prompt-templates", "--thinking", "low", "--model", model]
+    if guard.exists():  # -e loads it despite --no-extensions; COMPOSE_READGUARD tells it which shell line runs the guard
+        cmd += ["-e", str(fc_readguard.PI_EXT)]
+        env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
+    cmd.append(prompt)
     p = fc_proc.run(cmd, cwd=cwd, env=env, timeout=timeout)
     text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
     for line in p.stdout.splitlines():
