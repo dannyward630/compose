@@ -224,11 +224,13 @@ def run_test(meta, wt):
 
 def cmd_timed(argv):
     """`compose timed <seconds> -- <command>`: what teammates run tests and commands through, so a hang fails fast.
-    One argument is a shell line; several are the command's own arguments, quoted so sh passes each through unchanged."""
+    One argument is a shell line; several are the command's own arguments, quoted so sh passes each through unchanged.
+    The command gets the caller's env as it is, keys included: no config is applied here, so every key in it is the caller's
+    own, not one the CLI exported. Only COMPOSE_CONFIG is a scratch one, and the output is still scrubbed."""
     if len(argv) < 3 or argv[1] != "--":
         sys.exit("usage: compose timed <seconds> -- <command>")
     cmd = argv[2] if len(argv) == 3 else shlex.join(argv[2:])
-    r = timed(cmd, os.getcwd(), int(argv[0]), env=fc_core.clean_env())
+    r = timed(cmd, os.getcwd(), int(argv[0]), env={**os.environ, "COMPOSE_CONFIG": fc_core.scratch_config()})
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 

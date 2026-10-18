@@ -86,15 +86,16 @@ class Secrets(unittest.TestCase):
         self.assertClean(log)
         self.assertClean(prompts[1])
 
-    def test_compose_timed_runs_the_command_without_them(self):
+    def test_compose_timed_passes_the_callers_own_keys_through_and_redacts_them_in_its_output(self):
         env = {**os.environ, "OPENROUTER_API_KEY": KEY, "TYPESAFE_API_KEY": TYPESAFE}
         env.pop("COMPOSE_CONFIG", None)
-        p = subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--", "env"], capture_output=True, text=True, env=env)
+        p = subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--",
+                            f'test "$OPENROUTER_API_KEY" = {KEY} && test "$TYPESAFE_API_KEY" = {TYPESAFE} && env'], capture_output=True, text=True, env=env)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn("PATH=", p.stdout)
-        self.assertNotIn("OPENROUTER_API_KEY", p.stdout)
-        self.assertNotIn("TYPESAFE_API_KEY", p.stdout)
+        self.assertIn("OPENROUTER_API_KEY=<redacted>", p.stdout)
+        self.assertIn("TYPESAFE_API_KEY=<redacted>", p.stdout)
         self.assertNotIn(KEY, p.stdout)
+        self.assertNotIn(TYPESAFE, p.stdout)
 
     def test_compose_code_under_test_keeps_its_state_out_of_the_users_compose_home_and_a_write_there_is_flagged(self):
         env = {**os.environ}
