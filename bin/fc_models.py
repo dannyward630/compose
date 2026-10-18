@@ -129,7 +129,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     return sid, "\n".join(text), tools, usage
 
 def fallback_for(model):
-    """The model to switch to after a miss, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
+    """The model to switch to after FALLBACK_AFTER failed attempts or a rate limit, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
     return fc_config.FALLBACK_MODEL if fc_config.FALLBACK_MODEL and model != fc_config.FALLBACK_MODEL and not fc_claude.is_claude(model) else None
 
 
@@ -294,11 +294,7 @@ def cmd_models(a):
 
 
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
-TURN_TIMEOUT = 180  # seconds one implementer turn may take on its own; GLM turns take 10 to 40 s, a hang used to cost 300 s an attempt
-
-def turn_timeout(meta):
-    """A turn's wall-time limit: the turn itself plus one run of the task's test, which the implementer runs inside the turn."""
-    return TURN_TIMEOUT + int(meta.get("test_timeout") or TEST_TIMEOUT)
+TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, and the task's test runs after the turn, not in it
 
 
 def payment_halt(repo, proj, command, remaining, args, err):

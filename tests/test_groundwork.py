@@ -276,19 +276,23 @@ class Triage(unittest.TestCase):
                 self.assertEqual((verdict, reason), ("unknown", f"triage failed: reply cut off at max_tokens={budgets[1]}"))
 
 
-class CondenseFailure(unittest.TestCase):
-    def test_short_output_keyless_or_failing_calls_add_nothing(self):
-        with mock.patch.object(fc.fc_models, "fast_json", side_effect=AssertionError("no call for short output")):
-            self.assertEqual(fc.fc_implement.condense_failure("FAIL x"), "")
-        long = "noise\n" * 400
-        with mock.patch.object(fc.fc_models, "fast_env", return_value={}):
-            self.assertEqual(fc.fc_implement.condense_failure(long), "")
-        with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
-                mock.patch.object(fc.fc_models, "fast_json", side_effect=TimeoutError()):
-            self.assertEqual(fc.fc_implement.condense_failure(long), "")
-        with mock.patch.object(fc.fc_models, "fast_env", return_value={"TEXT_MODEL_API_KEY": "k"}), \
-                mock.patch.object(fc.fc_models, "fast_json", return_value={"summary": "TestScore: want 2, got 1"}):
-            self.assertEqual(fc.fc_implement.condense_failure(long), "TestScore: want 2, got 1")
+class ReadFailure(unittest.TestCase):
+    def test_haiku_writes_the_brief_read_only_and_failures_add_nothing(self):
+        meta, calls = {"test": "pytest t.py", "files": ["a.py"]}, []
+        def once(cwd, prompt, timeout=900, model=None, tools=None, lean=False):
+            calls.append((model, tools, lean, prompt))
+            return None, "\nt.py::test_x expected 2, got 1; look at a.py:3\n", 2, {"cost": 0.0, "reference_cost": 0.002}
+        with mock.patch.object(fc.fc_claude, "claude_once", once):
+            brief, usage = fc.fc_implement.read_failure(Path("/w"), meta, "FAIL test_x", Path("/w/001.test.log"))
+        self.assertEqual((brief, usage["reference_cost"]), ("t.py::test_x expected 2, got 1; look at a.py:3", 0.002))
+        model, tools, lean, prompt = calls[0]
+        self.assertEqual((model, tools, lean), ("claude-haiku-5-5", "Read,Grep,Glob", True))
+        for part in ("FAIL test_x", "pytest t.py", "/w/001.test.log", "a.py", "file:line"):
+            self.assertIn(part, prompt)
+        with mock.patch.object(fc.fc_claude, "claude_once", side_effect=subprocess.TimeoutExpired("claude", 120)):
+            self.assertEqual(fc.fc_implement.read_failure(Path("/w"), meta, "FAIL", Path("/w/l")), ("", None))
+        with mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.object(fc.fc_claude, "claude_once", side_effect=AssertionError("no reader set")):
+            self.assertEqual(fc.fc_implement.read_failure(Path("/w"), meta, "FAIL", Path("/w/l")), ("", None))
 
 
 class CrewWorkdir(unittest.TestCase):

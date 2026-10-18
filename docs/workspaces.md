@@ -34,7 +34,7 @@ The active workspace is merged over the top level:
 ```json
 {"workspace": "work",
  "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
-            "fallback": null, "fix": "<default: implementer>",
+            "fallback": null, "fallback_after": 2, "test_reader": "claude:claude-haiku-5-5", "fix": "<default: implementer>",
             "crew": {"planner": {"model": "pi:openai/gpt-6-astra", "effort": "high",
                                  "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
@@ -48,6 +48,13 @@ The workspace key reaches pi, OpenCode, the Mercury review, and jev, so every Op
 OpenRouter presets belong to an account, so create `glm-5-3-flash-fast` in each workspace's account.
 `run` and `resume` send each model one tiny prompt first.
 If an id or preset is wrong, the run stops with the provider's message.
+
+`fallback_after` is how many failed attempts a task gets on its own model before `fallback` takes over.
+A rate limit switches at once.
+`test_reader` reads each failed test run and writes the implementer's fix brief.
+It must be a `claude:` model, since it runs in Claude Code with read-only tools.
+`null` sends the raw test output alone.
+It is not probed first: when it fails, the raw output goes back instead.
 
 A model id names its harness:
 

@@ -16,8 +16,9 @@ PRIMARY, BACKUP = "pi:p/primary", "pi:b/backup"
 
 
 class Fallback(unittest.TestCase):
-    def run_once(self, first, reset_files=False):
-        """The primary model behaves as `first` ("error" or "miss"); the fallback writes the answer. Returns (result, models called)."""
+    def run_once(self, first, reset_files=False, after=2):
+        """The primary model behaves as `first` ("error", "miss", or "rate"); the fallback writes the answer. Returns (result, models called);
+        the prompts land in self.prompts."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -27,19 +28,22 @@ class Fallback(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
-        calls = []
+        calls, self.prompts = [], []
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
-            calls.append(model)
+            calls.append(model); self.prompts.append(prompt)
             if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
+            if model == PRIMARY and first == "rate":
+                raise fc.fc_models.RateLimited({"cost": 0.0})
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
+                mock.patch.object(fc.fc_config, "FALLBACK_AFTER", after), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, 3, reset_files=reset_files), calls
 
-    def test_turn_limit_leaves_room_for_the_tasks_test(self):
+    def test_turn_limit_has_no_room_for_a_test_run(self):
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -57,20 +61,34 @@ class Fallback(unittest.TestCase):
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.fc_implement.run_task(repo, proj, task, 3)
-        self.assertGreaterEqual(limits[0], fc.fc_models.TURN_TIMEOUT + 300)
+        self.assertEqual(limits[0], fc.fc_models.TURN_TIMEOUT)  # compose runs the test after the turn, never inside it
 
-    def test_error_falls_back(self):
+    def test_error_falls_back_after_two(self):
         r, calls = self.run_once("error")
         self.assertEqual(r["status"], "passed")
-        self.assertEqual(calls, [PRIMARY, BACKUP])
+        self.assertEqual(calls, [PRIMARY, PRIMARY, BACKUP])
         self.assertEqual(r["model"], BACKUP)
-        self.assertEqual(r["attempts"], 2)
-        self.assertEqual(r["log"][0]["fallback"]["why"], "errored")
+        self.assertEqual(r["attempts"], 3)
+        self.assertEqual(r["log"][1]["fallback"]["why"], "errored")
 
-    def test_miss_falls_back_with_feedback(self):
+    def test_two_misses_then_the_fallback(self):
         r, calls = self.run_once("miss")
         self.assertEqual(r["status"], "passed")
-        self.assertEqual(calls, [PRIMARY, BACKUP])
+        self.assertEqual(calls, [PRIMARY, PRIMARY, BACKUP])
+        self.assertNotIn("fallback", r["log"][0])
+        self.assertEqual(r["log"][1]["fallback"]["why"], "missed")
+        self.assertEqual(self.run_once("miss", after=1)[1], [PRIMARY, BACKUP])  # models.fallback_after
+
+    def test_rate_limit_switches_at_once(self):
+        r, calls = self.run_once("rate")
+        self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+
+    def test_implementer_is_told_not_to_run_the_test(self):
+        self.run_once("miss")
+        self.assertIn("grep -q yes a.txt", self.prompts[0])
+        self.assertIn("Do not run it", self.prompts[0])
+        self.assertNotIn(" timed ", self.prompts[0])
+        self.assertNotIn("Run the test command", self.prompts[0])
 
     def test_fallback_has_no_fallback(self):
         with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
@@ -289,11 +307,13 @@ def ws(name=None, target=None, stdin=""):
 class Workspaces(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "config.json"
-        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fix": "pi:f/x"},'
+        self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fix": "pi:f/x", "fallback_after": 3,'
+                             ' "test_reader": "claude:claude-haiku-x"},'
                              ' "workspaces": {"work": {"openrouter_api_key": "sk-work"},'
                              ' "personal": {"openrouter_api_key": "sk-home", "models": {"fallback": null}, "env": {"X_FC": "1"}}}}')
         self.patches = [mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
                         mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
+                        mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER),
                         mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)]
         for p in self.patches:
             p.start()
@@ -309,6 +329,7 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(os.environ["COMPOSE_FIX_MODEL"], "pi:f/x")
         self.assertNotIn("OPENCODE_CONFIG_CONTENT", os.environ)  # OpenCode gets the key from a file, not an env its tools inherit
         self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:g/h")
+        self.assertEqual((fc.fc_config.FALLBACK_AFTER, fc.fc_config.TEST_READER), (3, "claude:claude-haiku-x"))
 
     def test_switch_overrides_top_level(self):
         ws("personal")
@@ -389,8 +410,9 @@ class Workspaces(unittest.TestCase):
 
 
 class RetryMessage(unittest.TestCase):
-    def run_three(self, summary="", backup=None):
-        """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path)."""
+    def run_three(self, summary="", backup=None, session="s", reader_cost=0.0):
+        """Attempts write a, b, yes; the test prints 5,000 copies and fails until yes. Returns (result, prompts, logs seen, log path);
+        the run's log lines land in self.said."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -407,9 +429,11 @@ class RetryMessage(unittest.TestCase):
             prompts.append(prompt)
             seen.append(log.read_text() if log.exists() else None)
             (Path(cwd) / "a.txt").write_text(["a", "b", "yes"][len(prompts) - 1] + "\n")
-            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+            return session, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        self.said = []
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
-                mock.patch.object(fc.fc_implement, "condense_failure", return_value=summary), \
+                mock.patch.object(fc.fc_implement, "read_failure", return_value=(summary, {"cost": reader_cost, "reference_cost": 0.5} if summary else None)), \
+                mock.patch.object(fc.fc_core, "say", self.said.append), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", backup), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, 3), prompts, seen, log
@@ -427,6 +451,18 @@ class RetryMessage(unittest.TestCase):
             self.assertEqual(Path(path).resolve(), log.resolve())
         self.assertEqual([len(e["test_output"]) for e in r["log"][:2]], [3000, 3000])
 
+    def test_reader_cost_counts_and_shows(self):
+        r, _, _, _ = self.run_three(summary="case_x expected yes, got a", reader_cost=0.01)
+        self.assertAlmostEqual(r["cost"], 0.02)
+        fails = [l for l in self.said if " attempt " in l and " fail " in l]
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(all("reader $0.0100" in l for l in fails), fails)
+
+    def test_no_session_to_resume_starts_again_from_the_task(self):
+        _, prompts, _, _ = self.run_three(session=None)  # Claude Code runs each turn one-shot
+        self.assertTrue(prompts[1].startswith(prompts[0]))
+        self.assertIn("The test still fails.", prompts[1])
+
     def test_no_summary_leaves_out_what_failed(self):
         _, prompts, _, _ = self.run_three(summary="")
         self.assertNotIn("What failed:", prompts[1])
@@ -434,8 +470,8 @@ class RetryMessage(unittest.TestCase):
 
     def test_fallback_starts_from_the_task_and_ends_with_the_same_problems(self):
         r, prompts, _, _ = self.run_three(backup=BACKUP)
-        self.assertEqual(r["log"][0]["fallback"]["to"], BACKUP)
-        self.assertTrue(prompts[1].startswith(prompts[0]))
-        problems = prompts[1][prompts[1].index("The test still fails."):]
+        self.assertEqual(r["log"][1]["fallback"]["to"], BACKUP)  # after models.fallback_after (2) misses
+        self.assertTrue(prompts[2].startswith(prompts[0]))
+        problems = prompts[2][prompts[2].index("The test still fails."):]
         self.assertIn("Full output: ", problems)
         self.assertLess(len(problems), 2000)  # the short tail, not the 3,000-character one

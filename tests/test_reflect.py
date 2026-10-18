@@ -376,7 +376,7 @@ class ImplementerContradiction(unittest.TestCase):
             prompts.append(prompt)
             return "s", reply, 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
-                mock.patch.object(fc.fc_core, "say", lambda m: None), \
+                mock.patch.object(fc.fc_core, "say", lambda m: None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, meta, 3), prompts
 

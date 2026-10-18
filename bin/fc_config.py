@@ -6,7 +6,7 @@ import fc_core
 # ---------- global config and workspaces ----------
 # ~/.compose/config.json: top-level settings, and `workspaces` whose active entry (`workspace`) overrides them.
 #   {"workspace": "work",
-#    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:...",
+#    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fallback_after": 2, "test_reader": "claude:<id>" or null, "fix": "pi:...",
 #               "crew": {"orchestrator": "claude:<id>", "<role>": "claude:<id>", "default": "claude:<id>", "small": "claude:<id>"}},
 #    "env": {"TYPESAFE_API_KEY": "..."},
 #    "parallel": 20,
@@ -18,9 +18,12 @@ import fc_core
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Teammate sessions run in pi or Claude Code.
 
 DEFAULT_MODEL = "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"  # pi harness; the OpenRouter preset pins Together, then CoreWeave
-# Takes over when an attempt errors, times out, is rate-limited, or misses. None by default: GLM passes where gpt-oss kept missing,
-# so a second model is opt-in (`models.fallback` in the config).
+# Takes over after FALLBACK_AFTER failed attempts (misses, errors, timeouts) on a task's model, or at once on a rate limit. None by
+# default: GLM passes where gpt-oss kept missing, so a second model is opt-in (`models.fallback` in the config).
 FALLBACK_MODEL = None
+FALLBACK_AFTER = 2
+# Reads a failed test run and writes the implementer's short fix brief, in Claude Code with read-only tools. None sends the raw tail alone.
+TEST_READER = "claude:claude-haiku-5-5"
 JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent verify's e2e cases drive: its own uv project
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
@@ -70,7 +73,7 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL
     name, st = settings(read_config())
     PARALLEL = st.get("parallel")
     if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
@@ -85,6 +88,8 @@ def apply_config():
                      for k, v in crew.items() if isinstance(v, dict) and v.get("fallback")}  # one entry or an ordered list
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
+    FALLBACK_AFTER = int(models.get("fallback_after", FALLBACK_AFTER))
+    TEST_READER = models.get("test_reader", TEST_READER)
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
@@ -166,7 +171,8 @@ def cmd_workspace(a):
         print(f"{'*' if n == current else ' '} {n:16} openrouter key {state}, linear key {lin}")
     _, st = settings(cfg)
     m = st.get("models", {})
-    print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)}\nfix         {m.get('fix', '(implementer)')}")
+    print(f"implementer {m.get('implementer', DEFAULT_MODEL)}\nfallback    {m.get('fallback', FALLBACK_MODEL)} after {m.get('fallback_after', FALLBACK_AFTER)} failed attempts\n"
+          f"test reader {m.get('test_reader', TEST_READER)}\nfix         {m.get('fix', '(implementer)')}")
     show = lambda e: (f"{e.get('model')}" + (f" ({e['effort']} effort)" if e.get("effort") else "")) if isinstance(e, dict) else str(e)
     for role, entry in (m.get("crew") or {}).items():
         fb = entry.get("fallback") if isinstance(entry, dict) else None

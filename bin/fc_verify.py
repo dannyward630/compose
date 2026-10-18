@@ -434,7 +434,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
                   + (f"DESIGN CONTEXT (authoritative; never contradict it): {cfg['review_context']} " if cfg.get("review_context") else "") +
                   "Fix the app for a real user, never for the test harness: do not add labels, text, attributes, or "
                   "shortcuts aimed at the test bot or the e2e script; if a finding is the harness's fault, change nothing. "
-                  "Run the test commands yourself before finishing. Do not explain, just edit; your whole reply is one line, "
+                  "Do not run tests or checks: verify runs every stage again after your turn. Do not explain, just edit; your whole reply is one line, "
                   "a plain description of the change you made (like 'Save submissions in one transaction'), never about this process.\n\nFINDINGS:\n" + findings[:30000])
         try:
             _, reply, tools, usage = fc_implement.implementer(repo, model, prompt)

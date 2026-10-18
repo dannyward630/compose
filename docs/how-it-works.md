@@ -14,9 +14,9 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   │ DISPATCH   one clone + one pi session per task (GLM 5.3 Flash); `after:` tasks start    │
   │            on their base task's branch                                                  │
   │   test RED on HEAD? ─ no ─▶ skip                                                        │
-  │        yes ─▶ implement ─▶ run test, protected files untouched, ≤350 lines, own files  │
+  │        yes ─▶ implement (edits only) ─▶ CLI runs test, protected untouched, ≤350 lines │
   │                 ▲                │                                                      │
-  │                 └── RED: failure fed back to the same session, ≤3 attempts             │
+  │                 └── RED: Haiku's fix brief to the session, ≤3, fallback after 2         │
   │                                  │ GREEN                                                │
   │                                  ▼                                                      │
   │                         format, commit on fast/<project>/NNN                            │
@@ -35,17 +35,18 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Seven roles split the decisions.
+Eight roles split the decisions.
 
 | Who | Decides |
 |---|---|
 | Team lead (Claude, frontier) | spec, review of the planner's cut, tests, layer review, escalations; never writes code or merges |
 | Planner (frontier teammate) | the plan, the stories when a feature has none, and the task issues; never writes code |
 | Designer (Claude teammate) | design stories and tasks in Figma, built by its own crew; never writes repo files or decides a product question |
-| Fast implementer (GLM 5.3 Flash in pi) | makes one test green in one session; never writes tests |
+| Fast implementer (GLM 5.3 Flash in pi) | makes one test green in one session; never writes or runs tests |
+| Test reader (Claude Haiku) | reads a failed test run and writes the implementer's short fix brief; never edits or runs anything |
 | Mercury | raises review findings, then confirms or drops them |
 | Jev (TypeSafe) | scores acceptance criteria, drives the browser, screens settled decisions against new evidence |
-| CLI | red check, protected-file guard, timing, cost ledger |
+| CLI | red check, every test run, protected-file guard, timing, cost ledger |
 
 A task that fails three attempts is re-split into smaller tasks and re-run, and the loop never falls back to typing its code by hand.
 A provider that runs out of credit halts the run, and [workspaces.md](workspaces.md#billing-halts) explains billing halts.
@@ -168,6 +169,9 @@ A project whose build output depends on where `node_modules` lives sets `install
 ## Model choices
 
 Since 2026-10-10, the default implementer is `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast`, with no fallback.
+With `models.fallback` set, a task gets `models.fallback_after` failed attempts (default 2) on its own model before the fallback takes the rest; a rate limit switches at once.
+Implementers never run tests: an implementer waiting on a test run pays for the wait, and every later turn re-reads the output as input tokens.
+The CLI runs the test after each turn, and on a failure the test reader (`models.test_reader`, default `claude:claude-haiku-5-5`) writes the implementer's fix brief.
 
 GLM 5.3 Flash earned that spot on a real seven-task project.
 There, gpt-oss-120b on Cerebras missed the largest task four times and was rate-limited on two more, while GLM 5.3 Flash passed each on its first try in 9 to 20 s.

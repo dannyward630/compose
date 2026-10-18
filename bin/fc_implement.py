@@ -1,4 +1,4 @@
-import shlex, json, os, re, signal, subprocess, sys, time
+import json, os, re, signal, subprocess, sys, time
 from pathlib import Path
 import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers
 
@@ -173,20 +173,25 @@ def format_files(wt, files, base="HEAD"):
             out.append(f)
     return out
 
-def condense_failure(output):
-    """A few lines naming the failing case(s) and why, for the implementer's next attempt. Empty when the output is already
-    short, no key is set, or the fast model fails: the raw tail always follows, so this only ever adds."""
-    if len(output) < 1200:
-        return ""
-    env = fc_models.fast_env()
-    if not env.get("TEXT_MODEL_API_KEY"):
-        return ""
+READER_TIMEOUT = 120  # seconds the test reader may take before the raw tail goes back alone
+
+def read_failure(wt, meta, output, log_path):
+    """(brief, usage): the test reader's short fix brief for a failed test run, for the implementer's next attempt. The reader
+    (models.test_reader, Claude Haiku by default) runs headless in the task's clone with read-only tools, so it can point at the
+    file:line but never edit or run anything. ("", None) when no Claude reader is set, or it fails or times out: the raw tail
+    always follows, so this only ever adds."""
+    if not fc_config.TEST_READER or not fc_claude.is_claude(fc_config.TEST_READER):
+        return "", None
+    prompt = (f"A test run failed in this repository.\nTest command: {meta['test']}\nFull output: {log_path}\nOutput (tail):\n{output[-6000:]}\n\n"
+              f"Files the fix may change: {', '.join(meta['files']) or 'any'}. Open the test file and those files with Read when the output alone does not "
+              "show where the problem is; you cannot edit files or run commands. "
+              "Reply with at most 8 short lines and nothing else: each failing case, what it expected versus what it got, and the file:line "
+              "to look at. No advice beyond that, no code.")
     try:
-        v = fc_models.fast_json(env, "You read a failing test run. Return JSON {\"summary\": str}: in at most 5 short lines, name each failing "
-                      "test case and what it expected versus what it got. No advice, no code.", output[-8000:], max_tokens=300, timeout=15)
-        return str(v.get("summary") or "").strip()[:800]
-    except Exception:  # noqa: BLE001 - a summary is optional
-        return ""
+        _, reply, _, usage = fc_claude.claude_once(wt, prompt, timeout=READER_TIMEOUT, model=fc_claude.claude_id(fc_config.TEST_READER), tools="Read,Grep,Glob", lean=True)
+    except Exception:  # noqa: BLE001 - a timeout or a refused call leaves the raw tail
+        return "", None
+    return reply.strip()[:1500], usage
 
 HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
              "another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
@@ -220,7 +225,7 @@ def run_test(meta, wt):
     return timed(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT), env=fc_core.clean_env())
 
 def cmd_timed(argv):
-    """`compose timed <seconds> -- <command>`: what implementers run their test through, so a hang fails fast."""
+    """`compose timed <seconds> -- <command>`: what teammates run tests and commands through, so a hang fails fast."""
     if len(argv) < 3 or argv[1] != "--":
         sys.exit("usage: compose timed <seconds> -- <command>")
     r = timed(" ".join(argv[2:]), os.getcwd(), int(argv[0]), env=fc_core.clean_env())
@@ -286,10 +291,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"Files you may edit: {abs_files}.\n"
               f"Files you must NOT edit: {abs_protected}.\n"
               f"Done means this command exits 0: {meta['test']}\n"
-              f"Run it through the time limit, exactly: {shlex.quote(str(Path(sys.argv[0]).resolve()))} timed {int(meta.get('test_timeout') or fc_models.TEST_TIMEOUT)} -- {meta['test']}\n"
+              "Do not run it, or any other test or build: compose runs the test after your turn ends and sends you what failed. "
+              "Read the test file, edit, and end your turn.\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
-              "Run the test command once before finishing; if it hangs, your code deadlocks or waits forever, so stop it and fix that. Make the smallest, simplest change that passes: no defensive checks, flags, "
+              "Make the smallest, simplest change that passes: no defensive checks, flags, "
               "hardening, helpers, or comments the task does not ask for. Do not explain, just edit.\n"
               f"Hard limits: the whole change must stay under {fc_config.MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
               "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
@@ -309,19 +315,27 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_linear.linear_event(proj, meta, "dispatched")
     rate_waits = 0
     attempt = 0
+    fails = 0  # failed attempts on the current model
     fall = lambda: None if reset_files else fc_models.fallback_for(meta["model"])  # bench measures the named model alone
     def switch(why, next_prompt):  # hand the task to the fallback model in a fresh session (a session is bound to its model)
-        nonlocal session, prompt
+        nonlocal session, prompt, fails
         model = fall()
         fc_core.say(f"{tid} fallback {meta['model']} {why}; switching to {model}")
         log[-1]["fallback"] = {"from": meta["model"], "to": model, "why": why}  # on the attempt that triggered it
-        meta["model"], session, prompt = model, None, next_prompt
+        meta["model"], session, prompt, fails = model, None, next_prompt, 0
+    def failed(why, next_prompt):  # one more failed attempt: the fallback takes over after models.fallback_after of them
+        nonlocal fails
+        fails += 1
+        if fall() and fails >= fc_config.FALLBACK_AFTER:
+            switch(why, next_prompt)
+            return True
+        return False
     while attempt < attempts:
         attempt += 1
         t0 = time.time()
         try:
             session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
-                                                       timeout=fc_models.turn_timeout(meta))
+                                                       timeout=fc_models.TURN_TIMEOUT)
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
             if fall():
@@ -347,8 +361,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
             session = None
             prompt = original_prompt
-            if fall():
-                switch("timed out", original_prompt)
+            failed("timed out", original_prompt)
             continue
         except fc_models.PaymentRequired as e:
             fc_core.say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
@@ -358,8 +371,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         except Exception as e:  # noqa: BLE001
             fc_core.say(f"{tid} error   {str(e)[-300:]}")
             log.append({"attempt": attempt, "error": str(e)[-2000:]})
-            if fall():
-                switch("errored", original_prompt)
+            if fall():  # a fresh session on the same model until the fallback takes over
+                if not failed("errored", original_prompt):
+                    session, prompt = None, original_prompt
                 continue
             break
         cost += usage["cost"]
@@ -382,7 +396,18 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_herdr.herdr_label(session, f"attempt {attempt}/{attempts}", cost)
         over = lines > fc_config.MAX_DIFF_LINES
         verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray else "fail"
+        output, reader = test.stdout + test.stderr, None
+        if test.returncode != 0 and not tampered:  # the reader's brief, written before the line so its cost is on it
+            (proj / "results").mkdir(parents=True, exist_ok=True)
+            log_path = proj / "results" / f"{tid}.test.log"
+            log_path.write_text(output)
+            entry["summary"], reader = read_failure(wt, meta, output, log_path)
+            if reader:
+                entry["reader"] = {"model": fc_config.TEST_READER, "usage": reader}
+                cost += reader["cost"]
+                progress("running")
         fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
+            + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
             + (f"  outside files: {', '.join(stray)}" if stray else ""))
         if tampered:
@@ -391,13 +416,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         if verdict == "pass":
             status = "passed"
             break
-        output = test.stdout + test.stderr
         problems = []
         if test.returncode != 0:
-            (proj / "results").mkdir(parents=True, exist_ok=True)
-            log_path = proj / "results" / f"{tid}.test.log"
-            log_path.write_text(output)
-            summary = entry["summary"] = condense_failure(output)
+            summary = entry["summary"]
             problems.append(f"The test still fails.\nCommand: {meta['test']}\nExit code: {test.returncode}\n"
                             + (f"What failed:\n{summary}\n" if summary else "") + f"Output (tail):\n{output[-1000:]}"
                             + f"\nFull output: {log_path.resolve()}; read it before you change anything.")
@@ -412,8 +433,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                             + f"\nFiles you may change: {', '.join(meta['files'])}")
         status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else status) if test.returncode == 0 else status
         prompt = "\n\n".join(problems) + "\nFix it without editing protected files."
-        if fall():  # the fresh session starts from the task, the edits left in the clone, and what went wrong
-            switch("missed", original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt)
+        fresh = original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt
+        if not failed("missed", fresh) and session is None:  # nothing to resume (Claude Code turns are one-shot): start from the task too
+            prompt = fresh
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
     # Only this task's own files are reverted: the team lead may be editing other files in the main checkout meanwhile.

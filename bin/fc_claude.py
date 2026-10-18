@@ -29,11 +29,12 @@ def crew_settings(role, cwd):
     return json.dumps({"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"},
                        "enabledPlugins": {k: False for k in enabled if not k.startswith("compose@") and not (keep and k.startswith("figma@"))}})
 
-def claude_once(cwd, prompt, timeout=900, model=None):
-    """One-shot baseline through Claude Code on the subscription. Marginal cost $0; the CLI's own cost figure is recorded for reference."""
+def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bash,Grep,Glob", lean=False):
+    """One-shot baseline through Claude Code on the subscription, with only `tools`. Marginal cost $0; the CLI's own cost figure is recorded for reference.
+    `lean` starts it without the user's CLAUDE.md, skills, plugins, hooks, and MCP servers, which cost ~200K input tokens a call."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("COMPOSE_CLAUDE_MODEL", "claude-sonnet-5-5"),
-           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"]
+           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools] + (["--safe-mode", "--strict-mcp-config"] if lean else [])
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
     try:
         out = json.loads(p.stdout)
