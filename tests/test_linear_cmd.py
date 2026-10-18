@@ -71,3 +71,59 @@ class LinearProject(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.linear_project, str(self.repo)), (1, f"Linear has no project {URL}"))
         (self.repo / ".compose" / "linear.json").unlink()
         self.assertEqual(self.fails(fc.fc_linear_cmd.linear_project, str(self.repo)), (1, f"no .compose/linear.json in {self.repo}"))
+
+
+class LinearGet(unittest.TestCase):
+    QUERY = "issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } }"
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir()
+        (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.calls = []
+        self.issue = {"identifier": "ENG-7", "title": "Fix the cart", "description": "Steps here.", "state": {"name": "In Progress"},
+                      "labels": {"nodes": [{"name": "bug"}, {"name": "ui"}]}, "project": {"id": "p1", "name": "Shop"}, "parent": None,
+                      "comments": {"nodes": [{"body": "second", "createdAt": "2026-03-04T09:00:00.000Z", "user": {"name": "Bob"}},
+                                             {"body": "first", "createdAt": "2026-01-02T23:30:00.000Z", "user": {"name": "Ann"}}]}}
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        return {"issue": self.issue}
+
+    def get(self, *target, **kw):
+        with redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_get(self.args("get", *target, **kw))
+        return [line for line in out.getvalue().splitlines() if line.strip()]
+
+    def test_line_shape_with_and_without_labels(self):
+        self.assertEqual(fc.fc_linear_cmd.issue_line(self.issue), "ENG-7 In Progress bug Fix the cart")
+        self.assertEqual(fc.fc_linear_cmd.issue_line({**self.issue, "labels": {"nodes": []}}), "ENG-7 In Progress - Fix the cart")
+
+    def test_get_prints_only_the_line_from_the_issue_query(self):
+        self.assertEqual(self.get("ENG-7"), ["ENG-7 In Progress bug Fix the cart"])
+        self.assertEqual([v for q, v in self.calls if self.QUERY in q], [{"id": "ENG-7"}])
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get")), (1, "get needs an issue id"))
+
+    def test_body_then_comments_oldest_first(self):
+        line, ann, bob = "ENG-7 In Progress bug Fix the cart", ["--- Ann 2026-01-02", "first"], ["--- Bob 2026-03-04", "second"]
+        self.assertEqual(self.get("ENG-7", body=True, comments=True), [line, "Steps here."] + ann + bob)
+        self.assertEqual(self.get("ENG-7", comments=True), [line] + ann + bob)
+        self.assertEqual(self.get("ENG-7", body=True), [line, "Steps here."])
+
+    def test_json_prints_only_the_issue(self):
+        with redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_get(self.args("get", "ENG-7", json=True, body=True, comments=True))
+        self.assertEqual(out.getvalue().strip(), json.dumps(self.issue, indent=1))
+
+    def test_out_of_scope_refuses_unless_any_project(self):
+        self.issue["project"] = {"id": "p9", "name": "Shop"}
+        for kw in ({}, {"json": True}):
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get", "ENG-7", **kw)), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
+            self.assertEqual(out.getvalue(), "")
+        self.assertEqual(self.get("ENG-7", any_project=True), ["ENG-7 In Progress bug Fix the cart"])
