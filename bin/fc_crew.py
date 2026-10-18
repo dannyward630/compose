@@ -495,8 +495,7 @@ def close_after_turn(proj, name):
                      start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     scratch = scratch_dir(proj, name)
     if scratch.exists():
-        stop_listeners_under(scratch)
-        shutil.rmtree(scratch, ignore_errors=True)
+        stop_listeners_under(scratch)  # the files stay: Linear comments cite them as evidence
     crew_closed(proj, name, "reported done; tab closes when the turn ends")
 
 def crew_closed(proj, name, why):
@@ -517,7 +516,8 @@ def teardown(proj):
     stopped = stop_listeners_under(fc_herdr.project_worktree(proj))
     if stopped:
         print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")
-    shutil.rmtree(scratch_dir(proj), ignore_errors=True)
+    if scratch_dir(proj).exists():
+        stop_listeners_under(scratch_dir(proj))
     space = fc_herdr.herdr_env() and fc_herdr.herdr_project_space(proj)
     if not space:
         return []

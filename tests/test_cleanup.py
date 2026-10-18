@@ -181,7 +181,7 @@ class Leftovers(unittest.TestCase):
             fc.fc_crew.teardown(proj)
         self.assertIsNotNone(mine.wait(timeout=5))
         self.assertIsNone(other.poll())
-        self.assertFalse(fc.fc_crew.scratch_dir(proj).exists())
+        self.assertTrue(fc.fc_crew.scratch_dir(proj).exists())
 
     def test_preamble_points_scratch_inside_the_project(self):
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"

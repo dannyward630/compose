@@ -65,6 +65,19 @@ class Teardown(unittest.TestCase):
         popen.assert_not_called()
 
 
+    def test_scratch_files_stay_after_done_and_teardown(self):
+        log = fc.fc_crew.scratch_dir(self.proj, "shop-e2e") / "repro.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("evidence")
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+                mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(subprocess, "Popen"), mock.patch.object(fc.fc_crew, "stop_listeners_under", return_value=[]) as stop:
+            fc.fc_crew.cmd_report(type("A", (), {"as_": "shop-e2e", "state": "done", "message": ["finished"]}))
+            stop.assert_called_with(log.parent)  # servers it left listening are stopped
+        self.assertEqual(log.read_text(), "evidence")
+        self.teardown()
+        self.assertEqual(log.read_text(), "evidence")
+
     def test_a_shared_space_closes_only_this_projects_tabs(self):
         fc.fc_herdr.space_record(self.proj).write_text(json.dumps({"space": "w9"}))  # the space compose was started from
         self.tabs = {"t1": "shop shell", "t2": "shop status", "t3": "shop orchestrator", "t4": "shop implementers", "t7": "shop verify",
