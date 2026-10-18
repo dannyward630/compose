@@ -494,19 +494,32 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     too, so the project branch carries nothing the layers do not; when they cannot be built (build_layers' STOP), the layers and
     the registered stack stay as they were. Nothing is pushed unless submit=True; preview=True prints each layer's
     PR title and body as submit would write them, with no gh call. A project whose fast/<project>/ branches were never pushed
-    first moves onto the names a new project gets (fc_worktree.rename_legacy_branches)."""
+    first moves onto the names a new project gets (fc_worktree.rename_legacy_branches). A base ahead of its upstream would put
+    its unpushed commits into the PRs: the stack says so, and a submit stops before anything changes."""
+    global STACK_STOP
     fc_worktree.rename_legacy_branches(repo, proj)
     if not fc_worktree.stack_order(repo, proj):
-        return []
-    wt = fc_worktree.stack_worktree(repo, proj, trunk)
-    gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    linear = linearize(repo, proj, trunk, wt)
-    if not linear:
         return []
     cfg = fc_core.project_config(proj)
     base = cfg.get("review_base") or fc_worktree.default_branch(repo) or trunk
     if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
         base = trunk
+    up = fc_core.sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{base}@{{upstream}}"], repo, check=False)
+    upstream = up.stdout.strip() if up.returncode == 0 else ""
+    ahead = int(fc_core.sh(["git", "rev-list", "--count", f"{upstream}..{base}"], repo).stdout) if upstream else 0
+    if ahead:
+        them = "them" if ahead > 1 else "it"
+        said = f"{base} is {ahead} commit{'s' * (ahead > 1)} ahead of {upstream}, so the PRs would carry {them}"
+        if submit:
+            STACK_STOP = f"{said}; nothing was built or pushed. Push {base}, or wait until {upstream} has {them}, then re-run"
+            fc_core.say(f"stack  STOP  {STACK_STOP}")
+            return []
+        fc_core.say(f"stack  WARN  {said}; --submit stops until {base} is pushed")
+    wt = fc_worktree.stack_worktree(repo, proj, trunk)
+    gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    linear = linearize(repo, proj, trunk, wt)
+    if not linear:
+        return []
     budget = int(cfg.get("review_layer_lines") or REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
     layers = build_layers(repo, proj, base, trunk, linear, wt, budget, cap)

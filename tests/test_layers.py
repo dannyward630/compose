@@ -311,6 +311,46 @@ class Layers(unittest.TestCase):
         broken.stop()
         self.assertEqual(stops, ["stack  STOP  the layers differ from compose/p-003 in 003.src, t003.test; the layers and the stack are left as they were"])
 
+    def submit(self):
+        """Run `compose stack --submit`; return its lines and exit code (0 when it returned)."""
+        out = []
+        with mock.patch.object(fc.fc_core, "say", out.append):
+            try:
+                fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
+            except SystemExit as e:
+                return out, e.code
+        return out, 0
+
+    def test_a_base_ahead_of_its_upstream_warns_and_a_submit_stops_with_nothing_changed(self):
+        self.git("update-ref", "refs/remotes/origin/main", "main"); self.git("branch", "-q", "--set-upstream-to=origin/main", "main")
+        self.git("checkout", "-q", "main")
+        for n in ("1", "2"):
+            self.write(f"unpushed{n}.txt", "u\n"); self.commit(f"unpushed {n}")
+        self.git("checkout", "-q", "compose/p")
+        self.assertIn("stack  WARN  main is 2 commits ahead of origin/main, so the PRs would carry them; --submit stops until main is pushed", self.stack())
+        refs = lambda: self.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/compose/p*")
+        before = (refs(), (self.repo / ".git" / "fake-gh-stack.json").read_text(), (self.repo / ".git" / "fake-gh-calls").read_text())
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertEqual(out, ["stack  STOP  main is 2 commits ahead of origin/main, so the PRs would carry them; nothing was built or pushed. "
+                               "Push main, or wait until origin/main has them, then re-run"])
+        self.assertEqual((refs(), (self.repo / ".git" / "fake-gh-stack.json").read_text(), (self.repo / ".git" / "fake-gh-calls").read_text()), before)
+
+    def test_a_base_even_with_or_behind_its_upstream_or_without_one_submits_without_a_word(self):
+        for upstream in ("none", "even", "behind"):
+            if upstream != "none":
+                self.git("update-ref", "refs/remotes/origin/main", "main"); self.git("branch", "-q", "--set-upstream-to=origin/main", "main")
+            if upstream == "behind":
+                self.git("checkout", "-q", "-b", "elsewhere", "main"); self.write("theirs.txt", "t\n"); self.commit("pushed by someone else")
+                self.git("update-ref", "refs/remotes/origin/main", "elsewhere"); self.git("checkout", "-q", "compose/p")
+            (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
+            calls = self.repo / ".git" / "fake-gh-calls"
+            seen = len(calls.read_text().splitlines()) if calls.exists() else 0
+            out, code = self.submit()
+            self.assertEqual(code, 0, upstream)
+            self.assertFalse([l for l in out if "WARN" in l or "STOP" in l], upstream)
+            self.assertIn("stack submit --auto", calls.read_text().splitlines()[seen:], upstream)
+
     def test_stack_without_submit_prints_each_layers_pr_title_and_body_and_calls_no_gh_pr(self):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
         cache = json.loads((self.proj / "results" / "tasks.json").read_text())

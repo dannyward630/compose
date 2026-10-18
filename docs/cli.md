@@ -80,7 +80,7 @@ These commands check the finished work and turn it into a stack.
 | Command | Does |
 |---|---|
 | `verify` | Runs the local pipeline. `--fix 0` reports only, and `--skip-e2e` and `--skip-review` skip those stages |
-| `stack` | Cuts passed task branches into review layers (`review_layer_lines` in verify.json, default 300 lines, groundwork and each task's tests included), at most `max_stack_prs` layers, and registers them as one gh stack on the real base. `--submit` pushes and opens one draft PR per layer; without it, each layer's PR title and body are printed |
+| `stack` | Cuts passed task branches into review layers (`review_layer_lines` in verify.json, default 300 lines, groundwork and each task's tests included), at most `max_stack_prs` layers, and registers them as one gh stack on the real base. `--submit` pushes and opens one draft PR per layer, and stops while the base is ahead of its upstream; without it, each layer's PR title and body are printed |
 | `top` | Checks out the stack top for manual testing. `--detach` releases it |
 
 ### Teammates and supervision
