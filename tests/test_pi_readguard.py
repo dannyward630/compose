@@ -16,7 +16,8 @@ const mod = await import(process.argv[2]);
 mod.default({on: (name, fn) => { handlers[name] = fn; }});
 if (!handlers.tool_call) throw new Error("no tool_call handler registered");
 const out = [];
-for (const [line, event] of JSON.parse(process.argv[3])) {
+for (const [line, event, path] of JSON.parse(process.argv[3])) {
+  if (path) process.env.PATH = path;
   if (line === null) delete process.env.COMPOSE_READGUARD; else process.env.COMPOSE_READGUARD = line;
   out.push(await handlers.tool_call(event, {}));
 }
@@ -45,15 +46,20 @@ class PiReadGuard(unittest.TestCase):
         steps = [[rec + "printf '  refused: caf\u00e9 is outside the task\\n\\n'", ev("read", {"path": "../caf\u00e9.py"})],
                  [rec, ev("bash", {"command": "cat /etc/hosts | head"})],
                  [None, ev("read", {"path": "/etc/passwd"})],
-                 [rec + "echo refused >&2; exit 3", ev("grep", {"pattern": "def ", "path": "src"})],
-                 [rec + "echo no", ev("ls", {})]]
-        self.assertEqual(self.drive(steps), [{"block": True, "reason": "refused: caf\u00e9 is outside the task"},
-                                             None, None, None, {"block": True, "reason": "no"}])
+                 [rec + "printf 'guard broke' >&2; exit 3", ev("grep", {"pattern": "def ", "path": "src"})],
+                 [rec + "echo no", ev("ls", {})],
+                 [rec + "kill -9 $$", ev("find", {"pattern": "*.py"})],
+                 [rec, ev("read", {"path": "a.py"}), str(log.parent)]]
+        out = self.drive(steps)
+        self.assertEqual(out[:5], [{"block": True, "reason": "refused: caf\u00e9 is outside the task"}, None, None,
+                                   {"block": True, "reason": "guard broke"}, {"block": True, "reason": "no"}])
+        self.assertIs(out[5]["block"], True)
+        self.assertIs(out[6]["block"], True); self.assertIn("ENOENT", out[6]["reason"])
         got = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
         self.assertEqual(got, [{"tool": "read", "args": {"path": "../caf\u00e9.py"}},
                                {"tool": "bash", "args": {"command": "cat /etc/hosts | head"}},
                                {"tool": "grep", "args": {"pattern": "def ", "path": "src"}},
-                               {"tool": "ls", "args": {}}])
+                               {"tool": "ls", "args": {}}, {"tool": "find", "args": {"pattern": "*.py"}}])
 
 
 if __name__ == "__main__":
