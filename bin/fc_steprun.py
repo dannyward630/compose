@@ -1,5 +1,6 @@
 """Run one setup step: the plain path and the Textual app both go through run_step."""
 import subprocess
+from pathlib import Path
 import fc_config, fc_checks, fc_keys, fc_steps, fc_links, fc_pi
 
 
@@ -22,7 +23,11 @@ def run_step(row, checkout, yes, claude, terminal):
     terminal rows are never run (manual or skipped, the line says what to do by hand), a designer row is skipped under yes;
     run and interactive rows shell out to install, write rows call their writer, then the check runs again: done rows have
     an empty line but a write row keeps its writer's line, and a failed run or interactive row ends with the install to
-    run by hand after the last error line, or failed."""
+    run by hand after the last error line, or failed; every line shows ~/ wherever the home directory followed by / appears in it."""
+    state, line = _run_step(row, checkout, yes, claude, terminal)
+    return state, line.replace(str(Path.home()) + "/", "~/")
+
+def _run_step(row, checkout, yes, claude, terminal):
     name, _, install, level, needs_claude, mode = row
     ok, detail = fc_steps.check(row, checkout)
     if ok:
