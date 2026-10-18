@@ -263,3 +263,50 @@ class LateCheck(unittest.IsolatedAsyncioTestCase):
             self.running.set(); await until(pilot, lambda: isinstance(app.screen, KeysScreen))
             app.screen.dismiss(([], [])); await until(pilot, lambda: isinstance(app.screen, FinishScreen))
             self.assertEqual(app.screen.results, [("fine", "done"), ("broke", "failed"), ("held", "done"), ("last", "done")])
+
+
+P1 = "/Users/someone/workspace/tools/compose/.treehouse/compose-fdfef9/1/compose/.compose/easy-install/bin/compose"
+PATHS = f"dangling link {P1} -> /Users/me/.local/bin/cmp"  # 150 characters
+INSTALL = f"ln -sf {P1} /Users/someone/.local/bin/compose"
+
+
+class PathWrap(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        AppFixes.setUp(self)
+        rows = tuple((n, lambda c: (False, ""), cmd, "required", False, "run") for n, cmd in (("hand", INSTALL), ("linker", "true"), ("blank", "true"), ("after", "true")))
+        states = {"linker": ("failed", PATHS), "blank": ("failed", ""), "after": ("done", "")}
+        for p in (mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_steps, "check", lambda row, c: (False, "")),
+                  mock.patch.object(fc_steprun, "run_step", lambda row, *a: states[row[0]])):
+            p.start(); self.addCleanup(p.stop)
+
+    def block(self, screen, name):  # the rendered rows under the row named name, up to the next row
+        i = next(i for i, l in enumerate(screen) if re.search(rf"\b{name}\b", l)); n = screen[i].index(name)
+        out = []
+        for l in screen[i + 1:-1]:
+            if not l.strip() or any(l[n:].startswith(r) for r in ("hand", "linker", "blank", "after")): break
+            out.append(l)
+        return n, out
+
+    def assertBreaksClean(self, text, rows, n):
+        pos = 0
+        for l in rows:
+            self.assertTrue(n <= len(l) - len(l.lstrip()) <= len(rows[0]) - len(rows[0].lstrip()), (n, rows))
+            self.assertTrue(text.startswith(l.strip(), pos), (text[pos:], rows)); pos += len(l.strip())
+            if pos < len(text):  # every row ends at a space or right after a slash
+                self.assertTrue(text[pos] == " " or text[pos - 1] == "/", (l, rows)); pos += text[pos] == " "
+        self.assertEqual(pos, len(text), rows)
+
+    async def test_long_path_details_break_at_a_space_or_after_a_slash(self):
+        self.assertEqual(len(PATHS), 150)
+        app = setup_app.SetupApp(ROOT)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(); await app.workers.wait_for_complete()
+            await pilot.press(key(app, "skip"), key(app, "start"))
+            await until(pilot, lambda: isinstance(app.screen, KeysScreen)); app.pop_screen(); await pilot.pause()
+            screen = lines(app)
+            n, rows = self.block(screen, "linker")
+            self.assertGreaterEqual(len(rows), 2, screen); self.assertBreaksClean(PATHS, rows, n)
+            n, rows = self.block(screen, "hand")
+            self.assertGreaterEqual(len(rows), 2, screen); self.assertBreaksClean(f"compose stops working without it; by hand: {INSTALL}", rows, n)
+            self.assertEqual(self.block(screen, "blank")[1], [], screen)  # an empty detail shows no detail row
+            self.assertTrue(any(re.search(r"\bblank\b.*\bfailed\b", l) for l in screen), screen)
