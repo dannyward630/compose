@@ -759,6 +759,60 @@ class BranchNamesInSections(unittest.TestCase):
         self.assertEqual(three.count("herdr agent prompt <slug>-tests-NNN"), 1)
 
 
+class StackDocs(unittest.TestCase):
+    def setUp(self):
+        # sections/4.md lines 8-11 plus the new cap line, between the untouched trunk and lockfile lines.
+        lines = read("sections/4.md").splitlines()
+        at = [i for i, l in enumerate(lines) if l.startswith("The trunk is the branch the user is on")]
+        end = [i for i, l in enumerate(lines) if l.startswith("Lockfiles (`package-lock.json`")]
+        self.assertEqual((len(at), len(end)), (1, 1))
+        self.region = lines[at[0] + 1 : end[0]]
+
+    def test_the_edited_lines_hold_one_sentence_each_and_no_em_dash(self):
+        self.assertFalse([l for l in self.region if "\u2014" in l or re.search(r"[a-z)`]\. [A-Z`]", l)])
+
+    def one(self, word):
+        found = [l for l in self.region if word in l]
+        self.assertEqual(len(found), 1, (word, found))
+        return found[0]
+
+    def test_the_chain_and_naming_line_default_to_project_branch_layers(self):
+        chain = self.one("(main) <- ")
+        self.assertIn("`(main) <- <project branch>-layer-01 <- <project branch>-layer-02 <- ...`", chain)
+        self.assertNotIn("fast/", chain)
+        naming = self.one("`task_prefix`")
+        for word in ("`<project branch>-NNN`", "-tests-NNN`", "-layer-NN`", "every project"):
+            self.assertIn(word, naming)
+        # The old default, tied to a stored branch, is gone.
+        self.assertFalse([l for l in self.region if "else `fast/" in l or "stored `branch`" in l])
+
+    def test_the_naming_line_keeps_the_legacy_rule_with_both_prefixes(self):
+        naming = self.one("`task_prefix`")
+        for word in ("`fast/<project>/`", "`layer_prefix`", "verify.json", "`clean`"):
+            self.assertIn(word, naming)
+        self.assertLess(naming.index("<project branch>-NNN"), naming.index("fast/<project>/"), "new names first, legacy after")
+
+    def test_the_cap_line_follows_the_grouping_line(self):
+        cap = self.one("`max_stack_prs`")
+        at = self.region.index(cap)
+        self.assertTrue(self.region[at - 1].startswith("Consecutive tasks, in stack order, are grouped into one layer"))
+        self.assertEqual(at, len(self.region) - 1, "the cap line sits just above the lockfile line")
+        self.assertIn("Tasks stay tiny for implementers; the layers are sized for the reviewer.", self.region)
+        for word in ("~/.compose/config.json", "verify.json", "adjacent", "fold", "same kind first"):
+            self.assertIn(word, cap)
+        self.assertRegex(cap, r"\bdefault[^.;]*\b10\b")
+
+    def test_only_the_cli_stack_row_names_the_cap(self):
+        cli = read("docs/cli.md").splitlines()
+        rows = [l for l in cli if "max_stack_prs" in l]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("| `stack` | Cuts passed task branches into review layers (`review_layer_lines`"))
+        self.assertIn("`--submit` pushes and opens one draft PR per layer", rows[0])
+        at = cli.index(rows[0])
+        self.assertTrue(cli[at - 1].startswith("| `verify` | Runs the local pipeline."))
+        self.assertEqual(cli[at + 1], "| `top` | Checks out the stack top for manual testing. `--detach` releases it |")
+
+
 
         self.assertNotIn("trunk is the project branch", line)
         self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
