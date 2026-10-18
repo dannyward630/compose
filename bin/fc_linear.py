@@ -1,4 +1,4 @@
-import json, sys, urllib.request
+import json, sys, urllib.error, urllib.request
 import fc_core, fc_config, fc_tasks
 
 
@@ -57,8 +57,18 @@ _linear_warned = []
 def linear_gql(query, variables):
     req = urllib.request.Request(LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": fc_config.LINEAR_KEY})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        out = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            parsed = json.loads(e.read().decode(errors="replace"))
+        except ValueError:
+            parsed = None
+        e.close()
+        if isinstance(parsed, dict) and parsed.get("errors"):
+            raise RuntimeError("; ".join(x.get("message", "?") for x in parsed["errors"])[:300])
+        raise
     if out.get("errors"):
         raise RuntimeError("; ".join(e.get("message", "?") for e in out["errors"])[:300])
     return out["data"]
