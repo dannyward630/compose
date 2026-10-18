@@ -6,7 +6,8 @@ import fc_core, fc_config, fc_linear
 
 
 def issue_line(issue):
-    raise NotImplementedError
+    labels = issue["labels"]["nodes"]
+    return f"{issue['identifier']} {issue['state']['name']} {labels[0]['name'] if labels else '-'} {issue['title']}"
 
 def read_body(a):
     raise NotImplementedError
@@ -28,7 +29,11 @@ def linear_project(repo):
     return {"id": p["id"], "name": p["name"], "url": p["url"], "team": {"id": team["id"], "name": team["name"], "key": team["key"]}}
 
 def in_scope(issue, a):
-    raise NotImplementedError
+    if a.any_project:
+        return
+    p = linear_project(a.repo)
+    if issue["project"]["id"] != p["id"]:
+        sys.exit(f"{issue['identifier']} is not in project {p['name']}; pass --any-project to use it")
 
 def state_and_labels(team, a):
     raise NotImplementedError
@@ -41,7 +46,21 @@ def verb_project(a):
     print(f"{p['name']} on team {p['team']['name']}: {p['url']}")
 
 def verb_get(a):
-    raise NotImplementedError
+    if not a.target:
+        sys.exit("get needs an issue id")
+    issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } } }",
+                                 {"id": a.target[0]})["issue"]
+    in_scope(issue, a)
+    if a.json:
+        print(json.dumps(issue, indent=1))
+        return
+    print(issue_line(issue))
+    if a.body:
+        print(issue["description"])
+    if a.comments:
+        for c in sorted(issue["comments"]["nodes"], key=lambda c: c["createdAt"]):
+            print(f"--- {c['user']['name']} {c['createdAt'][:10]}")
+            print(c["body"])
 
 def verb_list(a):
     raise NotImplementedError
