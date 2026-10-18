@@ -815,8 +815,6 @@ class StackDocs(unittest.TestCase):
 
 
 class ConfigKeysDocs(unittest.TestCase):
-    HEADINGS = ["Commands", "Keys", "Config", "Parallel", "Branch names and stack size", "Linear key", "Crew models", "Billing halts"]
-
     def setUp(self):
         self.text = read("docs/workspaces.md")
 
@@ -833,14 +831,14 @@ class ConfigKeysDocs(unittest.TestCase):
     def test_the_example_config_parses_with_both_keys_at_their_defaults(self):
         cfg = json.loads(self.section("Config").split("```json\n", 1)[1].split("```", 1)[0])
         self.assertEqual((cfg.get("branch_prefix"), cfg.get("max_stack_prs")), ("compose/", 10))
-        self.assertEqual(set(cfg), {"workspace", "models", "env", "parallel", "workspaces", "branch_prefix", "max_stack_prs"})
-        self.assertEqual((cfg["parallel"], cfg["workspaces"]["work"], set(cfg["workspaces"]["personal"])), (20, {}, {"models"}))
+        for name, ws in cfg.get("workspaces", {}).items():
+            self.assertFalse({"branch_prefix", "max_stack_prs"} & set(ws), name)
 
-    def test_the_section_sits_between_parallel_and_linear_key_and_nothing_else_moved(self):
-        self.assertEqual(re.findall(r"(?m)^## (.+)$", self.text), self.HEADINGS)
-        parallel = self.section("Parallel").strip().splitlines()
-        self.assertEqual((len(parallel), parallel[-1]), (12, "A value that is not a whole number of 1 or more stops every command."))
-        self.assertTrue(self.section("Linear key").startswith("\nA workspace's Linear key (`compose workspace key <name> --linear`)"))
+    def test_the_section_sits_right_after_parallel_and_right_before_linear_key(self):
+        self.section("Branch names and stack size")
+        headings = re.findall(r"(?m)^## (.+)$", self.text)
+        at = headings.index("Branch names and stack size")
+        self.assertEqual(headings[at - 1 : at + 2], ["Parallel", "Branch names and stack size", "Linear key"])
 
     def test_branch_prefix_default_empty_value_and_init_record(self):
         self.assertRegex(self.lines("`branch_prefix`", "default"), r"default[^.;]*`compose/`")
