@@ -93,3 +93,47 @@ class TrailRow(unittest.TestCase):
     def test_check_not_ok_for_a_trail_that_cannot_run(self):
         self.fake("trail", mode=0o644); ok, detail = fc_steps.check(self.row, self.co)
         self.assertFalse(ok); self.assertNotIn("1.0.0", detail)
+
+class OwnedLinks(unittest.TestCase):
+    """An owned link is ok when it resolves to its place in this or any compose checkout (a directory with bin/compose.py and SKILL.md)."""
+    # (row, link under HOME, its place in a checkout, a path inside a checkout that is not that place)
+    LINKS = (("compose CLI link", ".local/bin/compose", "bin/compose", "bin/compose.py"), ("compose skill link", ".claude/skills/compose", "", "bin"),
+             ("bp link", ".local/bin/bp", "bp/bin/bp.mjs", "bin/compose"))
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup); self.tmp = Path(d.name).resolve(); self.home = self.tmp / "home"
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home), "COMPOSE_CONFIG": str(self.home / ".compose/config.json")}); p.start(); self.addCleanup(p.stop)
+        self.co, self.other = self.checkout("co"), self.checkout("other")
+        self.rows = {r[0]: r for r in fc_steps.STEPS}
+
+    def checkout(self, name, files=("bin/compose.py", "SKILL.md", "bin/compose", "bp/bin/bp.mjs")):
+        for f in files: (self.tmp / name / f).parent.mkdir(parents=True, exist_ok=True); (self.tmp / name / f).write_text("")
+        return self.tmp / name
+
+    def at(self, name, link, target):
+        """Point ~/<link> at target (None: no link) and check the row."""
+        p = self.home / link; p.parent.mkdir(parents=True, exist_ok=True); p.unlink(missing_ok=True)
+        if target is not None: p.symlink_to(target)
+        return fc_steps.check(self.rows[name], self.co)
+
+    def test_ok_into_this_or_another_checkout(self):
+        (self.tmp / "alias").symlink_to(self.other)  # a checkout reached through a symlinked directory
+        for name, link, rel, _ in self.LINKS:
+            for c in (self.co, self.other, self.tmp / "alias"):
+                self.assertEqual(self.at(name, link, c / rel), (True, ""), f"{name} -> {c / rel}")
+
+    def test_not_ok_outside_any_checkout(self):
+        no_skill = self.checkout("noskill", ("bin/compose.py", "bin/compose", "bp/bin/bp.mjs"))
+        no_cli = self.checkout("nocli", ("SKILL.md", "bin/compose", "bp/bin/bp.mjs"))
+        nested = self.checkout("other/nested", ("bin/compose", "bp/bin/bp.mjs"))  # inside a checkout, but not one itself
+        for name, link, rel, wrong in self.LINKS:
+            for target in (no_skill / rel, no_cli / rel, nested / rel, self.other / wrong):
+                self.assertEqual(self.at(name, link, target), (False, f"{self.home / link} is not a link to {self.co / rel}"), f"{name} -> {target}")
+
+    def test_dangling_absent_or_a_plain_file(self):
+        for name, link, rel, _ in self.LINKS:
+            raw = self.tmp / "gone" / rel
+            self.assertEqual(self.at(name, link, raw), (False, f"dangling link {self.home / link} -> {raw}"), name)
+            self.assertFalse(self.at(name, link, None)[0], name)
+        (self.home / ".local/bin/compose").write_text("")  # a copy, not a link
+        self.assertFalse(fc_steps.check(self.rows["compose CLI link"], self.co)[0])
