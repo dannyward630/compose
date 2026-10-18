@@ -18,10 +18,14 @@ def key_status(auth, workspace, framelink_env):
 
 def linear_connected():
     """True when `claude mcp list` shows the claude.ai Linear line Connected, False when missing or another status, None without claude."""
-    try:
-        out = subprocess.run(["claude", "mcp", "list"], capture_output=True, text=True).stdout
-    except FileNotFoundError:
+    if not shutil.which("claude"):
         return None
+    # A HOME where Claude Code never ran: `claude mcp list` would create ~/.claude.json and ~/.claude/backups, so skip the call.
+    if not (Path.home() / ".claude.json").exists():
+        return False
+    # The health checks spawn the servers' own commands: os.defpath keeps the system dirs reachable even on a minimal caller PATH.
+    out = subprocess.run(["claude", "mcp", "list"], capture_output=True, text=True,
+                         env={**os.environ, "PATH": os.environ.get("PATH", "") + os.pathsep + os.defpath}).stdout
     for line in out.splitlines():
         if line.startswith("claude.ai Linear"):
             return "Connected" in line.rsplit(" - ", 1)[-1]
@@ -53,11 +57,15 @@ def skipped_line(kind, workspace):
     """What stops working without the key of kind, and the command to set it later."""
     later = f"pbpaste | compose workspace key {workspace}"
     if kind == "openrouter":
-        return f"No OpenRouter key: without it run and verify have no model. Add one later: {later}"
+        return (f"No OpenRouter key: without it run and verify have no model. Add one later:\n"
+                f"  {later}")
     if kind == "linear":
-        return (f"No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. "
-                f"Add one later: {later} --linear, or connect the claude.ai Linear connector")
+        return (f"No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. Add one later:\n"
+                f"  {later} --linear\n"
+                f"  or connect the claude.ai Linear connector")
     if kind == "typesafe":
-        return "No TypeSafe key: without it verify and change cannot check your code. Add one later: compose setup"
+        return ("No TypeSafe key: without it verify and change cannot check your code. Add one later, on a terminal:\n"
+                "  compose setup")
     if kind == "figma":
-        return "No Figma token: without it the designer cannot build your designs. Add one later: compose setup"
+        return ("No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n"
+                "  compose setup")
