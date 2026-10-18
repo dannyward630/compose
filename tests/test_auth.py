@@ -15,7 +15,8 @@ def mode(p):
 
 class AuthStore(unittest.TestCase):
     def setUp(self):
-        self.path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "store" / "auth.json"
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        self.path = Path(t.name) / "store" / "auth.json"
 
     def test_read_missing_and_present(self):
         self.assertEqual(fc_auth.read_auth(self.path), {})
@@ -116,7 +117,8 @@ class KeyMove(unittest.TestCase):
 
 class KeyClash(unittest.TestCase):
     def setUp(self):
-        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        d = Path(t.name)
         self.cfg, self.env, self.auth = d / "config.json", d / ".env", d / "auth.json"
 
     def move(self, cfg, env, auth=None):

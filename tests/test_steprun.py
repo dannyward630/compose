@@ -10,11 +10,12 @@ import fc_config, fc_keys, fc_links, fc_pi, fc_steps, fc_steprun
 
 class RunStep(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        self.tmp = Path(t.name)
         self.ran, self.has = self.tmp / "ran", lambda c: (self.ran.exists(), "")
         for p in (mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)), mock.patch.object(fc_config, "WORKSPACE", "acme"),
                   mock.patch.object(fc_config, "apply_config", return_value="acme"), mock.patch.object(fc_config, "OPENROUTER_KEY", "sk-or-test")):
-            self.enterContext(p)
+            p.start(); self.addCleanup(p.stop)
 
     def step(self, check, install=None, level="required", claude_row=False, mode="run", yes=False, claude=True, terminal=False, name="pi"):
         state, line = fc_steprun.run_step((name, check, install or f"touch {self.ran}", level, claude_row, mode), self.tmp, yes, claude, terminal)
@@ -65,9 +66,10 @@ class RunStep(unittest.TestCase):
 
 class StepLines(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        self.tmp = Path(t.name).resolve()
         self.ran, self.has = self.tmp / "ran", lambda c: (self.ran.exists(), "")
-        self.enterContext(mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)))
+        p = mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)); p.start(); self.addCleanup(p.stop)
         for f in ("bin/compose", "bp/bin/bp.mjs"):
             (self.tmp / f).parent.mkdir(parents=True, exist_ok=True)
             (self.tmp / f).write_text("")
@@ -116,9 +118,10 @@ class StepLines(unittest.TestCase):
 
 class HomePaths(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        self.tmp = Path(t.name).resolve()
         self.ran, self.has = self.tmp / "ran", lambda c: (self.ran.exists(), "")
-        self.enterContext(mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)))
+        p = mock.patch.object(fc_steps, "check", lambda row, c: row[1](c)); p.start(); self.addCleanup(p.stop)
 
     def step(self, install, mode="run", name="pi", check=None):
         return fc_steprun.run_step((name, check or self.has, install, "required", False, mode), self.tmp, False, True, False)

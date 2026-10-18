@@ -13,7 +13,7 @@ class Checks(unittest.TestCase):
     """Each check reads a fake HOME and PATH holding fake tools; nothing else on the machine."""
     def setUp(self):
         self.bin, self.home = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
-        self.enterContext(mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}))
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
 
     def fake(self, tool, body):
         (self.bin / tool).write_text(f"#!/bin/sh\n{body}\n")

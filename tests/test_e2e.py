@@ -75,7 +75,7 @@ class E2eLifecycle(unittest.TestCase):
     def test_the_stage_launches_and_ends_its_own_browser(self):
         chromium = Path(os.environ["HOME"]) / "chromium"  # the fake stands in for Playwright's Chromium, which bp launches
         chromium.write_text(FAKE_CHROMIUM); chromium.chmod(0o755)
-        self.enterContext(mock.patch.dict(os.environ, {"BP_CHROME": str(chromium)}))
+        p = mock.patch.dict(os.environ, {"BP_CHROME": str(chromium)}); p.start(); self.addCleanup(p.stop)
         out = Path(self.dir) / "cdp"
         ua = Path(self.dir) / "ua"
         ok, report, _ = self.stage({"e2e": [{"name": "b", "driver": f"curl -sf $BU_CDP_URL/json/version > {ua} && echo $BU_CDP_URL $BU_NAME > {out}"}]})

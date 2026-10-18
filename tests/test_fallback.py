@@ -342,7 +342,8 @@ class Workspaces(unittest.TestCase):
 
     def same(self, got, want):
         """Compares item by item without printing either side: a wrong value may be a real key."""
-        for i, (g, w) in enumerate(zip(got, want, strict=True)):
+        self.assertEqual(len(got), len(want))
+        for i, (g, w) in enumerate(zip(got, want)):
             self.assertTrue(g == w, f"item {i} differs")
 
     def test_keys_come_from_auth_json_with_the_default_fallback(self):
