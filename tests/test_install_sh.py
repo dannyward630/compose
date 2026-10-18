@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import os, subprocess, tempfile, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""

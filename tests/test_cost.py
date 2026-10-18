@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from datetime import datetime, timezone
 from pathlib import Path

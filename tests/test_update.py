@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import io, os, subprocess, sys, tempfile, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path

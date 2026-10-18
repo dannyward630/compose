@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import json
 import os
 import unittest

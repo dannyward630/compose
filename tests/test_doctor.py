@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import io, json, os, re, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock

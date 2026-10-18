@@ -1,3 +1,4 @@
+import hermetic  # first: no test sees the real home
 import json, os, subprocess, tempfile, unittest
 from pathlib import Path
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
