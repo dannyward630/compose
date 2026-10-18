@@ -211,3 +211,42 @@ class WarningsInView(unittest.IsolatedAsyncioTestCase):
     async def test_warnings_taller_than_the_body_scroll_it_to_the_end(self):
         body = await self.warn(skip=lambda k, w: f"skip-{k}-{w}" + "\nmore" * 12, whole=False)
         self.assertGreater(body.max_scroll_y, 0)
+
+
+
+class EnteredStatus(unittest.IsolatedAsyncioTestCase):
+    async def test_typed_key_reads_entered_until_cleared_or_saved(self):
+        saved = []
+        with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, (False, True, False, False)))), \
+             mock.patch.object(fc_keys, "linear_connected", return_value=True), mock.patch.object(fc_keys, "linear_state", return_value="connector"), \
+             mock.patch.object(fc_keys, "save_key", side_effect=lambda k, v, w, f: saved.append((k, v)) or "saved"), \
+             mock.patch.object(fc_keys, "skipped_line", side_effect=lambda k, w: f"skip-{k}-{w}"):
+            app = Host("default")
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                def status(kind):
+                    w = app.screen.query_one(f"#{kind}-status", Static)
+                    return str(w.render()).strip(), "present" in w.classes, "absent" in w.classes
+                async def keys(kind, *presses):
+                    app.screen.query_one(f"#{kind}", Input).focus(); await pilot.press(*presses); await pilot.pause()
+                before = {k: status(k) for k in LABELS}
+                self.assertEqual(before, {"openrouter": ("not set", False, True), "typesafe": ("set", True, False),
+                                          "linear": ("connector connected", True, False), "figma": ("not set", False, True)})
+                for kind, value in (("openrouter", "sk-or-test"), ("typesafe", "ts-test"), ("linear", "lin-test")):
+                    await keys(kind, *value)
+                    self.assertEqual({k: status(k) for k in LABELS}, before | {kind: ("entered", True, False)}, kind)
+                    await keys(kind, *["backspace"] * (len(value) - 1))
+                    self.assertEqual(status(kind), ("entered", True, False), kind)
+                    await keys(kind, "backspace")
+                    self.assertEqual(status(kind), before[kind], kind)
+                await keys("figma", *"   ")
+                self.assertEqual((status("figma"), app.screen.query_one("#figma", Input).value), (("not set", False, True), "   "))
+                await keys("figma", *["backspace"] * 3, *"fig-test")
+                shown = "\n".join(str(w.render()) for w in app.screen.query(Static))
+                self.assertEqual((status("figma"), "fig-" in shown), (("entered", True, False), False))
+                await pilot.click(app.screen.query_one("#continue", Button)); await pilot.pause(); await pilot.pause()
+                self.assertEqual((saved, app.result, status("figma"), status("openrouter")), ([("figma", "fig-test")], None, ("set", True, False), before["openrouter"]))
+                await keys("openrouter", *"sk-or-test")
+                self.assertEqual(status("openrouter"), ("entered", True, False))
+                await pilot.click(app.screen.query_one("#continue", Button)); await pilot.pause()
+        self.assertEqual((saved, app.result), ([("figma", "fig-test"), ("openrouter", "sk-or-test")], (["figma", "openrouter"], [])))
