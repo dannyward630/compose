@@ -59,10 +59,10 @@ These commands load the tasks, dispatch them, and steer the run.
 |---|---|
 | `sync` | Stores the feature and its task issues: `--from-linear` reads them from Linear, else JSON on stdin |
 | `tasks` | Prints the task list to review, with files, `after`, and tests. It warns on shared files |
-| `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel 3`, `--redo`, `--no-stack`, and `--trunk <branch>` |
+| `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel N` (default `parallel` in the config, else 3), `--redo`, `--no-stack`, and `--trunk <branch>` |
 | `done` | Records tasks finished by hand with `--only <ids> --note <why>` and moves them In Review on Linear |
 | `triage` | Has a fast model clean or flag each passed task (`run` ends with it) |
-| `resume` | Continues a run or verify that stopped on a billing halt |
+| `resume` | Continues a run or verify that stopped on a billing halt. `--parallel N` sets tasks at once (default `parallel` in the config, else the halted run's) |
 | `reflect` | Screens the settled decisions against evidence with Jev, using `--evidence -` and `--against "<line>"`. `--dismiss "<why>"` marks the evidence so far as answered, so later screens skip it |
 | `hold` | Holds tasks back from dispatch with `--only <ids> --reason "<why>"`. `--release <ids>` or `all` releases them |
 | `change start\|done\|undo` | Records a change of course. `undo C<n>` puts back what it touched |
@@ -89,9 +89,9 @@ These commands start the teammates, collect their reports, and supervise the tea
 | `explore`, `wayfinder`, `groundwork` | Prints that teammate's brief. `--extra -` appends notes from stdin |
 | `planner` | Prints the planner teammate's brief. `--issue NEB-xxx` picks the ticket, default the project's feature. `--extra -` appends notes from stdin |
 | `designer` | Prints the designer teammate's brief. `--figma <url or key>` stores the Figma file key, and `--extra -` appends notes from stdin |
-| `designcrews` | Starts one `design-NNN` builder per open design task. `--only <ids>` picks tasks, `--max N` caps builders started at once (default 3, or `design_concurrency` in verify.json; the rest are printed), and `--print` prints the briefs |
+| `designcrews` | Starts one `design-NNN` builder per open design task. `--only <ids>` picks tasks, `--max N` caps builders started at once (default `design_concurrency` in verify.json, else `parallel` in the config, else 3; the rest are printed), and `--print` prints the briefs |
 | `figma check\|tree\|judge` | `check --figma <url or key>` stores the target file key in `linear.json` and proves Framelink reads the file (one depth-1 fetch; it prints the token file path and the `claude mcp add` line when it cannot). `tree --only NNN --node <ids> [--depth n] [--bindings <file or ->]` fetches the nodes through Framelink into `results/NNN.tree.txt` and appends what the write script returned. `judge --only <ids>` asks Jev MET, NOT_MET, or UNCLEAR per acceptance criterion on that tree, confirms each NOT_MET, and exits 1 on a confirmed one |
-| `testcrews` | Runs one test-writing teammate per task, in parallel |
+| `testcrews` | Runs one test-writing teammate per task, in parallel, at most `parallel` from the config at once when it is set |
 | `toolsmith` | Prints the toolsmith teammate's brief from the project's newest tool-bug entry. The maintainer's variant files, then fixes on a branch; anyone else's only reproduces, diagnoses, and files. It exits non-zero when the project has no entry |
 | `tool-bug file --body <file>` | Scrubs the body file (line 1 is `# <command>: <symptom>`), searches open issues on prodoxx/compose, then posts a `bug` issue or comments on the match (`--comment <n>`, or `--new` to force a new issue), and records the URL in `tool-bugs.jsonl` as `issue`. Without maintainer rights or a logged-in gh it saves a draft under `~/.compose/tool-bugs/` and posts nothing until the same command runs with `--approved` |
 | `report` | Lets a teammate report up with `working`, `needs-user`, `blocked`, `done`, `tool-bug`, or `contradiction` |

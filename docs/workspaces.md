@@ -39,6 +39,7 @@ The active workspace is merged over the top level:
                                  "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"TYPESAFE_API_KEY": "<any env var the CLI and its tools read>"},
+ "parallel": 20,
  "workspaces": {"work": {"openrouter_api_key": "sk-or-..."},
                 "personal": {"openrouter_api_key": "sk-or-...", "linear_api_key": "lin_api_..."}}}
 ```
@@ -56,6 +57,21 @@ A model id names its harness:
 | `claude:<model-id>` | Claude Code with that model |
 | `claude` | Claude Code with its default model |
 | anything else | OpenCode |
+
+## Parallel
+
+`parallel` is how many agents start at once.
+Set it at the top level, or in one workspace to override it there.
+
+| Command | Uses |
+|---|---|
+| `run` | `--parallel`, else `parallel`, else 3 |
+| `resume` | `--parallel`, else `parallel`, else the halted run's value |
+| `designcrews` | `--max`, else `design_concurrency` in verify.json, else `parallel`, else 3 |
+| `testcrews` | `parallel` when set, else every writer at once |
+
+`designcrews` and `testcrews` print the tasks past the cap, with the command that starts them.
+A value that is not a whole number of 1 or more stops every command.
 
 ## Linear key
 

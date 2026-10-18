@@ -154,6 +154,16 @@ class Groundwork(unittest.TestCase):
         self.assertEqual(started, ["tests-002"])
         self.assertIn("tests-001 not started: agent_prompt_stalled", out.getvalue())
 
+    def test_the_configs_parallel_caps_test_writers_and_prints_the_rest(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        started, out = [], io.StringIO()
+        with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+             mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out), mock.patch.object(fc.fc_config, "PARALLEL", 1):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
+        self.assertEqual(started, ["tests-001"])
+        self.assertIn("1 test writer(s) queued past the cap of 1", out.getvalue())
+        self.assertIn("compose testcrews --project p --only 002", out.getvalue())
+
     def test_a_named_task_that_needs_no_test_writer_says_why(self):
         (self.proj / "results" / "contract.md").write_text("c")
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
@@ -507,7 +517,12 @@ class DesignCrews(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"design_concurrency": 1}))
         self.assertEqual(len(self.run_crews()[0]), 1)
         self.assertEqual(len(self.run_crews(max=2)[0]), 2)
-        (self.proj / "verify.json").unlink()
+        with mock.patch.object(fc.fc_config, "PARALLEL", 2):
+            self.assertEqual(len(self.run_crews()[0]), 1)  # the project's design_concurrency wins over the config
+            (self.proj / "verify.json").unlink()
+            self.assertEqual(len(self.run_crews()[0]), 2)
+        with mock.patch.object(fc.fc_config, "PARALLEL", 1):
+            self.assertIn("queued past the cap of 1: 005", self.run_crews()[1])
         started, out, _ = self.run_crews()  # no config: the default of 3 holds both open tasks
         self.assertEqual((len(started), "queued" in out), (2, False))
 

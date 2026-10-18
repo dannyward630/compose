@@ -47,6 +47,8 @@ def cmd_triage(a):
     if not triage(repo, proj, ids):
         sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
 
+RUN_PARALLEL = 3  # tasks at once when neither --parallel nor the config's `parallel` says
+
 def cmd_run(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
@@ -56,6 +58,7 @@ def cmd_run(a):
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
     redo = bool(getattr(a, "redo", False))
+    a.parallel = getattr(a, "parallel", None) or fc_config.PARALLEL or RUN_PARALLEL
     kept = {m["id"]: fc_tasks.task_finished(proj, m, redo) for m in tasks}
     for tid, why in kept.items():
         if why:
@@ -234,6 +237,7 @@ def cmd_resume(a):
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
+        ns.parallel = getattr(a, "parallel", None) or fc_config.PARALLEL or getattr(ns, "parallel", None) or RUN_PARALLEL  # flag, config, the halted run's
         fc_core.say(f"resume {len(tasks)} task(s): {', '.join(state['remaining'])}")
         run_tasks(repo, proj, tasks, ns)
     else:

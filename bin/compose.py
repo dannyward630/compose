@@ -133,10 +133,12 @@ def main():
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)
-            s.add_argument("--parallel", type=int, default=3)
+            s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else 3)")
             s.add_argument("--trunk", default=None, help="trunk branch the stack targets (default: the branch you are on)")
             s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
+        if name == "resume":
+            s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else the halted run's)")
         if name == "done":
             s.add_argument("--only", required=True, help="comma-separated task ids")
             s.add_argument("--note", required=True, help="why it was done by hand, e.g. 'provider out of credit'")
@@ -169,7 +171,7 @@ def main():
         if name == "designcrews":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
-            s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else 3)")
+            s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":

@@ -114,7 +114,7 @@ def cmd_designcrews(a):
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
         return
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
-    cap = a.max or cfg.get("design_concurrency", DESIGN_CONCURRENCY)
+    cap = a.max or cfg.get("design_concurrency") or fc_config.PARALLEL or DESIGN_CONCURRENCY
     # designcrews exits once the builders start, so nothing can start the rest later: the queued ids are printed with the command.
     metas, queued = metas[:cap], metas[cap:]
     fc_herdr.herdr_space(proj)  # once, before the parallel starts

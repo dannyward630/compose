@@ -294,7 +294,7 @@ class Workspaces(unittest.TestCase):
                              ' "personal": {"openrouter_api_key": "sk-home", "models": {"fallback": null}, "env": {"X_FC": "1"}}}}')
         self.patches = [mock.patch.object(fc.fc_config, "CONFIG_PATH", self.path), mock.patch.dict(os.environ, {}),
                         mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
-                        mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None)]
+                        mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)]
         for p in self.patches:
             p.start()
 
@@ -318,6 +318,22 @@ class Workspaces(unittest.TestCase):
         self.assertEqual(os.environ["X_FC"], "1")
         self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:a/b")  # inherited from the top level
         self.assertIsNone(fc.fc_models.fallback_for("pi:a/b"))  # personal turned the fallback off
+
+    def test_parallel_comes_from_the_config_and_a_workspace_overrides_it(self):
+        fc.fc_config.apply_config()
+        self.assertIsNone(fc.fc_config.PARALLEL)  # unset: each command keeps its own default
+        cfg = fc.fc_config.read_config()
+        cfg["parallel"], cfg["workspaces"]["personal"]["parallel"] = 20, 5
+        self.path.write_text(json.dumps(cfg))
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.PARALLEL, 20)
+        ws("personal")
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.PARALLEL, 5)
+        for bad in (0, "many", 2.5, True):
+            self.path.write_text(json.dumps({**cfg, "workspace": "default", "parallel": bad}))
+            with self.assertRaisesRegex(SystemExit, "parallel must be a whole number"):
+                fc.fc_config.apply_config()
 
     def test_unknown_workspace_refused(self):
         with self.assertRaises(SystemExit):

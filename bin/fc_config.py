@@ -9,8 +9,11 @@ import fc_core
 #    "models": {"implementer": "pi:...", "fallback": "pi:..." or null, "fix": "pi:...",
 #               "crew": {"orchestrator": "claude:<id>", "<role>": "claude:<id>", "default": "claude:<id>", "small": "claude:<id>"}},
 #    "env": {"TYPESAFE_API_KEY": "..."},
+#    "parallel": 20,
 #    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
+# `parallel` is how many agents start at once: the tasks of run and resume (else 3), designcrews' builders (after --max and
+# verify.json design_concurrency, else 3), and testcrews' writers (else all at once). A command's own flag wins.
 # A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Teammate sessions run in pi or Claude Code.
 
@@ -35,6 +38,7 @@ os.environ.setdefault("GRAFT_NO_GITIGNORE", "1")
 os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
+PARALLEL = None  # `parallel` from the config; None keeps each command's own default
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
@@ -66,8 +70,11 @@ def settings(cfg):
 def apply_config():
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE
+    global DEFAULT_MODEL, FALLBACK_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL
     name, st = settings(read_config())
+    PARALLEL = st.get("parallel")
+    if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
+        sys.exit(f"{CONFIG_PATH}: parallel must be a whole number of 1 or more, not {PARALLEL!r}")
     WORKSPACE, LINEAR_KEY = name, st.get("linear_api_key") or None  # the CLI moves Linear states with it (full path only)
     models = st.get("models", {})
     crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}

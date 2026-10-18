@@ -353,6 +353,8 @@ def cmd_testcrews(a):
         return
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
+    cap = fc_config.PARALLEL  # unset: every writer starts at once
+    metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
         short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
@@ -379,6 +381,10 @@ def cmd_testcrews(a):
         list(ex.map(start, metas))
     if failed:
         print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}")
+    if queued:
+        ids = ",".join(m["id"] for m in queued)
+        print(f"{len(queued)} test writer(s) queued past the cap of {cap} (parallel in {fc_config.CONFIG_PATH}): {ids}\n"
+              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}")
 
 def test_branch(proj, tid):
     return f"fast/{proj.name}/tests-{tid}"
