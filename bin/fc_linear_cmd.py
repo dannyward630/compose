@@ -155,13 +155,42 @@ def verb_update(a):
     print(f"updated {issue['identifier']}")
 
 def verb_comment(a):
-    raise NotImplementedError
+    issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier project { id name } } }",
+                                 {"id": a.target[0]})["issue"]
+    in_scope(issue, a)
+    body = read_body(a).strip()
+    if not body:
+        sys.exit("comment needs a body: --file <path> or stdin")
+    fc_linear.linear_comment(issue, body)
+    print(f"commented on {issue['identifier']}")
 
 def verb_labels(a):
-    raise NotImplementedError
+    p = linear_project(a.repo)
+    if a.create:
+        fc_linear.linear_gql("mutation($name: String!, $team: String!) { issueLabelCreate(input: {name: $name, teamId: $team}) { success } }",
+                             {"name": a.create, "team": p["team"]["id"]})
+        print(f"created label {a.create}")
+        return
+    team = fc_linear.linear_gql("query($id: String!) { team(id: $id) { labels(first: 250) { nodes { id name } } } }",
+                                {"id": p["team"]["id"]})["team"]
+    for l in sorted(team["labels"]["nodes"], key=lambda l: l["name"]):
+        print(l["name"])
 
 def verb_doc(a):
-    raise NotImplementedError
+    if a.target == ["create"]:
+        if not a.title:
+            sys.exit("doc create needs --title")
+        p = linear_project(a.repo)
+        doc = fc_linear.linear_gql("mutation($in: DocumentCreateInput!) { documentCreate(input: $in) { document { url } } }",
+                                   {"in": {"title": a.title, "content": read_body(a), "projectId": p["id"]}})["documentCreate"]["document"]
+        print(doc["url"])
+    elif len(a.target) == 2 and a.target[0] == "get":
+        doc = fc_linear.linear_gql("query($id: String!) { document(id: $id) { title content url } }",
+                                   {"id": a.target[1]})["document"]
+        print(doc["title"])
+        print(doc["content"])
+    else:
+        sys.exit("doc takes create, or get <id>")
 
 def cmd_linear(a):
     if not fc_config.LINEAR_KEY:
