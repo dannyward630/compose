@@ -2,7 +2,7 @@
 from typing import List, Tuple
 
 from textual.app import ComposeResult
-from textual.containers import Grid
+from textual.containers import Grid, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, Static
 
@@ -41,7 +41,11 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
     KeysScreen Grid .key-status {
         padding-left: 1;
     }
+    KeysScreen #keys-body {
+        height: 1fr;
+    }
     KeysScreen #continue {
+        dock: bottom;
         margin-top: 1;
     }
     KeysScreen .present {
@@ -67,14 +71,15 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         self.warned = False
 
     def compose(self) -> ComposeResult:
-        yield Label(f"Keys for workspace {self.workspace}", id="keys-title")
-        with Grid():
-            for kind in KINDS:
-                yield Label(LABELS[kind], classes="key-label")
-                yield Input(password=True, id=kind)
-                text, state_class = self._status(kind)
-                yield Static(text, classes=f"key-status {state_class}", id=f"{kind}-status")
-                yield Static(f"{MARKS[kind]} · {HINTS[kind]}", classes="key-hint", id=f"{kind}-hint")
+        with VerticalScroll(id="keys-body"):
+            yield Label(f"Keys for workspace {self.workspace}", id="keys-title")
+            with Grid():
+                for kind in KINDS:
+                    yield Label(LABELS[kind], classes="key-label")
+                    yield Input(password=True, id=kind)
+                    text, state_class = self._status(kind)
+                    yield Static(text, classes=f"key-status {state_class}", id=f"{kind}-status")
+                    yield Static(f"{MARKS[kind]} · {HINTS[kind]}", classes="key-hint", id=f"{kind}-hint")
         button = Button("Continue", id="continue")
         button.active_effect_duration = 0
         yield button
@@ -106,6 +111,7 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
             self.warned = True
             warnings = [Static(fc_keys.skipped_line(kind, self.workspace), classes="skipped") for kind in missing]
             warnings.append(Static("Press Continue again to go on without the missing keys.", classes="skipped"))
-            self.mount(*warnings, before=self.query_one("#continue"))
+            self.query_one("#keys-body").mount(*warnings)
+            warnings[0].scroll_visible()
             return
         self.dismiss((self.saved, missing))
