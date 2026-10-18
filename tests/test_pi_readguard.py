@@ -46,15 +46,16 @@ class PiReadGuard(unittest.TestCase):
         steps = [[rec + "printf '  refused: caf\u00e9 is outside the task\\n\\n'", ev("read", {"path": "../caf\u00e9.py"})],
                  [rec, ev("bash", {"command": "cat /etc/hosts | head"})],
                  [None, ev("read", {"path": "/etc/passwd"})],
-                 [rec + "printf 'guard broke' >&2; exit 3", ev("grep", {"pattern": "def ", "path": "src"})],
+                 [rec + "echo refused >&2; exit 3", ev("grep", {"pattern": "def ", "path": "src"})],
                  [rec + "echo no", ev("ls", {})],
                  [rec + "kill -9 $$", ev("find", {"pattern": "*.py"})],
+                 ["no-such-guard-cmd-006", ev("read", {"path": "a.py"})],
                  [rec, ev("read", {"path": "a.py"}), str(log.parent)]]
         out = self.drive(steps)
-        self.assertEqual(out[:5], [{"block": True, "reason": "refused: caf\u00e9 is outside the task"}, None, None,
-                                   {"block": True, "reason": "guard broke"}, {"block": True, "reason": "no"}])
-        self.assertIs(out[5]["block"], True)
-        self.assertIs(out[6]["block"], True); self.assertIn("ENOENT", out[6]["reason"])
+        self.assertEqual(out[:3] + out[4:5], [{"block": True, "reason": "refused: caf\u00e9 is outside the task"},
+                                              None, None, {"block": True, "reason": "no"}])
+        for i, said in [(3, "refused"), (5, ""), (6, "no-such-guard-cmd-006"), (7, "ENOENT")]:
+            self.assertIs(out[i]["block"], True, out[i]); self.assertIn(said, out[i]["reason"])
         got = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
         self.assertEqual(got, [{"tool": "read", "args": {"path": "../caf\u00e9.py"}},
                                {"tool": "bash", "args": {"command": "cat /etc/hosts | head"}},
