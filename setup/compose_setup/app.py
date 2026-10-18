@@ -9,6 +9,7 @@ from textual.app import App, ComposeResult
 
 from .finish import FinishScreen
 from .keys import KeysScreen
+from .wrap import Wrapped
 from textual.widgets import Footer, Label, ListItem, ListView
 
 
@@ -40,7 +41,7 @@ class SetupApp(App[int]):
         self.states: Dict[int, str] = {}
         self._lines: Dict[int, str] = {}
         self._labels: List[Label] = []
-        self._details: List[Label] = []
+        self._details: List[Wrapped] = []
 
     def compose(self) -> ComposeResult:
         yield Label(HEADER, id="title")
@@ -50,7 +51,7 @@ class SetupApp(App[int]):
                 self.states[i] = state
                 label = Label(self._row_text(i, state), classes=f"row {state}")
                 self._labels.append(label)
-                detail = Label("", classes="detail")
+                detail = Wrapped("", classes="detail")
                 detail.display = False
                 self._details.append(detail)
                 with ListItem():
