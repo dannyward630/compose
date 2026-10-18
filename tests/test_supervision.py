@@ -66,11 +66,56 @@ class Stalls(unittest.TestCase):
         """tests-002 was collected before its `done` report landed: its last report says working, its tab is closed."""
         s = self.snap(tasks=("passed",), crew={ORCH: ("working", 600), "hw-tests-002": ("working", 600)}, last_ago=600)
         s["closed"] = ["hw-tests-002"]
-        self.assertEqual(self.stalls(s), [])
+        ev = self.stalls(s)
+        self.assertEqual(len(ev), 1, ev)
+        self.assertIn("stall=ended agent=hw-tests-002", ev[0])
         crew = {ORCH: ("working", 100), "hw-tests-001": ("done", 500), "hw-tests-002": ("working", 400)}
         s = self.snap(crew=crew, last_ago=100); s["closed"] = ["hw-tests-002"]
         ev = self.stalls(s)
         self.assertTrue(any("stall=undispatched" in e and "teammates working none" in e for e in ev), ev)
+
+    def ended(self, ev):
+        """Each `ended` line's agent name mapped to the part of the line before the usual tail."""
+        heads = [e.split("; ")[0] for e in ev if "stall=ended agent=" in e]
+        return {h.split("stall=ended agent=")[1].split()[0]: h for h in heads}
+
+    def test_a_closed_teammate_not_done_is_reported_at_once(self):
+        """Fires with no stall window, even while another teammate waits on the product owner."""
+        crew = {ORCH: ("working", 600), "hw-tests-001": ("needs-user", 10), "hw-tests-002": ("working", 10),
+                "hw-tests-003": ("blocked", 10), "hw-tests-004": ("needs-user", 600)}
+        s = self.snap(crew=crew, last_ago=600)
+        s["crew"]["hw-tests-003"].insert(0, {"at": at(20), "state": "done", "message": "m"})  # the last report counts
+        s["closed"] = ["hw-tests-001", "hw-tests-002", "hw-tests-003"]
+        ev = self.stalls(s)
+        self.assertEqual(len(ev), 3, ev)  # no quiet stall: the needs-user silence still holds for the others
+        got = self.ended(ev)
+        self.assertEqual(sorted(got), ["hw-tests-001", "hw-tests-002", "hw-tests-003"])
+        for n, st in (("hw-tests-001", "needs-user"), ("hw-tests-002", "working"), ("hw-tests-003", "blocked")):
+            self.assertIn(st, got[n])
+
+    def test_a_closed_team_lead_or_a_done_team_lead_does_not_hide_it(self):
+        s = self.snap(tasks=("passed",), crew={ORCH: ("needs-user", 10)}); s["closed"] = [ORCH]
+        got = self.ended(self.stalls(s))
+        self.assertEqual(list(got), [ORCH]); self.assertIn("needs-user", got[ORCH])
+        s = self.snap(crew={ORCH: ("done", 10), "hw-tests-001": ("working", 10)}); s["closed"] = ["hw-tests-001"]
+        self.assertEqual(list(self.ended(self.stalls(s))), ["hw-tests-001"])
+
+    def test_a_closed_teammate_fires_once_until_it_reports_again(self):
+        s = self.snap(tasks=("passed",), crew={ORCH: ("working", 10), "hw-tests-001": ("working", 30)})
+        s["closed"] = ["hw-tests-001"]
+        self.assertEqual(len(self.ended(self.stalls(s))), 1)
+        self.assertEqual(self.stalls(s), [])
+        s["crew"]["hw-tests-001"].append({"at": at(5), "state": "blocked", "message": "m"})
+        got = self.ended(self.stalls(s))
+        self.assertEqual(list(got), ["hw-tests-001"]); self.assertIn("blocked", got["hw-tests-001"])
+
+    def test_a_closed_teammate_done_or_without_reports_is_not_ended(self):
+        crew = {ORCH: ("working", 10), "hw-tests-001": ("done", 10), "hw-tests-003": ("working", 10)}
+        s = self.snap(tasks=("passed",), crew=crew)
+        s["crew"]["hw-tests-001"].insert(0, {"at": at(20), "state": "working", "message": "m"})
+        s["crew"]["hw-tests-002"] = []
+        s["closed"] = ["hw-tests-001", "hw-tests-002", "hw-tests-005"]  # tests-003 is open, tests-005 never reported
+        self.assertEqual(self.stalls(s), [])
 
     def test_run_ended_with_no_next_step(self):
         ev = self.stalls(self.snap(tasks=("passed",), crew={ORCH: ("working", 900)}, last_ago=100, run_end=NOW - 300))
