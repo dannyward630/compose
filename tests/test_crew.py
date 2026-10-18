@@ -855,7 +855,7 @@ class RestrictedStart(unittest.TestCase):
         settings = json.loads(args[args.index("--settings") + 1])
         self.assertEqual({k: settings[k] for k in ("attribution", "env")}, {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
         self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
-        self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P if p != "claude_ai_Linear"})
+        self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P})
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
         self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
         self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
@@ -869,11 +869,17 @@ class RestrictedStart(unittest.TestCase):
                     self.assertNotIn("enabledMcpjsonServers", got)
                     self.assertLessEqual({"attribution", "env", "enabledPlugins"}, set(got))
 
-    def test_designer_keeps_linear_and_figma_but_not_graft_or_trail(self):
+    def test_designer_keeps_figma_but_not_linear_graft_or_trail(self):
         dropped = self.patterns(self.start("designer"))
-        for p in ("claude_ai_Linear", "framelink-figma", "claude_ai_Figma"):
+        for p in ("framelink-figma", "claude_ai_Figma"):
             self.assertNotIn(f"mcp__{p}__*", dropped)
-        self.assertLessEqual({"mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
+        self.assertLessEqual({"mcp__claude_ai_Linear__*", "mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
+
+    def test_no_role_keeps_the_linear_server(self):
+        for role, kw in [("orchestrator", {}), ("wayfinder", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
+                         ("design-003", {}), ("design-review", {})]:
+            with self.subTest(role=role, **kw):
+                self.assertIn("mcp__claude_ai_Linear__*", self.patterns(self.start(role, **kw)))
 
     def test_only_design_roles_keep_skills(self):
         for role, off in [("orchestrator", True), ("planner", True), ("wayfinder", True), ("explore", True), ("toolsmith", True),
@@ -928,9 +934,8 @@ class RestrictedStart(unittest.TestCase):
 
     def test_no_patterns_means_no_bare_disallowed_tools(self):
         allow = ["--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"]
-        for servers, role, kw in [([], "planner", {}), (["claude_ai_Linear"], "planner", {}),
-                                  (["frame0", "claude_ai_Linear"], "planner", {"frame0": True}),
-                                  ([], "designer", {}), (["claude_ai_Linear", "claude_ai_Figma", "framelink-figma"], "designer", {})]:
+        for servers, role, kw in [([], "planner", {}), (["frame0"], "planner", {"frame0": True}),
+                                  ([], "designer", {}), (["claude_ai_Figma", "framelink-figma"], "designer", {})]:
             with self.subTest(servers=servers, role=role, **kw):
                 self.P = servers
                 skills = [] if role == "designer" else ["--disable-slash-commands"]
@@ -940,8 +945,8 @@ class RestrictedStart(unittest.TestCase):
         self.P = ["claude_ai_Linear", "claude_ai_Notion", "trail", "frame0"]
         tail = self.tail(self.start("planner"))
         self.assertEqual(tail[0], "--disallowedTools")
-        self.assertEqual(set(tail[1:4]), {"mcp__claude_ai_Notion__*", "mcp__trail__*", "mcp__frame0__*"})
-        self.assertEqual(tail[4:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
+        self.assertEqual(set(tail[1:5]), {"mcp__claude_ai_Linear__*", "mcp__claude_ai_Notion__*", "mcp__trail__*", "mcp__frame0__*"})
+        self.assertEqual(tail[5:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
 
     def test_orchestrator_and_planner_autocompact_at_150k_before_settings(self):
         self.P = []  # same servers and skills switch for every role below, so their args differ only by --autocompact

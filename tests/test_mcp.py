@@ -29,11 +29,11 @@ def pat(*names):
 
 class RoleMcp(unittest.TestCase):
     def test_servers_and_skills_by_role(self):
-        d = ("linear", "figma", "framelink-figma")
+        d = ("figma", "framelink-figma")
         for role, servers, skills in [("toolsmith", (), False), ("implementer", (), False),
                                       ("designer", d, True), ("design-003", d, True), ("design-review", d, True),
-                                      ("planner", ("linear",), False), ("wayfinder", ("linear",), False),
-                                      ("no-such-role", ("linear",), False)]:
+                                      ("planner", (), False), ("wayfinder", (), False), ("orchestrator", (), False),
+                                      ("no-such-role", (), False), ("design-x", (), False), ("explore", (), False)]:
             self.assertEqual((tuple(fc_mcp.servers_for(role)), fc_mcp.keeps_skills(role)), (servers, skills), role)
 
     def test_installed_servers_reads_list_in_cwd(self):
@@ -50,13 +50,15 @@ class RoleMcp(unittest.TestCase):
             self.assertEqual(fc_mcp.installed_servers("/w"), [])
 
     def test_disallowed(self):
-        self.assertEqual(set(fc_mcp.disallowed("planner", P)), pat(*P) - pat("claude_ai_Linear"))
+        self.assertEqual(set(fc_mcp.disallowed("planner", P)), pat(*P))
         for r, s in [(r, s) for r in ("designer", "design-review", "design-003") for s in (P, P + ["claude_ai_Figma"])]:
-            self.assertEqual(set(fc_mcp.disallowed(r, s)), pat(*P) - pat("claude_ai_Linear", "framelink-figma"))
-        for r in ("toolsmith", "implementer", "no-such-role", "orchestrator"):  # graft and trail are denied for every role
-            self.assertLessEqual(pat("graft", "trail"), set(fc_mcp.disallowed(r, P)), r)
+            self.assertEqual(set(fc_mcp.disallowed(r, s)), pat(*P) - pat("framelink-figma"))
+        for r in ("toolsmith", "implementer", "no-such-role", "orchestrator", "wayfinder", "designer", "design-003"):  # graft, trail, and Linear are denied for every role
+            self.assertLessEqual(pat("graft", "trail", "claude_ai_Linear"), set(fc_mcp.disallowed(r, P)), r)
+            self.assertLessEqual(pat("claude_ai_Linear"), set(fc_mcp.disallowed(r, P, frame0=True)), r)
         self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P))
-        self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("claude_ai_Linear", "frame0"))
+        self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("frame0"))
+        self.assertEqual(fc_mcp.disallowed("planner", ["graft"]), ["mcp__graft__*"])  # nothing is denied that is not installed
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), pat("LINEAR_x", "Graft2"))
 
     def test_no_mcpjson_approval_is_left(self):
