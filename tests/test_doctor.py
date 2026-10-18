@@ -163,11 +163,12 @@ class Doctor(unittest.TestCase):
 
     def test_a_missing_tool_still_runs_the_gh_auth_check_then_exits_1(self):
         (self.bin / "claude").unlink()
-        for fails, miss in ((["auth status"], "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"),
-                            (["auth status", "stack --version"], "MISSING: gh stack (install: gh extension install github/gh-stack)")):
+        for fails, miss, last in ((["auth status"], "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)", "1 required step missing"),
+                                  (["auth status", "stack --version"], "MISSING: gh stack (install: gh extension install github/gh-stack)",
+                                   "1 required step missing: run compose setup")):
             status, lines, calls = self.doctor(fails=fails)
             self.assertEqual((status, miss in lines, self.GH_WARNING in lines, "auth status" in calls), (1, True, True, True), lines)
-            self.assertRegex(lines[-1], r"^[1-9]\d* required steps? missing: run compose setup$")
+            self.assertEqual(lines[-1], last)  # claude is manual: setup never installs it
             self.fake("claude", TOOLS["claude"])  # then gh itself on PATH without its stack extension: the same
 
 class DoctorNotes(unittest.TestCase):
@@ -398,3 +399,43 @@ class InitGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SummaryFix(unittest.TestCase):
+    """doctor's summary says run compose setup only when a missing required row is one setup fixes: any mode but manual."""
+    setUp, fake, herdr_config, doctor = Doctor.setUp, Doctor.fake, Doctor.herdr_config, DoctorWarnings.doctor
+    LOCAL = ("~/.local/bin on PATH", lambda c: (False, ""), 'export PATH="$HOME/.local/bin:$PATH"', "required", False, "manual")
+    CLAUDE = ("claude", lambda c: (False, ""), "curl -fsSL https://claude.ai/install.sh | bash", "required", False, "manual")
+    GIT = ("git", "git", "xcode-select --install", "required", False, "manual")  # on the fake PATH: ok
+    OLD = [("openrouter_api_key", Path("/c/config.json"))]
+
+    def miss(self, mode):
+        return (f"{mode} row", lambda c: (False, ""), "compose setup", "required", False, mode)
+
+    def test_only_manual_rows_missing_name_no_setup(self):
+        self.fake("git", "git version 2.50.0")
+        for rows, last in (((self.GIT, self.LOCAL), "1 required step missing"), ((self.LOCAL, self.GIT, self.CLAUDE), "2 required steps missing"),
+                           ((self.LOCAL, self.miss("manual"), self.CLAUDE), "3 required steps missing")):
+            with self.subTest(rows=[r[0] for r in rows]):
+                code, lines = self.doctor(rows + (self.miss("run")[:3] + ("default", False, "run"),), self.OLD)  # an optional miss changes nothing
+                self.assertEqual((code, lines[-1]), (1, last), lines)
+                self.assertNotIn("compose setup", lines[-1])
+                self.assertIn('MISSING: ~/.local/bin on PATH (install: export PATH="$HOME/.local/bin:$PATH")', lines)
+                self.assertEqual(sum(l.startswith("WARNING:") for l in lines), 2, lines)  # gh logged out, old key
+
+    def test_a_row_setup_fixes_brings_setup_back(self):
+        for mode in ("key", "interactive", "run", "write"):
+            for rows, n in (((self.LOCAL, self.miss(mode)), 2), ((self.miss(mode),), 1), ((self.miss(mode), self.CLAUDE, self.LOCAL), 3)):
+                with self.subTest(mode=mode, n=n):
+                    code, lines = self.doctor(rows)
+                    self.assertEqual((code, lines[-1]), (1, f"{n} required step{'s' * (n > 1)} missing: run compose setup"), lines)
+
+    def test_the_mode_decides_not_the_name(self):
+        code, lines = self.doctor((self.LOCAL[:5] + ("run",),))
+        self.assertEqual((code, lines[-1]), (1, "1 required step missing: run compose setup"))
+        code, lines = self.doctor((("gh auth",) + self.LOCAL[1:],))
+        self.assertEqual((code, lines[-1]), (1, "1 required step missing"))
+
+    def test_nothing_required_missing_is_ready(self):
+        self.fake("git", "git version 2.50.0")
+        code, lines = self.doctor((self.GIT, ("pi auth.json override",) + self.LOCAL[1:3] + ("default", False, "manual")), self.OLD)
+        self.assertEqual((code, lines[-1], sum(l.startswith("WARNING:") for l in lines)), (0, DoctorWarnings.READY, 2), lines)
