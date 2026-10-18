@@ -300,3 +300,65 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", title="T")), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
         self.assertFalse([q for q, _ in self.calls if "issueUpdate" in q])
         self.assertEqual(self.update(title="T", any_project=True)[0], {"title": "T"})
+
+
+class LinearCommentLabelsDoc(unittest.TestCase):
+    ISSUE, LABELS, DOC = "issue(id: $id) { id identifier project { id name } }", "team(id: $id) { labels(first: 250) { nodes { id name } } }", "document(id: $id) { title content url }"
+    NEW_LABEL, NEW_DOC, DOC_URL = "issueLabelCreate(input: {name: $name, teamId: $team}) { success }", "documentCreate(input: $in) { document { url } }", "https://linear.app/acme/document/research-d1"
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "project": {"id": "p1", "name": "Shop"}}
+        self.sent = lambda query: [v for q, v in self.calls if query in q]
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear, "linear_comment", mock.Mock())):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        replies = {"projects(": {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t0", "name": "Design", "key": "DES"}, {"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}},
+                   "issueLabelCreate": {"issueLabelCreate": {"success": True}}, "documentCreate": {"documentCreate": {"document": {"url": self.DOC_URL}}},
+                   "document(": {"document": {"title": "Research", "content": "Line one.\nLine two.", "url": self.DOC_URL}},
+                   "team(": {"team": {"labels": {"nodes": [{"id": "l2", "name": "ui"}, {"id": "l1", "name": "bug"}, {"id": "l3", "name": "perf"}]}}}, "issue(": {"issue": self.issue}}
+        return next(v for k, v in replies.items() if k in query)
+
+    def a(self, verb, *target, body=None, **kw):
+        if body is not None: (self.repo / "body.md").write_text(body); kw["file"] = str(self.repo / "body.md")
+        return self.args(verb, *target, **kw)
+
+    def run_verb(self, verb, *target, **kw):
+        with redirect_stdout(io.StringIO()) as out:
+            getattr(fc.fc_linear_cmd, f"verb_{verb}")(self.a(verb, *target, **kw))
+        return [line for line in out.getvalue().splitlines() if line.strip()]
+
+    def test_comment_posts_the_stripped_body_from_a_file_or_stdin(self):
+        self.assertEqual(self.run_verb("comment", "ENG-7", body="\n  Looks good.\n\n"), ["commented on ENG-7"])
+        with mock.patch("sys.stdin", io.StringIO("piped note\n")):
+            self.run_verb("comment", "ENG-7")
+        self.assertEqual([c.args for c in fc.fc_linear.linear_comment.call_args_list], [(self.issue, "Looks good."), (self.issue, "piped note")])
+        self.assertEqual(self.sent(self.ISSUE), [{"id": "ENG-7"}] * 2)
+
+    def test_comment_refuses_an_empty_body_or_another_project(self):
+        for kw in ({"body": " \n\n"}, {}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", **kw)), (1, "comment needs a body: --file <path> or stdin"))
+        self.issue["project"] = {"id": "p9", "name": "Shop"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", body="hi")), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
+        fc.fc_linear.linear_comment.assert_not_called()
+        self.assertEqual(self.run_verb("comment", "ENG-7", body="hi", any_project=True), ["commented on ENG-7"])
+
+    def test_labels_lists_the_repo_team_sorted_or_creates_one(self):
+        self.assertEqual((self.run_verb("labels"), self.sent(self.LABELS)), (["bug", "perf", "ui"], [{"id": "t1"}]))
+        self.assertEqual((self.run_verb("labels", create="docs")[-1], self.sent(self.NEW_LABEL)), ("created label docs", [{"name": "docs", "team": "t1"}]))
+
+    def test_doc_create_sends_the_body_as_read_and_get_prints_title_then_content(self):
+        self.assertEqual(self.run_verb("doc", "create", title="Research", body="Findings.\n"), [self.DOC_URL])
+        self.assertEqual([v["in"] for v in self.sent(self.NEW_DOC)], [{"title": "Research", "content": "Findings.\n", "projectId": "p1"}])
+        self.assertEqual((self.fails(fc.fc_linear_cmd.verb_doc, self.args("doc", "create")), len(self.sent("documentCreate"))), ((1, "doc create needs --title"), 1))
+        self.assertEqual((self.run_verb("doc", "get", "d1"), self.sent(self.DOC)), (["Research", "Line one.", "Line two."], [{"id": "d1"}]))
+
+    def test_doc_refuses_any_other_target_and_sends_nothing(self):
+        for target in ([], ["get"], ["list"], ["create", "extra"]):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.args("doc", *target, title="T")), (1, "doc takes create, or get <id>"))
+        self.assertFalse([q for q, _ in self.calls if "document" in q])
