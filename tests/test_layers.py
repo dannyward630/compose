@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import argparse, importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import argparse, importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -753,6 +753,39 @@ class PrBody(unittest.TestCase):
 
 class DeletionBudget(unittest.TestCase):
     """Task 014 (NEB-951): branch_budget counts a whole-file deletion and each delete: path as one line."""
+
+    def repo(self, files):
+        r = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, n in files.items():
+            (r / f).parent.mkdir(parents=True, exist_ok=True); (r / f).write_text("".join(f"line {i}\n" for i in range(n)))
+        git("add", "-A"); git("commit", "-q", "-m", "init")
+        return r
+
+    def budget(self, r, allowed, delete=()):
+        return fc.fc_implement.branch_budget(r, "main", allowed=allowed, delete=delete)
+
+    def test_deleting_a_400_line_file_the_task_owns_counts_one_line(self):
+        r = self.repo({"big.py": 400, "keep.py": 3})
+        (r / "big.py").unlink()
+        self.assertEqual(self.budget(r, ["big.py"]), (1, [], []))
+
+    def test_a_deleted_delete_directory_counts_one_line_and_its_files_are_not_stray(self):
+        r = self.repo({"old/a.py": 100, "old/sub/b.py": 50, "keep.py": 3})
+        shutil.rmtree(r / "old")
+        self.assertEqual(self.budget(r, [], delete=["old/"]), (1, [], []))
+
+    def test_a_deletion_outside_allowed_and_every_delete_path_is_still_stray(self):
+        r = self.repo({"old/a.py": 100, "older.py": 80, "keep.py": 3})
+        shutil.rmtree(r / "old"); (r / "older.py").unlink()
+        self.assertEqual(self.budget(r, [], delete=["old"]), (2, [], ["older.py"]))
+
+    def test_edits_lockfiles_and_an_emptied_file_count_as_before_beside_a_deletion(self):
+        r = self.repo({"a.py": 5, "b.py": 10, "gone.py": 300})
+        (r / "a.py").write_text("line 0\nchanged\nline 2\nline 3\nline 4\n"); (r / "b.py").write_text("")
+        (r / "yarn.lock").write_text("x\n" * 5000); (r / "gone.py").unlink()
+        self.assertEqual(self.budget(r, ["a.py", "b.py", "yarn.lock", "gone.py"]), (2 + 10 + 1, [], []))
 
 
 if __name__ == "__main__":
