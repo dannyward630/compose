@@ -243,6 +243,9 @@ def merge_evidence(repo, branch, targets, has_remote):
         p = fc_core.sh(["git", "cherry", t, branch], repo, check=False)
         if p.returncode == 0 and p.stdout.strip() and all(l.startswith("-") for l in p.stdout.splitlines()):
             return f"contained in {t} by patch"
+        p = fc_core.sh(["git", "merge-tree", "--write-tree", t, branch], repo, check=False)
+        if p.returncode == 0 and p.stdout.split("\n", 1)[0] == fc_core.sh(["git", "rev-parse", "-q", f"{t}^{{tree}}"], repo, check=False).stdout.strip():
+            return f"merging it into {t} changes nothing"
     if has_remote:
         p = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "merged", "--json", "number,mergedAt", "--limit", "1"],
                            cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL)
