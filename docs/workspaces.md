@@ -50,6 +50,7 @@ The active workspace is merged over the top level:
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"SOME_VAR": "<any env var the CLI and its tools read>"},
  "parallel": 20,
+ "branch_prefix": "compose/", "max_stack_prs": 10,
  "workspaces": {"work": {},
                 "personal": {"models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"}}}}
 ```
@@ -93,6 +94,17 @@ Set it at the top level, or in one workspace to override it there.
 `testcrews` prints the tasks past the cap, with the command that starts them.
 `designcrews` never reads `parallel`: it starts `--max`, else `design_concurrency` in verify.json, else 3 builders, to stay under Figma's per-minute write rate limit.
 A value that is not a whole number of 1 or more stops every command.
+
+## Branch names and stack size
+
+`branch_prefix` (default `compose/`) starts every new project's branch.
+`init` reads it once and stores the full branch in the project's verify.json `branch`.
+An empty string gives branches named after the slug alone.
+Task, test and layer branches are that branch plus `-NNN`, `-tests-NNN`, `-layer-NN`.
+`max_stack_prs` (default 10) caps how many PRs one stack opens.
+The same key in a project's verify.json overrides it.
+Past it adjacent layers fold.
+Both can be set at the top level or in one workspace, like `parallel`.
 
 ## Linear key
 
