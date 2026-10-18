@@ -30,6 +30,7 @@ You review the plan, the task list, and the stack.
 
 When you ask, `compose stack --project my-feature --submit` pushes and opens one draft PR per layer.
 After the PRs merge, `compose clean --project my-feature` removes what merged, moves those tasks to Done in Linear with their story and the feature, and keeps what did not merge.
+A kept branch is named with its first unmatched commit.
 
 Before the first run in a new repo, do these three things:
 
@@ -51,7 +52,7 @@ These commands create, list, and clean up projects.
 | `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s, and asks git only when a result file or a branch changed |
-| `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. `--delete-unmerged` also drops unreviewed layers |
+| `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. A branch is merged when it is contained in the target, when every commit has its patch there, when merging it would change nothing, or when GitHub has a merged PR for it; the review base is checked first. A kept branch is named with its first unmatched commit. `--delete-unmerged` also drops unreviewed layers |
 | `trail` | Sets trail up again in the project's worktree |
 
 ### Tasks

@@ -231,10 +231,13 @@ def cmd_init(a):
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
 
 def merge_evidence(repo, branch, targets, has_remote):
-    """Why a branch counts as merged, or None. Three independent signals, any suffices:
+    """Why a branch counts as merged, or None. Four independent signals, any suffices:
     git ancestry (fast-forward and merge-commit merges), every commit's patch in the target (`git cherry`: a target
-    fast-forwarded to a layer built locally, which holds cherry-picked copies), or a merged pull request for the branch on
-    GitHub (covers squash and rebase merges, where the commits are rewritten and ancestry says nothing). Any doubt means not merged."""
+    fast-forwarded to a layer built locally, which holds cherry-picked copies), a merge of the branch into the target that
+    would change nothing (`git merge-tree --write-tree` gives the target's own tree without a conflict: the branch tip's
+    changes are all there, even where a cherry-pick on a moved base gave its commits other patch ids), or a merged pull request
+    for the branch on GitHub (covers squash and rebase merges, where the commits are rewritten and ancestry says nothing).
+    Any doubt means not merged."""
     for t in targets:
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", t], repo, check=False).returncode:
             continue

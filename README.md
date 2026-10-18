@@ -183,7 +183,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose status [--project <name>] [--watch]` | Shows every project and every task |
 | `compose stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `compose resume --project <name>` | Continues after a billing halt |
-| `compose clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
+| `compose clean --project <name>` | Removes what has merged, including a stack re-cut onto a moved base, and moves it to Done in Linear, story and feature included; names the first unmatched commit of each branch it keeps |
 | `compose yolo --project <name> [--push] [words]\|--clear-words\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
 | `compose workspace [<name>]` | Lists or switches billing workspaces; `workspace key` sets a key in `~/.compose/auth.json` |
 
