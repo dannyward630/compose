@@ -6,15 +6,14 @@ import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree
 CONFIG_FILE_RE = re.compile(r"(^|/)(package(-lock)?\.json|[^/]*\.lock|pnpm-lock\.yaml|go\.(mod|sum)|requirements[^/]*\.txt|[^/]*\.(ya?ml|toml|ini)|\.[^/]*rc(\.\w+)?|[^/]*\.config\.\w+)$")
 
 def layer_prefix(repo, proj):
-    """Review layer branches are `<prefix>layer-NN`. The prefix recorded in verify.json (written when layers are first built) wins; a project
-    whose `fast/<project>/layer-NN` branches already exist, locally or as remote-tracking refs, keeps them; only a project with no layers
-    yet gets `<stored branch>-` (`init --branch`), else `fast/<project>/`."""
-    cfg, legacy = fc_core.project_config(proj), f"fast/{Path(proj).name}/"
+    """Review layer branches are `<prefix>layer-NN`, named from the task prefix: the prefix recorded in verify.json (written when
+    layers are first built) wins, else `fc_worktree.task_prefix(repo, proj)`, so a project whose `fast/<project>/` task branches
+    exist, locally or as remote-tracking refs, keeps `fast/<project>/layer-NN`, and a new project names its layers from its
+    stored branch."""
+    cfg = fc_core.project_config(proj)
     if cfg.get("layer_prefix"):
         return cfg["layer_prefix"]
-    if fc_core.sh(["git", "for-each-ref", "--count=1", "--format=%(refname)", f"refs/heads/{legacy}layer-*", f"refs/remotes/*/{legacy}layer-*"], repo, check=False).stdout.strip():
-        return legacy
-    return f"{cfg['branch']}-" if cfg.get("branch") else legacy
+    return fc_worktree.task_prefix(repo, proj)
 
 
 def commit_message(meta, conv=None):
@@ -35,8 +34,9 @@ def chain_order(repo, proj):
     order = fc_worktree.stack_order(repo, proj)
     tip = {b: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip() for b in order}
     below = {b: set() for b in order}  # b -> the other branches its tip contains; one at the same tip is no constraint
+    prefix = fc_worktree.task_prefix(repo, proj)
     for a in order:
-        held = fc_core.sh(["git", "for-each-ref", "--contains", tip[a], "--format=%(refname)", f"refs/heads/fast/{proj.name}/"], repo).stdout.split()
+        held = fc_core.sh(["git", "for-each-ref", "--contains", tip[a], "--format=%(refname)", f"refs/heads/{prefix}*"], repo).stdout.split()
         for b in (r.removeprefix("refs/heads/") for r in held):
             if b in below and tip[b] != tip[a]:
                 below[b].add(a)
@@ -61,6 +61,7 @@ def _linearize(repo, proj, trunk, wt):
     chain = chain_order(repo, proj)
     linear, prev = [], trunk
     replaced = fc_worktree.replaced_tips(repo, proj)
+    prefix = fc_worktree.task_prefix(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     for b in chain:
@@ -96,7 +97,7 @@ def _linearize(repo, proj, trunk, wt):
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     for rb, t in replaced:  # an old tip no layer carries any more is done with
         if not any(contains(t, b) for b in chain):
-            fc_core.sh(["git", "update-ref", "-d", f"refs/compose/replaced/{proj.name}/{rb.rsplit('/', 1)[1]}/{t}"], repo, check=False)
+            fc_core.sh(["git", "update-ref", "-d", f"refs/compose/replaced/{proj.name}/{rb.removeprefix(prefix)}/{t}"], repo, check=False)
     return linear
 
 REVIEW_LAYER_LINES = 300  # verify.json `review_layer_lines` changes it
@@ -147,7 +148,7 @@ def review_units(repo, proj, base, trunk, chain):
     task at or above that place that protects its files; one no task owns is a groundwork unit of its own right above that
     task's unit, never inside it."""
     protected = {m["id"]: set(m["protected"]) for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
-    ids = [b.rsplit("/", 1)[1] for b in chain]
+    ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in chain]
     def unit(name, commits, key=None):
         facts = [commit_facts(repo, c) for c in commits]
         gen = {}
