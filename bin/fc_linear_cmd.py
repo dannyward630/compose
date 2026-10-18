@@ -63,7 +63,30 @@ def verb_get(a):
             print(c["body"])
 
 def verb_list(a):
-    raise NotImplementedError
+    if not a.parent and not a.search:
+        sys.exit('list needs --parent <id> or --search "<terms>"')
+    f = {"project": {"id": {"eq": linear_project(a.repo)["id"]}}}
+    if a.parent:
+        f["parent"] = {"id": {"eq": a.parent}}
+    if a.search:
+        f["searchableContent"] = {"contains": a.search}
+    if a.state:
+        f["state"] = {"name": {"eqIgnoreCase": a.state}}
+    if a.label:
+        f["labels"] = {"some": {"name": {"in": a.label}}}
+    query = "query($after: String, $f: IssueFilter) { issues(first: 100, after: $after, filter: $f) { pageInfo { hasNextPage endCursor } nodes { identifier title state { name } labels { nodes { name } } } } }"
+    nodes, after = [], None
+    while True:
+        page = fc_linear.linear_gql(query, {"after": after, "f": f})["issues"]
+        nodes += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+    if a.json:
+        print(json.dumps(nodes, indent=1))
+        return
+    for n in nodes:
+        print(issue_line(n))
 
 def verb_create(a):
     raise NotImplementedError
