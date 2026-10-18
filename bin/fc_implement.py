@@ -158,7 +158,24 @@ PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", "
 def prettier_opted_in(wt, path):
     """Whether the repo chose prettier for `path`: a prettier config file or a package.json `prettier` key on the way from the
     file's directory up to `wt`, or prettier as a direct dependency of the nearest package.json."""
-    raise NotImplementedError("fc_implement.prettier_opted_in")
+    names = [".prettierrc"] + [".prettierrc." + e for e in ("json", "yaml", "yml", "json5", "js", "cjs", "mjs", "ts", "cts", "mts", "toml")] \
+        + ["prettier.config." + e for e in ("js", "cjs", "mjs", "ts", "cts", "mts")]
+    nearest = None
+    d = path.parent
+    while d == wt or wt in d.parents:
+        if any((d / n).exists() for n in names):
+            return True
+        pkg = d / "package.json"
+        if pkg.exists():
+            cfg = json.loads(pkg.read_text())
+            if "prettier" in cfg:
+                return True
+            if nearest is None:
+                nearest = cfg
+        d = d.parent
+    if nearest is None:
+        return False
+    return "prettier" in {**nearest.get("dependencies", {}), **nearest.get("devDependencies", {})}
 
 def format_files(wt, files, base="HEAD"):
     """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
@@ -171,7 +188,7 @@ def format_files(wt, files, base="HEAD"):
         cmd = None
         if p.suffix == ".go" and shutil.which("gofmt"):
             cmd = ["gofmt", "-w", str(p)]
-        elif p.suffix in PRETTIER_EXT:
+        elif p.suffix in PRETTIER_EXT and prettier_opted_in(wt, p):
             d = p.parent
             while cmd is None and (d == wt or wt in d.parents):  # the nearest node_modules, up to the clone root
                 bin_ = d / "node_modules" / ".bin" / "prettier"
