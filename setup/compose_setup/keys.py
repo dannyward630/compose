@@ -11,6 +11,8 @@ import fc_auth, fc_config, fc_keys, fc_steps
 KINDS = ("openrouter", "typesafe", "linear", "figma")
 REQUIRED = ("openrouter", "typesafe", "linear")
 LABELS = {"openrouter": "OpenRouter", "typesafe": "TypeSafe", "linear": "Linear", "figma": "Figma"}
+MARKS = {"openrouter": "required", "typesafe": "required", "linear": "required, or the claude.ai Linear connector", "figma": "optional"}
+HINTS = {"openrouter": "openrouter.ai/keys", "typesafe": "your TypeSafe account", "linear": "linear.app/settings/api", "figma": "a Figma personal access token"}
 
 
 class KeysScreen(Screen[Tuple[List[str], List[str]]]):
@@ -22,14 +24,22 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
     }
     KeysScreen Grid {
         height: auto;
-        grid-size: 3 4;
+        grid-size: 3 8;
         grid-columns: 14 1fr 22;
-        grid-rows: 3;
+        grid-rows: 3 1;
     }
     KeysScreen Grid Label,
     KeysScreen Grid Static {
         height: 3;
         content-align: left middle;
+    }
+    KeysScreen Grid .key-hint {
+        column-span: 3;
+        height: 1;
+        color: $text-muted;
+    }
+    KeysScreen Grid .key-status {
+        padding-left: 1;
     }
     KeysScreen #continue {
         margin-top: 1;
@@ -43,6 +53,9 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
     KeysScreen .skipped {
         color: $error;
     }
+    KeysScreen #keys-title {
+        text-style: bold;
+    }
     """
 
     def __init__(self, workspace: str = "default"):
@@ -54,13 +67,14 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         self.warned = False
 
     def compose(self) -> ComposeResult:
-        yield Label(f"Keys for workspace {self.workspace}", id="title")
+        yield Label(f"Keys for workspace {self.workspace}", id="keys-title")
         with Grid():
             for kind in KINDS:
                 yield Label(LABELS[kind], classes="key-label")
                 yield Input(password=True, id=kind)
                 text, state_class = self._status(kind)
                 yield Static(text, classes=f"key-status {state_class}", id=f"{kind}-status")
+                yield Static(f"{MARKS[kind]} · {HINTS[kind]}", classes="key-hint", id=f"{kind}-hint")
         button = Button("Continue", id="continue")
         button.active_effect_duration = 0
         yield button
