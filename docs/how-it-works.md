@@ -10,16 +10,16 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   explore the code ─▶ wayfinder page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
                                                                                         │
                                                                              compose run│
-  ┌─────────────────────────────────────────────────────────────────────────────────────▼──┐
+  ┌─────────────────────────────────────────────────────────────────────────────────────▼───┐
   │ DISPATCH   one clone + one pi session per task (GLM 5.3 Flash); `after:` tasks start    │
   │            on their base task's branch                                                  │
   │   test RED on HEAD? ─ no ─▶ skip                                                        │
-  │        yes ─▶ implement (edits only) ─▶ CLI runs test, protected untouched, ≤350 lines │
+  │        yes ─▶ implement (edits only) ─▶ CLI runs test, protected untouched, ≤350 lines  │
   │                 ▲                │                                                      │
   │                 └── RED: Haiku's fix brief to the session, ≤3, fallback after 2         │
   │                                  │ GREEN                                                │
   │                                  ▼                                                      │
-  │                         format, commit on fast/<project>/NNN                            │
+  │                         format, commit on <project branch>-NNN                          │
   └──────────────────────────────────┬──────────────────────────────────────────────────────┘
                                      ▼
   TEAM LEAD REVIEW of each layer's diff ─▶ accept, or re-split and re-run
@@ -150,7 +150,7 @@ A project is one feature in its own worktree.
   Without treehouse, it is `../compose-<name>`.
 - `.compose/<name>/` sits beside it and holds the Linear link, the verify config, and results.
   `init` git-ignores it, `graft/`, and `.trail/` first.
-- The stack's trunk is the project branch, and one final PR brings it to your branch.
+- The layers stack on the review base, main unless `review_base` says otherwise, and `gh stack merge` lands them as one all-or-nothing merge, with no final PR.
 - `init --after <other>` branches from another project's branch when the feature needs its code.
 
 Your checkout is never touched, so several features can run at once.
