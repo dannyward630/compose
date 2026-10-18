@@ -106,3 +106,58 @@ class Outcome(unittest.TestCase):
         self.path = EXPORT; lines, code = F.finish([("berry", "manual")], True)
         self.assertEqual((self.named(lines[0], "run by hand: "), lines[1:5], code),
                          (["berry"], ["set by hand in config.toml: a = 1", "b = 2", *PATH_LINES], 0))
+
+
+ADDED, WHY = "added default models to ~/.compose/config.json: ", "provider: no endpoints for glm-5-3-flash-fast"
+NOT_DONE_LINE = lambda lines: [l for l in lines if l.startswith(NOT_DONE)]
+REAL_PROBE = F.fc_defaults.probe_implementer
+
+class Tidy(unittest.TestCase):
+    run_finish = Finish.run_finish
+
+    def setUp(self):
+        Finish.setUp(self); self.why = (True, "ok")
+        for p in (mock.patch.object(F.fc_defaults, "probe_implementer", REAL_PROBE),
+                  mock.patch.object(F.fc_defaults.fc_models, "model_available", lambda m: self.why)):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_preset_steps_once_in_every_result(self):
+        self.assertTrue(F.fc_defaults.PRESET_STEPS)
+        for self.why, auth, yes in (((True, "ok"), ALL, False), ((False, WHY), ALL, False), ((False, WHY), ALL, True),
+                                    ((False, WHY), {"workspaces": {"default": {}}}, False)):
+            lines, _ = self.run_finish(auth, yes)
+            self.assertEqual([lines.count(l) for l in F.fc_defaults.PRESET_STEPS], [1] * len(F.fc_defaults.PRESET_STEPS), lines)
+            self.assertEqual(WHY in lines, not self.why[0] and auth is ALL and not yes)
+
+    def test_models_in_one_line_and_no_write_when_nothing_to_add(self):
+        crew = F.fc_defaults.DEFAULT_MODELS["crew"]
+        self.cfg.write_text(json.dumps({"models": {"implementer": "pi:mine", "crew": {}}}))
+        lines, code = self.run_finish(ALL)
+        self.assertEqual(([l for l in lines if "models" in l and l not in F.fc_defaults.PRESET_STEPS], code),
+                         ([f"{ADDED}fallback, crew ({len(crew)} roles)"], 0))
+        self.cfg.write_text(json.dumps({"models": {"implementer": "pi:mine", "crew": crew}}))
+        self.assertIn(ADDED + "fallback", self.run_finish(ALL)[0])
+        self.cfg.unlink(); lines, _ = self.run_finish(ALL)  # fresh: no config.json yet
+        added = [l for l in lines if l.startswith(ADDED)]
+        self.assertEqual(len(added), 1); self.assertIn("implementer", added[0]); self.assertTrue(added[0].endswith(f"crew ({len(crew)} roles)"))
+        self.assertFalse([l for l in lines if "{" in l or l.startswith("models.")])
+        os.utime(self.cfg, ns=(10**18, 10**18)); before = (self.cfg.read_bytes(), self.cfg.stat().st_mtime_ns, self.cfg.stat().st_ino)
+        lines, code = self.run_finish(ALL)
+        self.assertEqual((self.cfg.read_bytes(), self.cfg.stat().st_mtime_ns, self.cfg.stat().st_ino, code), (*before, 0))
+        self.assertFalse([l for l in lines if l.startswith("added default models")]); self.assertEqual(lines[-2:], READY)
+
+    def test_not_finished_says_why(self):
+        self.why = (False, WHY)
+        lines, code = self.run_finish(ALL)
+        self.assertEqual((lines[-1], code), (NOT_DONE + ": the model probe failed", 1))
+        self.why = (True, "ok")
+        for self.connected, auth, keys in ((False, {"workspaces": {"default": {}}}, ["openrouter", "typesafe", "linear"]),
+                                           (True, {"workspaces": {"default": {"openrouter": "sk-or-test"}}}, ["typesafe"])):
+            lines, code = self.run_finish(auth); (line,) = NOT_DONE_LINE(lines)
+            self.assertEqual((lines[-1], code), (line, 1))
+            self.assertTrue(line.startswith(NOT_DONE + ": missing ") and ";" not in line, line)
+            self.assertEqual([k for k in ("openrouter", "typesafe", "linear") if k in line.lower()], keys)
+        self.why = (False, WHY)
+        (line,) = NOT_DONE_LINE(self.run_finish({"workspaces": {"default": {"openrouter": "sk-or-test"}}})[0])
+        self.assertTrue(line.startswith(NOT_DONE + ": missing ") and line.endswith("; the model probe failed"), line)
+        self.assertNotIn("openrouter", line.lower())
