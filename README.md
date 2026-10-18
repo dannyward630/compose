@@ -167,7 +167,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `compose resume --project <name>` | Continues after a billing halt |
 | `compose clean --project <name>` | Removes what has merged and moves it to Done in Linear, story and feature included |
-| `compose yolo --project <name> [--push] [words]\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
+| `compose yolo --project <name> [--push] [words]\|--clear-words\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
 | `compose workspace [<name>]` | Lists or switches billing workspaces |
 
 Every command is documented in [docs/cli.md](docs/cli.md).

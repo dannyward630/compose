@@ -101,7 +101,7 @@ def main():
                             ("triage", fc_run.cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", fc_change.cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
                             ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
-                            ("yolo", fc_yolo.cmd_yolo, "the product owner is away: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, `off` prints the digest and archives"),
+                            ("yolo", fc_yolo.cmd_yolo, "the product owner is away: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `off` prints the digest and archives"),
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
@@ -192,6 +192,7 @@ def main():
             s.add_argument("--release", help="comma-separated task ids, or all")
         if name == "yolo":
             s.add_argument("--push", action="store_true", help="permission, given in advance, to submit the project's verified stack")
+            s.add_argument("--clear-words", action="store_true", help="empty the words, keeping since, push, and the decisions")
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `off`")
         if name == "change":
             s.add_argument("action", choices=("start", "done", "undo"))

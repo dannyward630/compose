@@ -1,6 +1,6 @@
 ---
 description: Go away (yolo) - the engineering manager answers with the recommendation and logs it; `off` when you are back
-argument-hint: "[--push] [words] | off"
+argument-hint: "[--push] [words] | --clear-words | off"
 allowed-tools: Bash(compose yolo:*)
 ---
 The project is the one this session runs; for an epic, every project of the epic.

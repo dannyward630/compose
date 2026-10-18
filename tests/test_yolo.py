@@ -26,9 +26,9 @@ class Yolo(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         self.file = self.proj / "results" / "yolo.json"
 
-    def yolo(self, *words, push=False, snapshot=None):
+    def yolo(self, *words, push=False, clear_words=False, snapshot=None):
         out = io.StringIO()
-        a = SimpleNamespace(repo=".", project="hw", push=push, words=list(words))
+        a = SimpleNamespace(repo=".", project="hw", push=push, clear_words=clear_words, words=list(words))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snapshot or snap()), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
@@ -59,6 +59,38 @@ class Yolo(unittest.TestCase):
         d = json.loads(self.file.read_text())
         self.assertEqual((d["since"], d["words"], len(d["decisions"])), ("2026-01-01 09:00:00", "second", 1))
         self.assertIn("push: no", out)
+
+    def test_clear_words_empties_them_and_keeps_since_push_and_decisions(self):
+        self.yolo("ship", push=True)
+        self.yolo("decided", "db?: postgres")
+        since = json.loads(self.file.read_text())["since"]
+        out = self.yolo(clear_words=True)
+        d = json.loads(self.file.read_text())
+        self.assertEqual((d["words"], d["since"], d["push"], [x["text"] for x in d["decisions"]]), ("", since, True, ["db?: postgres"]))
+        self.assertIn("words cleared", out)
+        for words, push in ((["new"], False), ([], True)):
+            with self.assertRaises(SystemExit):
+                self.yolo(*words, push=push, clear_words=True)
+        self.assertEqual(json.loads(self.file.read_text()), d)
+
+    def test_clear_words_without_yolo_exits_1(self):
+        with self.assertRaises(SystemExit) as e:
+            self.yolo(clear_words=True)
+        self.assertEqual(e.exception.code, 1)
+        self.assertFalse(self.file.exists())
+
+    def test_words_that_look_like_a_command_are_refused_with_a_quoting_hint(self):
+        self.yolo("ship", "it", push=True)
+        d = json.loads(self.file.read_text())
+        for words in (["--project hw decided db?: postgres"], ["--repo . --project hw ship it"], ["decided --project hw db?: pg"],
+                      ["db?", "decided", "postgres"]):
+            with self.assertRaises(SystemExit) as e:
+                self.yolo(*words)
+            self.assertIn("quote", str(e.exception.code))
+            self.assertIn('compose yolo decided --project hw "<question>: <answer taken>"', str(e.exception.code))
+        self.assertEqual(json.loads(self.file.read_text()), d)
+        self.yolo("the", "decidedly", "safe", "option")
+        self.assertEqual(json.loads(self.file.read_text())["words"], "the decidedly safe option")
 
     def test_decided_appends(self):
         self.yolo()
@@ -165,6 +197,13 @@ class Yolo(unittest.TestCase):
                 mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
             fc.main()
         self.assertEqual(seen[0].words, ["decided", "db?: postgres"])
+
+    def test_main_parses_clear_words_as_a_flag(self):
+        seen = []
+        with mock.patch.object(sys, "argv", ["compose", "yolo", "--project", "hw", "--clear-words"]), \
+                mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
+            fc.main()
+        self.assertEqual((seen[0].clear_words, seen[0].words), (True, []))
 
 
 if __name__ == "__main__":

@@ -42,14 +42,21 @@ def yolo_digest(repo, proj, y):
     return "\n".join(out)
 
 def cmd_yolo(a):
-    """Enter yolo (words pre-answer questions verbatim; --push permits the stack's submit), log a decision taken, or come back (`off`)."""
+    """Enter yolo (words pre-answer questions verbatim; --push permits the stack's submit), log a decision taken, clear the words, or come back (`off`)."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     path = proj / "results" / "yolo.json"
     y = fc_tasks.yolo_state(proj)
     words = list(a.words or [])
-    if words[:1] in (["off"], ["decided"]) and not y:
+    if (words[:1] in (["off"], ["decided"]) or a.clear_words) and not y:
         print(f"yolo is not on for {proj.name}; `compose yolo --project {proj.name} [--push] [words]` turns it on")
         sys.exit(1)
+    if a.clear_words:
+        if words or a.push:
+            sys.exit(f"--clear-words changes only the words; run it alone: `compose yolo --project {proj.name} --clear-words`")
+        y["words"] = ""
+        fc_core.atomic_write(path, json.dumps(y, indent=2))
+        print(f"words cleared for {proj.name}; kept: since {y['since']}, push: {'yes' if y.get('push') else 'no'}, {len(y['decisions'])} decision(s)")
+        return
     if words == ["off"]:
         print(yolo_digest(repo, proj, y))
         os.replace(path, path.with_name(f"yolo-{y['since'].replace(' ', 'T').replace(':', '')}.json"))
@@ -61,6 +68,13 @@ def cmd_yolo(a):
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"logged for the product owner's return: {' '.join(words[1:])}")
         return
+    # A shell variable holding a whole command reaches here as one word (zsh never splits an unquoted one): refuse it, never store it.
+    if any(w.startswith(("--repo", "--project")) for w in words) or " decided " in f" {' '.join(words)} ":
+        sys.exit(f"these words look like a compose command passed as one word, so nothing changed: {' '.join(words)!r}\n"
+                 f"write the command out and quote only the words:\n"
+                 f"  compose yolo --project {proj.name} [--push] \"<words>\"\n"
+                 f"  compose yolo decided --project {proj.name} \"<question>: <answer taken>\"\n"
+                 f"words that themselves say ` decided ` are taken for a mislaid `yolo decided`: reword them")
     y = y or {"since": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": []}
     y.update(push=bool(a.push), words=" ".join(words) if words else y.get("words", ""))
     path.parent.mkdir(parents=True, exist_ok=True)
