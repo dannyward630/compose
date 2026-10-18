@@ -60,3 +60,41 @@ class InstallSh(unittest.TestCase):
         self.assertEqual((cli.read_text(), self.log("uv.flag")), ("mine", "1\n")); self.assertIn("pull --ff-only", self.log("git.log"))
         self.assertIn("https://astral.sh/uv/install.sh", self.log("curl.log")); self.assertTrue(ran[2].startswith(f"{self.home}/.local/bin:"))
         self.assertEqual([f for f in os.listdir(self.home) if f.endswith(("rc", "profile"))], [])
+
+
+FETCH = "From https://github.com/prodoxx/compose\n * branch            main       -> FETCH_HEAD\n"
+HINTS = FETCH + "".join(
+    f"hint: {h}\n" for h in ("Diverging branches can't be fast-forwarded, you need to either:", "", "\tgit merge --no-ff",
+                             "", "or:", "", "\tgit rebase", "", 'Disable this message with "git config set advice.diverging false"'))
+PULL_GIT = ('echo "$*" >> "$HOME/git.log"\ncase "$*" in\n'
+            '*pull*) printf "%s" "${PULL_OUT:-}"; printf "%s" "${PULL_ERR:-}" >&2; exit "${PULL_CODE:-0}";;\nesac')
+
+
+class InstallMessages(unittest.TestCase):  # the InstallSh fakes, with a git whose pull talks like the real one
+    setUp, log, run_install = InstallSh.setUp, InstallSh.log, InstallSh.run_install
+
+    def checkout(self, **pull):
+        (self.home / "compose.log").unlink(missing_ok=True); mine = self.home / "mine"
+        script(mine / "bin/compose", COMPOSE); script(self.bin / "git", PULL_GIT)
+        out, ran = self.run_install(COMPOSE_INSTALL_DIR=str(mine), **pull)
+        self.assertEqual(ran[:2], [str(mine / "bin/compose"), "setup --yes"])
+        self.assertIn("pull --ff-only", self.log("git.log"))
+        return out, out.splitlines(), mine
+
+    def test_failed_pull_is_one_warn_line_with_gits_last_error(self):
+        for last in ("fatal: Not possible to fast-forward, aborting.", "fatal: couldn't find remote ref main",
+                     "fatal: unable to access 'https://example.invalid/a%20b/%s': Could not resolve host: example.invalid"):
+            with self.subTest(last):
+                out, lines, mine = self.checkout(PULL_ERR=HINTS + last + "\n", PULL_CODE="1")
+                warn = f"  warn  git pull failed ({last}); going on with the checkout as it is"
+                self.assertEqual([l for l in lines if "git pull" in l or "fatal" in l], [warn], out)
+                self.assertNotIn("hint", out); self.assertNotIn("FETCH_HEAD", out)
+                self.assertIn(f"  ok    checkout: {mine}", lines)
+
+    def test_good_pull_prints_no_git_output_and_no_terminal_names_plain_setup(self):
+        pulled = "Updating 1a2b3c4..5d6e7f8\nFast-forward\n bin/compose | 2 +-\n"
+        out, lines, mine = self.checkout(PULL_OUT=pulled, PULL_ERR=FETCH)
+        for git_said in ("Updating", "Fast-forward", "bin/compose |", "FETCH_HEAD", "From https", "warn", "guided"):
+            self.assertNotIn(git_said, out)
+        self.assertIn(f"  ok    checkout: {mine}", lines)
+        self.assertIn("no terminal; running the plain setup with every default (compose setup --yes)", lines)
