@@ -557,6 +557,38 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.assertEqual(out.count("linear skipped"), 1, out)
         self.assertIn("fast/p/001", out)  # the branches are still cleaned
 
+    def test_with_task_branches_gone_merged_layers_move_their_tasks_story_and_feature_to_done(self):
+        self.linear_project()
+        wt = self.r.parent / "compose-p"
+        (wt / "stub.txt").write_text("groundwork\n")  # the project branch's own commit: only its layers prove it merged
+        self.run("add", "stub.txt", cwd=wt); self.run("commit", "-qm", "groundwork", cwd=wt)
+        self.run("branch", "-D", "fast/p/001", "fast/p/002")
+        (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Progress", "ENG-2"), ENG_5=("Canceled", "ENG-2"))
+        with mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            out = self.clean_here()
+        self.assertIn("every layer built from it is merged", out)
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "Done", "Canceled", "Done", "Done"])
+
+    def merged_ids(self):
+        with mock.patch.object(fc.fc_linear, "linear_merged") as lm:
+            self.clean_here()
+        _, metas, project_merged = lm.call_args.args
+        return [m["id"] for m in metas], project_merged
+
+    def test_a_task_held_by_any_layer_not_merged_is_not_counted(self):
+        self.linear_project()
+        self.run("branch", "-D", "fast/p/001", "fast/p/002")
+        (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001", "002"], "fast/p/layer-02": ["002"]}))
+        ids, project_merged = self.merged_ids()  # only layer-01 is merged: 002 waits for layer-02
+        self.assertEqual(sorted(ids), ["001", "003"])
+        self.assertFalse(project_merged)
+
+    def test_a_task_proven_merged_by_its_branch_and_its_layer_is_counted_once(self):
+        self.linear_project()
+        ids, _ = self.merged_ids()
+        self.assertEqual(sorted(ids), ["001", "003"])
+
 
 
 if __name__ == "__main__":
