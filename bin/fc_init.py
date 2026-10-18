@@ -123,9 +123,10 @@ def cmd_doctor(a):
     bad = check_deps()
     if shutil.which("gh") and fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode != 0:
         print("WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)")
-    if old := fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE):
-        print("WARNING: " + ", ".join(f"{name} in {path}" for name, path in old)
-              + " still in the old places; each differs from the key auth.json holds, so it was kept: remove the one you do not want")
+    home = Path.home()
+    for name, path in fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE):
+        shown = "~" + str(path)[len(str(home)):] if path.is_relative_to(home) else str(path)
+        print(f"WARNING: {name} in {shown} differs from the key auth.json holds, so it was kept: remove the one you do not want")
     if bad:
         modes = {row[0]: row[5] for row in fc_steps.STEPS}  # setup fixes every mode but manual
         print(f"{len(bad)} required step{'s' if len(bad) > 1 else ''} missing"
