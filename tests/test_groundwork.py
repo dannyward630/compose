@@ -133,7 +133,7 @@ class Groundwork(unittest.TestCase):
         self.assertIn("compose linear create", planner)
         self.assertIn("`compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says", planner)
         self.assertRegex(explore, r'compose linear update[^`]*--section "## Notes"')
-        for s in ("patch append", "### Codebase brief", "NEB-9"):
+        for s in ("### Codebase brief", "NEB-9"):
             self.assertIn(s, explore)
         self.assertRegex(" ".join(b.CHANGE_BRIEF.split()), r"compose linear update[^`]*--section")
 
@@ -221,7 +221,7 @@ class Explore(unittest.TestCase):
             fc.fc_briefs.cmd_explore(SimpleNamespace(extra="the client lives in web/"))
         brief = out[0]
         for want in ("ENG-7", "through trail only", "trail ask", "trail callers", "trail map", "trail skeleton", "under 3 minutes",
-                     "at most 40 lines", "patch append", "the client lives in web/"):
+                     "at most 40 lines", "the client lives in web/"):
             self.assertIn(want, brief)
         self.assertNotIn("graft", brief)
         self.assertNotIn("graft", fc.fc_briefs.cmd_explore.__doc__)
@@ -234,6 +234,54 @@ class Explore(unittest.TestCase):
         for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
             self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
             self.assertNotRegex(getattr(b, name), r"`graft\b", name)
+
+
+class SectionRewrite(unittest.TestCase):
+    """Briefs that record a line in one section read it first, then write the whole section back."""
+    GET, WHOLE, NEVER = "compose linear get <id> --body", "write the whole section back", "never a whole-description write"
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        self.repo, _ = repo_with({"README.md": "x\n"})
+        self.proj = self.repo / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj),
+                  mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo)):
+            p.start(); self.addCleanup(p.stop)
+
+    def printed(self, cmd, **kw):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            cmd(SimpleNamespace(repo=str(self.repo), project="p", extra=None, **kw))
+        return " ".join(out.getvalue().split())
+
+    def test_wayfinder_and_change_briefs_read_then_rewrite_decisions_so_far_in_step_5(self):
+        update = 'compose linear update <id> --section "## Decisions so far" --file <path>'
+        for brief in (self.printed(fc.fc_briefs.cmd_wayfinder), " ".join(fc.fc_briefs.CHANGE_BRIEF.split())):
+            step = brief[brief.index(" 5. "):brief.index(" 6. ")]
+            for s in (self.GET, self.WHOLE, update):
+                self.assertIn(s, step)
+            self.assertLess(step.index(self.GET), step.index(update))  # read, then write back
+            self.assertIn(self.NEVER, brief)
+
+    def test_change_brief_keeps_its_strike_through_format(self):
+        change = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
+        for s in ("- ~~<old line>~~ ({cid}) - <new line> ({cid}: <why, naming the evidence's source>)", '"keep it as is" changes nothing in the map.'):
+            self.assertIn(s, change)
+
+    def test_explore_brief_reads_then_rewrites_notes_with_the_codebase_brief(self):
+        explore, update = self.printed(fc.fc_briefs.cmd_explore), 'compose linear update <id> --section "## Notes" --file <path>'
+        for s in (self.GET, self.WHOLE, update, "### Codebase brief", self.NEVER, "NEB-9"):
+            self.assertIn(s, explore)
+        self.assertLess(explore.index(self.GET), explore.index(update))
+
+    def test_no_brief_says_patch_append(self):
+        b = fc.fc_briefs
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_wayfinder, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split())]
+        self.assertEqual(len(consts), 7)
+        self.assertEqual([brief[:60] for brief in printed + consts if "patch append" in brief], [])
 
 
 class Triage(unittest.TestCase):
