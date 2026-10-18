@@ -491,6 +491,20 @@ class Timed(unittest.TestCase):
         r = timed("echo one && echo two")
         self.assertEqual((r.returncode, r.stdout), (0, "one\ntwo\n"), r.stderr)
 
+    def test_timed_passes_the_callers_stdin_on_but_never_a_terminal(self):
+        import pty, subprocess as sp
+        cat = lambda **stdin: sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "5", "--", "cat"],
+                                     capture_output=True, text=True, **stdin)
+        r = cat(input='{"feature": {}}')
+        self.assertEqual((r.returncode, r.stdout), (0, '{"feature": {}}'), r.stderr)
+        main, term = pty.openpty()
+        try:
+            r = cat(stdin=term)  # a test reading stdin must not wait on the keyboard until the limit
+        finally:
+            os.close(main)
+            os.close(term)
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
 
 class JevLeash(unittest.TestCase):
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):

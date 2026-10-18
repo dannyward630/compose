@@ -77,7 +77,8 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
             f"and a test failing on the stubs plus the team lead's read of it is the proof.\n"
             f"Run tests and the project's own commands through `compose timed <seconds> -- <command>`: it gives them a scratch "
-            f"~/.compose and says if your real one changes.\n"
+            f"~/.compose and says if your real one changes. Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) "
+            f"directly: under `compose timed` they get that scratch config, with no workspace and no keys.\n"
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 

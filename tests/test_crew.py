@@ -399,6 +399,7 @@ class Crew(unittest.TestCase):
         self.assertIn("Fact-check before you say it", pre)
         self.assertIn("not verified", pre)
         self.assertIn("through `compose timed <seconds> -- <command>`", pre)
+        self.assertIn("Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) directly", pre)
 
     def test_start_in_an_untrusted_worktree_says_so_before_opening_a_tab(self):
         calls = []
