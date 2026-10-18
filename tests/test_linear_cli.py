@@ -22,22 +22,25 @@ class FakeLinear:
         self.state = {"ENG-1": "Todo", "ENG-2": "Todo", "ENG-3": "Todo", "ENG-4": "Todo"}
         self.parent = {"ENG-2": "ENG-1", "ENG-3": "ENG-2", "ENG-4": "ENG-2"}
         self.comments, self.calls = [], 0
+        self.lag, self.before = False, None  # lag: the first read after a move still shows the states from before it
 
-    def node(self, i):
-        return {"name": self.state[i], "type": next(s["type"] for s in STATES if s["name"] == self.state[i])}
+    def node(self, i, seen=None):
+        name = (seen or self.state)[i]
+        return {"name": name, "type": next(s["type"] for s in STATES if s["name"] == name)}
 
     def __call__(self, query, variables):
         self.calls += 1
         if "issueUpdate" in query:
+            self.before = dict(self.state) if self.lag else None
             self.state[variables["id"]] = next(s["name"] for s in STATES if s["id"] == variables["s"])
             return {"issueUpdate": {"success": True}}
         if "commentCreate" in query:
             self.comments.append((variables["id"], variables["b"]))
             return {"commentCreate": {"success": True}}
-        i = variables["id"]
-        return {"issue": {"id": i, "identifier": i, "state": self.node(i), "team": {"states": {"nodes": STATES}},
+        i, seen, self.before = variables["id"], self.before, None
+        return {"issue": {"id": i, "identifier": i, "state": self.node(i, seen), "team": {"states": {"nodes": STATES}},
                           "parent": {"identifier": self.parent[i]} if i in self.parent else None,
-                          "children": {"nodes": [{"identifier": c, "state": self.node(c)} for c, p in self.parent.items() if p == i]}}}
+                          "children": {"nodes": [{"identifier": c, "state": self.node(c, seen)} for c, p in self.parent.items() if p == i]}}}
 
 
 class LinearKey(unittest.TestCase):
@@ -77,6 +80,7 @@ class LinearStates(unittest.TestCase):
         return {"status": status, "branch": "fast/p/001", "attempts": 2, "cost": 0.0123, "model": "pi:x/glm", "log": log or []}
 
     def test_the_state_table_runs_from_cli_events(self):
+        self.lin.lag = True  # each roll-up reads right after its own move
         fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "dispatched")
         self.assertEqual([self.lin.state[i] for i in ("ENG-3", "ENG-2", "ENG-1")], ["In Progress"] * 3)
         fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
@@ -85,10 +89,27 @@ class LinearStates(unittest.TestCase):
         fc.fc_linear.linear_event(self.proj, {"linear": "ENG-4"}, "passed", self.result())
         self.assertEqual(self.lin.state["ENG-2"], "In Review")
         self.assertEqual(self.lin.state["ENG-1"], "In Progress")  # every story In Review, but verify has not passed
-        fc.fc_linear.linear_verified(self.proj)
+        fc.fc_linear.linear_reconcile(self.proj, verified=True)
         self.assertEqual(self.lin.state["ENG-1"], "In Review")
         self.assertIn("fast/p/001", self.lin.comments[0][1]); self.assertIn("2 attempt(s)", self.lin.comments[0][1])
         self.assertIn("$0.0123", self.lin.comments[0][1]); self.assertIn("pi:x/glm", self.lin.comments[0][1])
+
+    def test_a_story_a_task_event_left_behind_rolls_up_after_the_run_and_at_verify_pass(self):
+        """A task event rolls up from the one read after its own move, which can miss (parallel tasks, a read behind the
+        write): every task In Review, the story and the feature still In Progress, as the event left them."""
+        self.lin.lag = True
+        self.lin.state.update({"ENG-1": "In Progress", "ENG-2": "In Progress", "ENG-3": "In Review", "ENG-4": "In Review"})
+        (self.proj / "results").mkdir()
+        passed = lambda repo, proj, meta, attempts: {"id": meta["id"], "title": "t", "status": "passed", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-"}
+        with mock.patch.object(fc.fc_implement, "run_task", passed), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
+                redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+            fc.fc_run.run_tasks(Path("."), self.proj, [{"id": "004", "model": "pi:x/glm", "linear": "ENG-4"}],
+                                SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
+        self.assertEqual((self.lin.state["ENG-2"], self.lin.state["ENG-1"]), ("In Review", "In Progress"))  # verify has not passed
+        self.lin.state["ENG-2"] = "In Progress"
+        fc.fc_linear.linear_reconcile(self.proj, verified=True)
+        self.assertEqual((self.lin.state["ENG-2"], self.lin.state["ENG-1"]), ("In Review", "In Review"))
 
     def test_a_failure_stays_in_progress_with_its_cause(self):
         fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "failed",
@@ -108,7 +129,7 @@ class LinearStates(unittest.TestCase):
         said = []
         with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=OSError("connection refused")), mock.patch.object(fc.fc_core, "say", said.append):
             fc.fc_linear.linear_event(self.proj, {"linear": "ENG-3"}, "passed", self.result())
-            fc.fc_linear.linear_verified(self.proj)
+            fc.fc_linear.linear_reconcile(self.proj, verified=True)
         self.assertTrue(any("update failed" in s for s in said))
 
     def test_untracked_tasks_leave_linear_alone(self):

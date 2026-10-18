@@ -141,13 +141,17 @@ def rollup_state(children):
         return "In Progress"
     return None
 
-def linear_roll_up(proj, ident, verified=False):
-    """Roll `ident` and its parents up the table. The feature reaches In Review only when verify passed, and the CLI
-    never marks the feature Done (that needs the project branch merged)."""
+def linear_roll_up(proj, ident, verified=False, moved=None):
+    """Roll `ident` and its parents up the table. `moved` ({identifier: state name}) holds the states this step just set;
+    they stand over the read, which can still return a child's state from before its move. The feature reaches In Review
+    only when verify passed, and the CLI never marks the feature Done (that needs the project branch merged)."""
     feature = json.loads((proj / "linear.json").read_text()).get("feature")
+    moved = dict(moved or {})
     while ident:
         issue = linear_issue(ident)
-        target = rollup_state(issue["children"]["nodes"])
+        states = {n["name"].lower(): n for n in issue["team"]["states"]["nodes"]}
+        target = rollup_state([{**c, "state": states[moved[c["identifier"]].lower()]} if c["identifier"] in moved else c
+                               for c in issue["children"]["nodes"]])
         if issue["identifier"] == feature:
             if target in ("In Review", "Done"):
                 target = "In Review" if verified else "In Progress"
@@ -156,6 +160,7 @@ def linear_roll_up(proj, ident, verified=False):
             return
         if target:
             linear_move(issue, target)
+            moved[issue["identifier"]] = target
         ident = (issue.get("parent") or {}).get("identifier")
 
 def linear_event(proj, meta, event, result=None):
@@ -167,23 +172,20 @@ def linear_event(proj, meta, event, result=None):
         return
     try:
         issue = linear_issue(meta["linear"])
-        if event == "dispatched":
-            linear_move(issue, "In Progress")
-        elif event == "passed":
-            linear_move(issue, "In Review")
+        state = "In Review" if event in ("passed", "hand_done") else "In Progress"
+        linear_move(issue, state)
+        if event == "passed":
             linear_comment(issue, f"Passed: branch `{result['branch']}`, {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`.")
         elif event == "hand_done":
-            linear_move(issue, "In Review")
             linear_comment(issue, f"Finished by hand: {result['note']}")
-        else:
-            linear_move(issue, "In Progress")
+        elif event != "dispatched":
             last = (result.get("log") or [{}])[-1]
             tail = (last.get("test_output") or "").strip().splitlines()
             why = last.get("contradiction") or last.get("error") or (tail[-1] if tail else "no detail")
             linear_comment(issue, f"{result['status']} after {result['attempts']} attempt(s) (${result['cost']:.4f}, model `{result['model']}`): {why[:400]}")
         parent = (issue.get("parent") or {}).get("identifier")
         if parent:
-            linear_roll_up(proj, parent)
+            linear_roll_up(proj, parent, moved={issue["identifier"]: state})
     except Exception as e:  # noqa: BLE001  Linear never stops a run
         fc_core.say(f"linear {meta.get('linear')}: update failed ({str(e)[:200]}); the run goes on")
 
@@ -215,14 +217,26 @@ def linear_merged(feature, metas, project_merged):
     except Exception as e:  # noqa: BLE001
         fc_core.say(f"linear: moving merged work to Done failed ({str(e)[:200]}); the states are yours to set")
 
-def linear_verified(proj):
-    """verify PASS: the feature moves to In Review once every story is In Review or Done."""
+def linear_reconcile(proj, verified=False):
+    """The end of a run and verify PASS: every story under the feature rolls up from its tasks again, then the feature from
+    its stories, so a roll-up a task event missed (parallel tasks, a read behind the write) is made true. A project scoped to
+    stories re-rolls only those. The feature moves to In Review only when `verified`."""
     link = proj / "linear.json"
     if not link.exists() or not fc_config.LINEAR_KEY:
         return
-    feature = json.loads(link.read_text()).get("feature")
+    meta = json.loads(link.read_text())
+    feature, scope = meta.get("feature"), set(meta.get("stories") or [])
     try:
-        linear_roll_up(proj, feature, verified=True)
+        moved = {}
+        for child in linear_issue(feature)["children"]["nodes"]:
+            if scope and child["identifier"] not in scope:
+                continue
+            story = linear_issue(child["identifier"])
+            target = rollup_state(story["children"]["nodes"])
+            if target:
+                linear_move(story, target)
+                moved[story["identifier"]] = target
+        linear_roll_up(proj, feature, verified=verified, moved=moved)
     except Exception as e:  # noqa: BLE001
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
 

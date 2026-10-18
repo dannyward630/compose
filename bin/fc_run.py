@@ -1,7 +1,7 @@
 import argparse, json, os, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -169,6 +169,8 @@ def run_tasks(repo, proj, tasks, a):
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids]
     for t in reflecting:  # every screen is on disk before the run reports its end
         t.join()
+    if any(m.get("linear") for m in tasks):
+        fc_linear.linear_reconcile(proj)
     results.sort(key=lambda r: r["id"])
     total = time.time() - t0
     print()

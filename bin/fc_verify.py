@@ -494,7 +494,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     fc_core.say(f"verify {'PASS' if ok else 'FAIL'}  wall {fc_core.fmt(final['seconds'])}  rounds={len(rounds)}")
     if ok:
-        fc_linear.linear_verified(proj)
+        fc_linear.linear_reconcile(proj, verified=True)
     fc_core.say(fc_core.LEDGER.line())
     if not ok:
         print("\nUnresolved after the fix budget. Escalate to the team lead with the confirmed findings above.")
