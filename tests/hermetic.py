@@ -78,6 +78,11 @@ def chmod(path, mode, *, dir_fd=None, follow_symlinks=True):
     return _chmod(path, mode, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
 
+def path_chmod(self, mode, *, follow_symlinks=True):
+    """Path.chmod through chmod: on 3.9 it calls the os.chmod pathlib bound at import, which never sees the patch."""
+    chmod(self, mode, follow_symlinks=follow_symlinks)
+
+
 def shared(p):
     return _stubs is not None and p.is_symlink() and str(p.resolve()).startswith(str(_stubs) + "/")
 
@@ -98,6 +103,7 @@ def writing_anew(write):
 if tempfile.mkdtemp is not mkdtemp:
     tempfile.mkdtemp = mkdtemp
     os.chmod = chmod
+    Path.chmod = path_chmod
     Path.write_text = writing_anew(Path.write_text)
     Path.write_bytes = writing_anew(Path.write_bytes)
     atexit.register(remove_made)
