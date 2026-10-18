@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers
+import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -32,14 +32,18 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         old = fc_herdr.herdr("agent", "get", name)
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
-        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-                                                           "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()},
-                                               fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
+        guard = fc_readguard.guard_file(cwd)
+        env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()}
+        if guard.exists():
+            env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
+                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
@@ -288,6 +292,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         return result
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo)
+    fc_readguard.write_guard(wt, meta["files"] + meta["protected"], pack)
     context = (f"CONTEXT PACK from the repo's trail graph (exact file:line, with source). Use it instead of exploring. "
                f"If you need more, run `trail ask \"<question>\"` or `trail callers <symbol>`; do not open unrelated files.\n{pack}\n\n"
                if pack else "")
@@ -346,6 +351,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             raise fc_proc.Stopped
         attempt += 1
         t0 = time.time()
+        ref_before = fc_readguard.refused(wt)
         try:
             session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
                                                        timeout=fc_models.TURN_TIMEOUT)
@@ -406,6 +412,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] else None)
         entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
                  "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
         progress("running")
@@ -423,7 +430,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 entry["reader"] = {"model": fc_config.TEST_READER, "usage": reader}
                 cost += reader["cost"]
                 progress("running")
-        fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  ${usage['cost']:.4f}"
+        fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
             + (f"  outside files: {', '.join(stray)}" if stray else ""))
