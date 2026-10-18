@@ -1,4 +1,5 @@
 import hermetic  # first: no test sees the real home
+import hashlib
 import os
 import re
 import unittest
@@ -613,6 +614,58 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("  `init` git-ignores it, `graft/`, and `.trail/` first.", how)
         # The step table holds the trail and treehouse install row.
         self.assertIn("| trail, treehouse | default | installs `@trailhq/trail-code` and treehouse | no |", machine)
+
+
+class StackBaseDocs(unittest.TestCase):
+    # (file, lines kept before the edit, lines kept after it, sha256 prefixes of both as they were before it)
+    KEPT = {
+        "sections/0a.md": (13, 2, "c2a4607b33bc4c5e", "7acdeff301550556"),
+        "SKILL.md": (50, 133, "27db20dff8519625", "a0b234cb9e3a634a"),
+    }
+
+    def edited(self, rel):
+        head, tail, before, after = self.KEPT[rel]
+        lines = read(rel).splitlines(keepends=True)
+        digest = lambda part: hashlib.sha256("".join(part).encode()).hexdigest()[:16]
+        self.assertEqual(digest(lines[:head]), before, f"{rel}: a line before the edit changed")
+        self.assertEqual(digest(lines[len(lines) - tail :]), after, f"{rel}: a line after the edit changed")
+        edited = [l.rstrip("\n") for l in lines[head : len(lines) - tail]]
+        self.assertTrue(edited, f"{rel}: the edited lines are gone")
+        self.assertNotIn("\u2014", "".join(edited))
+        return edited
+
+    def project_lines(self):
+        edited = self.edited("sections/0a.md")
+        at = next(i for i, l in enumerate(edited) if "init --after <other-slug>" in l)
+        self.assertGreater(at, 0, "the trunk line still comes before the --after line")
+        return "\n".join(edited[:at]), "\n".join(edited[at:])
+
+    def test_the_stack_sits_on_the_review_base_and_merges_all_or_nothing(self):
+        lines = read("sections/0a.md").splitlines()
+        for old in ("PRs target it", "final PR"):
+            self.assertFalse([l for l in lines if old in l], old)
+        trunk, _ = self.project_lines()
+        for word in ("`review_base`", "default branch", "`gh stack merge`", "--branch <new>`", "renames its git branch"):
+            self.assertIn(word, trunk)
+        self.assertRegex(trunk, r"all.or.nothing")
+
+    def test_an_after_project_stacks_on_that_projects_branch(self):
+        _, after = self.project_lines()
+        for word in ("`review_base`", "`(after <other-slug>)`", "`clean` counts a merge into either."):
+            self.assertIn(word, after)
+        self.assertRegex(after, r"layers\b[^.]*\bstack[^.]*\bthat project's branch")
+        self.assertNotIn("until that one merges", after)
+
+    def test_the_rewritten_project_lines_hold_one_sentence_each(self):
+        for line in "\n".join(self.project_lines()).splitlines():
+            self.assertNotRegex(line, r"[a-z)`]\. [A-Z`]", line)
+
+    def test_each_epic_feature_has_no_final_pr(self):
+        line = " ".join(self.edited("SKILL.md"))
+        self.assertNotIn("final PR", line)
+        self.assertTrue(line.startswith("- **epic**: the epic is taken through to done as a unit, but it is never one project:"))
+        for word in ("each feature is its own project (0a)", "worktree, team lead,", "stack", "whether its features are known:"):
+            self.assertIn(word, line)
 
 
 if __name__ == "__main__":
