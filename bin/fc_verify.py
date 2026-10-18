@@ -271,7 +271,7 @@ def run_stages(repo, proj, cfg, a):
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
     stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
-    panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages)
+    panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages, fc_herdr.tab_label(proj, "verify"))
     fc_herdr.herdr_stage(panes, "checks", "working")
     for c in cfg.get("checks", []):
         t1 = time.time()

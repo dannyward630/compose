@@ -132,6 +132,41 @@ class Tabs(unittest.TestCase):
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
 
 
+
+class SharedSpace(unittest.TestCase):
+    """A project opens in the space compose was started from: no new space, its tabs named for it, found again by every later command."""
+    def herdr(self, *args, check=False, timeout=120):
+        self.calls.append(args)
+        if args[:2] == ("workspace", "list"):
+            return {"workspaces": [{"workspace_id": "w7", "label": "apps", "worktree": {"checkout_path": "/elsewhere"}}]}
+        if args[:2] == ("tab", "list"):
+            return {"tabs": [{"tab_id": t, "label": l} for t, l in self.tabs.items()]}
+        if args[:2] == ("tab", "create"):
+            tid = f"w7:t{len(self.tabs) + 1}"
+            self.tabs[tid] = args[args.index("--label") + 1]
+            return {"tab": {"tab_id": tid}, "root_pane": {"pane_id": f"w7:p{len(self.tabs)}"}}
+        return {}
+
+    def space(self, caller):
+        fc.fc_herdr.HERDR_SPACES.clear()
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.dict(os.environ, {"HERDR_WORKSPACE_ID": caller}):
+            return fc.fc_herdr.herdr_space(self.proj)
+
+    def test_init_puts_the_project_in_the_callers_space_and_later_commands_find_it(self):
+        wt = Path(tempfile.mkdtemp()).resolve()
+        self.proj, self.tabs, self.calls = wt / ".compose" / "shop", {"w7:t1": "1"}, []
+        (self.proj / "results").mkdir(parents=True)
+        self.assertEqual(self.space("w7"), "w7")
+        self.assertFalse([c for c in self.calls if c[:2] in (("worktree", "open"), ("workspace", "create"), ("workspace", "rename"), ("tab", "rename"))])
+        self.assertEqual(sorted(self.tabs.values()), ["1", "shop shell", "shop status"])  # the caller's own tab is left as it is
+        self.assertTrue(all(str(wt) in c for c in self.calls if c[:2] == ("tab", "create")))
+        self.assertEqual(fc.fc_herdr.tab_label(self.proj, "implementers"), "shop implementers")
+        self.calls = []
+        self.assertEqual(self.space("w18"), "w7")  # a teammate in another space still finds the project's
+        self.assertFalse([c for c in self.calls if c[:2] == ("tab", "create")])
+
+
 FAKE_HERDR = """#!{py}
 import json, os, subprocess, sys
 state, args = {state!r}, sys.argv[1:]

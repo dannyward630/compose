@@ -199,7 +199,7 @@ def cmd_init(a):
             "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main",
             **({"after": a.after} if a.after else {}), **({"branch": a.branch} if a.branch else {})}, indent=2))
     if fc_herdr.herdr_space(proj):
-        print(f"herdr space {name!r} ({fc_herdr.HERDR_SPACES[name]}) with a status tab")
+        print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
 
@@ -232,7 +232,7 @@ def own_commits(repo, branch):
     log = fc_core.sh(["git", "reflog", "show", "--format=%H", f"refs/heads/{branch}"], repo, check=False).stdout.split()
     return not log or log[-1] != fc_core.sh(["git", "rev-parse", f"refs/heads/{branch}"], repo, check=False).stdout.strip()
 
-def live_crew(proj, wt):
+def live_crew(proj):
     """Why the project still has people working: teammates whose last report is not done, or agents alive in its herdr space.
     The team lead (orchestrator) is the one running the post-merge clean, so it does not count."""
     lead, why = fc_herdr.agent_name(proj.name, "orchestrator"), []
@@ -241,9 +241,19 @@ def live_crew(proj, wt):
         last = (fc_crew.crew_reports(proj, c["name"]) or [{}])[-1]
         if c["name"] != lead and not c.get("closed") and last.get("state") != "done":
             why.append(f"{c['name']} last reported {last.get('state', 'nothing')}")
-    space = fc_herdr.herdr_find_space(wt) if fc_herdr.herdr_env() else None
-    why += [f"{ag.get('name')} is alive in its herdr space" for ag in fc_herdr.live_agents() if space and ag.get("workspace_id") == space and ag.get("name") != lead]
+    space = fc_herdr.herdr_project_space(proj) if fc_herdr.herdr_env() else None
+    tabs = {t["tab_id"] for t in fc_herdr.herdr_project_tabs(proj, space)} if space else set()  # a shared space's other agents are not this project's
+    why += [f"{ag.get('name')} is alive in its herdr space" for ag in fc_herdr.live_agents() if ag.get("tab_id") in tabs and ag.get("name") != lead]
     return why
+
+def close_space(proj, name):
+    """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own."""
+    space = fc_herdr.herdr_project_space(proj)
+    if space and fc_herdr.space_record(proj).exists():
+        for t in fc_herdr.herdr_project_tabs(proj, space):
+            fc_herdr.herdr("tab", "close", t["tab_id"])
+    elif space and fc_herdr.herdr_space_is(space, name):
+        fc_herdr.herdr("workspace", "close", space)
 
 def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=False, force=False):
     """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
@@ -251,7 +261,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     project branch itself are merged, the project worktree and branch. Unmerged work is kept and named."""
     import shutil
     repo = wt
-    crew = live_crew(proj, wt)
+    crew = live_crew(proj)
     if crew and not (force and explicit):
         print(f"clean  {name}: kept, it has live crew ({'; '.join(crew)}); --project {name} --force overrides")
         return
@@ -323,18 +333,13 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             project_merged = bool(why)
         if why:
             fc_crew.stop_listeners_under(wt)
+            close_space(proj, name)  # while its record is still in the worktree
             if fc_worktree.is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
-                space = fc_herdr.herdr_find_space(wt)
-                if space and fc_herdr.herdr_space_is(space, name):
-                    fc_herdr.herdr("workspace", "close", space)
                 fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)
                 fc_worktree.release_slot(main_repo, wt)
             else:
                 fc_core.sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
             if wt.exists() and not fc_worktree.is_slot(main_repo, wt):
-                space = fc_herdr.herdr_find_space(wt)
-                if space and fc_herdr.herdr_space_is(space, name):
-                    fc_herdr.herdr("workspace", "close", space)
                 shutil.rmtree(wt, ignore_errors=True)
             fc_core.sh(["git", "worktree", "prune"], main_repo, check=False)
             fc_core.sh(["git", "branch", "-D", pbranch], main_repo, check=False)

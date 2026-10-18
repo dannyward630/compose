@@ -164,7 +164,7 @@ class Secrets(unittest.TestCase):
     def test_the_herdr_pi_pane_gets_only_the_openrouter_key_in_its_env(self):
         panes, starts = [], []
         with mock.patch.object(fc.fc_herdr, "herdr", return_value=None), \
-                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env: panes.append(env) or "p1"), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), \
                 mock.patch.object(fc.fc_herdr, "herdr_agent_start", lambda *a: starts.append(a) or {}), \
                 mock.patch.object(fc.fc_herdr, "herdr_error", return_value=(None, "timeout")):
             with self.assertRaises(subprocess.TimeoutExpired):

@@ -270,6 +270,29 @@ class CleanSafety(unittest.TestCase):
         self.assertFalse(self.wt["work"].exists())
 
 
+class SharedSpaceClean(unittest.TestCase):
+    """In the space compose was started from, clean closes the project's tabs, never the space, and other agents there are not its crew."""
+    def herdr(self, *args, check=False, timeout=120):
+        self.calls.append(args)
+        if args[:2] == ("workspace", "list"):
+            return {"workspaces": [{"workspace_id": "w7", "label": "shop"}]}
+        if args[:2] == ("tab", "list"):
+            return {"tabs": [{"tab_id": t, "label": l} for t, l in (("t1", "1"), ("t2", "shop shell"), ("t3", "shop status"), ("t4", "cart status"))]}
+        if args[:2] == ("agent", "list"):
+            return {"agents": [{"name": "manager", "tab_id": "t1", "workspace_id": "w7"}, {"name": "cart-orchestrator", "tab_id": "t4", "workspace_id": "w7"}]}
+        return {}
+
+    def test_clean_closes_the_projects_tabs_and_counts_only_its_agents(self):
+        wt = Path(tempfile.mkdtemp()); proj = wt / ".compose" / "shop"
+        (proj / "results").mkdir(parents=True)
+        fc.fc_herdr.space_record(proj).write_text(json.dumps({"space": "w7"}))
+        self.calls = []
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True):
+            self.assertEqual(fc.fc_init.live_crew(proj), [])
+            fc.fc_init.close_space(proj, "shop")
+        self.assertEqual([c for c in self.calls if c[0] in ("tab", "workspace") and c[1] == "close"], [("tab", "close", "t2"), ("tab", "close", "t3")])
+
+
 class ProjectBranch(unittest.TestCase):
     """A project's branch is stored in its verify.json: init --branch names it, --after and clean follow it, init --branch again renames it."""
     def setUp(self):

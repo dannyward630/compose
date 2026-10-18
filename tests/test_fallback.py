@@ -537,7 +537,7 @@ class HerdrPiKey(unittest.TestCase):
         environ = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], **environ}  # nothing from the real environment, which may hold real keys
         with mock.patch.object(fc.fc_config, "OPENROUTER_KEY", workspace_key), mock.patch.dict(os.environ, environ, clear=True), \
                 mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", agent_start), \
-                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env: panes.append(env) or "p1"), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), \
                 self.assertRaises(KeyboardInterrupt):
             fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", None, task)
         return panes[0], starts[0]

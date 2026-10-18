@@ -202,7 +202,7 @@ def cmd_crew(a):
     if not fc_herdr.herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     agent = name  # the herdr agent name: `name`, or a numbered one when a stranger outside this space already holds it
-    live, space = fc_herdr.live_agents(), fc_herdr.herdr_find_space(wt)
+    live, space = fc_herdr.live_agents(), fc_herdr.herdr_project_space(proj)
     if any(ag.get("name") == name and ag.get("workspace_id") == space for ag in live):
         sys.exit(f"{name} is already running; steer it with: herdr agent prompt {name} \"...\"")
     taken = {ag.get("name") for ag in live}
@@ -229,7 +229,7 @@ def cmd_crew(a):
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
-    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", title, "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", fc_herdr.tab_label(proj, title), "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
@@ -518,11 +518,11 @@ def teardown(proj):
     if stopped:
         print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")
     shutil.rmtree(scratch_dir(proj), ignore_errors=True)
-    space = fc_herdr.herdr_env() and fc_herdr.herdr_find_space(fc_herdr.project_worktree(proj))
+    space = fc_herdr.herdr_env() and fc_herdr.herdr_project_space(proj)
     if not space:
         return []
-    slug, orch = proj.name, fc_herdr.agent_name(proj.name, "orchestrator")
-    tabs = (fc_herdr.herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])
+    slug, orch, prefix = proj.name, fc_herdr.agent_name(proj.name, "orchestrator"), fc_herdr.tab_label(proj, "")
+    tabs = fc_herdr.herdr_project_tabs(proj, space)  # in a shared space, never another project's or the caller's own
     hosted = {}  # tab id -> live agent names in it
     for ag in (fc_herdr.herdr("agent", "list") or {}).get("agents", []):
         if ag.get("workspace_id") == space and ag.get("name"):
@@ -530,7 +530,7 @@ def teardown(proj):
     crew = {c["tab"]: c for c in (json.loads(f.read_text()) for f in sorted(crew_dir(proj).glob("*.json"))) if c.get("tab")}
     closed = []
     for t in tabs:
-        tid, label, names = t["tab_id"], t.get("label") or "", hosted.get(t["tab_id"], [])
+        tid, label, names = t["tab_id"], (t.get("label") or "")[len(prefix):], hosted.get(t["tab_id"], [])
         c = crew.get(tid)
         if label in ("shell", "status") or orch in names or (c and c["name"] == orch):
             continue

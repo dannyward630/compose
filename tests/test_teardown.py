@@ -65,5 +65,15 @@ class Teardown(unittest.TestCase):
         popen.assert_not_called()
 
 
+    def test_a_shared_space_closes_only_this_projects_tabs(self):
+        fc.fc_herdr.space_record(self.proj).write_text(json.dumps({"space": "w9"}))  # the space compose was started from
+        self.tabs = {"t1": "shop shell", "t2": "shop status", "t3": "shop orchestrator", "t4": "shop implementers", "t7": "shop verify",
+                     "t9": "shop tests", "t10": "shop e2e", "t20": "1", "t21": "cart implementers", "t22": "cart verify", "t23": "verify"}
+        self.agents = [("shop-orchestrator", "t3")]
+        with mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value="w9"):
+            self.assertEqual(sorted(self.teardown()), ["implementers", "tests", "verify"])
+        self.assertEqual(sorted(self.tabs), ["t1", "t10", "t2", "t20", "t21", "t22", "t23", "t3"])  # the caller's and another project's tabs stay
+
+
 if __name__ == "__main__":
     unittest.main()
