@@ -281,7 +281,7 @@ def layer_note(l, budget):
     over = ""
     if l["lines"] > budget:
         over = (f"; over the {budget}-line budget to stay within {l['fold_cap']} PRs" if l.get("fold_cap")
-                else f"; over the {budget}-line budget, a task is never split" if len(l["tasks"]) == 1 else "")
+                else f"; over the {budget}-line budget, a {'commit' if l['tasks'] == ['groundwork'] else 'task'} is never split" if len(l["tasks"]) == 1 else "")
     return f"{' + '.join(held)}: {l['lines']} lines{over}{gen}"
 
 def layer_title(repo, proj, l, n, metas):

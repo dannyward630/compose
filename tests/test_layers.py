@@ -405,6 +405,8 @@ class StackLimit(unittest.TestCase):
         l = {"tasks": ["001", "002"], "lines": 400, "generated": {}, "fold_cap": 3}
         self.assertEqual(fc.fc_layers.layer_note(l, 300), "task 001, 002: 400 lines; over the 300-line budget to stay within 3 PRs")
         self.assertEqual(fc.fc_layers.layer_note({**l, "lines": 250}, 300), "task 001, 002: 250 lines")
+        g = {"tasks": ["groundwork"], "lines": 400, "generated": {}}  # a groundwork unit is one commit
+        self.assertEqual(fc.fc_layers.layer_note(g, 300), "groundwork x1: 400 lines; over the 300-line budget, a commit is never split")
 
     def test_the_cap_is_ten_unless_set_and_verify_json_beats_the_workspace_which_beats_the_top_level(self):
         for i in range(8):  # 13 layers at a 1-line budget: two groundwork commits, these eight, three tasks
