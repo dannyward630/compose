@@ -254,5 +254,43 @@ class BeforePlanning(unittest.TestCase):
             self.assertFalse((repo / "checked").exists(), flags)
 
 
+T = 1_760_000_000  # fixed mtimes: the other record is 3 hours off, so its HH:MM never matches
+
+def hm(t):
+    return time.strftime("%H:%M", time.localtime(t))
+
+class SmokeStatus(unittest.TestCase):
+    def line(self, smoke=None, verify=None):
+        """Each record is (dict, mtime); returns the project line of render_status."""
+        repo = Path(tempfile.mkdtemp()); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        for name, rec in (("smoke.json", smoke), ("verify.json", verify)):
+            if rec:
+                (proj / "results" / name).write_text(json.dumps(rec[0])); os.utime(proj / "results" / name, (rec[1], rec[1]))
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
+            return fc.fc_status.render_status(repo, [proj]).splitlines()[0]
+
+    def test_smoke_alone_shows_smoke(self):
+        line = self.line(smoke=({"passed": True, "seconds": 2.0, "left_out": ["tasks"]}, T))
+        self.assertIn(f"  smoke PASS (no tasks) 2.0s at {hm(T)}", line)
+        self.assertNotIn("verify", line)
+
+    def test_newer_smoke_wins_with_its_own_label_time_and_seconds(self):
+        line = self.line(smoke=({"passed": True, "seconds": 125.6, "left_out": ["review", "e2e"]}, T), verify=({"passed": True, "seconds": 12.3}, T - 3 * 3600))
+        self.assertIn(f"  smoke PASS (no review, no e2e) 2m05.6s at {hm(T)}", line)
+        self.assertNotIn("verify", line)
+
+    def test_newer_verify_wins_as_today(self):
+        line = self.line(smoke=({"passed": True, "seconds": 2.0, "left_out": ["tasks", "review"]}, T - 3 * 3600), verify=({"passed": False, "seconds": 12.3}, T))
+        self.assertTrue(line.endswith(f"0 tasks:   verify FAIL 12.3s at {hm(T)}"), line)
+        self.assertNotIn("smoke", line)
+
+    def test_failed_smoke_says_fail(self):
+        line = self.line(smoke=({"passed": False, "seconds": 0.4, "left_out": ["tasks", "e2e"]}, T), verify=({"passed": True, "seconds": 12.3}, T - 3 * 3600))
+        self.assertIn(f"  smoke FAIL (no tasks, no e2e) 0.4s at {hm(T)}", line)
+        self.assertNotIn("PASS", line)
+
+
 if __name__ == "__main__":
     unittest.main()
