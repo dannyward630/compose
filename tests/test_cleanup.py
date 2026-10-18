@@ -296,9 +296,10 @@ class SharedSpaceClean(unittest.TestCase):
     def herdr(self, *args, check=False, timeout=120):
         self.calls.append(args)
         if args[:2] == ("workspace", "list"):
-            return {"workspaces": [{"workspace_id": "w7", "label": "shop"}]}
+            return {"workspaces": getattr(self, "spaces", [{"workspace_id": "w7", "label": "shop"}])}
         if args[:2] == ("tab", "list"):
-            return {"tabs": [{"tab_id": t, "label": l} for t, l in (("t1", "1"), ("t2", "shop shell"), ("t3", "shop status"), ("t4", "cart status"))]}
+            tabs = getattr(self, "tabs", (("t1", "1"), ("t2", "shop shell"), ("t3", "shop status"), ("t4", "cart status")))
+            return {"tabs": [{"tab_id": t, "label": l} for t, l in tabs]}
         if args[:2] == ("agent", "list"):
             return {"agents": [{"name": "manager", "tab_id": "t1", "workspace_id": "w7"}, {"name": "cart-orchestrator", "tab_id": "t4", "workspace_id": "w7"}]}
         return {}
@@ -323,6 +324,42 @@ class SharedSpaceClean(unittest.TestCase):
             self.assertEqual(fc.fc_init.live_crew(proj), [])
             fc.fc_init.close_space(proj, "shop")
         self.assertEqual([c for c in self.calls if c[0] in ("tab", "workspace") and c[1] == "close"], [("tab", "close", "t2"), ("tab", "close", "t3")])
+
+    def clean(self, proj, crew):
+        """crew maps a teammate to (its tab, its reports oldest first); returns the close calls and the `clean left` lines."""
+        d = fc.fc_crew.crew_dir(proj)
+        for n, (tab, states) in crew.items():
+            (d / f"{n}.json").write_text(json.dumps({"name": n, "title": "t", "space": "w7", "tab": tab}))
+            for st in states: fc.fc_crew.write_report(proj, n, st, "m")
+        self.calls, out = [], io.StringIO()
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch("sys.stdout", out):
+            fc.fc_init.close_space(proj, "shop")
+        return [c for c in self.calls if c[0] in ("tab", "workspace") and c[1] == "close"], sorted(l for l in out.getvalue().splitlines() if "left" in l)
+
+    def test_clean_keeps_the_tabs_of_teammates_whose_last_report_is_not_done(self):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
+        (proj / "results").mkdir(parents=True)
+        fc.fc_herdr.space_record(proj).write_text(json.dumps({"space": "w7"}))
+        lead = fc.fc_herdr.agent_name("shop", "orchestrator")
+        self.tabs = (("t1", "1"), ("t2", "shop shell"), ("t3", "shop status"), ("t4", "cart status"), ("t5", "shop tests-001"),
+                     ("t6", "shop tests-002"), ("t7", "shop tests-003"), ("t8", "shop orchestrator"), ("t9", "shop tests-004"))
+        closes, lines = self.clean(proj, {"shop-tests-001": ("t5", ["needs-user"]), "shop-tests-002": ("t6", ["done", "working"]),
+                                          "shop-tests-003": ("t7", ["working", "done"]), lead: ("t8", ["blocked"]),
+                                          "shop-tests-004": ("t9", []), "shop-tests-005": ("t99", ["working"])})
+        self.assertEqual(closes, [("tab", "close", "t2"), ("tab", "close", "t3"), ("tab", "close", "t7")])
+        self.assertEqual(lines, sorted([f"clean left {lead} open (last report: blocked)", "clean left shop-tests-001 open (last report: needs-user)",
+                                        "clean left shop-tests-002 open (last report: working)", "clean left shop-tests-004 open (last report: nothing)"]))
+
+    def test_a_space_of_its_own_stays_open_while_a_tab_is_kept(self):
+        wt = Path(tempfile.mkdtemp()).resolve(); proj = wt / ".compose" / "shop"
+        (proj / "results").mkdir(parents=True)
+        self.spaces = [{"workspace_id": "w8", "label": "shop", "worktree": {"checkout_path": str(wt)}}]
+        self.tabs = (("t1", "shell"), ("t2", "status"), ("t3", "tests-001"))
+        closes, lines = self.clean(proj, {"shop-tests-001": ("t3", ["done"])})
+        self.assertEqual((closes, lines), ([("workspace", "close", "w8")], []))
+        closes, lines = self.clean(proj, {"shop-tests-001": ("t3", ["done", "working"])})
+        self.assertEqual(closes, [("tab", "close", "t1"), ("tab", "close", "t2")])
+        self.assertEqual(lines, ["clean left shop-tests-001 open (last report: working)"])
 
 
 class ProjectBranch(unittest.TestCase):
@@ -556,6 +593,79 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
             out = self.clean_here()
         self.assertEqual(out.count("linear skipped"), 1, out)
         self.assertIn("fast/p/001", out)  # the branches are still cleaned
+
+    def test_with_task_branches_gone_merged_layers_move_their_tasks_story_and_feature_to_done(self):
+        self.linear_project()
+        wt = self.r.parent / "compose-p"
+        (wt / "stub.txt").write_text("groundwork\n")  # the project branch's own commit: only its layers prove it merged
+        self.run("add", "stub.txt", cwd=wt); self.run("commit", "-qm", "groundwork", cwd=wt)
+        self.run("branch", "-D", "fast/p/001", "fast/p/002")
+        (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Progress", "ENG-2"), ENG_5=("Canceled", "ENG-2"))
+        with mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            out = self.clean_here()
+        self.assertIn("every layer built from it is merged", out)
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "Done", "Canceled", "Done", "Done"])
+
+    def merged_ids(self):
+        with mock.patch.object(fc.fc_linear, "linear_merged") as lm:
+            self.clean_here()
+        _, metas, project_merged = lm.call_args.args
+        return [m["id"] for m in metas], project_merged
+
+    def test_a_task_held_by_any_layer_not_merged_is_not_counted(self):
+        self.linear_project()
+        self.run("branch", "-D", "fast/p/001", "fast/p/002")
+        (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001", "002"], "fast/p/layer-02": ["002"]}))
+        ids, project_merged = self.merged_ids()  # only layer-01 is merged: 002 waits for layer-02
+        self.assertEqual(sorted(ids), ["001", "003"])
+        self.assertFalse(project_merged)
+
+    def test_a_task_proven_merged_by_its_branch_and_its_layer_is_counted_once(self):
+        self.linear_project()
+        ids, _ = self.merged_ids()
+        self.assertEqual(sorted(ids), ["001", "003"])
+
+
+class CleanLinearLine(unittest.TestCase):
+    """Once the project is linked to a feature, clean always says what it did about Linear."""
+    NOTHING = "linear  nothing proven merged; states unchanged"
+
+    def lines(self, feature, metas, project_merged, key="k", linear=None):
+        gql = linear or mock.Mock(side_effect=AssertionError("Linear called"))
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc.fc_linear, "_linear_warned", []), \
+             mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch("sys.stdout", out):
+            fc.fc_linear.linear_merged(feature, metas, project_merged)
+        return [line.split("] ", 1)[1] for line in out.getvalue().splitlines()]
+
+    def test_with_a_key_and_nothing_merged_one_line_says_states_are_unchanged(self):
+        self.assertEqual(self.lines("ENG-1", [], False), [self.NOTHING])
+
+    def test_without_a_key_and_nothing_merged_one_line_says_linear_is_skipped(self):
+        out = self.lines("ENG-1", [], False, key="")
+        self.assertEqual(len(out), 1)
+        self.assertIn("linear skipped", out[0])
+
+    def test_no_feature_and_nothing_merged_says_nothing(self):
+        for key in ("k", ""):
+            for project_merged in (False, True):
+                self.assertEqual(self.lines(None, [], project_merged, key=key), [])
+
+    def test_merged_tasks_move_to_done_as_before(self):
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("Done", "ENG-2"))
+        out = self.lines("ENG-1", [{"id": "001", "linear": "ENG-3"}], False, linear=linear)
+        self.assertEqual(out, ["linear ENG-3 -> Done", "linear ENG-2 -> Done"])
+        self.assertEqual(linear.states("ENG-3", "ENG-2", "ENG-1"), ["Done", "Done", "In Review"])
+
+    def test_merged_tasks_without_a_key_are_skipped_once_without_calling_linear(self):
+        out = self.lines("ENG-1", [{"id": "001", "linear": "ENG-3"}], True, key="")
+        self.assertEqual(len(out), 1)
+        self.assertIn("linear skipped", out[0])
+
+    def test_a_merged_project_with_no_merged_task_still_rolls_the_feature_up(self):
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("Done", "ENG-1"))
+        self.assertEqual(self.lines("ENG-1", [], True, linear=linear), ["linear ENG-1 -> Done"])
 
 
 

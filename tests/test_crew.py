@@ -388,6 +388,45 @@ class Crew(unittest.TestCase):
             fc.fc_crew.cmd_crew(type("A", (), {"action": "list"}))
         self.assertNotIn("working", out.getvalue()); self.assertIn("half way", out.getvalue())
 
+    def test_list_shows_ended_for_a_closed_teammate_whose_last_report_is_not_done(self):
+        d = fc.fc_crew.crew_dir(self.proj)
+        teammates = {  # name: (reports oldest first, open as (agent name, space) or None)
+            "shop-a": (["needs-user"], None), "shop-b": (["blocked"], None), "shop-c": (["working"], None),
+            "shop-d": (["tool-bug"], None), "shop-e": (["contradiction"], None), "shop-f": (["done"], None),
+            "shop-g": ([], None), "shop-h": (["done", "needs-user"], None), "shop-i": (["needs-user", "done"], None),
+            "shop-j": (["needs-user"], ("shop-j", "w9")), "shop-k": (["blocked"], ("shop-k-2", "w9")),
+            "shop-l": (["needs-user"], ("shop-l", "wC")), "shop-m": ([], ("shop-m", "w9")),
+        }
+        agents = []
+        for name, (states, live) in teammates.items():
+            rec = {"name": name, "title": "t", "space": "w9", "tab": f"w9:{name}"}
+            if live and live[0] != name:
+                rec["agent"] = live[0]
+            (d / f"{name}.json").write_text(json.dumps(rec))
+            for s in states:
+                fc.fc_crew.write_report(self.proj, name, s, f"{s} msg")
+            if live:
+                agents.append({"name": live[0], "workspace_id": live[1], "agent_status": "working"})
+
+        def listed(answer):
+            out = io.StringIO()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+                    mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: answer), mock.patch("sys.stdout", out):
+                fc.fc_crew.cmd_crew(type("A", (), {"action": "list"}))
+            return {line.split()[0]: line.split()[1] for line in out.getvalue().splitlines() if line.strip()}
+
+        self.assertEqual(listed({"agents": agents}), {
+            "shop-a": "ended", "shop-b": "ended", "shop-c": "ended", "shop-d": "ended", "shop-e": "ended",
+            "shop-f": "done", "shop-g": "-", "shop-h": "ended", "shop-i": "done",
+            "shop-j": "needs-user", "shop-k": "blocked", "shop-l": "ended", "shop-m": "-",
+        })
+        # herdr cannot say who is open: nobody counts as closed, so every teammate shows its last report
+        self.assertEqual(listed(None), {
+            "shop-a": "needs-user", "shop-b": "blocked", "shop-c": "working", "shop-d": "tool-bug", "shop-e": "contradiction",
+            "shop-f": "done", "shop-g": "-", "shop-h": "needs-user", "shop-i": "done",
+            "shop-j": "needs-user", "shop-k": "blocked", "shop-l": "needs-user", "shop-m": "-",
+        })
+
     def test_team_lead_reports_to_engineering_manager(self):
         self.assertIn("the engineering manager", fc.fc_crew.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 

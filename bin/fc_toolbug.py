@@ -98,28 +98,29 @@ def post(title, body, comment=None):
     out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
     return out[-1] if out else None
 
-def record_issue(project, url):
-    """Set `issue` on the project's newest tool-bugs.jsonl entry; False when the project has none."""
+def record_issue(project, url, at):
+    """Set `issue` on the project's last tool-bugs.jsonl entry whose `at` is `at`, only when it has none yet; the URL that entry
+    holds afterwards (the new one or the kept one), None when no entry of the project has that `at`."""
     import json
-    from pathlib import Path
-    path = Path(fc_crew.TOOL_BUGS)
-    if not path.exists():
-        return False
-    lines = path.read_text().splitlines(keepends=True)
-    def project_of(line):
+    log = fc_crew.TOOL_BUGS
+    if not log.exists():
+        return None
+    lines = log.read_text().splitlines(keepends=True)
+    for i in range(len(lines) - 1, -1, -1):
         try:
-            d = json.loads(line)
+            e = json.loads(lines[i])
         except ValueError:
-            return None
-        return d.get("project") if isinstance(d, dict) else None
-    hits = [i for i, l in enumerate(lines) if project_of(l) == project]
-    if not hits:
-        return False
-    entry = json.loads(lines[hits[-1]])
-    entry["issue"] = url
-    lines[hits[-1]] = json.dumps(entry) + "\n"
-    path.write_text("".join(lines))
-    return True
+            continue
+        if not isinstance(e, dict):
+            continue
+        if e.get("project") == project and e.get("at") == at:
+            if "issue" in e:
+                return e["issue"]
+            e["issue"] = url
+            lines[i] = json.dumps(e) + "\n"
+            log.write_text("".join(lines))
+            return url
+    return None
 
 def cmd_tool_bug(a):
     """`tool-bug file --body <file> [--comment N | --new] [--approved]`: scrub, then post on the maintainer's machine or with
@@ -144,7 +145,7 @@ def cmd_tool_bug(a):
     if state == "no-gh" or (state == "reporter" and not a.approved):
         p = save_draft()
         print(f"saved {p}\nto post it: compose tool-bug file --project {a.project} --body {p} --approved"
-              + (", after `gh auth login`" if state == "no-gh" else ""))
+              + (f' --entry "{a.entry}"' if a.entry else "") + (", after `gh auth login`" if state == "no-gh" else ""))
         return
     if a.comment is not None:
         url = post(title, body, comment=a.comment)
@@ -160,7 +161,15 @@ def cmd_tool_bug(a):
         url = post(title, body)
     if url is None:
         p = save_draft()
-        print(f"saved {p}\ngh could not post it; retry with: compose tool-bug file --project {a.project} --body {p} --approved")
+        print(f"saved {p}\ngh could not post it; retry with: compose tool-bug file --project {a.project} --body {p} --approved"
+              + (f' --entry "{a.entry}"' if a.entry else ""))
         sys.exit(1)
     print(url)
-    record_issue(a.project, url)
+    if a.entry is None:
+        print(f'{url} not recorded: pass --entry "<at>" to link it to the tool-bugs.jsonl entry it fixes')
+        return
+    got = record_issue(a.project, url, a.entry)
+    if got is None:
+        print(f"{url} not recorded: no tool-bugs.jsonl entry of {a.project} has at {a.entry}")
+    elif got != url:
+        print(f"{url} not recorded: {a.entry} already links {got}")

@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, shlex, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, re, shlex, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -66,11 +66,56 @@ class Stalls(unittest.TestCase):
         """tests-002 was collected before its `done` report landed: its last report says working, its tab is closed."""
         s = self.snap(tasks=("passed",), crew={ORCH: ("working", 600), "hw-tests-002": ("working", 600)}, last_ago=600)
         s["closed"] = ["hw-tests-002"]
-        self.assertEqual(self.stalls(s), [])
+        ev = self.stalls(s)
+        self.assertEqual(len(ev), 1, ev)
+        self.assertIn("stall=ended agent=hw-tests-002", ev[0])
         crew = {ORCH: ("working", 100), "hw-tests-001": ("done", 500), "hw-tests-002": ("working", 400)}
         s = self.snap(crew=crew, last_ago=100); s["closed"] = ["hw-tests-002"]
         ev = self.stalls(s)
         self.assertTrue(any("stall=undispatched" in e and "teammates working none" in e for e in ev), ev)
+
+    def ended(self, ev):
+        """Each `ended` line's agent name mapped to the part of the line before the usual tail."""
+        heads = [e.split("; ")[0] for e in ev if "stall=ended agent=" in e]
+        return {h.split("stall=ended agent=")[1].split()[0]: h for h in heads}
+
+    def test_a_closed_teammate_not_done_is_reported_at_once(self):
+        """Fires with no stall window, even while another teammate waits on the product owner."""
+        crew = {ORCH: ("working", 600), "hw-tests-001": ("needs-user", 10), "hw-tests-002": ("working", 10),
+                "hw-tests-003": ("blocked", 10), "hw-tests-004": ("needs-user", 600)}
+        s = self.snap(crew=crew, last_ago=600)
+        s["crew"]["hw-tests-003"].insert(0, {"at": at(20), "state": "done", "message": "m"})  # the last report counts
+        s["closed"] = ["hw-tests-001", "hw-tests-002", "hw-tests-003"]
+        ev = self.stalls(s)
+        self.assertEqual(len(ev), 3, ev)  # no quiet stall: the needs-user silence still holds for the others
+        got = self.ended(ev)
+        self.assertEqual(sorted(got), ["hw-tests-001", "hw-tests-002", "hw-tests-003"])
+        for n, st in (("hw-tests-001", "needs-user"), ("hw-tests-002", "working"), ("hw-tests-003", "blocked")):
+            self.assertIn(st, got[n])
+
+    def test_a_closed_team_lead_or_a_done_team_lead_does_not_hide_it(self):
+        s = self.snap(tasks=("passed",), crew={ORCH: ("needs-user", 10)}); s["closed"] = [ORCH]
+        got = self.ended(self.stalls(s))
+        self.assertEqual(list(got), [ORCH]); self.assertIn("needs-user", got[ORCH])
+        s = self.snap(crew={ORCH: ("done", 10), "hw-tests-001": ("working", 10)}); s["closed"] = ["hw-tests-001"]
+        self.assertEqual(list(self.ended(self.stalls(s))), ["hw-tests-001"])
+
+    def test_a_closed_teammate_fires_once_until_it_reports_again(self):
+        s = self.snap(tasks=("passed",), crew={ORCH: ("working", 10), "hw-tests-001": ("working", 30)})
+        s["closed"] = ["hw-tests-001"]
+        self.assertEqual(len(self.ended(self.stalls(s))), 1)
+        self.assertEqual(self.stalls(s), [])
+        s["crew"]["hw-tests-001"].append({"at": at(5), "state": "blocked", "message": "m"})
+        got = self.ended(self.stalls(s))
+        self.assertEqual(list(got), ["hw-tests-001"]); self.assertIn("blocked", got["hw-tests-001"])
+
+    def test_a_closed_teammate_done_or_without_reports_is_not_ended(self):
+        crew = {ORCH: ("working", 10), "hw-tests-001": ("done", 10), "hw-tests-003": ("working", 10)}
+        s = self.snap(tasks=("passed",), crew=crew)
+        s["crew"]["hw-tests-001"].insert(0, {"at": at(20), "state": "working", "message": "m"})
+        s["crew"]["hw-tests-002"] = []
+        s["closed"] = ["hw-tests-001", "hw-tests-002", "hw-tests-005"]  # tests-003 is open, tests-005 never reported
+        self.assertEqual(self.stalls(s), [])
 
     def test_run_ended_with_no_next_step(self):
         ev = self.stalls(self.snap(tasks=("passed",), crew={ORCH: ("working", 900)}, last_ago=100, run_end=NOW - 300))
@@ -112,9 +157,8 @@ class WatchTimeout(unittest.TestCase):
         snap["closed"] = ["hw-tests-001"]
         with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
-            with self.assertRaises(SystemExit):
-                fc.fc_watch.cmd_watch(a)
-        self.assertIn("pending tasks 1, teammates working none,", out[-1])
+            fc.fc_watch.cmd_watch(a)  # the ended event wakes the watch at once, before any timeout
+        self.assertIn("event stall=ended agent=hw-tests-001", out[-1])  # a closed teammate is reported as ended, not left counted as working
 
     def test_the_snapshot_names_teammates_whose_tab_is_closed(self):
         proj = Path(tempfile.mkdtemp()) / "hw"; (proj / "results" / "crew").mkdir(parents=True)
@@ -531,7 +575,147 @@ class JevLeash(unittest.TestCase):
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+        self.assertEqual(r["exit"], 124); self.assertNotIn("assert_exit", r); self.assertNotIn("run", r)
 
+    USAGE = {"typesafe_calls": 0, "typesafe_in": 0, "typesafe_out": 0, "text_calls": 0, "text_in": 0, "text_out": 0}
+
+    def jev(self, code, status):
+        """The fake's returncode stands for the assert's exit code: the real script ends with sys.exit(subprocess.call(assert))."""
+        stdout = "JEV_RESULT " + json.dumps({"status": status, "elapsed_ms": 413, "steps": 7, "url": "about:blank", "usage": self.USAGE}) + "\n"
+        with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
+             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", code, stdout, "")):
+            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": "true"}, Path(tempfile.mkdtemp()))
+
+    def test_a_blocked_jev_fails_the_case_even_when_its_assert_passes(self):
+        r = self.jev(0, "blocked")
+        self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
+        self.assertTrue(r["stderr"].startswith("JEV_GAVE_UP: jev ended blocked after 7 steps\n"))
+        self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+        self.assertEqual(r["run"]["status"], "blocked")
+
+    def test_a_blocked_jev_keeps_a_failing_asserts_code(self):
+        for code in (1, 3):
+            r = self.jev(code, "blocked")
+            self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
+
+    def test_any_status_but_done_fails_the_case(self):
+        r = self.jev(0, "max_steps")
+        self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
+        self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
+
+    def test_a_done_jev_takes_the_asserts_code_as_its_verdict(self):
+        for code in (0, 3):
+            r = self.jev(code, "done")
+            self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
+            self.assertFalse(fc.fc_jev.tool_error(r["stderr"]))
+
+    def test_a_driver_case_has_no_assert_exit(self):
+        r = fc.fc_jev.jev_e2e({"name": "d", "driver": "true", "assert": "true"}, Path(tempfile.mkdtemp()))
+        self.assertEqual(sorted(r), ["exit", "name", "stderr", "stdout"]); self.assertEqual(r["exit"], 0)
+
+
+class JevGaveUpStage(unittest.TestCase):
+    """The e2e line ends with the assert's exit when the case record has one; the verdict and retry stay as they are."""
+    GAVE_UP = {"exit": 1, "assert_exit": 0, "stdout": "", "stderr": "JEV_GAVE_UP: jev ended blocked after 0 steps\n",
+               "run": {"status": "blocked", "steps": 0, "elapsed_ms": 413}}
+    DONE = {"exit": 0, "assert_exit": 0, "stdout": "", "stderr": "", "run": {"status": "done", "steps": 3, "elapsed_ms": 900}}
+
+    def stage(self, record):
+        calls = []
+        def fake(case, repo):
+            calls.append(case["name"]); return dict(record)
+        report, findings, out = {"e2e": []}, [], io.StringIO()
+        cfg = {"e2e": [{"name": "flow", "url": "about:blank", "goal": "g", "assert": "true"}], "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}}
+        with mock.patch.object(fc.fc_jev, "jev_e2e", fake), contextlib.redirect_stdout(out):
+            ok = fc.fc_verify.e2e_stage(Path(tempfile.mkdtemp()), cfg, {}, report, findings)
+        lines = [l for l in out.getvalue().splitlines() if "e2e    " in l and "retrying" not in l]
+        self.assertEqual(len(lines), 1, out.getvalue())
+        return ok, calls, findings, lines[0]
+
+    def test_a_gave_up_case_shows_tool_error_and_the_asserts_exit(self):
+        ok, calls, findings, line = self.stage(self.GAVE_UP)
+        self.assertIn("TOOL ERROR", line); self.assertTrue(line.endswith(" assert=0"), line)
+        self.assertEqual((ok, calls, findings), (False, ["flow", "flow"], []))
+
+    def test_a_done_case_shows_ok_and_the_asserts_exit(self):
+        ok, calls, findings, line = self.stage(self.DONE)
+        self.assertIn(" ok ", line); self.assertTrue(line.endswith("status=done assert=0"), line)
+        self.assertEqual((ok, calls, findings), (True, ["flow"], []))
+
+    def test_a_failing_assert_shows_its_own_code_and_is_a_finding(self):
+        ok, calls, findings, line = self.stage({**self.DONE, "exit": 3, "assert_exit": 3})
+        self.assertIn("FAIL", line); self.assertTrue(line.endswith(" assert=3"), line)
+        self.assertEqual((ok, calls, len(findings)), (False, ["flow"], 1))
+
+    def test_a_record_without_assert_exit_prints_no_assert(self):
+        killed = {"exit": 124, "stdout": "", "stderr": "JEV_GAVE_UP: jev did not reach its goal within 150s\nhung"}
+        driver = {"name": "flow", "exit": 0, "stdout": "", "stderr": ""}
+        for record, verdict in ((killed, "TOOL ERROR"), (driver, " ok ")):
+            line = self.stage(record)[3]
+            self.assertIn(verdict, line); self.assertNotIn("assert=", line); self.assertNotIn("status=", line)
+
+
+class RunStop(unittest.TestCase):
+    """Task 003 (NEB-920): Ctrl-C during run_tasks stops at once, exits 130, keeps run.json; no attempt or fallback after the stop; the herdr hook."""
+    def setUp(self):
+        self.addCleanup(fc.fc_proc.STOP.clear); self.addCleanup(fc.fc_proc.HOOKS.clear); self.addCleanup(fc.fc_proc.RUNNING.clear)
+        self.addCleanup(signal.signal, signal.SIGINT, signal.getsignal(signal.SIGINT))
+
+    def ctrl_c(self, stop=None):
+        proj, release, finished, exits, err = Path(tempfile.mkdtemp()), threading.Event(), threading.Event(), [], io.StringIO()
+        task = lambda *a: release.wait(5) or finished.set() or {}  # still running at the exit: the stop waits on no task
+        exit = lambda code: exits.append((code, finished.is_set())) or release.set() or sys.exit(code)
+        with mock.patch("concurrent.futures.wait", side_effect=KeyboardInterrupt), mock.patch.object(fc.fc_run.os, "_exit", exit), \
+                mock.patch.object(fc.fc_run, "preflight"), mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_proc, "stop", side_effect=stop) as stopped, \
+                mock.patch.object(fc.fc_implement, "run_task", task), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                fc.fc_run.run_tasks(proj, proj, [{"id": "001", "model": "pi:p/primary"}], SimpleNamespace(attempts=1, parallel=1, trunk="main", no_stack=True))
+            except BaseException as e:  # a loose KeyboardInterrupt would end the whole unittest run
+                self.assertIsInstance(e, SystemExit, err.getvalue())
+        self.assertEqual((stopped.call_count, exits), (1, [(130, False)]))
+        self.assertEqual(re.findall(r"\[\d\d:\d\d:\d\d\] (.+)\n", err.getvalue()), ["run stopped by Ctrl-C; `compose resume` continues it"], err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue()); self.assertTrue((proj / "results" / "run.json").exists())
+
+    def test_ctrl_c_stops_says_so_and_exits_130_without_waiting_on_the_task(self):
+        self.ctrl_c()
+
+    def test_a_second_ctrl_c_during_the_stop_changes_nothing(self):
+        self.ctrl_c(stop=lambda: os.kill(os.getpid(), signal.SIGINT))
+
+    def run_one(self, effect):
+        repo, calls = Path(tempfile.mkdtemp()), []; proj = repo / "proj"
+        for c in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", *c], cwd=repo, check=True, capture_output=True)
+        task = {"id": "001", "title": "t", "files": ["a.txt"], "protected": [], "test": "false", "model": "pi:p/primary", "after": "", "linear": "", "body": "## Goal\nx"}
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            calls.append(model); fc.fc_proc.STOP.set()
+            if effect: raise effect
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "DEFAULT_MODEL", "pi:p/primary"), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", "pi:p/backup"), \
+                mock.patch.object(fc.fc_config, "FALLBACK_AFTER", 1), mock.patch.object(fc.fc_config, "TEST_READER", None), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}), \
+                contextlib.suppress(fc.fc_proc.Stopped):
+            fc.fc_implement.run_task(repo, proj, task, 3)
+            self.assertIsNone(effect, "an implementer failure after the stop raises Stopped")
+        self.assertEqual(calls, ["pi:p/primary"])  # no further attempt, no fallback
+        return json.loads((proj / "results" / "001.json").read_text()), fc.fc_status.task_state(repo, proj, task, "")["state"]
+
+    def test_after_the_stop_an_implementer_error_or_timeout_is_no_attempt_and_no_turn_starts_another(self):
+        for effect in (RuntimeError("pi exited"), subprocess.TimeoutExpired("pi", 1), None):  # the stop lands in the turn, which then ends as `effect`
+            with self.subTest(effect=type(effect).__name__):
+                (result, state), _ = self.run_one(effect), fc.fc_proc.STOP.clear()
+                if effect: self.assertEqual((result["status"], result["log"], state), ("running", [], "interrupted"))
+
+    def test_a_herdr_agent_gets_esc_then_its_pane_closed_on_the_stop(self):
+        calls, hooked, root, name = [], [], Path(tempfile.mkdtemp()), fc.fc_herdr.agent_name("shop", "028")
+        def prompt(*a, **k):  # the stop lands while the agent works on its prompt
+            n = len(calls); hooked.extend(fc.fc_proc.HOOKS); fc.fc_proc.HOOKS.get(name, lambda: None)(); hooked.append(calls[n:])
+            return None, "stopped"
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a: calls.append(a) or {}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", return_value={}), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", return_value="p1"), mock.patch.object(fc.fc_herdr, "herdr_error", prompt), self.assertRaises(RuntimeError):
+            fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"})
+        self.assertEqual(hooked, [name, [("agent", "send-keys", name, "esc"), ("pane", "close", "p1")]])
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,7 +139,7 @@ class Secrets(unittest.TestCase):
 
     def test_harnesses_get_the_key_but_no_other_secret(self):
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
-        with mock.patch.object(subprocess, "run", run):
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
             fc.fc_models.pi_turn(str(self.root), "openrouter-fast/x/y", "hi")
         cmd, env = run.call_args[0][0], run.call_args[1]["env"]
         self.assertClean(json.dumps(cmd))  # pi's key is in its own env only, never in argv
@@ -149,7 +149,7 @@ class Secrets(unittest.TestCase):
         self.assertScratch(env["COMPOSE_CONFIG"])
 
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"text","sessionID":"s","part":{"text":"ok"}}', stderr="", returncode=0))
-        with mock.patch.object(subprocess, "run", run):
+        with mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
             fc.fc_models.opencode(str(self.root), "openrouter/x", "hi")
         env = run.call_args[1]["env"]
         self.assertEqual(env["OPENCODE_DISABLE_CLAUDE_CODE_SKILLS"], "1")  # its ~/.claude/skills scan can hang on ENAMETOOLONG

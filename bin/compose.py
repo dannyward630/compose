@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -247,6 +247,7 @@ def main():
             ex.add_argument("--new", action="store_true", help="open a new issue instead of searching the open issues")
             s.add_argument("--approved", action="store_true", help="post although this machine is not the maintainer's")
             s.add_argument("--body", required=True, help="file holding the raw report")
+            s.add_argument("--entry", help="the `at` of the tool-bugs.jsonl entry the posted URL is recorded on")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
             s.add_argument("target", nargs="?", help="the workspace add, key, or remove acts on")

@@ -1,6 +1,6 @@
-import json, os, subprocess
+import json, os
 from pathlib import Path
-import fc_mcp, fc_core
+import fc_mcp, fc_core, fc_proc, fc_readguard
 
 
 def is_claude(model):
@@ -33,7 +33,7 @@ def crew_settings(role, cwd):
 
 REPO_INSTRUCTIONS = ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md")
 def repo_instructions(cwd):
-    """The repo's own instruction files at `cwd`, for a session started in --safe-mode, which drops every CLAUDE.md with the
+    """The repo's own instruction files at `cwd`, for a session started in --restricted, which drops every CLAUDE.md with the
     user's: each one that exists, under its path, as one system-prompt addition, or None. `@` imports are not followed."""
     found = [(name, (Path(cwd) / name).read_text(errors="replace").strip()) for name in REPO_INSTRUCTIONS if (Path(cwd) / name).is_file()]
     return "\n\n".join(f"Contents of {name} (this repo's instructions):\n\n{text}" for name, text in found if text) or None
@@ -43,11 +43,16 @@ def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bas
     It starts lean, without the user's CLAUDE.md, skills, plugins, hooks, and MCP servers, which cost ~200K input tokens a call;
     the repo's own CLAUDE.md and AGENTS.md go into its system prompt instead."""
     # --model is explicit because ~/.claude/settings.json may carry a launcher-injected default that headless runs cannot use.
+    guard = fc_readguard.guard_file(cwd)
+    settings = NO_ATTRIBUTION
+    if guard.exists():  # --restricted fires --settings hooks, --safe-mode does not; a PreToolUse hook blocks only on exit 2 or a deny
+        settings = json.dumps({**json.loads(NO_ATTRIBUTION), "hooks": {"PreToolUse": [
+            {"matcher": "Read|Grep|Glob|Bash", "hooks": [{"type": "command", "command": fc_readguard.command(guard) + " || exit 2"}]}]}})
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model or os.environ.get("COMPOSE_CLAUDE_MODEL", "claude-sonnet-5-5"),
-           "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools, "--safe-mode", "--strict-mcp-config"]
+           "--settings", settings, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools, "--restricted", "--strict-mcp-config"]
     if own := repo_instructions(cwd):
         cmd += ["--append-system-prompt", own]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
+    p = fc_proc.run(cmd, cwd=cwd, env=headless_env(), timeout=timeout)
     try:
         out = json.loads(p.stdout)
     except json.JSONDecodeError:

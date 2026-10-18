@@ -192,7 +192,7 @@ tool-bug log is your assignment: {reporter} at {at}, compose {cli_commit} in {cl
 Read that repo's SKILL.md first; it is the only skill file to read, never another.
 1. Reproduce the bug from the report in your worktree, then find its root cause in the code.
 2. Write the body file: line 1 is `# <command>: <symptom>`, then the sections issue #1 has (`gh issue view 1 --repo {repo}`).
-3. File it: `compose tool-bug file --project {project} --body <file>`. Exit 2 means the search found an open issue already:
+3. File it: `compose tool-bug file --project {project} --entry "{at}" --body <file>`. Exit 2 means the search found an open issue already:
    `--comment <n>` comments there when it is the same bug, `--new` creates a new one when it is not.
 {variant}"""
 

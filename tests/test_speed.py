@@ -213,5 +213,43 @@ class AcceptanceJudge(unittest.TestCase):
         self.assertEqual(len(res["failed"]), 3)  # suspects are judged as before
 
 
+class PrettierOptIn(unittest.TestCase):
+    """Task 016 (NEB-953): prettier_opted_in and format_files running prettier only on an opt-in."""
+
+    def ran(self, files, calls, text):
+        """Write `files` (relative to the clone's parent) and an unformatted web/a.js, with prettier hoisted in the clone's
+        node_modules; format the file, assert prettier's recorded argv and the file's text, then return prettier_opted_in."""
+        top = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, top, True)
+        wt, log, prettier = top / "clone", top / "calls", top / "clone" / "node_modules" / ".bin" / "prettier"
+        for f, t in {**files, "clone/web/a.js": "x  =  1"}.items():
+            (top / f).parent.mkdir(parents=True, exist_ok=True); (top / f).write_text(t)
+        prettier.parent.mkdir(parents=True)
+        prettier.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\nprintf "pretty\\n\\n" > "$2"\n'); prettier.chmod(0o755)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
+        fc.fc_implement.format_files(wt, ["web/a.js"], "HEAD")
+        self.assertEqual((log.read_text().replace(str(wt), "<wt>") if log.exists() else "", (wt / "web" / "a.js").read_text()), (calls, text))
+        return fc.fc_implement.prettier_opted_in(wt, wt / "web" / "a.js")
+
+    def test_hoisted_prettier_alone_never_runs_and_the_file_keeps_its_text(self):
+        for files in [{}, {"clone/.editorconfig": "root = true\n", "clone/web/.prettierignore": "dist\n", "clone/other/.prettierrc": ""},
+                      {".prettierrc": "", "package.json": '{"prettier": {}, "devDependencies": {"prettier": "3"}}'},
+                      {"clone/web/package.json": '{"scripts": {"prettier": "prettier ."}, "peerDependencies": {"prettier": "3"}}'},
+                      {"clone/package.json": '{"devDependencies": {"prettier": "3"}}', "clone/web/package.json": '{"dependencies": {"x": "1"}}'}]:
+            with self.subTest(files=files):
+                self.assertIs(self.ran(files, "", "x  =  1\n"), False)
+
+    def test_each_opt_in_at_the_files_directory_or_the_root_runs_prettier(self):
+        names = [".prettierrc"] + [".prettierrc." + e for e in "json yaml yml json5 js cjs mjs ts cts mts toml".split()] \
+            + ["prettier.config." + e for e in "js cjs mjs ts cts mts".split()]
+        cases = [{d + n: ""} for n in names for d in ("clone/web/", "clone/")]
+        cases += [{"clone/package.json": '{"prettier": "@acme/style"}', "clone/web/package.json": "{}"},
+                  {"clone/web/package.json": '{"prettier": {}}'},
+                  {"clone/web/package.json": '{"dependencies": {"prettier": "3"}}'},
+                  {"clone/package.json": '{"devDependencies": {"prettier": "3"}}'}]
+        for files in cases:
+            with self.subTest(files=files):
+                self.assertIs(self.ran(files, "--write <wt>/web/a.js\n", "pretty\n"), True)
+
+
 if __name__ == "__main__":
     unittest.main()

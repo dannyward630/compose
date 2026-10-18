@@ -202,8 +202,14 @@ def linear_event(proj, meta, event, result=None):
 def linear_merged(feature, metas, project_merged):
     """clean's step through the state table: every task proven merged moves to Done, its story rolls up, and the feature is
     Done once every story is and the project branch is merged; otherwise the feature is left as verify put it. A Canceled
-    task stays Canceled. Without a key one line says so; a Linear failure is said and never stops the clean."""
-    if not (metas or (feature and project_merged)) or not linear_ready():
+    task stays Canceled. With a feature and nothing proven merged one line says the states are unchanged; without a key
+    one line says so; a Linear failure is said and never stops the clean."""
+    if not feature and not metas:
+        return
+    if not linear_ready():
+        return
+    if not (metas or (feature and project_merged)):
+        fc_core.say("linear  nothing proven merged; states unchanged")
         return
     try:
         stories = []
