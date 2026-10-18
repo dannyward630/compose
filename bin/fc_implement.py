@@ -195,13 +195,13 @@ def read_failure(wt, meta, output, log_path):
 HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
              "another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
 
-def timed(cmd, cwd, limit, env=None):
+def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged."""
     before = fc_core.home_state()
     p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+                         stdin=stdin, start_new_session=True, env=env)
     try:
         out, err = p.communicate(timeout=limit)
         return subprocess.CompletedProcess(cmd, p.returncode, fc_core.scrub(out), fc_core.scrub(err))
@@ -227,11 +227,13 @@ def cmd_timed(argv):
     """`compose timed <seconds> -- <command>`: what teammates run tests and commands through, so a hang fails fast.
     One argument is a shell line; several are the command's own arguments, quoted so sh passes each through unchanged.
     The command gets the caller's env as it is, keys included: no config is applied here, so every key in it is the caller's
-    own, not one the CLI exported. Only COMPOSE_CONFIG is a scratch one, and the output is still scrubbed."""
+    own, not one the CLI exported. Only COMPOSE_CONFIG is a scratch one, and the output is still scrubbed.
+    The caller's stdin goes on to the command (`< file` reaches it), unless it is a terminal: a test must not wait on the keyboard."""
     if len(argv) < 3 or argv[1] != "--":
         sys.exit("usage: compose timed <seconds> -- <command>")
     cmd = argv[2] if len(argv) == 3 else shlex.join(argv[2:])
-    r = timed(cmd, os.getcwd(), int(argv[0]), env={**os.environ, "COMPOSE_CONFIG": fc_core.scratch_config()})
+    r = timed(cmd, os.getcwd(), int(argv[0]), env={**os.environ, "COMPOSE_CONFIG": fc_core.scratch_config()},
+              stdin=subprocess.DEVNULL if sys.stdin is None or sys.stdin.isatty() else sys.stdin)
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 
