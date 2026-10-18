@@ -134,11 +134,19 @@ class Tabs(unittest.TestCase):
 
 
 class SharedSpace(unittest.TestCase):
-    """A project opens in the space compose was started from: no new space, its tabs named for it, found again by every later command."""
+    """A project opens as a worktree space of its own grouped under its repo's open space; with none open, in the space compose was
+    started from: no new space, its tabs named for it, found again by every later command."""
+    spaces, repo_space = [{"workspace_id": "w7", "label": "apps", "worktree": {"checkout_path": "/elsewhere"}}], None
+
     def herdr(self, *args, check=False, timeout=120):
         self.calls.append(args)
         if args[:2] == ("workspace", "list"):
-            return {"workspaces": [{"workspace_id": "w7", "label": "apps", "worktree": {"checkout_path": "/elsewhere"}}]}
+            return {"workspaces": self.spaces}
+        if args[:2] == ("worktree", "list"):  # `source_workspace_id` is the repo's open space, absent when none is
+            return {"source": {"source_workspace_id": self.repo_space} if self.repo_space else {}}
+        if args[:2] == ("worktree", "open"):
+            self.spaces = [*self.spaces, {"workspace_id": "w9", "label": "shop", "worktree": {"checkout_path": args[args.index("--path") + 1]}}]
+            return {"workspace": {"workspace_id": "w9"}}
         if args[:2] == ("tab", "list"):
             return {"tabs": [{"tab_id": t, "label": l} for t, l in self.tabs.items()]}
         if args[:2] == ("tab", "create"):
@@ -165,6 +173,22 @@ class SharedSpace(unittest.TestCase):
         self.calls = []
         self.assertEqual(self.space("w18"), "w7")  # a teammate in another space still finds the project's
         self.assertFalse([c for c in self.calls if c[:2] == ("tab", "create")])
+
+    def test_a_space_open_on_the_projects_repo_gets_the_worktree_as_its_own_space_grouped_under_it(self):
+        wt = Path(tempfile.mkdtemp()).resolve()
+        self.proj = wt / ".compose" / "shop"
+        (self.proj / "results").mkdir(parents=True)
+        self.repo_space = "w3"
+        for caller in ("w3", "w7"):  # started from the repo's own space, and from another repo's while the repo's is open
+            self.spaces, self.tabs, self.calls = SharedSpace.spaces, {"w3:t1": "1"}, []
+            self.assertEqual(self.space(caller), "w9")
+            self.assertIn(("worktree", "open", "--workspace", "w3", "--path", str(wt), "--label", "shop", "--no-focus"), self.calls)
+            self.assertEqual({c[c.index("--workspace") + 1] for c in self.calls if c[:2] == ("tab", "create")}, {"w9"})
+            self.assertFalse(fc.fc_herdr.space_record(self.proj).exists())
+            self.assertEqual(fc.fc_herdr.tab_label(self.proj, "implementers"), "implementers")
+            self.calls = []
+            self.assertEqual(self.space("w18"), "w9")  # a teammate in another space finds it, and nothing is opened again
+            self.assertFalse([c for c in self.calls if c[:2] in (("worktree", "open"), ("tab", "create"))])
 
 
 class NoHerdr(unittest.TestCase):

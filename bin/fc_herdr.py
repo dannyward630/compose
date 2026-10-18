@@ -182,13 +182,13 @@ def space_record(proj):
     return Path(proj) / "results" / "herdr.json"
 
 def tab_label(proj, name):
-    """A project tab's label. In a space it shares (the one compose was started from) the project's name goes first, so two
-    projects there never mistake each other's tabs; in a space of its own the bare name."""
+    """A project tab's label. In a space it shares (the one compose was started from, when no space of its repo was open) the
+    project's name goes first, so two projects there never mistake each other's tabs; in a space of its own the bare name."""
     return f"{Path(proj).name} {name}" if space_record(proj).exists() else name
 
 def herdr_project_space(proj):
-    """The project's space: the one `herdr_space` recorded, while it is open, else the space whose checkout is the project worktree
-    (projects from before compose used the caller's space). None when neither exists."""
+    """The project's space: the shared one `herdr_space` recorded, while it is open, else the space whose checkout is the project
+    worktree. None when neither exists."""
     if space_record(proj).exists():
         space = json.loads(space_record(proj).read_text()).get("space")
         return space if any(w.get("workspace_id") == space for w in (herdr("workspace", "list") or {}).get("workspaces", [])) else None
@@ -199,20 +199,32 @@ def herdr_project_tabs(proj, space):
     tabs = (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])
     return [t for t in tabs if (t.get("label") or "").startswith(tab_label(proj, ""))]
 
+def herdr_repo_space(wt):
+    """The open space of the repo's own checkout, the only one herdr groups the repo's worktree spaces under. None when no space
+    of the repo is open. `worktree list` names it even when `workspace list` has not yet learned the space's repo."""
+    return ((herdr("worktree", "list", "--cwd", str(wt)) or {}).get("source") or {}).get("source_workspace_id")
+
 def herdr_space(proj):
-    """The project's herdr space, idempotent: its recorded space, else the space compose was started from (HERDR_WORKSPACE_ID),
-    recorded so every later command finds it whoever runs it, with `<name> shell` and `<name> status` tabs in the worktree.
-    herdr can only open a worktree as a space of its own under a repo space it creates when none is open, so that stays the
-    fallback for a caller outside any space. Keyed on the project, never on where a command runs (verify runs in the stack worktree)."""
+    """The project's herdr space, idempotent: the project worktree opened as a worktree space of its own, labelled `<name>` with
+    `shell` and `status` tabs, grouped under the repo's open space. When no space of the repo is open, the space compose was
+    started from (HERDR_WORKSPACE_ID) instead, never a new empty repo space: there its tabs are labelled `<name> shell` and
+    `<name> status`, and the space is recorded so every later command finds it whoever runs it. A recorded space is kept while
+    it is open. Outside any space herdr opens the repo's space itself. Keyed on the project, never on where a command runs
+    (verify runs in the stack worktree)."""
     if not herdr_env():
         return None
     slug, wt = Path(proj).name, project_worktree(proj)
     if slug in HERDR_SPACES:
         return HERDR_SPACES[slug]
     space, caller = herdr_project_space(proj), os.environ.get("HERDR_WORKSPACE_ID")
-    if not space and caller:
-        space = caller
-        fc_core.atomic_write(space_record(proj), json.dumps({"space": space}))
+    if not space:
+        space_record(proj).unlink(missing_ok=True)  # a recorded space that was closed: the project's tabs move to a space of its own
+        if repo := herdr_repo_space(wt):
+            r = herdr("worktree", "open", "--workspace", repo, "--path", str(wt), "--label", slug, "--no-focus") or {}
+            space = (r.get("workspace") or {}).get("workspace_id")
+        elif caller:
+            space = caller
+            fc_core.atomic_write(space_record(proj), json.dumps({"space": space}))
     if space and space_record(proj).exists():
         HERDR_SPACES[slug] = space
         if tab_label(proj, "shell") not in herdr_tabs(space):
@@ -220,7 +232,6 @@ def herdr_space(proj):
         herdr_status_tab(space, wt, slug, tab_label(proj, "status"))
         return space
     if not space:
-        space_record(proj).unlink(missing_ok=True)  # a recorded space that was closed: the project's tabs move to a space of its own
         r = herdr("worktree", "open", "--cwd", herdr_main_repo(wt), "--path", str(wt), "--label", slug, "--no-focus") or {}
         space = (r.get("workspace") or {}).get("workspace_id") or r.get("workspace_id")
     if not space:

@@ -63,26 +63,28 @@ The config sets the model for each teammate role, as [workspaces.md](workspaces.
 
 ## Layout
 
-A project opens in the herdr space `init` was started from, laid out like this.
-Its tabs carry the project's name first (`<slug> status`), so several projects share one space without touching each other's tabs.
-The space is recorded in the project's `results/herdr.json`, so every later command finds it.
-A project created before this keeps its own space, labelled `<slug>`, with bare tab labels.
+A project opens as a herdr worktree space of its own, labelled `<slug>`, grouped under the space open on its repo, laid out like this.
+`init` uses the repo's space it was started from, or any open space of the repo, and opens no other space.
 
 | herdr | `compose` | Label |
 |---|---|---|
-| space | the one compose was started from | unchanged |
-| tab | a shell in the project worktree | `<slug> shell` |
-| tab | live `compose status --watch` | `<slug> status` |
-| tab | every implementer, one pane per task | `<slug> implementers` |
+| space | the project worktree, grouped under the repo's space | `<slug>` |
+| tab | a shell in the project worktree | `shell` |
+| tab | live `compose status --watch` | `status` |
+| tab | every implementer, one pane per task | `implementers` |
 | pane | one task's interactive pi session | `NNN <title>`, agent `<slug>-NNN` |
-| tab | the latest verify run, one pane per stage | `<slug> verify` |
-| tab | the team lead | `<slug> orchestrator` |
-| tab | one teammate session | `<slug> <title>`, agent `<slug>-<role>` |
+| tab | the latest verify run, one pane per stage | `verify` |
+| tab | the team lead | `orchestrator` |
+| tab | one teammate session | its title, agent `<slug>-<role>` |
+
+When no space of the project's repo is open, such as when compose runs from another repo's space, the project opens in the space `init` was started from instead, with no new space.
+There every tab carries the project's name first (`<slug> status`), so several projects share one space without touching each other's tabs.
+That space is recorded in the project's `results/herdr.json`, so every later command finds it, and the project stays there while it is open.
 
 Each task pane shows its state, such as `attempt 2/3` or `passed`, along with its model and cost.
 The team lead steers a working or blocked implementer with `herdr agent prompt <slug>-NNN "..."`.
 That prompt lands in the same pi session the CLI drives.
-`clean` closes the project's tabs along with its worktree, and never the space they share.
+`clean` closes the project's space along with its worktree, or in a shared space only the project's tabs.
 
 ## Supervision
 
