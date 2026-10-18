@@ -68,8 +68,8 @@ class Doctor(unittest.TestCase):
             (self.home / SKILLS[2]).unlink()
             (self.home / ".claude.json").unlink()
             self.assertEqual(self.deps(), (["herdr", "gh stack", "herdr skill"], [
-                "MISSING: herdr 0.8.0 is older than 0.9.3 (install: see https://herdr.dev)",
-                "MISSING: treehouse 2.0.1 is older than 3.1.2 (install: brew install treehouse) - optional",
+                "MISSING: herdr: 0.8.0 is older than 0.9.3 (install: see https://herdr.dev)",
+                "MISSING: treehouse: 2.0.1 is older than 3.1.2 (install: brew install treehouse) - optional",
                 "MISSING: gh stack (install: gh extension install github/gh-stack)",
                 "MISSING: herdr skill (install: herdr --skill)",
                 "MISSING: superpowers (install: claude plugin install superpowers) - optional",
@@ -84,7 +84,7 @@ class Doctor(unittest.TestCase):
         link.symlink_to(self.home / "gone" / "compose")
         with self.rows("compose CLI link"):
             self.assertEqual(self.deps(), (["compose CLI link"], [
-                f"MISSING: compose CLI link (dangling link {link} -> {self.home}/gone/compose; install: compose setup)"]))
+                f"MISSING: compose CLI link: dangling link {link} -> {self.home}/gone/compose (install: compose setup)"]))
 
     def test_key_rows_name_the_key_never_a_value(self):
         auth = self.home / ".config" / "compose" / "auth.json"
@@ -128,6 +128,7 @@ class Doctor(unittest.TestCase):
 
 
     GH_WARNING = "WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)"
+    READY = "every step compose needs is ready"
 
     def doctor(self, fails=()):
         """cmd_doctor in process with a gh that logs its calls and exits 1 (chattering on both streams) for each `fails` first
@@ -145,30 +146,30 @@ class Doctor(unittest.TestCase):
 
     def test_doctor_warns_when_gh_is_logged_out(self):
         status, lines, calls = self.doctor(fails=["auth status"])
-        self.assertEqual((status, lines), (0, [self.GH_WARNING, "every tool compose needs is installed"]))  # gh's own text stays out
+        self.assertEqual((status, lines), (0, [self.GH_WARNING, self.READY]))  # gh's own text stays out
         self.assertIn("auth status", calls)
 
     def test_doctor_is_quiet_when_gh_is_logged_in(self):
         status, lines, calls = self.doctor()
-        self.assertEqual((status, lines), (0, ["every tool compose needs is installed"]))
+        self.assertEqual((status, lines), (0, [self.READY]))
         self.assertIn("auth status", calls)
 
-    def test_doctor_shows_both_warnings_and_still_passes(self):
+    def test_doctor_shows_the_gh_warning_and_herdr_row_and_still_passes(self):
         self.herdr_config('[ui.toast]\ndelivery = "system"\n')
         status, lines, _ = self.doctor(fails=["auth status"])
         self.assertEqual(status, 0)
-        self.assertEqual(sorted(l.split(":")[0] for l in lines[:-1]), ["WARNING", "WARNING"])
+        self.assertEqual(sorted(l.split(":")[0] for l in lines[:-1]), ["MISSING", "WARNING"])
         self.assertIn(self.GH_WARNING, lines)
-        self.assertEqual(lines[-1], "every tool compose needs is installed")
+        self.assertEqual(lines[-1], self.READY)
 
-    def test_a_missing_tool_stops_doctor_before_the_gh_auth_check(self):
+    def test_a_missing_tool_still_runs_the_gh_auth_check_then_exits_1(self):
         (self.bin / "claude").unlink()
-        self.assertEqual(self.doctor(fails=["auth status"]), (1, ["MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"],
-                                                              ["stack --version"]))
-        self.fake("claude", TOOLS["claude"])  # gh itself on PATH without its stack extension stops it the same way
-        status, lines, calls = self.doctor(fails=["auth status", "stack --version"])
-        self.assertEqual((status, lines), (1, ["MISSING: gh stack (install: gh extension install github/gh-stack)"]))
-        self.assertNotIn("auth status", calls)
+        for fails, miss in ((["auth status"], "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"),
+                            (["auth status", "stack --version"], "MISSING: gh stack (install: gh extension install github/gh-stack)")):
+            status, lines, calls = self.doctor(fails=fails)
+            self.assertEqual((status, miss in lines, self.GH_WARNING in lines, "auth status" in calls), (1, True, True, True), lines)
+            self.assertRegex(lines[-1], r"^[1-9]\d* required steps? missing: run compose setup$")
+            self.fake("claude", TOOLS["claude"])  # then gh itself on PATH without its stack extension: the same
 
 class DoctorNotes(unittest.TestCase):
     """Without claude, doctor names the rows that need it on one line under the Claude Code install line; keys still in
@@ -216,16 +217,17 @@ class DoctorNotes(unittest.TestCase):
         env.write_text("TYPESAFE_API_KEY=ts-test\n")
         keys = [("openrouter_api_key", cfg), ("workspaces.w.linear_api_key", cfg), ("TYPESAFE_API_KEY", env)]
         with mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc.fc_config, "ENV_FILE", env):
-            self.assertEqual(self.doctor(self.ROWS[:2]), (0, ["every tool compose needs is installed"]))
+            self.assertEqual(self.doctor(self.ROWS[:2]), (0, [Doctor.READY]))
             code, lines = self.doctor(self.ROWS[:2], keys)
-            self.assertEqual((self.old.call_args, lines[-1]), (mock.call(cfg, env), "every tool compose needs is installed"))
+            self.assertEqual((self.old.call_args, lines[-1]), (mock.call(cfg, env), Doctor.READY))
             warn = [l for l in lines if l.startswith("WARNING:")]
             self.assertEqual((code, len(warn)), (0, 1), lines)
             self.assertTrue(all(str(x) in warn[0] for k in keys for x in k) and "auth.json" in warn[0], warn)
             self.assertFalse({"sk-or-test", "lin-test", "ts-test"} & set(re.findall(r"[\w-]+", "\n".join(lines))))
             self.herdr_config('[ui.toast]\ndelivery = "system"\n')
-            code, lines = self.doctor(self.ROWS[:2], keys)
-            self.assertEqual(sorted(l.startswith("WARNING: herdr") for l in lines if l.startswith("WARNING:")), [False, True])
+            code, lines = self.doctor(self.ROWS[:2] + tuple(r for r in fc_steps.STEPS if r[0] == "herdr config"), keys)
+            self.assertEqual(([l for l in lines if l.startswith("WARNING:")], [l for l in lines if l.startswith("MISSING: herdr config: ")]),
+                             (warn, ["MISSING: herdr config: ui.toast.delivery=system, ui.sound.enabled=true (install: compose setup) - optional"]))
 
 class DoctorWarnings(unittest.TestCase):
     """doctor prints every line (gh, old keys, herdr config) before a required miss exits 1, and ends with one summary;
