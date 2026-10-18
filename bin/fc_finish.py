@@ -39,7 +39,8 @@ def finish(results, yes):
     missing = [k for k in ("openrouter", "typesafe") if not status[k]]
     if fc_keys.linear_state(status, fc_keys.linear_connected()) in ("missing", "unknown"):
         missing.append("linear")
-    lines += [fc_keys.skipped_line(k, ws) for k in missing]
+    if not yes:
+        lines += [fc_keys.skipped_line(k, ws) for k in missing]
     ready = not missing
     probe_ok = None
     if not yes and status["openrouter"]:
@@ -60,7 +61,7 @@ def finish(results, yes):
         return lines, 1
     if yes:
         rows = [(name, install) for name, _, install, level, _, _ in fc_steps.STEPS
-                if level == "required" and state.get(name) not in ("ok", "done")]
+                if level == "required" and state.get(name) in groups]
         if rows:
             lines += ["compose is installed but not ready:", *[f"  {name}: {install}" for name, install in rows],
                       "run compose setup in a terminal to finish"]
