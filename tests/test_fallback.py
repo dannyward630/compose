@@ -904,7 +904,8 @@ class DeleteTasks(unittest.TestCase):
             return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
 
     def tree(self, repo):
-        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", "fast/proj/001"], cwd=repo, capture_output=True, text=True)
+        branch = fc.fc_worktree.task_branch(repo, repo.parent / "proj", "001")  # run_one puts proj beside repo
+        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", branch], cwd=repo, capture_output=True, text=True)
         return out.stdout.split() if out.returncode == 0 else None
 
     def edit(self, seen, extra=lambda cwd: None):
