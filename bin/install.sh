@@ -30,7 +30,9 @@ else
 fi
 
 if [ -d "$CHECKOUT" ]; then
-  git -C "$CHECKOUT" pull --ff-only origin main || say "  warn  git pull failed; going on with the checkout as it is"
+  if ! pull_out="$(git -C "$CHECKOUT" pull --ff-only origin main 2>&1)"; then
+    say "  warn  git pull failed ($(printf '%s\n' "$pull_out" | tail -n 1)); going on with the checkout as it is"
+  fi
   ok "checkout: $CHECKOUT"
 else
   git clone "$REPO_URL" "$CHECKOUT"
@@ -71,5 +73,5 @@ if ( : < /dev/tty ) 2>/dev/null; then
   say "starting the guided setup"
   exec "$CHECKOUT/bin/compose" setup < /dev/tty
 fi
-say "no terminal; running the guided setup with every default"
+say "no terminal; running the plain setup with every default (compose setup --yes)"
 exec "$CHECKOUT/bin/compose" setup --yes
