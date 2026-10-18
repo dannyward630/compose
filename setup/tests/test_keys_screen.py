@@ -25,9 +25,10 @@ class KeysScreenTest(unittest.IsolatedAsyncioTestCase):
     async def keys(self, status, connected, typed={}, workspace="default", presses=1):
         saved = []
         def save(kind, value, workspace, framelink_env): saved.append((kind, value, workspace)); return f"saved {kind}"
-        state = "key" if status[2] else "connector" if connected else "missing"
+        state = "key" if status[2] else "connector" if connected else "missing"  # create=True: faked whether fc_keys still has them, never called
         with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))), \
-             mock.patch.object(fc_keys, "linear_connected", return_value=connected), mock.patch.object(fc_keys, "linear_state", return_value=state), \
+             mock.patch.object(fc_keys, "linear_connected", create=True, return_value=connected) as conn, \
+             mock.patch.object(fc_keys, "linear_state", create=True, return_value=state) as lstate, \
              mock.patch.object(fc_keys, "save_key", side_effect=save), mock.patch.object(fc_keys, "skipped_line", side_effect=lambda k, w: f"skip-{k}-{w}"):
             app = Host(workspace)
             async with app.run_test(size=(80, 24)) as pilot:
@@ -41,12 +42,14 @@ class KeysScreenTest(unittest.IsolatedAsyncioTestCase):
                     await pilot.click(next(b for b in app.screen.query(Button) if "Continue" in str(b.label))); await pilot.pause()
                 text = "" if app.result else "\n".join(str(w.render()) for w in app.screen.query(Static))
                 self.assertFalse(any(v in text for v in typed.values()))
+        self.connector_calls = conn.call_count + lstate.call_count
         return app.result, saved, text
 
     async def test_statuses_never_show_values(self):
         _, _, text = await self.keys((True, False, False, False), True, presses=0)
-        self.assertIn("connector connected", text)
-        self.assertEqual((text.count("not set"), len(re.findall(r"(?<!not )\bset\b", text))), (2, 1))
+        self.assertNotIn("connector", text)
+        self.assertEqual((text.count("not set"), len(re.findall(r"(?<!not )\bset\b", text))), (3, 1))
+        self.assertEqual(self.connector_calls, 0)
 
     async def test_continue_saves_non_empty_inputs_only(self):
         result, saved, _ = await self.keys((False, True, False, True), False, {"openrouter": "sk-or-test", "linear": "lin-test"}, "work")
@@ -59,9 +62,13 @@ class KeysScreenTest(unittest.IsolatedAsyncioTestCase):
         result, saved, _ = await self.keys((False,) * 4, False, presses=2)
         self.assertEqual((result[0], saved, REQUIRED <= set(result[1])), ([], [], True))
 
-    async def test_set_keys_and_linear_connector_continue_at_once(self):
-        result, saved, _ = await self.keys((True, True, False, False), True)
-        self.assertEqual((result[0], saved, REQUIRED & set(result[1])), ([], [], set()))
+    async def test_linear_connector_does_not_stand_in_for_the_key(self):
+        for connected in (True, None):
+            result, _, text = await self.keys((True, True, False, False), connected)
+            self.assertEqual((result, [k for k in LABELS if f"skip-{k}-default" in text]), (None, ["linear"]))
+            self.assertIn("Press Continue again", text)
+            result, saved, _ = await self.keys((True, True, False, False), connected, presses=2)
+            self.assertEqual((result, saved), (([], ["linear"]), []))
 
 
 HINTS = {"openrouter": "openrouter.ai/keys", "typesafe": "your TypeSafe account", "linear": "linear.app/settings/api", "figma": "a Figma personal access token"}
@@ -70,7 +77,6 @@ HINTS = {"openrouter": "openrouter.ai/keys", "typesafe": "your TypeSafe account"
 class KeysLook(unittest.IsolatedAsyncioTestCase):
     async def look(self, status, check, skip=lambda k, w: f"skip-{k}-{w}", presses=0):
         with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))), \
-             mock.patch.object(fc_keys, "linear_connected", return_value=False), mock.patch.object(fc_keys, "linear_state", return_value="key" if status[2] else "missing"), \
              mock.patch.object(fc_keys, "save_key", return_value="saved"), mock.patch.object(fc_keys, "skipped_line", side_effect=skip):
             app = Host("default")
             async with app.run_test(size=(80, 24)) as pilot:
@@ -98,7 +104,8 @@ class KeysLook(unittest.IsolatedAsyncioTestCase):
                 text = " ".join(" ".join(rows).split()) + " | " + statics
                 mark, other = ("optional", "required") if kind == "figma" else ("required", "optional")
                 self.assertTrue(mark in text and other not in text, (kind, text))
-                if kind == "linear": self.assertIn("required, or the claude.ai Linear connector", text)
+                self.assertNotIn("connector", text, kind)
+                if kind == "linear": self.assertEqual(str(app.screen.query_one("#linear-hint", Static).render()).strip(), "required · linear.app/settings/api")
                 self.assertEqual(len([line for line in rows[inp.region.height:] if HINTS[kind] in line]), 1, (kind, rows))
                 self.assertEqual(next(line for line in rows if LABELS[kind] in line).index(LABELS[kind]), len(top) - len(top.lstrip()), (top, rows))
                 after = [line[inp.region.right:] for line in rows[:inp.region.height]]
@@ -125,7 +132,6 @@ class KeysKeyboard(unittest.IsolatedAsyncioTestCase):
     async def drive(self, status, steps):
         saved = []
         with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))), \
-             mock.patch.object(fc_keys, "linear_connected", return_value=False), mock.patch.object(fc_keys, "linear_state", return_value="key" if status[2] else "missing"), \
              mock.patch.object(fc_keys, "save_key", side_effect=lambda k, v, w, f: saved.append((k, v)) or "saved"), \
              mock.patch.object(fc_keys, "skipped_line", side_effect=lambda k, w: f"skip-{k}-{w}"):
             app = Host("default")
@@ -174,7 +180,6 @@ class KeysKeyboard(unittest.IsolatedAsyncioTestCase):
 class WarningsInView(unittest.IsolatedAsyncioTestCase):
     async def warn(self, status=(False,) * 4, skip=None, workspace="default", whole=True):
         patches = [mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, status))),
-                   mock.patch.object(fc_keys, "linear_connected", return_value=False), mock.patch.object(fc_keys, "linear_state", return_value="key" if status[2] else "missing"),
                    mock.patch.object(fc_keys, "save_key", side_effect=AssertionError("nothing to save"))]
         missing = [k for k in LABELS if k in REQUIRED and not dict(zip(LABELS, status))[k]]
         texts = [(skip or fc_keys.skipped_line)(k, workspace) for k in missing] + ["Press Continue again to go on without the missing keys."]
@@ -218,7 +223,6 @@ class EnteredStatus(unittest.IsolatedAsyncioTestCase):
     async def test_typed_key_reads_entered_until_cleared_or_saved(self):
         saved = []
         with mock.patch.object(fc_auth, "read_auth", return_value={}), mock.patch.object(fc_keys, "key_status", return_value=dict(zip(LABELS, (False, True, False, False)))), \
-             mock.patch.object(fc_keys, "linear_connected", return_value=True), mock.patch.object(fc_keys, "linear_state", return_value="connector"), \
              mock.patch.object(fc_keys, "save_key", side_effect=lambda k, v, w, f: saved.append((k, v)) or "saved"), \
              mock.patch.object(fc_keys, "skipped_line", side_effect=lambda k, w: f"skip-{k}-{w}"):
             app = Host("default")
@@ -231,7 +235,7 @@ class EnteredStatus(unittest.IsolatedAsyncioTestCase):
                     app.screen.query_one(f"#{kind}", Input).focus(); await pilot.press(*presses); await pilot.pause()
                 before = {k: status(k) for k in LABELS}
                 self.assertEqual(before, {"openrouter": ("not set", False, True), "typesafe": ("set", True, False),
-                                          "linear": ("connector connected", True, False), "figma": ("not set", False, True)})
+                                          "linear": ("not set", False, True), "figma": ("not set", False, True)})
                 for kind, value in (("openrouter", "sk-or-test"), ("typesafe", "ts-test"), ("linear", "lin-test")):
                     await keys(kind, *value)
                     self.assertEqual({k: status(k) for k in LABELS}, before | {kind: ("entered", True, False)}, kind)
@@ -249,4 +253,4 @@ class EnteredStatus(unittest.IsolatedAsyncioTestCase):
                 await keys("openrouter", *"sk-or-test")
                 self.assertEqual(status("openrouter"), ("entered", True, False))
                 await pilot.click(app.screen.query_one("#continue", Button)); await pilot.pause()
-        self.assertEqual((saved, app.result), ([("figma", "fig-test"), ("openrouter", "sk-or-test")], (["figma", "openrouter"], [])))
+        self.assertEqual((saved, app.result), ([("figma", "fig-test"), ("openrouter", "sk-or-test")], (["figma", "openrouter"], ["linear"])))
