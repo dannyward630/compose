@@ -729,8 +729,9 @@ class ProcGroupTurns(unittest.TestCase):
                 self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in {**fc.fc_core.clean_env(), **extra}.items() if k != "COMPOSE_CONFIG"})
 
     def test_a_turn_past_its_timeout_raises_and_its_whole_group_is_gone(self):
-        self.fake("sleep 31.7 >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
-        left = lambda: subprocess.run(["pgrep", "-f", "sleep 31.7( |$)"], capture_output=True, text=True).stdout.split()
+        n = f"31.{os.getpid()}"  # unique to this run: another suite's sleep is not ours to find or kill
+        self.fake(f"sleep {n} >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
+        left = lambda: subprocess.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True, text=True).stdout.split()
         self.addCleanup(lambda: [os.kill(int(p), 9) for p in left()])
         with self.assertRaises(subprocess.TimeoutExpired):
             fc.fc_models.pi_turn(self.wt, "openrouter/x/y", "hi", timeout=1)
