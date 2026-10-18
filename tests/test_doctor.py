@@ -72,8 +72,7 @@ class Doctor(unittest.TestCase):
                 "MISSING: treehouse: 2.0.1 is older than 3.1.2 (install: brew install treehouse) - optional",
                 "MISSING: gh stack (install: gh extension install github/gh-stack)",
                 "MISSING: herdr skill (install: herdr --skill)",
-                "MISSING: superpowers (install: claude plugin install superpowers) - optional",
-                "MISSING: framelink-figma (install: claude mcp add x) - needed for the designer"]))
+                "MISSING: superpowers (install: claude plugin install superpowers) - optional"]))
             self.assertEqual(self.deps("designer"), (["framelink-figma"], ["MISSING: framelink-figma (install: claude mcp add x)"]))
 
     def test_dangling_owned_link(self):
@@ -286,6 +285,56 @@ class DoctorWarnings(unittest.TestCase):
         m = re.match(r"init stopped: (.+?) missing; ", str(e.exception.code))
         self.assertTrue(m, e.exception.code)
         self.assertEqual([n in m.group(1) for n in ("npx", "herdr skill", "gh auth", "uv")], [True, True, False, False])
+
+class DesignerExtras(unittest.TestCase):
+    """With no role the designer rows are opt-in: no MISSING line, never on the waiting line, never returned, and one
+    designer extras line after the rows' lines when any is not ok. The designer's start reports them as today."""
+    setUp, fake, herdr_config = Doctor.setUp, Doctor.fake, Doctor.herdr_config
+    LINE = "designer extras not set up: compose setup, choose the designer rows"
+
+    def doctor(self, figma, token, role=None):
+        rows = (("claude", "claude", "curl x", "required", False, "manual"), ("gh", "gh", "brew install gh", "required", False, "run"),
+                ("superpowers", lambda c: (False, ""), "claude plugin install b", "default", True, "run"),
+                ("uv", lambda c: (False, ""), "brew install uv", "default", False, "run"),
+                ("framelink-figma", lambda c: (figma, ""), "claude mcp add x", "designer", True, "run"),
+                ("framelink-figma token", lambda c: (token, ""), "compose setup", "designer", False, "key"))
+        out, alone, code = io.StringIO(), io.StringIO(), 0
+        with mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_auth, "old_keys", return_value=[]):
+            with mock.patch("sys.stdout", out):
+                try:
+                    role or fc.fc_init.cmd_doctor(None)
+                except SystemExit as e:
+                    code = e.code
+            with mock.patch("sys.stdout", alone):
+                self.bad = fc.fc_init.check_deps(role)
+        return code, (out if role is None else alone).getvalue().splitlines()
+
+    def test_not_ok_rows_share_one_line_after_the_rows(self):
+        for figma, token in ((False, False), (True, False), (False, True)):
+            with self.subTest(figma=figma, token=token):
+                code, lines = self.doctor(figma, token)
+                self.assertEqual((code, self.bad, lines.count(self.LINE)), (0, [], 1), lines)
+                self.assertEqual([l for l in lines if "framelink" in l or "needed for the designer" in l], [])
+                self.assertIn("MISSING: uv (install: brew install uv) - optional", lines)
+                self.assertEqual(lines.index(self.LINE), max(i for i, l in enumerate(lines[:lines.index(Doctor.READY)]) if l.startswith("MISSING")) + 1)
+
+    def test_both_ok_print_no_designer_line(self):
+        code, lines = self.doctor(True, True)
+        self.assertEqual((code, self.bad, [l for l in lines if "designer" in l or "framelink" in l]), (0, [], []))
+
+    def test_without_claude_framelink_stays_off_the_waiting_line(self):
+        (self.bin / "claude").unlink()
+        code, lines = self.doctor(False, False)
+        wait = [l for l in lines if l.startswith("waiting on Claude Code: ")]
+        self.assertEqual((code, self.bad, lines.count(self.LINE), len(wait)), (1, ["claude"], 1, 1), lines)
+        self.assertTrue("superpowers" in wait[0] and "framelink" not in wait[0], wait)
+        self.assertLess(lines.index(self.LINE), lines.index(wait[0]))
+        self.assertGreater(lines.index(self.LINE), lines.index("MISSING: uv (install: brew install uv) - optional"))
+
+    def test_the_designer_start_reports_its_rows_as_today(self):
+        _, lines = self.doctor(False, False, role="designer")
+        self.assertEqual((self.bad, lines), (["framelink-figma", "framelink-figma token"],
+                         ["MISSING: framelink-figma (install: claude mcp add x)", "MISSING: framelink-figma token (install: compose setup)"]))
 
 class InitGate(unittest.TestCase):
     """init stops only on a missing required tool row, one whose check is a command, a command list, or a file under home;
