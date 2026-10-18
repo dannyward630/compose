@@ -42,9 +42,8 @@ class LinearProject(unittest.TestCase):
         return (1 if isinstance(code, str) else code), ((code if isinstance(code, str) else "") + err.getvalue()).strip()
 
     def test_no_key_exits_naming_the_workspace_and_calls_no_verb(self):
-        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_linear_cmd, "verb_project") as verb:
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_linear_cmd, "verb_project", side_effect=AssertionError("verb ran without a key")):
             self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.args("project")), (1, "compose linear needs a Linear key for workspace 'work': pbpaste | compose workspace key work --linear"))
-        verb.assert_not_called()
         p = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "linear", "project", "--repo", str(self.repo)], capture_output=True, text=True)
         self.assertEqual(p.returncode, 1); self.assertIn("compose linear needs a Linear key for workspace 'default': pbpaste | compose workspace key default --linear", p.stderr)
 
