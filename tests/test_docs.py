@@ -593,8 +593,7 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("| `trail` | Sets trail up again in the project's worktree |", cli)
         doctor = [l for l in cli if l.startswith("| `doctor` |")]
         self.assertEqual(len(doctor), 1, "one doctor row")
-        self.assertIn("(herdr, treehouse, trail, gh, gh stack, claude, npx, pi, bp, the `framelink-figma`", doctor[0])
-        self.assertIn("pi, bp, treehouse, and trail only warn, as does a gh that is installed but not logged in (`gh auth login`), and Framelink warns as `needed for the designer`", doctor[0])
+        self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
         # Only the tool word changes: the neighbouring env row stays, and the old graft env row is gone.
@@ -616,7 +615,5 @@ class NoGraftWord(unittest.TestCase):
         )
         # The folder names stay: init still ignores the old map folder beside .trail/.
         self.assertIn("  `init` git-ignores it, `graft/`, and `.trail/` first.", how)
-        # The install row takes graft's place in the table, between treehouse and Frame0.
-        row = machine.index("| trail | `npm i -g @trailhq/trail-code` |")
-        self.assertTrue(machine[row - 1].startswith("| treehouse |"), machine[row - 1])
-        self.assertTrue(machine[row + 1].startswith("| Frame0, OpenCode |"), machine[row + 1])
+        # The step table holds the trail and treehouse install row.
+        self.assertIn("| trail, treehouse | default | installs `@trailhq/trail-code` and treehouse | no |", machine)

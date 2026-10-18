@@ -34,7 +34,7 @@ Type `! pbpaste | compose workspace key <name>` instead.
 Its shape is `{"workspaces": {"default": {"openrouter": ..., "linear": ...}, "<name>": {...}}, "typesafe": ...}`.
 A workspace without its own OpenRouter key bills `default`'s, unless it was added with an empty key.
 The first `compose` command after an upgrade moves any key still in `config.json` or `~/.compose/.env` into `auth.json` and prints one line per key.
-Keys reach pi, OpenCode, and jev through the environment, never through a command line.
+Keys reach pi and jev through the environment, and OpenCode through a key file `compose` writes from `auth.json`, never through a command line.
 
 ## Config
 

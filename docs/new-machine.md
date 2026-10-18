@@ -60,7 +60,7 @@ enabled = false
 ```
 
 A config that is a symlink or not writable is left alone, and setup prints the two lines for you to set.
-`compose doctor` warns while either one is on.
+`compose doctor` prints an optional `MISSING: herdr config: <key>=<value>` line while either one is on.
 
 ## Each repo
 
