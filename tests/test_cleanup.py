@@ -755,7 +755,7 @@ class ReviewBaseFirst(unittest.TestCase):
         self.commit("compose/p-002", "build 002"); self.run("merge", "-q", "--ff-only", "compose/p-002", cwd=self.wt)
         self.commit("compose/p-001", "build 001"); self.run("branch", "compose/base", "compose/p-001")  # 001 only in the review base
         three = self.commit("compose/p-003", "add three", "fix three")  # against main, build 002 would come first
-        four = self.commit("compose/p-004", "add four")
+        four, layer = self.commit("compose/p-004", "add four"), self.commit("compose/p-layer-01", "stack one")
         cfg = json.loads((self.proj / "verify.json").read_text()); cfg["review_base"] = "compose/base"
         (self.proj / "verify.json").write_text(json.dumps(cfg))
         tasks = [{"id": t, "title": t, "files": [], "protected": [], "linear": f"ENG-{n}", "after": "", "test": "true"} for n, t in enumerate(("001", "002", "003", "004"), 3)]
@@ -766,7 +766,8 @@ class ReviewBaseFirst(unittest.TestCase):
         self.assertIn("clean  compose/p-002: contained in compose/base", lines)  # compose/p holds it too
         self.assertIn(f"clean  compose/p-003: kept unmerged, first unmatched commit {three[0]} add three and 1 more", lines)
         self.assertIn(f"clean  compose/p-004: kept unmerged, first unmatched commit {four[0]} add four", lines)
-        self.assertEqual(self.run("branch", "--list", "compose/p-*", "--format=%(refname:short)").stdout.split(), ["compose/p-003", "compose/p-004"])
+        self.assertIn(f"clean  compose/p-layer-01: kept unmerged, first unmatched commit {layer[0]} stack one", lines)
+        self.assertEqual(self.run("branch", "--list", "compose/p-*", "--format=%(refname:short)").stdout.split(), ["compose/p-003", "compose/p-004", "compose/p-layer-01"])
         self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-6"), ["Done", "Done", "In Review", "In Review"])
 
     def test_a_project_branch_kept_as_not_merged_yet_names_its_first_unmatched_commit_before_the_summary(self):
