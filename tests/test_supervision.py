@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, shlex, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, re, shlex, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -535,7 +535,65 @@ class JevLeash(unittest.TestCase):
 
 class RunStop(unittest.TestCase):
     """Task 003 (NEB-920): Ctrl-C during run_tasks stops at once, exits 130, keeps run.json; no attempt or fallback after the stop; the herdr hook."""
+    def setUp(self):
+        self.addCleanup(fc.fc_proc.STOP.clear); self.addCleanup(fc.fc_proc.HOOKS.clear); self.addCleanup(fc.fc_proc.RUNNING.clear)
+        self.addCleanup(signal.signal, signal.SIGINT, signal.getsignal(signal.SIGINT))
 
+    def ctrl_c(self, stop=None):
+        proj, release, finished, exits, err = Path(tempfile.mkdtemp()), threading.Event(), threading.Event(), [], io.StringIO()
+        task = lambda *a: release.wait(5) or finished.set() or {}  # still running at the exit: the stop waits on no task
+        exit = lambda code: exits.append((code, finished.is_set())) or release.set() or sys.exit(code)
+        with mock.patch("concurrent.futures.wait", side_effect=KeyboardInterrupt), mock.patch.object(fc.fc_run.os, "_exit", exit), \
+                mock.patch.object(fc.fc_run, "preflight"), mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_proc, "stop", side_effect=stop) as stopped, \
+                mock.patch.object(fc.fc_implement, "run_task", task), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                fc.fc_run.run_tasks(proj, proj, [{"id": "001", "model": "pi:p/primary"}], SimpleNamespace(attempts=1, parallel=1, trunk="main", no_stack=True))
+            except BaseException as e:  # a loose KeyboardInterrupt would end the whole unittest run
+                self.assertIsInstance(e, SystemExit, err.getvalue())
+        self.assertEqual((stopped.call_count, exits), (1, [(130, False)]))
+        self.assertEqual(re.findall(r"\[\d\d:\d\d:\d\d\] (.+)\n", err.getvalue()), ["run stopped by Ctrl-C; `compose resume` continues it"], err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue()); self.assertTrue((proj / "results" / "run.json").exists())
+
+    def test_ctrl_c_stops_says_so_and_exits_130_without_waiting_on_the_task(self):
+        self.ctrl_c()
+
+    def test_a_second_ctrl_c_during_the_stop_changes_nothing(self):
+        self.ctrl_c(stop=lambda: os.kill(os.getpid(), signal.SIGINT))
+
+    def run_one(self, effect):
+        repo, calls = Path(tempfile.mkdtemp()), []; proj = repo / "proj"
+        for c in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", *c], cwd=repo, check=True, capture_output=True)
+        task = {"id": "001", "title": "t", "files": ["a.txt"], "protected": [], "test": "false", "model": "pi:p/primary", "after": "", "linear": "", "body": "## Goal\nx"}
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            calls.append(model); fc.fc_proc.STOP.set()
+            if effect: raise effect
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "DEFAULT_MODEL", "pi:p/primary"), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", "pi:p/backup"), \
+                mock.patch.object(fc.fc_config, "FALLBACK_AFTER", 1), mock.patch.object(fc.fc_config, "TEST_READER", None), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}), \
+                contextlib.suppress(fc.fc_proc.Stopped):
+            fc.fc_implement.run_task(repo, proj, task, 3)
+            self.assertIsNone(effect, "an implementer failure after the stop raises Stopped")
+        self.assertEqual(calls, ["pi:p/primary"])  # no further attempt, no fallback
+        return json.loads((proj / "results" / "001.json").read_text()), fc.fc_status.task_state(repo, proj, task, "")["state"]
+
+    def test_after_the_stop_an_implementer_error_or_timeout_is_no_attempt_and_no_turn_starts_another(self):
+        for effect in (RuntimeError("pi exited"), subprocess.TimeoutExpired("pi", 1), None):  # the stop lands in the turn, which then ends as `effect`
+            with self.subTest(effect=type(effect).__name__):
+                (result, state), _ = self.run_one(effect), fc.fc_proc.STOP.clear()
+                if effect: self.assertEqual((result["status"], result["log"], state), ("running", [], "interrupted"))
+
+    def test_a_herdr_agent_gets_esc_then_its_pane_closed_on_the_stop(self):
+        calls, hooked, root, name = [], [], Path(tempfile.mkdtemp()), fc.fc_herdr.agent_name("shop", "028")
+        def prompt(*a, **k):  # the stop lands while the agent works on its prompt
+            n = len(calls); hooked.extend(fc.fc_proc.HOOKS); fc.fc_proc.HOOKS.get(name, lambda: None)(); hooked.append(calls[n:])
+            return None, "stopped"
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a: calls.append(a) or {}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", return_value={}), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", return_value="p1"), mock.patch.object(fc.fc_herdr, "herdr_error", prompt), self.assertRaises(RuntimeError):
+            fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"})
+        self.assertEqual(hooked, [name, [("agent", "send-keys", name, "esc"), ("pane", "close", "p1")]])
 
 if __name__ == "__main__":
     unittest.main()
