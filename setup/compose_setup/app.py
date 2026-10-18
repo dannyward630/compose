@@ -37,6 +37,7 @@ class SetupApp(App[int]):
         self.results: List[Tuple[str, str]] = []
         self.skipped: Set[int] = set()
         self.chosen: Set[int] = set()
+        self.states: Dict[int, str] = {}
         self._lines: Dict[int, str] = {}
         self._labels: List[Label] = []
         self._details: List[Label] = []
@@ -46,6 +47,7 @@ class SetupApp(App[int]):
         with ListView(id="steps"):
             for i, row in enumerate(self.rows):
                 state = "unchosen" if row[3] == "designer" else "pending"
+                self.states[i] = state
                 label = Label(self._row_text(i, state), classes=f"row {state}")
                 self._labels.append(label)
                 detail = Label("", classes="detail")
@@ -66,7 +68,7 @@ class SetupApp(App[int]):
                 self.call_from_thread(self._mark_ok, i)
 
     def _mark_ok(self, i: int) -> None:
-        if i not in self.skipped:
+        if self.states.get(i) in ("pending", "unchosen"):
             self._set_row(i, "ok")
 
     def _row_text(self, i: int, state: str, line: str = "") -> str:
@@ -75,6 +77,7 @@ class SetupApp(App[int]):
         return text
 
     def _set_row(self, i: int, state: str, line: str = "") -> None:
+        self.states[i] = state
         self._labels[i].update(self._row_text(i, state, line))
         self._labels[i].set_classes(f"row {state}")
         self._details[i].update(line)
