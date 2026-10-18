@@ -464,7 +464,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     for l in layers or []:
         fc_core.say(f"layer  {l['branch'].removeprefix(layer_prefix(repo, proj))}  {layer_note(l, budget)}")
     for l in layers if preview and layers else []:
-        title, body = layer_pr(repo, proj, l, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
+        title, body = layer_pr(repo, proj, l, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
         fc_core.say(f"pr     {l['branch']}  {title}\n" + "\n".join(f"    {x}" if x else "" for x in body.splitlines()))
     if submit:
         fc_core.sh(["git", "checkout", "-q", stack[-1]], wt, check=False)

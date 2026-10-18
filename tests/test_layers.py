@@ -295,6 +295,8 @@ class Layers(unittest.TestCase):
 
     def test_stack_without_submit_prints_each_layers_pr_title_and_body_and_calls_no_gh_pr(self):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
+        cache = json.loads((self.proj / "results" / "tasks.json").read_text())
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({**cache, "feature": {"title": "Build it", "description": "Fixes o/r#9."}}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
             fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
@@ -303,7 +305,9 @@ class Layers(unittest.TestCase):
         for i, l in enumerate(prs, 1):
             self.assertIn(f"({i}/3)", l.splitlines()[0])
             self.assertIn("## What changed", l)
-        calls = (self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
+        self.assertIn("- Part of o/r#9", prs[1])  # as submit writes it: the issue is fixed by the layer with its last task
+        self.assertIn("- Fixes o/r#9", prs[2])
+        calls =(self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
         self.assertFalse([c for c in calls if not c.startswith("stack ")])
         self.assertFalse((self.proj / "pr_text.json").exists())
 
