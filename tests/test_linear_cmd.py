@@ -362,3 +362,64 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         for target in ([], ["get"], ["list"], ["create", "extra"]):
             self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.args("doc", *target, title="T")), (1, "doc takes create, or get <id>"))
         self.assertFalse([q for q, _ in self.calls if "document" in q])
+
+
+class LinearNoProject(unittest.TestCase):
+    REFUSAL = (1, "ENG-7 is not in project Shop; pass --any-project to use it")
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        (self.repo / "body.md").write_text("a note\n")
+        self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "title": "Fix the cart", "description": "Steps.", "state": {"name": "Todo"}, "labels": {"nodes": []},
+                                      "project": None, "parent": None, "comments": {"nodes": []}, "team": {"name": "Engineering", "states": {"nodes": []}, "labels": {"nodes": []}}}
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        return {"issueUpdate": {"success": True}} if "issueUpdate" in query else {"commentCreate": {"success": True}} if "commentCreate" in query else {"issue": self.issue}
+
+    def writes(self):
+        return [w for q, _ in self.calls for w in ("issueUpdate", "commentCreate") if w in q]
+
+    def verbs(self):
+        return (("get", {}), ("get", {"json": True, "body": True}), ("update", {"title": "T"}), ("comment", {"file": str(self.repo / "body.md")}))
+
+    def test_in_scope_refuses_no_project_or_another_unless_any_project(self):
+        self.assertEqual(self.fails(fc.fc_linear_cmd.in_scope, self.issue, self.args("get", "ENG-7")), self.REFUSAL)
+        fc.fc_linear_cmd.in_scope(self.issue, self.args("get", "ENG-7", any_project=True))
+        fc.fc_linear_cmd.in_scope({**self.issue, "project": {"id": "p1", "name": "Shop"}}, self.args("get", "ENG-7"))
+        self.assertEqual(self.fails(fc.fc_linear_cmd.in_scope, {**self.issue, "project": {"id": "p9", "name": "Shop"}}, self.args("get", "ENG-7")), self.REFUSAL)
+
+    def test_each_verb_refuses_it_through_the_command_printing_and_writing_nothing(self):
+        for action, kw in self.verbs():
+            with self.subTest(action=action, **kw):
+                with redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.args(action, "ENG-7", **kw)), self.REFUSAL)
+                self.assertEqual(out.getvalue(), "")
+        self.assertEqual(self.writes(), [])
+
+    def test_any_project_lets_each_verb_use_it(self):
+        with redirect_stdout(io.StringIO()) as out:
+            for action, kw in self.verbs()[:1] + self.verbs()[2:]:
+                fc.fc_linear_cmd.cmd_linear(self.args(action, "ENG-7", any_project=True, **kw))
+        self.assertEqual([line for line in out.getvalue().splitlines() if line.strip()], ["ENG-7 Todo - Fix the cart", "updated ENG-7", "commented on ENG-7"])
+        self.assertEqual(self.writes(), ["issueUpdate", "commentCreate"])
+
+    def test_update_blocked_by_drops_empty_ids(self):
+        self.issue["project"] = {"id": "p1", "name": "Shop"}
+        for given, want in (("", []), ("NEB-1,,NEB-2", ["NEB-1", "NEB-2"]), (",NEB-3,", ["NEB-3"])):
+            with self.subTest(given=given):
+                with mock.patch.object(fc.fc_linear, "linear_blocked_by") as blocked, redirect_stdout(io.StringIO()):
+                    fc.fc_linear_cmd.verb_update(self.args("update", "ENG-7", blocked_by=given))
+                blocked.assert_called_once_with(self.issue, want)
+
+    def test_update_and_comment_need_an_issue_id_and_call_nothing(self):
+        for action in ("update", "comment"):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.args(action, title="T", file=str(self.repo / "body.md"))), (1, f"{action} needs an issue id"))
+        self.assertEqual(self.calls, [])
