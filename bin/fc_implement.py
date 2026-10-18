@@ -74,7 +74,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
 LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `trail ask` output
 BANNERS = ("[trail]", "⬆ trail", "· no learnings")  # trail's own notes there, not code
 
-def trail_pack(wt, query, repo=None, limit=6):
+def trail_pack(wt, query, repo=None, limit=6, cap=12000):
     """Context pack from a trail graph, $0 and no model. The graph is git-ignored, so a worktree gets its own graph:
     the main repo's graph is copied in as a cache, at the same place (graft/ or .trail/cache/), and rebuilt from the
     worktree's files (so a bench reset is not leaked)."""
@@ -100,7 +100,7 @@ def trail_pack(wt, query, repo=None, limit=6):
             lines.append(l)
     return "\n".join(lines).strip()[:12000]
 
-def branch_budget(wt, base, allowed=None):
+def branch_budget(wt, base, allowed=None, delete=()):
     """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
     All three are hard limits for an implementer: size, no documents, and scope."""
     fc_core.sh(["git", "add", "-A"], wt, check=False)
@@ -141,6 +141,11 @@ def task_base(repo, proj, meta):
         return base, fc_core.sh(["git", "rev-parse", base], repo).stdout.strip()
 
 PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
+
+def prettier_opted_in(wt, path):
+    """Whether the repo chose prettier for `path`: a prettier config file or a package.json `prettier` key on the way from the
+    file's directory up to `wt`, or prettier as a direct dependency of the nearest package.json."""
+    raise NotImplementedError("fc_implement.prettier_opted_in")
 
 def format_files(wt, files, base="HEAD"):
     """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
