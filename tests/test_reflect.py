@@ -782,5 +782,61 @@ class ChangeBrief(unittest.TestCase):
             self.brief("C9")
 
 
+class BranchNames(unittest.TestCase):
+    """status, done and change name task branches compose/hw-NNN in a new project and keep fast/hw/NNN in a legacy one."""
+    def setUp(self):
+        self.proj = project()
+        self.repo, self.git = git_repo(())
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", None),
+                                 (fc.fc_layers, "register_stack", lambda *a, **k: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        synced(self.proj, MAP, BEFORE)
+
+    def branch(self, name, msg="work"):
+        """Point `name` at a new commit on top of main, so it is unmerged. Returns the commit."""
+        sha = self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "main^{tree}", "-p", "main", "-m", msg)
+        self.git("branch", "-f", name, sha)
+        return sha
+
+    def test_status_reads_the_task_branch_by_its_project_name(self):
+        for config, name in ((None, "compose/hw-003"), ({"branch": "team/hw"}, "team/hw-003"), (None, "fast/hw/003")):
+            with self.subTest(name):
+                self.setUp()
+                if config:
+                    (self.proj / "verify.json").write_text(json.dumps(config))
+                (self.proj / "results" / "003.json").write_text(json.dumps({"status": "passed"}))
+                sha = self.branch(name)
+                row = fc.fc_status.task_state(self.repo, self.proj, task("003"), self.git("rev-parse", "main"))
+                self.assertEqual((row["state"], row["note"]), ("passed", name))
+                self.assertEqual(fc.fc_status.task_state(self.repo, self.proj, task("003"), sha)["state"], "merged")
+
+    def test_done_records_the_helper_branch_and_keeps_one_already_there(self):
+        for legacy, name in ((False, "compose/hw-003"), (True, "fast/hw/003")):
+            with self.subTest(name):
+                self.setUp()
+                if legacy:
+                    self.branch("fast/hw/004")  # another task's legacy branch makes the whole project legacy
+                (self.proj / "results" / "004.json").write_text(json.dumps({"status": "failed", "branch": "kept/004"}))
+                with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), redirect_stdout(io.StringIO()):
+                    fc.fc_status.cmd_done(SimpleNamespace(repo=str(self.repo), project="hw", only="003,004", note="by hand"))
+                read = lambda t: json.loads((self.proj / "results" / f"{t}.json").read_text())
+                self.assertEqual((read("003")["branch"], read("004")["branch"]), (name, "kept/004"))
+
+    def test_a_change_snapshots_new_name_tips_and_its_undo_resets_them(self):
+        old = self.branch("compose/hw-003", "first build")
+        self.branch("compose/hw-004")
+        change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
+        rec = fc.fc_change.load_change(self.proj, "C1")
+        self.assertEqual(rec["tips"], {"003": old, "004": self.git("rev-parse", "compose/hw-004")})
+        self.assertEqual(self.git("rev-parse", "refs/compose/hw/C1/003"), old)
+        self.branch("compose/hw-003", "rebuilt")  # the re-plan redid 003
+        synced(self.proj, MAP_AFTER, AFTER, ahead=2)
+        change(self.proj, self.repo, "done")
+        synced(self.proj, MAP_AFTER, AFTER, ahead=3)
+        change(self.proj, self.repo, "undo", cid="C1")
+        self.assertEqual(self.git("rev-parse", "compose/hw-003"), old)
+        self.assertNotIn("fast/hw/003", self.git("branch", "--list"))
+
+
 if __name__ == "__main__":
     unittest.main()
