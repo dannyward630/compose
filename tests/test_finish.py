@@ -267,3 +267,51 @@ class InsideHerdr(unittest.TestCase):
         self.assertEqual(same({"gh auth": "skipped"})[0][-1], FOOT)
         self.tty, self.claude = True, False
         self.assertEqual(same()[0][-1], CLAUDE); self.assertEqual(same({}, True)[0][-1], CLAUDE)
+
+
+PI = """#!/bin/sh
+printf '%s\\n%s' "$OPENROUTER_API_KEY" "$*" > "$REC"
+echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}'
+"""
+KEYS = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "TYPESAFE_API_KEY")
+
+class SavedKey(unittest.TestCase):
+    """The real probe path, pi faked on PATH: its env holds the key auth.json holds when finish runs, not only what setup exported at start."""
+    def setUp(self):
+        saved = dict(vars(F.fc_config)); self.addCleanup(lambda: vars(F.fc_config).update(saved))  # apply_config sets module globals
+        Finish.setUp(self); self.start_cfg = json.loads(self.cfg.read_text())
+        fakebin = Path(tempfile.mkdtemp()); self.rec = fakebin / "rec"
+        (fakebin / "pi").write_text(PI); (fakebin / "pi").chmod(0o755)
+        self.addCleanup(F.fc_defaults.fc_models._PROBED.clear)
+        for p in (mock.patch.object(F.fc_defaults, "probe_implementer", REAL_PROBE),
+                  mock.patch.object(F.fc_config, "PROBE_CACHE", self.cfg.parent / "model-probe.json"),
+                  mock.patch.dict(os.environ, {"PATH": f"{fakebin}:/usr/bin:/bin", "REC": str(self.rec)})):
+            p.start(); self.addCleanup(p.stop)
+
+    def run_setup(self, start, saved, cfg={}, shell=None):
+        """(key pi got, ending, code): setup starts on auth.json `start` (None: no file), then the keys screen writes `saved`."""
+        self.cfg.write_text(json.dumps(self.start_cfg | cfg)); self.auth.unlink(missing_ok=True); self.rec.unlink(missing_ok=True)
+        F.fc_config.PROBE_CACHE.unlink(missing_ok=True); F.fc_defaults.fc_models._PROBED.clear()
+        for k in KEYS: os.environ.pop(k, None)
+        if shell: os.environ["OPENROUTER_API_KEY"] = shell
+        if start is not None: self.auth.write_text(json.dumps(start))
+        F.fc_config.apply_config()
+        self.auth.write_text(json.dumps(saved))
+        lines, code = F.finish([("pi", "ok"), ("OpenRouter key", "done")], False)
+        key, argv = self.rec.read_text().split("\n", 1) if self.rec.exists() else (None, "")
+        for value in ("sk-or-test", "sk-or-w", "sk-or-stale", "ts-test", "lin-test"):
+            self.assertNotIn(value, "\n".join(lines) + argv)
+        return key, lines, code
+
+    def test_first_run_and_rerun_probe_with_the_saved_key(self):
+        key, first, code = self.run_setup(None, ALL)
+        self.assertEqual((key, code, first[-2:]), ("sk-or-test", 0, READY)); self.assertIn("implementer pi:mine: answered", first)
+        self.assertEqual(os.environ.get("TYPESAFE_API_KEY"), "ts-test")
+        self.assertEqual(self.run_setup({"workspaces": {"default": {}}}, ALL)[0], "sk-or-test")  # an empty auth.json at start
+        self.assertEqual(self.run_setup(ALL, ALL), ("sk-or-test", first, 0))  # rerun: exported at start, same ending
+
+    def test_saved_key_wins_over_a_stale_shell_key_and_follows_the_active_workspace(self):
+        self.assertEqual(self.run_setup(None, ALL, shell="sk-or-stale")[:3:2], ("sk-or-test", 0))
+        other = {"workspaces": {**ALL["workspaces"], "w": {"openrouter": "sk-or-w"}}, "typesafe": "ts-test"}
+        self.assertEqual(self.run_setup(None, other, {"workspace": "w"})[:3:2], ("sk-or-w", 0))
+        self.assertEqual(self.run_setup(ALL, other, {"workspace": "w"})[:3:2], ("sk-or-w", 0))
