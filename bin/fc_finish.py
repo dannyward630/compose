@@ -32,15 +32,22 @@ def finish(results, yes):
         missing.append("linear")
     lines += [fc_keys.skipped_line(k, ws) for k in missing]
     ready = not missing
+    probe_ok = None
     if not yes and status["openrouter"]:
         ok, probe_lines = fc_defaults.probe_implementer(merged)
-        lines += probe_lines
+        lines += [line for line in probe_lines if line not in fc_defaults.PRESET_STEPS]
         ready = ready and ok
+        probe_ok = ok
     if not shutil.which("claude"):
         lines.append(CLAUDE_MISSING)
         return lines, 1
     if not ready and not yes:
-        lines.append("setup is not finished")
+        reasons = []
+        if missing:
+            reasons.append("missing " + ", ".join({"openrouter": "OpenRouter", "typesafe": "TypeSafe", "linear": "Linear"}[k] for k in missing))
+        if probe_ok is False:
+            reasons.append("the model probe failed")
+        lines.append("setup is not finished: " + "; ".join(reasons))
         return lines, 1
     lines += ["compose is ready", "next: run compose to open herdr"]
     return lines, 0
