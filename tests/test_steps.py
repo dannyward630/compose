@@ -54,6 +54,7 @@ class StepsTable(unittest.TestCase):
         self.link.unlink(); self.link.symlink_to(self.co / "bin" / "compose"); self.assertEqual(self.check("compose CLI link"), (True, ""))
 
     def test_linear_key_or_connector_and_key_rows_hide_values(self):
+        (self.home / ".claude.json").write_text("{}")  # Claude Code has run here, so the connector check reads `claude mcp list`
         for mark, key, ok in (("! Needs authentication", False, False), ("✔ Connected", False, True), ("! Needs authentication", True, True)):
             self.fake("claude", f"Checking MCP server health…\n\nclaude.ai Linear: https://mcp.linear.app/mcp - {mark}"); self.auth.unlink(missing_ok=True)
             if key: self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test", "linear": "lin-test"}}, "typesafe": "ts-test"}))
