@@ -728,5 +728,55 @@ else: sys.exit(1)
         self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
 
 
+class ReviewBaseFirst(unittest.TestCase):
+    """Task branches are checked against the review base first, and each kept branch names its first commit with no patch there."""
+    def setUp(self):
+        self.r, self.run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        self.wt = self.r.parent / "compose-p"; self.proj = self.wt / ".compose" / "p"
+
+    def commit(self, branch, *subjects):
+        """Commits on a new branch cut from compose/p (on compose/p itself when branch is None); their short shas, oldest first."""
+        if branch:
+            self.run("checkout", "-q", "-b", branch, "compose/p", cwd=self.wt)
+        for s in subjects:
+            (self.wt / s.replace(" ", "_")).write_text(f"{s}\n"); self.run("add", "-A", cwd=self.wt); self.run("commit", "-qm", s, cwd=self.wt)
+        self.run("checkout", "-q", "compose/p", cwd=self.wt)
+        return [self.run("rev-parse", "--short", f"{branch or 'compose/p'}~{i}").stdout.strip() for i in reversed(range(len(subjects)))]
+
+    def clean(self, linear=None):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+        return out.getvalue().splitlines()
+
+    def test_task_branches_meet_the_review_base_first_and_kept_ones_name_their_first_unmatched_commit(self):
+        self.commit("compose/p-002", "build 002"); self.run("merge", "-q", "--ff-only", "compose/p-002", cwd=self.wt)
+        self.commit("compose/p-001", "build 001"); self.run("branch", "compose/base", "compose/p-001")  # 001 only in the review base
+        three = self.commit("compose/p-003", "add three", "fix three")  # against main, build 002 would come first
+        four = self.commit("compose/p-004", "add four")
+        cfg = json.loads((self.proj / "verify.json").read_text()); cfg["review_base"] = "compose/base"
+        (self.proj / "verify.json").write_text(json.dumps(cfg))
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "linear": f"ENG-{n}", "after": "", "test": "true"} for n, t in enumerate(("001", "002", "003", "004"), 3)]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks})); (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), **{f"ENG_{n}": ("In Review", "ENG-2") for n in range(3, 7)})
+        lines = self.clean(linear)
+        self.assertIn("clean  compose/p-001: contained in compose/base", lines)
+        self.assertIn("clean  compose/p-002: contained in compose/base", lines)  # compose/p holds it too
+        self.assertIn(f"clean  compose/p-003: kept unmerged, first unmatched commit {three[0]} add three and 1 more", lines)
+        self.assertIn(f"clean  compose/p-004: kept unmerged, first unmatched commit {four[0]} add four", lines)
+        self.assertEqual(self.run("branch", "--list", "compose/p-*", "--format=%(refname:short)").stdout.split(), ["compose/p-003", "compose/p-004"])
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-6"), ["Done", "Done", "In Review", "In Review"])
+
+    def test_a_project_branch_kept_as_not_merged_yet_names_its_first_unmatched_commit_before_the_summary(self):
+        first = self.commit(None, "groundwork one", "groundwork two")
+        lines = self.clean()
+        kept = f"clean  compose/p: kept unmerged, first unmatched commit {first[0]} groundwork one and 1 more"
+        self.assertIn(kept, lines, lines)
+        self.assertLess(lines.index(kept), next(i for i, l in enumerate(lines) if "project branch compose/p not merged yet" in l))
+        self.assertTrue(self.wt.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
