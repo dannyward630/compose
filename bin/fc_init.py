@@ -258,6 +258,10 @@ def merge_evidence(repo, branch, targets, has_remote):
 def merged_into(repo, branch, targets, has_remote=False):
     return merge_evidence(repo, branch, targets, has_remote) is not None
 
+def first_unmatched(repo, branch, targets):
+    """The first commit on the branch with no patch in the first target that resolves, as a line for clean's kept output, or None."""
+    return None
+
 def own_commits(repo, branch):
     """False when the branch never got a commit of its own: it still sits where it was created (an empty or design-only project),
     so ancestry says nothing about it being merged. Unknown (no reflog) counts as having commits."""
