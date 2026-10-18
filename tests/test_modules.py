@@ -15,7 +15,7 @@ BIN = ROOT / "bin"
 
 RANK = ("fc_core", "fc_auth", "fc_config", "fc_tasks", "fc_linear", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_checks", "fc_pi", "fc_keys", "fc_steps", "fc_layers", "fc_change", "fc_frame0", "fc_crew", "fc_toolbug", "fc_init", "fc_herdrconf", "fc_links", "fc_defaults", "fc_steprun", "fc_finish", "fc_plain", "fc_setup", "fc_update", "fc_figma", "fc_briefs", "fc_implement", "fc_jev", "fc_verify", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
 MODULES = {
-    "fc_core": ("now", "fmt", "say", "Ledger", "LEDGER", "sh", "worktrees", "project_config", "project_branch", "commit_convention", "COMMIT_TYPES", "typed", "commit_rule", "all_projects", "project_dir", "atomic_write", "SECRET_VARS", "SECRET_VALUES", "REDACTED", "clean_env", "SCRATCH_CONFIGS", "CLI_OWN", "scratch_config", "home_state", "flag_home", "scrub", "Scrubbed", "digests", "figma_key", "current_branch", "load_env", "free_port", "port_listening", "report_time", "project_after"),
+    "fc_core": ("now", "fmt", "say", "Ledger", "LEDGER", "sh", "worktrees", "project_config", "project_branch", "commit_convention", "COMMIT_TYPES", "typed", "commit_rule", "all_projects", "project_dir", "atomic_write", "SECRET_VARS", "SECRET_VALUES", "REDACTED", "clean_env", "SCRATCH_CONFIGS", "CLI_OWN", "scratch_config", "home_state", "flag_home", "scrub", "Scrubbed", "digests", "figma_key", "current_branch", "load_env", "free_port", "port_listening", "report_time", "project_after", "tilde"),
     "fc_auth": ("read_auth", "write_auth", "workspace_key", "set_key", "old_keys", "move_keys"),
     "fc_config": ("DEFAULT_MODEL", "FALLBACK_MODEL", "FALLBACK_AFTER", "TEST_READER", "JEV_DIR", "PRICES", "CONFIG_PATH", "ENV_FILE", "AUTH_PATH", "OPENROUTER_KEY", "MAX_DIFF_LINES", "DOC_RE", "DEP_DIRS", "EXPR_L36", "EXPR_L37", "CREW_MODELS", "PARALLEL", "LINEAR_KEY", "WORKSPACE", "CREW_EFFORT", "CREW_FALLBACK", "PLANNING_ROLES", "CREW_DEFAULTS", "PROBE_CACHE", "read_config", "write_config", "settings", "apply_config", "openrouter_key", "key_file", "WORKSPACE_ACTIONS", "read_key", "cmd_workspace"),
     "fc_tasks": ("TASK_BLOCK", "SYNC_SHAPE", "task_from_issue", "sync_tasks", "linear_cache", "load_tasks", "linear_done", "code_tasks", "FINISHED", "task_finished", "parse_criteria", "criteria_from_tasks", "_hold_warned", "held", "held_behind", "yolo_state", "CANCELED", "run_marker", "pid_alive", "run_alive"),
@@ -37,8 +37,8 @@ MODULES = {
     "fc_herdrconf": ("QUIET", "apply_herdr_config", "_edited"),
     "fc_links": ("ensure_link", "relink_owned", "path_line"),
     "fc_defaults": ("DEFAULT_MODELS", "PRESET_STEPS", "merge_models", "probe_implementer"),
-    "fc_steprun": ("link_writer", "WRITERS", "run_step"),
-    "fc_finish": ("CLAUDE_MISSING", "finish"),
+    "fc_steprun": ("link_writer", "WRITERS", "run_step", "_run_step"),
+    "fc_finish": ("CLAUDE_MISSING", "finish", "_finish"),
     "fc_plain": ("run_plain",),
     "fc_setup": ("cmd_setup",),
     "fc_update": ("cmd_update",),
@@ -231,8 +231,7 @@ class Residue(unittest.TestCase):
 
     def test_help_lists_the_same_subcommands(self):
         out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True).stdout
-        group = out[out.index("{") + 1 : out.index("}")]
-        self.assertEqual(group.split(","), SUBCOMMANDS)
+        self.assertEqual(re.findall(r"^    ([a-z][\w-]*)(?: |$)", out.split("positional arguments:")[1], re.M), SUBCOMMANDS)
 
     def test_help_names_trail_not_graft(self):
         env = {**os.environ, "COLUMNS": "400"}

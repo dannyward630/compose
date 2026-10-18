@@ -117,7 +117,7 @@ class Groundwork(unittest.TestCase):
     def test_planner_is_a_command_with_issue_and_extra(self):
         cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
         top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
-        self.assertRegex(top, r"[{,]planner[,}]")
+        self.assertRegex(top, r"(?m)^    planner ")
         sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)
         self.assertEqual(sub.returncode, 0, sub.stderr)
         self.assertIn("--issue", sub.stdout); self.assertIn("--extra", sub.stdout)
