@@ -16,10 +16,15 @@ def triage(repo, proj, ids):
         return {}
     metas = {m["id"]: m for m in fc_tasks.load_tasks(proj)}
     trunk = fc_core.current_branch(repo)
+    layers = list(fc_worktree.task_branches(repo, proj))
     def one(tid):
         m, branch = metas.get(tid) or {}, f"fast/{proj.name}/{tid}"
         try:
-            base = fc_core.sh(["git", "merge-base", trunk, branch], repo).stdout.strip()
+            # A stacked task's own change starts at the nearest layer below it, not at the trunk under the whole chain.
+            below = [b for b in layers if b != branch
+                     and fc_core.sh(["git", "merge-base", "--is-ancestor", b, branch], repo, check=False).returncode == 0]
+            base = max([fc_core.sh(["git", "merge-base", trunk, branch], repo).stdout.strip(), *below],
+                       key=lambda c: int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{c}"], repo).stdout))
             diff = fc_core.sh(["git", "diff", base, branch, "--", *(m.get("files") or [])], repo, check=False).stdout
             shape = '{"verdict": "clean" | "flag", "reason": str}'
             v = fc_models.fast_object(env, "You triage one finished coding task for a senior reviewer. " + TRIAGE_BAR +

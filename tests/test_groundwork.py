@@ -237,6 +237,22 @@ class Triage(unittest.TestCase):
         self.assertEqual(out["001"][0], "flag"); self.assertEqual(out["002"][0], "clean")
         self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["triage"]["verdict"], "flag")
 
+    def test_a_stacked_task_is_shown_only_its_own_layer(self):
+        run = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        run("checkout", "-q", "-b", "fast/p/003", "fast/p/001")
+        (self.repo / "a.go").write_text("001 change\n003 change\n"); run("commit", "-qam", "003"); run("checkout", "-q", "main")
+        (self.proj / "results" / "003.json").write_text(json.dumps({"id": "003", "status": "passed", "base": "fast/p/001"}))
+        t = json.loads((self.proj / "results" / "tasks.json").read_text())
+        t["tasks"].append({"id": "003", "after": "001", "files": ["a.go"], "body": "brief"})
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(t))
+        users = []
+        with mock.patch.object(fc.fc_models, "fast_json", lambda env, system, user, **kw: users.append(user) or {"verdict": "clean"}), \
+             mock.patch.object(fc.fc_core, "say"):
+            fc.fc_run.triage(self.repo, self.proj, ["003"])
+        diff = users[0].split("DIFF:\n", 1)[1]
+        self.assertIn("+003 change", diff)
+        self.assertNotIn("+001 change", diff)
+
     def test_a_failed_call_is_unknown_never_a_crash(self):
         with mock.patch.object(fc.fc_models, "fast_json", side_effect=RuntimeError("down")), mock.patch.object(fc.fc_core, "say"):
             out = fc.fc_run.triage(self.repo, self.proj, ["001"])
