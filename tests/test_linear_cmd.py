@@ -240,3 +240,63 @@ class LinearCreate(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_create, self.args("create")), (1, "create needs --title"))
         self.assertIn("has no label 'perf'", self.fails(fc.fc_linear_cmd.verb_create, self.args("create", title="Fix it", label=["perf"]))[1])
         self.assertFalse([q for q, _ in self.calls if "issueCreate" in q])
+
+
+class LinearUpdate(unittest.TestCase):
+    READ, UPDATE = "issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } }", "issueUpdate(id: $id, input: $in) { success }"
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", "project": {"id": "p1", "name": "Shop"},
+                                      "team": {"name": "Engineering", "states": {"nodes": [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "In Progress"}]}, "labels": {"nodes": [{"id": "l1", "name": "Bug"}]}}}
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        return {"issueUpdate": {"success": True}} if "issueUpdate" in query else {"issue": self.issue}
+
+    def update(self, body=None, **kw):
+        self.calls.clear()
+        if body is not None:
+            (self.repo / "body.md").write_text(body); kw["file"] = str(self.repo / "body.md")
+        with mock.patch.object(fc.fc_linear, "linear_issue", return_value={"id": "parent-id"}) as issue, mock.patch.object(fc.fc_linear, "linear_blocked_by") as blocked, redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_update(self.args("update", "ENG-7", **kw))
+        self.assertEqual(out.getvalue().strip(), "updated ENG-7")
+        self.assertEqual([v for q, v in self.calls if self.READ in q], [{"id": "ENG-7"}])
+        (sent,) = [v for q, v in self.calls if self.UPDATE in q]
+        self.assertIn(sent["id"], ("iid", "ENG-7")); return sent["in"], issue, blocked
+
+    def test_replace_section_swaps_only_that_section_or_appends_it(self):
+        rs, body, want = fc.fc_linear_cmd.replace_section, "# Cart\n\n## Plan\n\nold\n\n### Steps\n\n1. a\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nnew\n\n## Notes\n\nkeep\n"
+        self.assertEqual((rs(body, "## Plan", "  new \n\n"), rs(body, "## Plan", "## Plan\n\nnew\n")), (want, want))
+        self.assertEqual(rs("# Cart\n\n## Plan\nold\n", "## Plan", "new"), "# Cart\n\n## Plan\n\nnew\n")
+        self.assertEqual(rs("# Cart\n\n## Planning\n\nx\n\n\n", "## Plan", "new\n"), "# Cart\n\n## Planning\n\nx\n\n## Plan\n\nnew\n")
+
+    def test_fields_come_from_the_issue_team_and_the_parent(self):
+        sent, issue, blocked = self.update(title="New", parent="ENG-1", state="in progress", label=["bug"])
+        self.assertEqual(sent, {"title": "New", "parentId": "parent-id", "stateId": "s2", "labelIds": ["l1"]})
+        issue.assert_any_call("ENG-1"); blocked.assert_not_called()
+
+    def test_each_body_flag_sets_the_description(self):
+        self.assertEqual(self.update("new plan", section="## Plan")[0], {"description": "# Cart\n\n## Plan\n\nnew plan\n\n## Notes\n\nkeep\n"})
+        with mock.patch("sys.stdin", io.StringIO("\n more \n")):
+            self.assertEqual(self.update(append=True)[0], {"description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n\nmore\n"})
+        self.assertEqual(self.update("whole\n\n", description=True, title="T")[0], {"description": "whole\n\n", "title": "T"})
+
+    def test_blockers_are_set_on_the_read_issue(self):
+        self.assertEqual(self.update(blocked_by="ENG-2,ENG-3")[2].call_args.args, (self.issue, ["ENG-2", "ENG-3"]))
+        (blocked := self.update(blocked_by="")[2]).assert_called_once(); self.assertEqual(blocked.call_args.args[0], self.issue); self.assertFalse([x for x in blocked.call_args.args[1] if x])
+
+    def test_refuses_two_body_flags_or_another_project_and_updates_nothing(self):
+        for kw in ({"section": "## Plan", "append": True}, {"append": True, "description": True}, {"section": "## Plan", "description": True}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", **kw)), (1, "update takes one of --section, --append, --description"))
+        self.issue["project"] = {"id": "p9", "name": "Shop"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", title="T")), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
+        self.assertFalse([q for q, _ in self.calls if "issueUpdate" in q])
+        self.assertEqual(self.update(title="T", any_project=True)[0], {"title": "T"})
