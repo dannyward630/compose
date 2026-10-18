@@ -32,7 +32,8 @@ Verify reads `.compose/<project>/verify.json`.
 1. **checks** runs lint, unit tests, and smoke checks.
    These are exact and cheap, so they run first.
 2. **review** makes one fast-model review per perspective.
-   Each high or medium finding then gets a confirmation call that must quote the code, and only confirmed highs fail.
+   Each high or medium finding then gets a confirmation call that must quote the wrong line and say how it must read.
+   A quote that is not in the code, or a line that must read as it already does, drops the finding, and only confirmed highs fail.
 3. **jev** asks one MET / NOT_MET / UNCLEAR question per acceptance criterion.
    Failures above the threshold become findings.
 4. **e2e** has jev drive a real browser to each case's goal.

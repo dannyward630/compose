@@ -56,22 +56,34 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     with ThreadPoolExecutor(max_workers=len(wanted)) as ex:
         batches = list(ex.map(one, wanted))
     raw, malformed = [i for kept, _ in batches for i in kept], sum(n for _, n in batches)
-    # Confirmation pass: an independent call must reproduce the claim from the code, or it is dropped.
+    # Confirmation pass: an independent call must name the line that breaks a requirement and how it must read, or the claim is dropped.
+    flat = lambda s: " ".join(str(s).split())
     def confirm(i):
         if i.get("confirmed") or i.get("severity") not in ("high", "medium"):
             i.setdefault("confirmed", False)
             return i
+        docs = docs_text[:20000] if i.get("perspective") == "docs" else ""
         try:
-            i["confirmed"], i["evidence"] = fc_models.confirm_call(
-                env, "You are verifying one code-review claim against the actual code. Evidence is only the exact lines of code that "
-                "prove the claim, copied verbatim, nothing else. If those lines are not in the code, or the code contradicts the claim, "
-                "reject it. If the claim is wrong, speculative, contradicted by passing tests, contradicted by the design context, "
-                'or about style, reject it. ' + SIMPLICITY_BAR + ' Return JSON {"confirmed": bool, "evidence": str}.',
+            # The verdict comes last, so the model compares the line with the requirement before it decides.
+            v = fc_models.fast_object(
+                env, "You are verifying one code-review claim against the actual code, the plan, and the design context. Fill the fields "
+                'in order. "requirement": the words of the plan, design context, or docs the claim says are broken, copied verbatim; for a '
+                'crash, data loss, or security hole, one sentence naming it. "wrong_line": the line of the code or docs that breaks it, '
+                'copied verbatim, nothing else. "fixed_line": that line as it must read to meet the requirement ("" if it must go). '
+                '"confirmed": true only if wrong_line really breaks the requirement. If the code already does what the requirement says, '
+                "the claim's own text says the code is correct, or the claim contradicts the plan or the design context, confirmed is "
+                "false. If the claim is wrong, speculative, contradicted by passing tests, or about style, reject it. " + SIMPLICITY_BAR,
                 (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
-                f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nCLAIM: [{i['severity']}] {i['file']}: {i['note']}\n\nCODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n"
-                + ("The tests currently pass." if tests_pass else ""))
-            if i["confirmed"] and " ".join(i["evidence"].split()) not in " ".join(diff.split()):
-                i["confirmed"], i["evidence"] = False, "evidence is not a quote from the code: " + i["evidence"]
+                f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nCLAIM: [{i['severity']}] {i['file']}{':' + str(i['line']) if i.get('line') else ''}: {i['note']}\n\n"
+                f"CODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n" + (f"DOCS:\n{docs}\n\n" if docs else "")
+                + ("The tests currently pass." if tests_pass else ""),
+                '{"requirement": str, "wrong_line": str, "fixed_line": str, "confirmed": bool}', "confirmed")
+            wrong, i["fix"] = str(v.get("wrong_line") or ""), str(v.get("fixed_line") or "")
+            i["confirmed"], i["evidence"] = bool(v["confirmed"]), wrong[:300]
+            if i["confirmed"] and (not flat(wrong) or flat(wrong) not in flat(diff + "\n" + docs)):
+                i["confirmed"], i["evidence"] = False, "evidence is not a quote from the code: " + wrong[:300]
+            elif i["confirmed"] and flat(i["fix"]) == flat(wrong):
+                i["confirmed"], i["evidence"] = False, "the line as it must read is the line as it is: " + wrong[:300]
         except fc_models.PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
@@ -320,7 +332,8 @@ def run_stages(repo, proj, cfg, a):
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
         for i in rv["confirmed"] if gate_review else []:
-            findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}")
+            findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
+                            + (f"\nMust read: {i['fix'] or '(remove the line)'}" if "fix" in i else ""))
     if not a.skip_review and cfg.get("jev_acceptance", True):
         t1 = time.time()
         fc_herdr.herdr_stage(panes, "jev", "working")

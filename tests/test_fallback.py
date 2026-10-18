@@ -290,15 +290,35 @@ class FixScope(unittest.TestCase):
             self.assertEqual(budgets, [1500, 1500 * fc.fc_models.CUT_RETRY])
             self.assertIn(found, rv["issues"][0]["note"])
 
-    def test_review_drops_a_confirmation_whose_quote_is_not_in_the_code(self):
-        def review(evidence, cfg=None):
-            fj = lambda env, system, user, **kw: {"issues": [{"file": "a.ts", "severity": "high", "note": "n"}]} \
-                if "strict code reviewer" in system else {"confirmed": True, "evidence": evidence}
+    def test_review_confirms_only_a_quoted_wrong_line_the_fix_changes(self):
+        def review(reply, finding=None, code="build: {\n  fileName: 'x.js',\n}", perspective="spec", cfg=None, users=None):
+            def fj(env, system, user, **kw):
+                if "strict code reviewer" in system:
+                    return {"issues": [finding or {"file": "a.ts", "severity": "high", "note": "n"}]}
+                (users if users is not None else []).append(user)
+                return reply
             with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
-                return fc.fc_verify.llm_review({"perspectives": ["spec"], **(cfg or {})}, "build: {\n  fileName: 'x.js',\n}", "plan", "", True)
-        self.assertEqual(len(review("fileName:   'x.js',")["confirmed"]), 1)
-        rv = review("lib output defaults to main.js")
+                return fc.fc_verify.llm_review({"perspectives": [perspective], **(cfg or {})}, code, "plan", "==== README.md ====\nREAD ME", True)
+        rv = review({"wrong_line": "fileName:   'x.js',", "fixed_line": "fileName: 'x.mjs',", "confirmed": True})
+        self.assertEqual([(i["evidence"], i["fix"]) for i in rv["confirmed"]], [("fileName:   'x.js',", "fileName: 'x.mjs',")])
+        for reply in ({"wrong_line": "lib output defaults to main.js", "fixed_line": "x", "confirmed": True},  # not a quote of the code
+                      {"wrong_line": "", "fixed_line": "x", "confirmed": True},  # no line named
+                      {"confirmed": True, "evidence": "fileName: 'x.js',"}):  # a verdict and a quote, but no wrong line
+            rv = review(reply)
+            self.assertEqual((rv["confirmed"], rv["pass"]), ([], True), reply)
+        # A finding whose own text says the code meets the rule in the design context: the line as it must read is the line as it is.
+        line = 'state = "ended" if last.get("state") not in (None, "done") and tab_closed(c, agents) else last.get("state", "-")'
+        context = "crew list shows `ended` for a closed teammate whose last report is any state but done"
+        finding = {"file": "bin/fc_crew.py", "line": 177, "severity": "high", "note": "crew list shows \"ended\" for any closed teammate whose last "
+                   "report is not \"done\", but the spec says only for teammates whose last report is any state but done. The diff excludes None "
+                   "and \"done\" but still includes other states correctly."}
+        users = []
+        rv = review({"requirement": context, "wrong_line": line, "fixed_line": " " + line, "confirmed": True}, finding, "+            " + line, "docs",
+                    {"review_context": context}, users)
         self.assertEqual((rv["confirmed"], rv["pass"]), ([], True))
+        self.assertIn("is the line as it is", rv["issues"][0]["evidence"])
+        for seen in (context, "bin/fc_crew.py:177:", "READ ME"):
+            self.assertIn(seen, users[0])
 
     def test_review_counts_only_well_formed_findings_and_prints_each_on_one_line(self):
         # A reviewer that spent its JSON reply on its reasoning: the schema echoed back, then objects of loose thoughts.
@@ -310,7 +330,7 @@ class FixScope(unittest.TestCase):
             if "strict code reviewer" in system:
                 return {"issues": reasoning + [{"file": "a.py", "line": 2, "severity": "high", "note": "add\n  subtracts"}]}
             confirms.append(user)
-            return {"confirmed": True, "evidence": "return a - b"}
+            return {"wrong_line": "return a - b", "fixed_line": "return a + b", "confirmed": True}
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
         out = io.StringIO()
         with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}), \
@@ -320,6 +340,7 @@ class FixScope(unittest.TestCase):
         self.assertEqual((ok, len(confirms), [i["file"] for i in report["review"]["issues"]]), (False, 1, ["a.py"]))
         self.assertIn("1 confirmed of 1 raised, 5 malformed dropped", out.getvalue())
         self.assertIn("confirmed [high/correctness] a.py:2: add subtracts\n", out.getvalue())
+        self.assertIn("Evidence: return a - b\nMust read: return a + b", findings)
         self.assertNotIn("Avoid", out.getvalue() + findings)
         self.assertNotIn("Analysis", out.getvalue() + findings)
 
