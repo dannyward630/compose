@@ -242,7 +242,8 @@ class BareCompose(unittest.TestCase):
         (nobin / "claude").write_text("#!/bin/sh\nexit 0\n")
         (fakebin / "herdr").chmod(0o755), (nobin / "claude").chmod(0o755)
         path = ":".join([str(fakebin)] * herdr + [str(nobin)] * claude + ["/usr/bin:/bin"])
-        base = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "CI", "COMPOSE_NO_HERDR")}
+        base = {k: v for k, v in os.environ.items() if k not in ("CI", "COMPOSE_NO_HERDR") and not k.startswith(("HERDR_", "ANTHROPIC_"))}
+        base |= {"HOME": str(tmp), "COMPOSE_CONFIG": str(tmp / "config.json")}
         master, slave = pty.openpty()
         io = {"stdin": slave, "stdout": slave} if tty else {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE}
         p = subprocess.Popen([sys.executable, str(self.ROOT / "bin" / "compose"), *args], stderr=subprocess.PIPE, cwd=tmp,
@@ -290,3 +291,37 @@ class BareCompose(unittest.TestCase):
             self.assertEqual(code, 0, err)
             self.assertIn("usage: compose", out)
             self.assertFalse((rec / "argv").exists())
+
+
+class BareUsage(unittest.TestCase):
+    ROOT = BareCompose.ROOT
+    compose = BareCompose.run_compose
+
+    def names(self):
+        code, _, err, _, _ = self.compose("nosuchcmd", tty=False, COLUMNS="80")
+        self.assertEqual(code, 2)
+        self.assertIn("invalid choice: 'nosuchcmd'", err)
+        return [n.strip(" '") for n in err.split("choose from ")[1].split(")")[0].split(",")]
+
+    def test_bare_prints_every_command_on_its_own_line(self):
+        names = self.names()
+        self.assertTrue({"doctor", "setup", "workspace"} <= set(names), names)
+        for kw in ({"HERDR_ENV": "1"}, {"HERDR_ENV": "1", "tty": False}, {"CI": "1"}, {"COMPOSE_NO_HERDR": "1"}):
+            code, out, err, rec, _ = self.compose(COLUMNS="80", **kw)
+            self.assertEqual(code, 2, kw)
+            self.assertTrue(err.startswith("usage: compose [-h] <command> ..."), err[:200])
+            self.assertNotIn("{doctor", err)
+            self.assertNotIn("opening herdr", out)
+            self.assertFalse((rec / "argv").exists(), kw)
+            starts = [l.split()[0] for l in err.splitlines() if l.strip()]
+            self.assertEqual([n for n in names if n not in starts], [], kw)
+            self.assertEqual([l for l in err.splitlines() if len(l) > 80], [], kw)
+
+    def test_help_and_subcommands_keep_working(self):
+        code, out, err, rec, _ = self.compose("--help", HERDR_ENV="1", COLUMNS="80")
+        self.assertEqual(code, 0, err)
+        self.assertIn("usage: compose [-h] <command> ...", out)
+        code, out, err, rec, _ = self.compose("tasks", "--bogus", tty=False, HERDR_ENV="1")
+        self.assertEqual(code, 2)
+        self.assertIn("usage: compose tasks", err)
+        self.assertIn("unrecognized arguments: --bogus", err)
