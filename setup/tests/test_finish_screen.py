@@ -41,7 +41,7 @@ class FinishScreenTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertTrue(app.screen.query(LoadingIndicator) and style_at(app, "checking your model…"))
                 gate.set(); await app.workers.wait_for_complete()
-                await pilot.pause()
+                await pilot.pause(); await pilot.wait_for_scheduled_animations(); await pilot.pause()  # layout and scroll settled
                 buttons = {str(b.label): b for b in app.screen.query(Button)}
                 self.assertTrue(all(b.region.area and app.screen.region.contains_region(b.region) for b in buttons.values()))
                 check(app); buttons[press].press()
