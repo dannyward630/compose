@@ -64,6 +64,13 @@ class E2eLifecycle(unittest.TestCase):
         self.assertFalse(fc.fc_core.port_listening(client))  # detached from the setup's group, like `bp launch`
         self.assertFalse(self.alive(int((Path(self.dir) / "sleep.pid").read_text())))
 
+    def test_the_cases_start_once_the_ports_their_setup_names_accept(self):
+        late = "sleep 1; exec python3 -m http.server {} >/dev/null 2>&1"  # a server still starting when the configured wait is over
+        probe = "curl -sf -o /dev/null http://127.0.0.1:$E2E_PORT/ && curl -sf -o /dev/null http://127.0.0.1:$E2E_CLIENT_PORT/"
+        ok, report, _ = self.stage({"e2e_setup": late.format("$E2E_PORT"), "e2e_setup_wait": 0,
+                                    "e2e": [{"name": "late", "driver": probe, "setup": late.format("$E2E_CLIENT_PORT"), "setup_wait": 0}]})
+        self.assertTrue(ok, report)
+
     def test_every_stage_gets_fresh_ports(self):
         seen = []
         for _ in range(2):

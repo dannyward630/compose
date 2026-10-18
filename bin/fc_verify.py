@@ -228,7 +228,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
             # One setup (for example a local server) for the whole stage; per-case `setup` still works for one-offs.
             stage_setup = subprocess.Popen(cfg["e2e_setup"], shell=True, cwd=repo, env={**fc_core.clean_env(), **env}, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            time.sleep(cfg.get("e2e_setup_wait", 3))
+            fc_jev.await_setup(cfg["e2e_setup"], env, cfg.get("e2e_setup_wait", 3))
         for i, case in enumerate(cfg.get("e2e", [])):
             t1 = time.time()
             stage = f"e2e {case.get('name', i)}"[:40]

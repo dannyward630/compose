@@ -49,6 +49,9 @@ Every run ends with time and cost per provider.
   Verify expands them in `url` and `goal` and sets them for `e2e_setup`, `driver`, and `assert`.
   Never hardcode a port.
 - Start servers in `e2e_setup` with a plain `&`.
+- The cases start once every port `e2e_setup` names (`$E2E_PORT`, `$E2E_CLIENT_PORT`) accepts a connection, waiting up to 60 s, or `e2e_setup_wait` if longer.
+  A setup that names neither, such as an extension's browser on a pinned port, waits a fixed `e2e_setup_wait` seconds.
+  A case's own `setup` works the same way with `setup_wait`.
 - Keep driver and assert scripts under `.compose/<project>/e2e/`.
 - Each stage launches its own Chromium with a throwaway profile, so verify never touches your real Chrome.
   The browser is visible, and only the `compose` test suite runs it headless.

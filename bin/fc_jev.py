@@ -70,6 +70,23 @@ def e2e_ports(cfg, env):
 def expand_ports(text, env):
     return re.sub(r"\$\{?(E2E_PORT|E2E_CLIENT_PORT)\}?", lambda m: env[m.group(1)], text) if isinstance(text, str) else text
 
+SETUP_DEADLINE = 60  # seconds a setup gets to bind the ports it names; a server slow to start under load is waited for, not raced
+
+def await_setup(setup, env, wait):
+    """Return once every fresh e2e port the setup names (by variable, or by number once expanded) accepts a connection, within
+    SETUP_DEADLINE (or `wait`, if longer), so no case races a server still starting. A setup that names none (a browser on a
+    pinned port) gets the fixed `wait`. A port still closed at the deadline is said, and left to the cases to fail on."""
+    ports = [int(env[k]) for k in ("E2E_PORT", "E2E_CLIENT_PORT") if env.get(k) and re.search(rf"\b(?:{k}|{env[k]})\b", setup)]
+    if not ports:
+        return time.sleep(wait)
+    deadline = time.time() + max(wait, SETUP_DEADLINE)
+    while time.time() < deadline:
+        closed = [p for p in ports if not fc_core.port_listening(p)]
+        if not closed:
+            return
+        time.sleep(0.1)
+    fc_core.say(f"e2e    setup still not listening on {', '.join(map(str, closed))} after {fc_core.fmt(max(wait, SETUP_DEADLINE))}")
+
 def driver_e2e(case, repo):
     """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
     env = {**fc_core.clean_env(), **{k: str(v) for k, v in (case.get("env") or {}).items()}}
@@ -77,7 +94,7 @@ def driver_e2e(case, repo):
     if case.get("setup"):
         setup = subprocess.Popen(case["setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        time.sleep(case.get("setup_wait", 3))
+        await_setup(case["setup"], env, case.get("setup_wait", 3))
     try:
         p = subprocess.run(case["driver"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
                            timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
