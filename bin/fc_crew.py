@@ -132,18 +132,19 @@ def crew_effort(role, explicit=None):
     """The Claude Code effort for the entry crew_pick chose, or None to keep Claude Code's default."""
     return crew_pick(role, explicit)[1]
 
-def crew_workdir(cwd, wt, name, role=None):
-    """(directory, branch) a teammate session works in. A toolsmith's --cwd in a git repo, the project's own repo included, gets
-    its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
-    worktree) ever switches branches. Any other teammate runs where it was pointed in its own repo (default: the project worktree)."""
+def crew_workdir(cwd, wt, name, leased=False):
+    """(directory, branch) a teammate session works in. A --cwd in a git repo, the project's own repo included and whatever the
+    role, gets its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
+    worktree) ever switches branches. A worktree the CLI leased for this one teammate (a test writer's slot) and a plain folder
+    run where pointed; no --cwd runs in the project worktree."""
     if not cwd:
         return wt, None
     cwd = Path(cwd)
-    common = lambda d: fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], d, check=False).stdout.strip()
-    theirs = common(cwd) if cwd.is_dir() else ""
-    if not theirs or (theirs == common(wt) and role != "toolsmith"):
+    theirs = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, check=False).stdout.strip() if cwd.is_dir() else ""
+    if not theirs or leased:
         return cwd, None
-    top = Path(fc_core.sh(["git", "rev-parse", "--show-toplevel"], cwd).stdout.strip())
+    top = Path(theirs).parent  # the main checkout: a new worktree never nests inside a linked one (a project worktree)
+    base = fc_core.sh(["git", "rev-parse", "HEAD"], cwd).stdout.strip()
     if fc_claude.claude_trusted(top) is False:
         sys.exit(fc_claude.untrusted(top))
     exclude = Path(theirs) / "info" / "exclude"
@@ -153,10 +154,10 @@ def crew_workdir(cwd, wt, name, role=None):
             f.write("/.claude/worktrees/\n")
     branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     if fc_worktree.use_treehouse():
-        fc_core.sh(["git", "branch", branch, "HEAD"], top)
+        fc_core.sh(["git", "branch", branch, base], top)
         return fc_worktree.slot_on(top, branch, f"compose:{name}"), branch
     path = top / ".claude" / "worktrees" / branch
-    fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), "HEAD"], top)
+    fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), base], top)
     return path, branch
 
 
@@ -216,7 +217,7 @@ def cmd_crew(a):
     if not (brief or "").strip():
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
-    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name, a.role)
+    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
     if not model.startswith("pi:") and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
     try:

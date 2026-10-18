@@ -150,11 +150,11 @@ class Groundwork(unittest.TestCase):
         def crew(ns):
             if ns.role.endswith("001"):
                 raise RuntimeError("agent_prompt_stalled")
-            started.append(ns.role)
+            started.append((ns.role, ns.cwd, ns.leased))
         with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", crew), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
             fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
-        self.assertEqual(started, ["tests-002"])
+        self.assertEqual(started, [("tests-002", str(self.repo), True)])  # each writer runs in the worktree leased for it
         self.assertIn("tests-001 not started: agent_prompt_stalled", out.getvalue())
 
     def test_the_configs_parallel_caps_test_writers_and_prints_the_rest(self):
@@ -317,8 +317,8 @@ class CrewWorkdir(unittest.TestCase):
         self.assertEqual(self.tool_git("branch", "--show-current").stdout.strip(), "main")  # the checkout stayed put
         self.assertEqual(self.tool_git("status", "--porcelain").stdout.strip(), "")  # the worktree is excluded, not untracked noise
 
-    def test_the_project_repo_and_plain_folders_run_where_pointed(self):
-        self.assertEqual(fc.fc_crew.crew_workdir(str(self.project), self.project, "x"), (self.project, None))
+    def test_a_leased_worktree_and_plain_folders_run_where_pointed(self):
+        self.assertEqual(fc.fc_crew.crew_workdir(str(self.project), self.project, "x", leased=True), (self.project, None))
         plain = tempfile.mkdtemp()
         self.assertEqual(fc.fc_crew.crew_workdir(plain, self.project, "x"), (Path(plain), None))
         self.assertEqual(fc.fc_crew.crew_workdir(None, self.project, "x"), (self.project, None))

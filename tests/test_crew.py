@@ -612,7 +612,7 @@ class ToolBug(unittest.TestCase):
 
 
 class ToolsmithWorktree(unittest.TestCase):
-    def test_toolsmith_in_the_project_repo_gets_its_own_worktree_and_leaves_checkouts_alone(self):
+    def test_any_role_in_the_project_repo_gets_its_own_worktree_and_leaves_checkouts_alone(self):
         def git(*args, cwd):
             return fc.fc_core.sh(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd).stdout.strip()
         repo = Path(tempfile.mkdtemp()).resolve()
@@ -621,12 +621,17 @@ class ToolsmithWorktree(unittest.TestCase):
         slot = repo.parent / (repo.name + "-slot")
         git("worktree", "add", "-q", "-b", "compose/shop", str(slot), cwd=repo)
         with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True):
-            path, branch = fc.fc_crew.crew_workdir(str(repo), slot, "shop-toolsmith", "toolsmith")
-            same, none = fc.fc_crew.crew_workdir(str(repo), slot, "shop-tests", "tests")
-        self.assertTrue(str(path).startswith(str(repo / ".claude" / "worktrees")) and branch)
-        self.assertEqual(git("branch", "--show-current", cwd=path), branch)
+            git("commit", "-q", "--allow-empty", "-m", "stubs", cwd=slot)
+            path, branch = fc.fc_crew.crew_workdir(str(repo), slot, "shop-toolsmith2")
+            other, other_branch = fc.fc_crew.crew_workdir(str(slot), slot, "shop-explore")
+            same, none = fc.fc_crew.crew_workdir(str(slot), slot, "shop-tests-001", leased=True)
+        for p, b, start in ((path, branch, "main"), (other, other_branch, "compose/shop")):
+            self.assertEqual(p.parent, repo / ".claude" / "worktrees")  # under the main checkout, never nested in the project worktree
+            self.assertEqual(git("branch", "--show-current", cwd=p), b)
+            self.assertEqual(git("rev-parse", "HEAD", cwd=p), git("rev-parse", start, cwd=repo))  # off the checkout it was pointed at
+        self.assertTrue(branch.startswith("shop-toolsmith2-") and other_branch.startswith("shop-explore-"))
         self.assertEqual((git("branch", "--show-current", cwd=repo), git("branch", "--show-current", cwd=slot)), ("main", "compose/shop"))
-        self.assertEqual((same, none), (Path(repo), None))  # other roles still run where they were pointed
+        self.assertEqual((same, none), (slot, None))  # a worktree leased for this teammate runs where it was pointed
 
 
 class AwaitStart(unittest.TestCase):

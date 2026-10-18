@@ -377,7 +377,7 @@ def cmd_testcrews(a):
     def start(m):
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=test_brief(m, contract, budget, fc_core.commit_convention(proj)), force=False, cwd=str(wts[m["id"]]), model=model))
+                                        brief=test_brief(m, contract, budget, fc_core.commit_convention(proj)), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")

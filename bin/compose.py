@@ -213,7 +213,7 @@ def main():
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
-            s.add_argument("--cwd", help="start: run the session in this directory instead of the project worktree (a toolsmith works in the compose repo)")
+            s.add_argument("--cwd", help="start: run the session in its own new worktree of this repo (a plain folder: in it) instead of the project worktree")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "models":
