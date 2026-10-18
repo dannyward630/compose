@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -305,6 +305,66 @@ class PiKeepsLinear(unittest.TestCase):
         with mock.patch.object(fc.fc_models, "model_available", return_value=(False, "down")), self.assertRaises(SystemExit) as e:
             fc.fc_crew.crew_pick_full("designer")  # nothing runs: still exits naming each probe error
         self.assertIn(f"{self.astra} unavailable (down)", str(e.exception))
+
+
+class ProbeCache(unittest.TestCase):
+    """Only a pass is cached for the day: a failed probe is asked again on the next call, and its message is kept whole."""
+    M, MID = "claude:claude-fable-5-1", "claude-fable-5-1"
+    LONG = "  model not found: /Users/someone/.pi/agent/" + "very/long/" * 30 + "models.json (check the openrouter-fast preset)\n"
+
+    def setUp(self):
+        self.cache = Path(os.environ["HOME"]) / ".compose" / "model-probe.json"
+        p = mock.patch.object(fc.fc_config, "PROBE_CACHE", self.cache); p.start(); self.addCleanup(p.stop)
+        fc.fc_models._PROBED.clear(); self.addCleanup(fc.fc_models._PROBED.clear)
+
+    def probes(self, *answers):
+        return mock.patch.object(fc.fc_models, "probe_once", side_effect=list(answers))
+
+    def entry(self, mid=None):
+        return json.loads(self.cache.read_text()).get(mid or self.MID) if self.cache.exists() else None
+
+    def test_a_pass_is_cached_for_the_day(self):
+        with self.probes((True, "answered", False)) as run:
+            self.assertEqual([fc.fc_models.model_available(self.M) for _ in "ab"], [(True, "answered")] * 2)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(self.entry(), {"date": time.strftime("%Y-%m-%d"), "ok": True, "why": "answered"})
+        fc.fc_models._PROBED.clear()  # a new CLI process the same day reads the file
+        with self.probes() as run:
+            self.assertEqual(fc.fc_models.model_available(self.M), (True, "answered"))
+        run.assert_not_called()
+
+    def test_a_failed_probe_is_not_cached_and_the_next_call_probes_again(self):
+        for failed in ([(False, self.LONG.strip(), False)], [(False, "overloaded", True)] * 2):  # definite, and transient twice
+            with self.subTest(failed=failed[0][1][:20]):
+                fc.fc_models._PROBED.clear(); self.cache.unlink(missing_ok=True)
+                with self.probes(*failed, (True, "answered", False)) as run:
+                    self.assertEqual(fc.fc_models.model_available(self.M), (False, failed[0][1]))
+                    self.assertNotIn(self.MID, fc.fc_models._PROBED)
+                    self.assertIsNone(self.entry())
+                    self.assertEqual(fc.fc_models.model_available(self.M), (True, "answered"))
+                self.assertEqual(run.call_count, len(failed) + 1)
+                self.assertTrue(self.entry()["ok"])
+
+    def test_an_old_failing_entry_is_probed_again_and_replaced(self):
+        today = time.strftime("%Y-%m-%d")
+        self.cache.parent.mkdir(parents=True); self.cache.write_text(json.dumps({self.MID: {"date": today, "ok": False, "why": "no key"},
+                                          "claude-opus-5-5": {"date": today, "ok": True, "why": "answered"}}))
+        with self.probes((True, "answered", False)) as run:
+            self.assertEqual(fc.fc_models.model_available(self.M), (True, "answered"))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(self.entry(), {"date": today, "ok": True, "why": "answered"})
+        self.assertTrue(self.entry("claude-opus-5-5")["ok"])  # other models' passes stay
+
+    def test_the_providers_message_is_kept_whole(self):
+        whole = self.LONG.strip()
+        claude = subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": self.LONG}), "")
+        pi = subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": self.LONG}}), "")
+        self.assertEqual(fc.fc_models.probe_result(self.M, claude), (False, whole))
+        self.assertEqual(fc.fc_models.probe_result("pi:openai/x", pi), (False, whole))
+        with mock.patch.object(subprocess, "run", return_value=claude):
+            self.assertEqual(fc.fc_models.probe_once(self.M, 60), (False, whole, False))
+        with mock.patch.object(subprocess, "run", side_effect=OSError(whole)):
+            self.assertEqual(fc.fc_models.probe_once(self.M, 60), (False, f"OSError: {whole}", True))
 
 
 if __name__ == "__main__":
