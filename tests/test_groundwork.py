@@ -501,7 +501,8 @@ class DesignCrews(unittest.TestCase):
         def issue(n):
             return {"id": f"ENG-{n}", "title": n, "description": f"```compose\nid: {n}\nkind: design\ntest: t\nnodes: P{n}/A\n```\n", "status": "Todo", "blockedBy": []}
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue(f"10{i}") for i in range(5)]})
-        started, out, _ = self.run_crews()
+        with mock.patch.object(fc.fc_config, "PARALLEL", 20):  # the config's parallel never raises it: Figma's write rate limit sets it
+            started, out, _ = self.run_crews()
         self.assertEqual((len(started), "queued past the cap of 3" in out), (3, True))
 
     def test_starts_one_crew_per_open_design_task_and_reports_one_that_fails(self):
@@ -521,13 +522,8 @@ class DesignCrews(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"design_concurrency": 1}))
         self.assertEqual(len(self.run_crews()[0]), 1)
         self.assertEqual(len(self.run_crews(max=2)[0]), 2)
-        with mock.patch.object(fc.fc_config, "PARALLEL", 2):
-            self.assertEqual(len(self.run_crews()[0]), 1)  # the project's design_concurrency wins over the config
-            (self.proj / "verify.json").unlink()
-            self.assertEqual(len(self.run_crews()[0]), 2)
-        with mock.patch.object(fc.fc_config, "PARALLEL", 1):
-            self.assertIn("queued past the cap of 1: 005", self.run_crews()[1])
-        started, out, _ = self.run_crews()  # no config: the default of 3 holds both open tasks
+        (self.proj / "verify.json").unlink()
+        started, out, _ = self.run_crews()  # the default of 3 holds both open tasks
         self.assertEqual((len(started), "queued" in out), (2, False))
 
     def test_a_named_id_that_is_skipped_prints_one_line_with_the_reason(self):

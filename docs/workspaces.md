@@ -75,10 +75,10 @@ Set it at the top level, or in one workspace to override it there.
 |---|---|
 | `run` | `--parallel`, else `parallel`, else 3 |
 | `resume` | `--parallel`, else `parallel`, else the halted run's value |
-| `designcrews` | `--max`, else `design_concurrency` in verify.json, else `parallel`, else 3 |
 | `testcrews` | `parallel` when set, else every writer at once |
 
-`designcrews` and `testcrews` print the tasks past the cap, with the command that starts them.
+`testcrews` prints the tasks past the cap, with the command that starts them.
+`designcrews` never reads `parallel`: it starts `--max`, else `design_concurrency` in verify.json, else 3 builders, to stay under Figma's per-minute write rate limit.
 A value that is not a whole number of 1 or more stops every command.
 
 ## Linear key

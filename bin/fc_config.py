@@ -12,8 +12,8 @@ import fc_core
 #    "parallel": 20,
 #    "workspaces": {"work": {"openrouter_api_key": "sk-or-..."}, "personal": {"openrouter_api_key": "sk-or-...", "models": {...}}}}
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
-# `parallel` is how many agents start at once: the tasks of run and resume (else 3), designcrews' builders (after --max and
-# verify.json design_concurrency, else 3), and testcrews' writers (else all at once). A command's own flag wins.
+# `parallel` is how many agents start at once: the tasks of run and resume (else 3) and testcrews' writers (else all at once).
+# A command's own flag wins. designcrews never reads it: Figma's per-minute write rate limit caps its builders.
 # A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Teammate sessions run in pi or Claude Code.
 
