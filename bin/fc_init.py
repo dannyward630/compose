@@ -351,6 +351,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 merged.append(b.removeprefix(fc_worktree.task_prefix(repo, proj)))
         else:
             kept.append(b)
+    merged += [t for t in metas if t not in merged and any(t in ts for ts in held.values())
+               and all(lb in layer_why for lb, ts in held.items() if t in ts)]
     if (proj / "verify.json").exists() and "layer_prefix" in fc_core.project_config(proj) \
             and not fc_core.sh(["git", "branch", "--list", f"{fc_core.project_config(proj)['layer_prefix']}layer-*"], repo, check=False).stdout.strip():
         fc_core.atomic_write(proj / "verify.json", json.dumps({k: v for k, v in fc_core.project_config(proj).items() if k != "layer_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
@@ -366,6 +368,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             why = None
         elif not why and held and all(lb in layer_why for lb in held):  # layers squash the project branch's commits: its merge is theirs
             why = f"every layer built from it is merged ({', '.join(held)})"
+            project_merged = True
         elif not why and delete_unmerged:
             why = "UNMERGED, removed on --delete-unmerged"
         else:
