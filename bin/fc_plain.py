@@ -13,9 +13,10 @@ def run_plain(checkout, yes):
         else:
             state, line = fc_steprun.run_step(row, checkout, yes, claude, terminal=False)
         print(f"{state} {row[0]}")
-        for part in line.splitlines():
-            if part:
-                print(f"  {part}")
+        if row[5] != "key":
+            for part in line.splitlines():
+                if part:
+                    print(f"  {part}")
         results.append((row[0], state))
     lines, code = fc_finish.finish(results, yes)
     for line in lines:
