@@ -38,7 +38,7 @@ def key(app, word):  # the footer key whose description names the action
 
 
 class GuidedSetup(unittest.IsolatedAsyncioTestCase):
-    async def test_steps_then_herdr_keys_and_finish(self):
+    async def test_steps_then_keys_and_finish(self):
         log, suspended = [], []
         def run_step(row, checkout, yes, claude, terminal):
             log.append((row[0], terminal, bool(suspended))); return STATES[row[0]]
@@ -56,12 +56,12 @@ class GuidedSetup(unittest.IsolatedAsyncioTestCase):
                 for name, _, _, level, _, _ in ROWS: self.assertRegex(text, rf"\b{name}\b.*\b{level}\b")
                 await pilot.press(key(app, "skip"), "down", key(app, "choose"), key(app, "start"))
                 await until(pilot, lambda: isinstance(app.screen, KeysScreen))
-                self.assertEqual(log, [("figma", False, False), ("brew", True, True), ("pi", False, False), "herdr"])
+                self.assertEqual(log, [("figma", False, False), ("brew", True, True), ("pi", False, False)])
                 for _ in range(2):  # Back to keys returns to KeysScreen, then finishes again without rerunning anything
                     app.screen.dismiss(([], ["openrouter"])); await until(pilot, lambda: isinstance(app.screen, FinishScreen))
                     self.assertEqual([r for r in app.screen.results if r[0] != "token"], [("gh", "skipped"), ("figma", "done"), ("brew", "ok"), ("pi", "failed")])
                     app.screen.dismiss("keys"); await until(pilot, lambda: isinstance(app.screen, KeysScreen))
-                self.assertEqual(log[-1], "herdr"); self.assertEqual(log.count("herdr"), 1)
+                self.assertNotIn("herdr", log)  # the ending applies herdr's config, not the steps
                 app.exit(4)
             self.assertEqual(app.return_value, 4)
 
