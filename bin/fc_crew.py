@@ -67,7 +67,7 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"When something you find contradicts what Linear says (a decision, a brief, a criterion), report it at once: "
             f"`{report} contradiction \"<what you found>; Linear says: <quoted line> (<issue>); evidence: <file:line or command output>\"`, "
             f"then keep working on what it does not touch, and never re-scope your brief.\n"
-            f"Linear is the record: write what you learn and decide there, never to files.\n"
+            f"Linear is the record: read and write it with `compose linear` (get, list, create, update, comment), never a Linear MCP tool; write what you learn and decide there, never to files.\n"
             f"Commit messages describe the change itself in plain words; never mention compose, waves, task ids, teammates, or Linear. "
             f"{fc_core.commit_rule(fc_core.commit_convention(proj))}"
             f"Write the simplest code and the fewest tests that cover the requirements: one test file per unit, extended in place.\n"
@@ -247,7 +247,7 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
-            fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions", "-e", "builtin:mcp",
+            fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
                   *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), "--append-system-prompt", TRUST_PROMPT)
         else:
