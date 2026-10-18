@@ -842,6 +842,50 @@ class ReadGuardWiring(unittest.TestCase):
 
 class LibrarySection(unittest.TestCase):
     """Task 012 (NEB-950): the LIBRARY API section in the implementer prompt and the shared budget."""
+    def run_one(self, section, pack=True):
+        """run_task with fc_libapi.section answering `section` and a fake trail_pack that fills its cap (or gives nothing).
+        Returns (first prompt, the caps the pack got, the section calls, the clone)."""
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in {"a.txt": "no\n", "t.sh": "grep -q yes a.txt  # TEST TEXT\n"}.items(): (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": ["t.sh", "gone.sh"], "test": "sh t.sh",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.\n## Notes\nKeep it short."}
+        prompts, caps = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt); (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        def trail_pack(wt, query, repo=None, limit=6, cap=12000):
+            caps.append(cap); return "P" * cap if pack else ""
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", trail_pack), \
+                mock.patch.object(fc.fc_libapi, "section", return_value=section) as sec, mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            self.assertEqual(fc.fc_implement.run_task(repo, proj, task, 3)["status"], "passed")
+        return prompts[0], caps, sec.call_args_list, proj / "worktrees" / "001"
+
+    def test_the_section_sits_between_the_pack_and_the_body_and_shares_the_12000_budget(self):
+        section = "LIBRARY API for the packages this task imports\nlib 1.0\nlib.f(x, y=2)"
+        prompt, caps, calls, wt = self.run_one(section)
+        self.assertEqual(len(calls), 1)
+        (cwt, files, words), kw = calls[0]
+        self.assertEqual((Path(cwt).resolve(), files, kw), (wt.resolve(), ["a.txt"], {}))
+        self.assertIn("Write yes.", words); self.assertIn("TEST TEXT", words); self.assertNotIn("Keep it short.", words)
+        self.assertEqual(caps, [12000 - len(section)])
+        pack = "P" * caps[0]
+        self.assertLess(prompt.index(pack + "\n"), prompt.index(section))
+        self.assertLess(prompt.index(section) + len(section), prompt.index("## Goal\nWrite yes."))
+        self.assertNotIn("P" * (caps[0] + 1), prompt)
+
+    def test_a_section_without_a_pack_still_comes_before_the_body(self):
+        prompt, caps, _, _ = self.run_one("LIBRARY API x\nlib 1.0", pack=False)
+        self.assertLess(prompt.index("LIBRARY API x\nlib 1.0"), prompt.index("## Goal\nWrite yes."))
+        self.assertNotIn("CONTEXT PACK", prompt)
+
+    def test_no_section_leaves_the_prompt_as_today_with_the_full_pack(self):
+        prompt, caps, calls, _ = self.run_one("")
+        self.assertEqual((caps, len(calls)), ([12000], 1))
+        self.assertIn("do not open unrelated files.\n" + "P" * 12000 + "\n\n## Goal\nWrite yes.", prompt)
 
 
 class DeleteTasks(unittest.TestCase):
