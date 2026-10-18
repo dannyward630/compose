@@ -189,18 +189,57 @@ class CheckoutBp(unittest.TestCase):
 
 class BeforePlanning(unittest.TestCase):
     """Groundwork writes checks and e2e cases before any task exists; verify runs them without a sync when nothing reads the tasks."""
-    def verify(self, **flags):
+    TASK = {"id": "001", "title": "a", "files": ["x.py"], "protected": ["t.py"], "test": "true", "body": "## Goal\nx"}
+
+    def verify(self, tasks=None, checks=None, last=None, **flags):
         repo = Path(tempfile.mkdtemp())
         for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
             subprocess.run(["git", *args], cwd=repo, check=True)
-        proj = repo / ".compose" / "p"
-        proj.mkdir(parents=True)
-        (proj / "verify.json").write_text(json.dumps({"checks": [f"touch {repo}/checked"], "review": False, "jev_acceptance": False,
+        self.proj = proj = repo / ".compose" / "p"
+        (proj / "results").mkdir(parents=True)
+        (proj / "verify.json").write_text(json.dumps({"checks": checks or [f"touch {repo}/checked"], "review": False, "jev_acceptance": False,
                                                       "e2e": [{"name": "probe", "driver": f"touch {repo}/driven"}]}))
+        if tasks is not None:
+            (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        if last is not None:
+            (proj / "results" / "verify.json").write_text(last)
         a = SimpleNamespace(**{"repo": str(repo), "project": "p", "skip_e2e": False, "skip_review": False, "fix": 2, **flags})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), self.assertRaises(SystemExit) as cm:
+        self.out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_linear, "linear_reconcile") as self.lr, \
+                mock.patch.object(fc.fc_verify, "verify_failed"), contextlib.redirect_stdout(self.out), self.assertRaises(SystemExit) as cm:
             fc.fc_verify.cmd_verify(a)
         return cm.exception.code, repo
+
+    def smoke(self, label, **kw):
+        code, _ = self.verify(**kw)
+        final = [l for l in self.out.getvalue().splitlines() if f"smoke {label}" in l or "verify PASS" in l or "verify FAIL" in l]
+        self.assertEqual(len(final), 1, self.out.getvalue()); self.assertIn(f"smoke {label}", final[0])
+        self.assertEqual(self.lr.call_count, 0)
+        return code, json.loads((self.proj / "results" / "smoke.json").read_text())
+
+    def test_an_unsynced_or_empty_sync_run_is_a_smoke_run_and_writes_no_verify_record(self):
+        for kw, left_out in (({"skip_review": True, "fix": 0}, ["tasks", "review"]), ({"tasks": []}, ["tasks"]),
+                             ({"tasks": [], "skip_e2e": True, "fix": 0}, ["tasks", "e2e"])):
+            code, smoke = self.smoke(f"PASS ({', '.join('no ' + x for x in left_out)})", **kw)
+            self.assertEqual((code, smoke["left_out"], smoke["passed"], len(smoke["rounds"])), (0, left_out, True, 1), kw)
+            self.assertFalse((self.proj / "results" / "verify.json").exists(), kw)
+
+    def test_a_skipped_stage_is_a_smoke_run_that_leaves_the_last_verify_record_alone(self):
+        for kw, left_out in (({"skip_review": True}, ["review"]), ({"skip_e2e": True, "skip_review": True}, ["review", "e2e"]),
+                             ({"skip_e2e": True, "checks": ["false"], "fix": 0}, ["e2e"])):
+            label = ("FAIL" if "checks" in kw else "PASS") + f" ({', '.join('no ' + x for x in left_out)})"
+            code, smoke = self.smoke(label, tasks=[self.TASK], last='{"passed": true}', **kw)
+            self.assertEqual((code, smoke["left_out"], {"rejected_fixes", "seconds", "cost"} <= smoke.keys()), (1 if "checks" in kw else 0, left_out, True), kw)
+            record = self.proj / "results" / "verify.json"
+            self.assertEqual(record.read_text(), '{"passed": true}', kw)
+
+    def test_a_synced_run_with_no_skip_flag_is_a_full_verify_even_with_review_and_e2e_off_in_its_config(self):
+        code, _ = self.verify(tasks=[self.TASK])
+        record = json.loads((self.proj / "results" / "verify.json").read_text())
+        self.assertEqual((code, record["passed"], "left_out" in record), (0, True, False))
+        self.assertFalse((self.proj / "results" / "smoke.json").exists())
+        self.assertIn("verify PASS", self.out.getvalue()); self.assertNotIn("smoke", self.out.getvalue())
+        self.assertEqual(self.lr.call_args_list, [mock.call(self.proj, verified=True)])
 
     def test_checks_and_e2e_run_unsynced_with_no_review_and_no_fixer(self):
         code, repo = self.verify(skip_review=True, fix=0)
