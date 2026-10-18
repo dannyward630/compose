@@ -22,8 +22,13 @@ def finish(results, yes):
         lines += ["~/.local/bin is not on your PATH; add this line to your shell profile:", path]
     cfg = fc_config.read_config()
     merged, added = fc_defaults.merge_models(cfg)
-    fc_config.write_config(merged)
-    lines += added
+    if added:
+        fc_config.write_config(merged)
+        names = [k for k in fc_defaults.DEFAULT_MODELS if k != "crew" and k not in cfg.get("models", {})]
+        n = len(merged["models"]["crew"]) - len(cfg.get("models", {}).get("crew", {}))
+        if names or n:
+            lines.append("added default models to ~/.compose/config.json: " +
+                         ", ".join(names + ([f"crew ({n} roles)"] if n else [])))
     lines += fc_defaults.PRESET_STEPS
     ws, _ = fc_config.settings(cfg)
     status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), ws, fc_steps.FRAMELINK_ENV)
