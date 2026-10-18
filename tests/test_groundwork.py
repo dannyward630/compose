@@ -705,9 +705,23 @@ class ToolsmithBrief(unittest.TestCase):
             for s in ("report crashed with KeyError owner", "shop-impl-002", "2026-10-17 15:30:00", "abc1234",
                       "SKILL.md", "# <command>: <symptom>", "--comment <n>", "--new"):
                 self.assertIn(s, out, state)
-            self.assertRegex(out, r"compose tool-bug file --project (shop|<slug>) --body")
-            for s in ("sections/", "trust prompt", "1111111", "other project's", "9999999"):
+            self.assertIn('compose tool-bug file --project shop --entry "2026-10-17 15:30:00" --body <file>', out, state)
+            for s in ("sections/", "trust prompt", "1111111", "other project's", "9999999",
+                      "2026-10-17 09:00:00", "2026-10-18 08:00:00"):
                 self.assertNotIn(s, out, state)
+
+    def test_the_filing_command_names_only_this_projects_newest_entry(self):
+        self.entry("shopping", "a project whose name starts with shop", at="2026-10-16 08:00:00")
+        self.entry("shop", "older", at="2026-10-16 09:00:00")
+        self.entry("shop", "newest", at="2026-10-16 21:45:07")
+        self.entry("shopping", "a later entry of that project", at="2026-10-16 23:00:00")
+        for state in ("maintainer", "reporter", "no-gh"):
+            out = self.brief(state)
+            self.assertEqual(out.count('--entry "2026-10-16 21:45:07"'), 1, state)
+            self.assertNotIn("--entry 2026", out, state)
+            for s in ("08:00:00", "09:00:00", "23:00:00"):
+                self.assertNotIn(s, out, state)
+        self.assertIn("run the same filing command with `--approved`", self.brief("reporter"))
 
     def test_the_maintainers_toolsmith_fixes_on_a_branch_and_never_merges(self):
         self.entry("shop", "report crashed")

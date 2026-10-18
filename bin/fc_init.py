@@ -284,13 +284,31 @@ def live_crew(proj):
     return why
 
 def close_space(proj, name):
-    """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own."""
+    """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own.
+    A tab whose crew record's last report is not done stays open, one line saying so; the team lead gets no exception."""
     space = fc_herdr.herdr_project_space(proj)
-    if space and fc_herdr.space_record(proj).exists():
-        for t in fc_herdr.herdr_project_tabs(proj, space):
-            fc_herdr.herdr("tab", "close", t["tab_id"])
-    elif space and fc_herdr.herdr_space_is(space, name):
-        fc_herdr.herdr("workspace", "close", space)
+    if not space:
+        return
+    crew = {c["tab"]: c for c in (json.loads(f.read_text()) for f in sorted(fc_crew.crew_dir(proj).glob("*.json"))) if c.get("tab")}
+    kept, closed = [], []
+    for t in fc_herdr.herdr_project_tabs(proj, space):
+        c = crew.get(t["tab_id"])
+        if c:
+            last = (fc_crew.crew_reports(proj, c["name"]) or [{}])[-1]
+            if last.get("state") != "done":
+                print(f"clean left {c['name']} open (last report: {last.get('state', 'nothing')})")
+                kept.append(t["tab_id"])
+                continue
+        closed.append(t["tab_id"])
+    if fc_herdr.space_record(proj).exists():
+        for tid in closed:
+            fc_herdr.herdr("tab", "close", tid)
+    elif fc_herdr.herdr_space_is(space, name):
+        if kept:
+            for tid in closed:
+                fc_herdr.herdr("tab", "close", tid)
+        else:
+            fc_herdr.herdr("workspace", "close", space)
 
 def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=False, force=False):
     """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
@@ -351,6 +369,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
                 merged.append(b.removeprefix(fc_worktree.task_prefix(repo, proj)))
         else:
             kept.append(b)
+    merged += [t for t in metas if t not in merged and any(t in ts for ts in held.values())
+               and all(lb in layer_why for lb, ts in held.items() if t in ts)]
     if (proj / "verify.json").exists() and "layer_prefix" in fc_core.project_config(proj) \
             and not fc_core.sh(["git", "branch", "--list", f"{fc_core.project_config(proj)['layer_prefix']}layer-*"], repo, check=False).stdout.strip():
         fc_core.atomic_write(proj / "verify.json", json.dumps({k: v for k, v in fc_core.project_config(proj).items() if k != "layer_prefix"}, indent=2))  # merged and cleaned: a later stack names afresh
@@ -366,6 +386,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             why = None
         elif not why and held and all(lb in layer_why for lb in held):  # layers squash the project branch's commits: its merge is theirs
             why = f"every layer built from it is merged ({', '.join(held)})"
+            project_merged = True
         elif not why and delete_unmerged:
             why = "UNMERGED, removed on --delete-unmerged"
         else:
