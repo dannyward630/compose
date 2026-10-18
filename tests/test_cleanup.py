@@ -350,6 +350,51 @@ class ProjectBranch(unittest.TestCase):
         self.assertEqual(fc.fc_core.project_branch(f.parent), "compose/old")
         self.assertIn("compose/old", self.branches())
 
+    def config(self, cfg):
+        f = Path(self.env["COMPOSE_CONFIG"]); f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(cfg))
+
+    def test_init_names_and_stores_the_project_branch_from_branch_prefix(self):
+        ws = {"branch_prefix": "top/", "workspace": "w", "workspaces": {"w": {"branch_prefix": "ws/"}}}
+        for cfg, args, want in (({}, (), "compose/p"), ({"branch_prefix": ""}, (), "p"), ({"branch_prefix": "team/"}, (), "team/p"),
+                                (ws, (), "ws/p"), (ws, ("--branch", "js-1-p"), "js-1-p")):
+            with self.subTest(cfg=cfg, args=args):
+                self.r, self.run = repo()
+                self.config(cfg)
+                self.cli("init", "--project", "p", *args)
+                wt = self.r.parent / "compose-p"
+                self.assertEqual(self.run("branch", "--show-current", cwd=wt).stdout.strip(), want)
+                self.assertEqual(json.loads((wt / ".compose" / "p" / "verify.json").read_text())["branch"], want)
+
+    def test_after_a_project_with_no_record_builds_on_its_prefixed_branch(self):
+        self.config({"branch_prefix": "team/"})
+        self.run("branch", "team/x")
+        self.cli("init", "--project", "q", "--after", "x")
+        self.assertEqual(json.loads((self.r.parent / "compose-q" / ".compose" / "q" / "verify.json").read_text())["review_base"], "team/x")
+
+    def test_clean_removes_only_its_own_merged_branches_then_drops_the_task_prefix(self):
+        self.cli("init", "--project", "p")
+        wt = self.r.parent / "compose-p"; f = wt / ".compose" / "p" / "verify.json"
+        git = lambda *a: self.run("-c", "user.name=t", "-c", "user.email=t@t", *a, cwd=wt).stdout.strip()
+        (wt / "f.txt").write_text("f\n"); git("add", "f.txt"); git("commit", "-qm", "f")  # unmerged project: its worktree stays
+        for b in ("compose/p-001", "compose/p-tests-001", "compose/p-002-bench-x", "compose/p-layer-01", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"):
+            git("branch", b, "compose/p")
+        git("branch", "compose/p-003", git("commit-tree", "main^{tree}", "-p", "main", "-m", "unmerged"))
+        f.write_text(json.dumps({**json.loads(f.read_text()), "task_prefix": "compose/p-"}))
+        self.cli("clean", "--project", "p")
+        self.assertEqual(sorted(b for b in self.branches() if b.startswith("compose/p-")), ["compose/p-003", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"])
+        self.assertEqual(json.loads(f.read_text())["task_prefix"], "compose/p-")
+        git("branch", "-D", "compose/p-003")
+        self.cli("clean", "--project", "p")
+        self.assertNotIn("task_prefix", json.loads(f.read_text()))
+
+    def test_clean_still_removes_a_legacy_projects_merged_task_branches(self):
+        self.cli("init", "--project", "p")
+        for b in ("fast/p/001", "fast/p/tests-001"):
+            self.run("branch", b, "compose/p")
+        self.cli("clean", "--project", "p")
+        self.assertEqual([b for b in self.branches() if b.startswith("fast/")], [])
+
 
 class FakeLinear:
     """Linear in memory: issues by identifier, each with a state and a parent. A state's id is its name."""
