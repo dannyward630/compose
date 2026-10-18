@@ -227,6 +227,64 @@ class DoctorNotes(unittest.TestCase):
             code, lines = self.doctor(self.ROWS[:2], keys)
             self.assertEqual(sorted(l.startswith("WARNING: herdr") for l in lines if l.startswith("WARNING:")), [False, True])
 
+class DoctorWarnings(unittest.TestCase):
+    """doctor prints every line (gh, old keys, herdr config) before a required miss exits 1, and ends with one summary;
+    loud herdr config is an optional row; init's stop line names the tool rows that stop it."""
+    setUp, fake, herdr_config = Doctor.setUp, Doctor.fake, Doctor.herdr_config
+    OK = (("gh", "gh", "brew install gh", "required", False, "run"), ("claude", "claude", "curl x", "required", False, "manual"))
+    MISS = (("npx", "no-such-npx", "brew install node", "required", False, "run"),
+            ("gh auth", lambda c: (False, "not logged in"), "compose setup", "required", False, "interactive"),
+            ("uv", lambda c: (False, "not on PATH"), "brew install uv", "default", False, "run"))
+    HERDR, READY = "MISSING: herdr config: {} (install: compose setup) - optional", "every step compose needs is ready"
+
+    def doctor(self, rows, keys=()):  # gh is logged out; a real "herdr config" row, if the table has one, stays
+        self.fake("gh", "gh version 2.94.0", body='[ "$1 $2" = "auth status" ] && exit 1')
+        rows += tuple(r for r in fc_steps.STEPS if r[0] == "herdr config")
+        out, code = io.StringIO(), 0
+        with mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_auth, "old_keys", return_value=list(keys)), \
+             mock.patch("sys.stdout", out):
+            try:
+                fc.fc_init.cmd_doctor(None)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue().splitlines()
+
+    def test_a_required_miss_still_prints_every_line_then_exits_1(self):
+        self.herdr_config('[ui.toast]\ndelivery = "system"\n')
+        keys = [("openrouter_api_key", self.home / "config.json"), ("TYPESAFE_API_KEY", self.home / ".env")]
+        code, lines = self.doctor(self.OK + self.MISS, keys)
+        self.assertEqual((code, lines[-1]), (1, "2 required steps missing: run compose setup"))
+        for line in (Doctor.GH_WARNING, self.HERDR.format("ui.toast.delivery=system, ui.sound.enabled=true"),
+                     "MISSING: gh auth: not logged in (install: compose setup)", "MISSING: uv: not on PATH (install: brew install uv) - optional"):
+            self.assertIn(line, lines)
+        self.assertEqual([l for l in lines if l.startswith("WARNING: herdr") or "every tool" in l], [])
+        warn = [l for l in lines if "openrouter_api_key" in l]
+        self.assertEqual(len(warn), 1, lines)
+        self.assertTrue(all(str(x) in warn[0] for k in keys for x in k), warn)
+        self.assertTrue("differ" in warn[0] and "auth.json" in warn[0] and "remove the one you do not want" in warn[0], warn)
+        self.assertNotIn("next time", warn[0])
+
+    def test_herdr_config_row_quiet_absent_and_sound_only(self):
+        self.assertEqual(self.doctor(self.OK), (0, [Doctor.GH_WARNING, self.READY]))  # quiet: no herdr line at all
+        for text, loud in ((None, "ui.sound.enabled=true"), ('[ui.toast]\ndelivery = "off"\n[ui.sound]\nenabled = true\n', "ui.sound.enabled=true"),
+                           ('[ui.toast]\ndelivery = "system"\n[ui.sound]\nenabled = false\n', "ui.toast.delivery=system")):
+            with self.subTest(text=text):
+                (self.home / ".config" / "herdr" / "config.toml").unlink(missing_ok=True)
+                text and self.herdr_config(text)
+                code, lines = self.doctor(self.OK)  # optional: exit 0, and the summary still says ready
+                self.assertEqual((code, lines[-1], sorted(lines[:-1])), (0, self.READY, sorted([Doctor.GH_WARNING, self.HERDR.format(loud)])))
+
+    def test_init_stop_line_names_the_tool_rows_that_stop_it(self):
+        skill = ("herdr skill", ".claude/skills/none/SKILL.md", "herdr --skill", "required", False, "run")
+        (self.home / "repo").mkdir()  # not a git repository: init must stop before it touches it
+        a = mock.Mock(repo=str(self.home / "repo"), project="p", branch=None, here=False, after=None)
+        with mock.patch.object(fc_steps, "STEPS", self.OK + self.MISS + (skill,)), mock.patch("sys.stdout", io.StringIO()), \
+             self.assertRaises(SystemExit) as e:
+            fc.fc_init.cmd_init(a)
+        m = re.match(r"init stopped: (.+?) missing; ", str(e.exception.code))
+        self.assertTrue(m, e.exception.code)
+        self.assertEqual([n in m.group(1) for n in ("npx", "herdr skill", "gh auth", "uv")], [True, True, False, False])
+
 class InitGate(unittest.TestCase):
     """init stops only on a missing required tool row, one whose check is a command, a command list, or a file under home;
     a required row checked by a function prints its MISSING line and init goes on. doctor exits 1 on either."""
