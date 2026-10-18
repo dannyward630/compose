@@ -304,7 +304,7 @@ def change_undo(a, proj, repo):
     else:
         left = edits
     if left:
-        print("apply these through Linear (save_issue), then sync:")
+        print("apply these through `compose linear update`, then sync:")
         for ident, fields in left:
             print(f"  {ident}: {json.dumps(fields)}")
     print(f"{cid} open: undo {a.id}. Sync, then `compose change done`.")
