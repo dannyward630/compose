@@ -64,6 +64,13 @@ class LinearProject(unittest.TestCase):
             fc.fc_linear_cmd.verb_project(self.args("project"))
         self.assertEqual(out.getvalue().strip(), f"Shop on team Engineering: {URL}")
 
+    def test_project_link_as_pasted_resolves_to_its_slug(self):
+        for link in (f"{URL}/overview", f"{URL}/", f"{URL}/issues?layout=list", f"{URL}#top", "my-shop-abc123"):
+            (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": link, "team": "Engineering"}))
+            self.calls.clear()
+            self.assertEqual(fc.fc_linear_cmd.linear_project(str(self.repo))["id"], "p1")
+            self.assertEqual([v for _, v in self.calls], [{"slug": "abc123"}], link)
+
     def test_project_failures(self):
         self.teams = self.teams[:1]
         self.assertEqual(self.fails(fc.fc_linear_cmd.linear_project, str(self.repo)), (1, "project Shop is not on team Engineering"))

@@ -1,5 +1,5 @@
 """`compose linear <verb>`: read and write Linear with the workspace key, printing compact text."""
-import json, sys
+import json, sys, urllib.parse
 from pathlib import Path
 
 import fc_core, fc_config, fc_linear
@@ -19,7 +19,8 @@ def linear_project(repo):
     if not path.exists():
         sys.exit(f"no .compose/linear.json in {repo}")
     link = json.loads(path.read_text())
-    slug = link["project"].rsplit("-", 1)[-1]
+    name = urllib.parse.urlsplit(link["project"]).path.split("/project/", 1)[-1].strip("/").split("/")[0]
+    slug = name.rsplit("-", 1)[-1]
     p = fc_linear.linear_gql("query($slug: String!) { projects(filter: {slugId: {eq: $slug}}) { nodes { id name url teams { nodes { id name key } } } } }",
                              {"slug": slug})["projects"]["nodes"]
     if not p:
