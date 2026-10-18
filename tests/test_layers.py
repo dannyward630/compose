@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import argparse, importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -91,6 +91,7 @@ from pathlib import Path
 git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
 a, f = sys.argv[1:], Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "fake-gh-stack.json"
 s = json.loads(f.read_text()) if f.exists() else None
+open(f.with_name("fake-gh-calls"), "a").write(" ".join(a) + "\\n")
 if a[:2] == ["stack", "init"]:
     f.write_text(json.dumps({"trunk": a[a.index("--base") + 1], "branches": [{"name": b} for b in a[4:]]}))
 elif a[:2] == ["stack", "view"] and s and git("branch", "--show-current") in [b["name"] for b in s["branches"]]:
@@ -118,7 +119,8 @@ class Layers(unittest.TestCase):
         (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         self.write("lock.txt", ""); self.write("bun.lock", "x\n" * 4000); self.write("setup.txt", "s\n" * 20); self.commit("groundwork one")
         self.write("stub.txt", "s\n" * 20); self.commit("groundwork two")
-        tasks = [{"id": t, "protected": [f"t{t}.test"], "files": [f"{t}.src"], "after": ""} for t in ("001", "002", "003")]
+        tasks = [{"id": t, "protected": [f"t{t}.test"], "files": [f"{t}.src"], "after": "", "test": f"make {t}", "title": f"Build {t}", "linear": f"ENG-{t}", "body": f"## Goal\nBuild {t}.\n"}
+                 for t in ("001", "002", "003")]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002", "003"):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"test {t}")
@@ -290,6 +292,20 @@ class Layers(unittest.TestCase):
         data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(data["trunk"], "main")
         self.assertEqual([b["name"] for b in data["branches"]], self.layers())
+
+    def test_stack_without_submit_prints_each_layers_pr_title_and_body_and_calls_no_gh_pr(self):
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
+        out = []
+        with mock.patch.object(fc.fc_core, "say", out.append):
+            fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+        prs = [l for l in out if l.startswith("pr ")]
+        self.assertEqual([l.split()[1] for l in prs], self.layers())
+        for i, l in enumerate(prs, 1):
+            self.assertIn(f"({i}/3)", l.splitlines()[0])
+            self.assertIn("## What changed", l)
+        calls = (self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
+        self.assertFalse([c for c in calls if not c.startswith("stack ")])
+        self.assertFalse((self.proj / "pr_text.json").exists())
 
 
 class LayerNames(unittest.TestCase):

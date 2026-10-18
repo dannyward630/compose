@@ -351,12 +351,13 @@ def write_pr_text(proj, wt, b, before, title, body):
         fc_core.atomic_write(rec_file, json.dumps({**rec, b: {"title": title, "body": body}}, indent=2))
     return r.returncode == 0
 
-def register_stack(repo, proj, trunk, submit=False):
+def register_stack(repo, proj, trunk, submit=False, preview=False):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
     stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
-    too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True."""
+    too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True; preview=True prints each layer's
+    PR title and body as submit would write them, with no gh call."""
     if not fc_worktree.stack_order(repo, proj):
         return []
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
@@ -391,6 +392,9 @@ def register_stack(repo, proj, trunk, submit=False):
     fc_core.say(f"stack  ok    ({stack_base}) <- {' <- '.join(stack)}")
     for l in layers or []:
         fc_core.say(f"layer  {l['branch'].removeprefix(layer_prefix(repo, proj))}  {layer_note(l, budget)}")
+    for l in layers if preview and layers else []:
+        title, body = layer_pr(repo, proj, l, len(layers), budget, fc_tasks.code_tasks(fc_tasks.load_tasks(proj)))
+        fc_core.say(f"pr     {l['branch']}  {title}\n" + "\n".join(f"    {x}" if x else "" for x in body.splitlines()))
     if submit:
         fc_core.sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
         before = {b: gh_pr_text(wt, b) for b in stack}  # which PRs exist, and their text, before this submit touches anything
@@ -412,5 +416,5 @@ def register_stack(repo, proj, trunk, submit=False):
 def cmd_stack(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
-    if not register_stack(repo, proj, trunk, submit=a.submit):
+    if not register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit):
         print("stack  nothing to register: no unmerged task branches")
