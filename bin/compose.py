@@ -260,7 +260,8 @@ def main():
         a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
     elif extra:
         sub.choices[a.cmd].error(f"unrecognized arguments: {' '.join(extra)}")
-    if a.cmd in DETACHED and not os.environ.get("COMPOSE_DETACHED"):
+    detached = os.environ.pop("COMPOSE_DETACHED", None)  # the marker is for this process alone: a compose run by anything it starts must detach on its own
+    if a.cmd in DETACHED and not detached:
         return detach(a)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config()  # "default" when no workspace is chosen

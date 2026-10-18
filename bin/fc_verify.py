@@ -244,9 +244,9 @@ def e2e_stage(repo, cfg, panes, report, findings):
             ok &= r["exit"] == 0
             verdict = "ok  " if r["exit"] == 0 else "TOOL ERROR" if r["tool_error"] else "FAIL"
             fc_herdr.herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
-            run = r.get("run") or {}
-            fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {case.get('name')}  "
-                f"steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}")
+            run = r.get("run")  # a driver case reports one only when it prints an E2E_RESULT line
+            fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {case.get('name')}" + (
+                f"  steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}" if run else ""))
             for line in (r.get("stdout") or "").splitlines()[-8:]:
                 if line and not line.startswith("E2E_RESULT"):
                     print(f"           {line[:160]}")

@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -104,6 +104,16 @@ class E2eLifecycle(unittest.TestCase):
         self.assertEqual(Path(cwd).resolve(), Path(self.dir).resolve())
         ok, _, _ = self.stage({"e2e": [{"name": "a", "driver": "true", "assert": "true"}]})
         self.assertTrue(ok)
+
+    def test_a_case_line_shows_the_run_only_when_the_driver_reports_one(self):
+        result = 'echo \'E2E_RESULT {"steps": 3, "elapsed_ms": 40, "status": "done"}\''
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.stage({"e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1", "BU_NAME": "ext"},
+                        "e2e": [{"name": "bare", "driver": "true"}, {"name": "run", "driver": result}]})
+        lines = [l for l in out.getvalue().splitlines() if "e2e    ok" in l]
+        self.assertTrue(lines[0].endswith("  bare"), lines)
+        self.assertTrue(lines[1].endswith("  run  steps=3 run=40ms status=done"), lines)
 
     def test_a_failing_driver_skips_its_assert(self):
         out = Path(self.dir) / "assert"

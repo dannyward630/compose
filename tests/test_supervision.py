@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, shlex, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -395,6 +395,25 @@ class Detach(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             fc.follow([sys.executable, "-c", "import os; print(os.getsid(0))"], self.log)
         self.assertNotEqual(int(self.log.read_text().split()[0]), os.getsid(0))
+
+    def test_a_compose_verify_started_by_a_detached_verify_detaches_too(self):
+        """The detach marker is the CLI's own: an e2e driver that runs compose gets a run in its own session, never one in
+        the outer verify's process group, where stopping it would stop the outer verify."""
+        cli = Path(__file__).resolve().parents[1] / "bin" / "compose.py"
+        verify = lambda repo: [sys.executable, str(cli), "verify", "--repo", str(repo), "--project", "p", "--skip-review", "--fix", "0"]
+        def repo(driver):
+            r = Path(tempfile.mkdtemp())
+            for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
+                subprocess.run(["git", *args], cwd=r, check=True)
+            (r / ".compose" / "p").mkdir(parents=True)
+            (r / ".compose" / "p" / "verify.json").write_text(json.dumps({"review": False, "jev_acceptance": False, "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1", "BU_NAME": "d"},  # no browser
+                                                                             "e2e": [{"name": "d", "driver": driver}]}))
+            return r
+        outer = repo(f"{shlex.join(verify(repo('true')))} > {self.dir}/nested.out 2>&1")
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_DETACHED"}
+        p = subprocess.run(verify(outer), env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("runs in its own session", (self.dir / "nested.out").read_text())
 
     def test_killing_the_follower_leaves_the_work_running(self):
         done = self.dir / "done"
