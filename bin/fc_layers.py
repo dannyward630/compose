@@ -104,7 +104,9 @@ def _linearize(repo, proj, trunk, wt):
 
 REVIEW_LAYER_LINES = 300  # verify.json `review_layer_lines` changes it
 def commit_facts(repo, c):
-    """(files, changed lines, {generated file: lines}) of one commit. Lockfiles are not counted: nobody reads them."""
+    """(files, changed lines, {generated file: lines}) of one commit. Lockfiles are not counted: nobody reads them. A file the
+    commit deletes whole counts one line, as `branch_budget` sizes a task branch: the change is the deletion, not its content."""
+    deleted = set(fc_core.sh(["git", "show", "--diff-filter=D", "--name-only", "--no-renames", "--format=", c], repo).stdout.splitlines())
     files, counted, generated = [], 0, {}
     for l in fc_core.sh(["git", "show", "--numstat", "--no-renames", "--format=", c], repo).stdout.splitlines():
         a, d, f = l.split("\t", 2)
@@ -113,7 +115,7 @@ def commit_facts(repo, c):
         if fc_worktree.GENERATED_RE.search(f):
             generated[f] = generated.get(f, 0) + n
         else:
-            counted += n
+            counted += 1 if f in deleted else n
     return files, counted, generated
 
 def group_units(units, budget):
