@@ -64,8 +64,8 @@ def skipped_line(kind, workspace):
                 f"  {later} --linear\n"
                 f"  or connect the claude.ai Linear connector")
     if kind == "typesafe":
-        return ("No TypeSafe key: without it verify and change cannot check your code. Add one later, on a terminal:\n"
-                "  compose setup")
+        return (f"No TypeSafe key: without it verify and change cannot check your code. Add one later:\n"
+                f"  {later} --typesafe")
     if kind == "figma":
         return ("No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n"
                 "  compose setup")
