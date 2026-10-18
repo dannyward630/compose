@@ -157,9 +157,8 @@ class WatchTimeout(unittest.TestCase):
         snap["closed"] = ["hw-tests-001"]
         with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
-            with self.assertRaises(SystemExit):
-                fc.fc_watch.cmd_watch(a)
-        self.assertIn("pending tasks 1, teammates working none,", out[-1])
+            fc.fc_watch.cmd_watch(a)  # the ended event wakes the watch at once, before any timeout
+        self.assertIn("event stall=ended agent=hw-tests-001", out[-1])  # a closed teammate is reported as ended, not left counted as working
 
     def test_the_snapshot_names_teammates_whose_tab_is_closed(self):
         proj = Path(tempfile.mkdtemp()) / "hw"; (proj / "results" / "crew").mkdir(parents=True)
