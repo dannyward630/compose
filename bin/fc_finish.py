@@ -1,4 +1,5 @@
 """The end of every setup run: the steps' outcome, herdr's config, the PATH line, models merged, key rules, the implementer probe, the exit code."""
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -63,5 +64,5 @@ def finish(results, yes):
             lines += ["compose is installed but not ready:", *[f"  {name}: {install}" for name, install in rows],
                       "run compose setup in a terminal to finish"]
             return lines, 0
-    lines += ["compose is ready", "next: run compose to open herdr"]
+    lines += ["compose is ready", "next: run claude in a pane and type /compose" if os.environ.get("HERDR_ENV") else "next: run compose to open herdr"]
     return lines, 0
