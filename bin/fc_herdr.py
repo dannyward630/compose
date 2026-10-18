@@ -46,8 +46,9 @@ def herdr(*args, check=False, timeout=120):
     return out.get("result", out)
 
 def herdr_error(*args, timeout=120):
-    """Like herdr() but returns the error code string on failure ("timeout", "agent_blocked", ...) instead of None."""
-    p = subprocess.run(herdr_argv(args), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    """Like herdr() but returns the error code string on failure ("timeout", "agent_blocked", ...) instead of None.
+    In its own session: a SIGINT to the run's process group must not kill a `--wait` client before the run set its stop."""
+    p = subprocess.run(herdr_argv(args), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, start_new_session=True)
     try:
         out = json.loads((p.stdout or p.stderr or "{}").strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
