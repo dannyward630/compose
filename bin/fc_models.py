@@ -263,7 +263,10 @@ TRANSIENT = re.compile(r"overloaded|rate.?limit|too many requests|\b(5\d\d|429)\
 def probe_once(model, timeout):
     """(ok, why, transient) from one probe turn. Only a clear answer (ok, or a refusal such as an unknown model) is definite."""
     try:
-        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=fc_claude.headless_env())
+        env = fc_claude.headless_env()
+        if model.startswith("pi:") and "OPENROUTER_API_KEY" in os.environ:  # pi's custom providers read the key from env, never argv
+            env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+        p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         return False, f"{type(e).__name__}: {e}"[:160], True
