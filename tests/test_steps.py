@@ -24,7 +24,8 @@ class StepsTable(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         self.bin, self.home, self.co, self.auth, self.link = tmp / "bin", tmp / "home", tmp / "co", tmp / "auth.json", tmp / "home/.local/bin/compose"
         for d in (self.bin, self.link.parent, self.co / "bin"): d.mkdir(parents=True)
-        (self.co / "bin" / "compose").write_text(""); (tmp / "figma.env").write_text("FIGMA_API_KEY=figd-test\n")
+        for f in ("bin/compose", "bin/compose.py", "SKILL.md"): (self.co / f).write_text("")  # a compose checkout
+        (tmp / "figma.env").write_text("FIGMA_API_KEY=figd-test\n")
         for p in (mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}), mock.patch.object(fc_config, "AUTH_PATH", self.auth),
                   mock.patch.object(fc_steps, "FRAMELINK_ENV", tmp / "figma.env")):
             p.start(); self.addCleanup(p.stop)
