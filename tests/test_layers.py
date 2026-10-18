@@ -84,10 +84,30 @@ if a[:2] == ["pr", "edit"]: json.dump({"title": a[a.index("--title") + 1], "body
         self.assertEqual(self.pr(), {"title": "hand", "body": "written"})
 
 
+FAKE_GH_STACK = """#!/usr/bin/env python3
+# gh stack's local side, no login or network: init records the stack in the repo's git dir, view shows it from one of its branches
+import json, subprocess, sys
+from pathlib import Path
+git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+a, f = sys.argv[1:], Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "fake-gh-stack.json"
+s = json.loads(f.read_text()) if f.exists() else None
+if a[:2] == ["stack", "init"]:
+    f.write_text(json.dumps({"trunk": a[a.index("--base") + 1], "branches": [{"name": b} for b in a[4:]]}))
+elif a[:2] == ["stack", "view"] and s and git("branch", "--show-current") in [b["name"] for b in s["branches"]]:
+    print(json.dumps(s))
+elif a[:2] == ["stack", "unstack"]:
+    f.unlink(missing_ok=True)
+else:
+    sys.exit(1)
+"""
+
+
 class Layers(unittest.TestCase):
     """A project branch with groundwork and every task's test on it, and task branches above it: the layers regroup all of it."""
     def setUp(self):
-        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        bin_ = Path(tempfile.mkdtemp()).resolve()
+        (bin_ / "gh").write_text(FAKE_GH_STACK); (bin_ / "gh").chmod(0o755)
+        self.env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{bin_}:{os.environ['PATH']}"}); self.env.start(); self.addCleanup(self.env.stop)
         self.repo = Path(tempfile.mkdtemp()).resolve()
         self.git("init", "-q", "-b", "main")
         self.git("remote", "add", "origin", "https://github.com/o/r.git")
