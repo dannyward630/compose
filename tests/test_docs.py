@@ -720,6 +720,45 @@ class SetupTestLine(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--project") + 1], top)
 
 
+class BranchNamesInSections(unittest.TestCase):
+    # Each edit: (file, start of the untouched line above, the edited lines in full, start of the untouched line below).
+    EDITS = [
+        ("sections/3.md", "When it reports `stubs ready`, run `compose testcrews", [
+            "Each test-writing teammate works in its own worktree on its own branch (`<project branch>-tests-NNN`, off the stubs commit), so no teammate can amend or reset another's commit.",
+        ], "Tasks that share a protected test file get their writers one after another:"),
+        ("sections/3.md", "Each test teammate reports `working \"test ready\"` once", [
+            "Read every test once they are all in (`git log -p HEAD..<project branch>-tests-NNN`), send changes back with `herdr agent prompt <slug>-tests-NNN \"...\"` until each tests what its issue says, then tell each to report `done` and run `--collect` before `run`.",
+        ], "A test that fails on the stubs because it needs code another task owns"),
+        ("sections/5.md", "You are the senior engineer over the fast models.", [
+            "`run` ends with a `NNN triage clean|flag: <reason>` line per passed task: a fast model checked each diff against its brief and the simplicity bar, all at once (`compose triage` repeats it). Read flagged layers in full. For a clean layer check only its diffstat (`git diff --stat <base>..<project branch>-NNN`): when every changed file is in the task's `files:`, accept it without reading the diff. Reading every diff of an all-clean run is the time triage exists to save. A flag is a pointer, never a verdict.",
+            "Read `.compose/<project>/results/NNN.json` and the layer's own diff: `git diff <base>..<project branch>-NNN`, where `base` is in the result (`HEAD` or the lower task's branch). `gh stack view --json` from a layer branch shows the chain.",
+        ], "Passing is not done."),
+    ]
+
+    def test_the_edited_lines_name_the_project_branch_between_untouched_neighbours(self):
+        for rel, above, edited, below in self.EDITS:
+            lines = read(rel).splitlines()
+            at = [i for i, l in enumerate(lines) if l.startswith(above)]
+            self.assertEqual(len(at), 1, (rel, above))
+            end = at[0] + 1 + len(edited)
+            self.assertEqual(lines[at[0] + 1 : end], edited, rel)
+            self.assertTrue(lines[end].startswith(below), (rel, lines[end]))
+
+    def test_no_fast_branch_or_em_dash_is_left_in_either_file(self):
+        for rel in ("sections/3.md", "sections/5.md"):
+            self.assertFalse([l for l in read(rel).splitlines() if "fast/" in l or "—" in l], rel)
+
+    def test_each_new_name_appears_only_where_the_old_one_was(self):
+        three, five = read("sections/3.md"), read("sections/5.md")
+        self.assertEqual(three.count("<project branch>-tests-NNN"), 2)
+        self.assertEqual(three.count("<project branch>-NNN"), 0, "the test writer's branch keeps its tests- part")
+        self.assertEqual(five.count("<project branch>-NNN"), 2)
+        self.assertEqual(five.count("<project branch>"), 2)
+        # The results path and the herdr teammate name are not branches and keep their placeholders.
+        self.assertEqual(five.count(".compose/<project>/results/NNN.json"), 1)
+        self.assertEqual(three.count("herdr agent prompt <slug>-tests-NNN"), 1)
+
+
 
         self.assertNotIn("trunk is the project branch", line)
         self.assertFalse([l for l in self.lines if "one final PR" in l], "one final PR")
