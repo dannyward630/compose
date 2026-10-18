@@ -341,5 +341,55 @@ class LayerNames(unittest.TestCase):
         self.assertEqual(self.git("diff", "feat/p-layer-03", "feat/p-003"), "")
 
 
+class StackLimit(unittest.TestCase):
+    """Adjacent layers fold until the stack has no more PRs than max_stack_prs: same kind first, then any; recorded layers never."""
+    setUp, git, write, commit, stack = Layers.setUp, Layers.git, Layers.write, Layers.commit, Layers.stack
+
+    def groups(self, units, cap):
+        return [(b, [u["name"] for u in g], f) for b, g, f in fc.fc_layers.group_by_record(self.proj, units, 300, cap)]
+
+    def test_twelve_one_task_layers_fold_the_lowest_pair_into_ten_the_lower_on_a_tie(self):
+        us = [unit(f"{i:03d}", 400) for i in range(1, 13)]
+        alone = [(None, [u["name"]], False) for u in us]
+        self.assertEqual(self.groups(us, None), alone)
+        self.assertEqual(self.groups(us, 12), alone)
+        self.assertEqual(self.groups(us, 10), [(None, ["001", "002"], True), (None, ["003", "004"], True)] + alone[4:])
+        self.assertEqual(self.groups([unit("001", 400), unit("002", 500), unit("003", 350)], 2), [(None, ["001"], False), (None, ["002", "003"], True)])
+
+    def test_groundwork_and_a_task_fold_together_only_when_no_same_kind_pair_is_left(self):
+        us = [unit("groundwork", 10), unit("001", 400), unit("002", 400), unit("groundwork", 10)]
+        self.assertEqual(self.groups(us, 3), [(None, ["groundwork"], False), (None, ["001", "002"], True), (None, ["groundwork"], False)])
+        self.assertEqual(self.groups(us, 2), [(None, ["groundwork", "001", "002"], True), (None, ["groundwork"], False)])
+
+    def test_a_recorded_layer_keeps_its_tasks_and_never_folds_even_above_the_cap(self):
+        (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
+        us = [unit(f"{i:03d}", 400) for i in range(1, 5)]
+        self.assertEqual(self.groups(us, 2), [("fast/p/layer-01", ["001"], False), ("fast/p/layer-02", ["002"], False), (None, ["003", "004"], True)])
+
+    def test_a_folded_layer_over_the_budget_says_so_on_its_layer_line_and_size_line(self):
+        out = [l for l in self.stack(review_layer_lines=30, max_stack_prs=3) if l.startswith("layer ")]  # natural: 20, 20, 105, 125, 155
+        self.assertEqual(len(out), 3)
+        self.assertRegex(out[0], r"layer-01  groundwork x2: 40 lines.*; over the 30-line budget to stay within 3 PRs")
+        self.assertRegex(out[1], r"layer-02  task 001, 002: 230 lines.*; over the 30-line budget to stay within 3 PRs")
+        self.assertIn("task 003: 155 lines; over the 30-line budget, a task is never split", out[2])
+        self.assertNotIn("stay within", out[2])
+        l = {"tasks": ["001", "002"], "lines": 400, "generated": {}, "fold_cap": 3}
+        self.assertEqual(fc.fc_layers.layer_note(l, 300), "task 001, 002: 400 lines; over the 300-line budget to stay within 3 PRs")
+        self.assertEqual(fc.fc_layers.layer_note({**l, "lines": 250}, 300), "task 001, 002: 250 lines")
+
+    def test_the_cap_is_ten_unless_set_and_verify_json_beats_the_workspace_which_beats_the_top_level(self):
+        for i in range(8):  # 13 layers at a 1-line budget: two groundwork commits, these eight, three tasks
+            self.write(f"g{i}.txt", "g\n"); self.commit(f"groundwork g{i}")
+        cfg = Path(tempfile.mkdtemp()) / "config.json"
+        count = lambda **v: len([l for l in self.stack(review_layer_lines=1, **v) if l.startswith("layer ")])
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg):
+            self.assertEqual(count(), 10)
+            cfg.write_text(json.dumps({"max_stack_prs": 5}))
+            self.assertEqual(count(), 5)
+            cfg.write_text(json.dumps({"max_stack_prs": 5, "workspace": "w", "workspaces": {"w": {"max_stack_prs": 4}}}))
+            self.assertEqual(count(), 4)
+            self.assertEqual(count(max_stack_prs=3), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
