@@ -18,14 +18,15 @@ class Finish(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp()); self.cfg, self.auth = tmp / "config.json", tmp / "auth.json"
         self.cfg.write_text(json.dumps({"workspaces": {"w": {"target": "x"}}, "models": {"implementer": "pi:mine"}}))
         self.probe, self.claude, self.connected = mock.Mock(return_value=(True, ["probe passed"])), True, False
-        self.herdr, self.path = mock.Mock(return_value=("ok", [])), None
+        self.herdr, self.path, self.tty = mock.Mock(return_value=("ok", [])), None, True  # the terminal path unless a case says no-TTY
         for p in (mock.patch.object(F.fc_config, "CONFIG_PATH", self.cfg), mock.patch.object(F.fc_config, "AUTH_PATH", self.auth),
                   mock.patch.object(F.fc_config, "ENV_FILE", tmp / ".env"), mock.patch.object(F.fc_steps, "FRAMELINK_ENV", tmp / "figma.env"),
                   mock.patch.object(F.fc_defaults, "probe_implementer", self.probe),
                   mock.patch.object(fc_herdrconf, "apply_herdr_config", self.herdr), mock.patch.object(fc_links, "path_line", lambda: self.path),
                   mock.patch.object(F.fc_keys, "linear_connected", lambda: self.connected),
                   mock.patch.object(F.fc_keys, "skipped_line", lambda kind, ws: f"skipped {kind}"),
-                  mock.patch.object(F.shutil, "which", lambda n, *a, **k: None if n == "claude" and not self.claude else f"/bin/{n}")):
+                  mock.patch.object(F.shutil, "which", lambda n, *a, **k: None if n == "claude" and not self.claude else f"/bin/{n}"),
+                  mock.patch("sys.stdin.isatty", lambda: self.tty)):
             p.start(); self.addCleanup(p.stop)
 
     def run_finish(self, auth, yes=False):
@@ -173,9 +174,8 @@ ENDING = lambda *names: [HEAD, *[f"  {n}: fix-{n}" for n in names], FOOT]
 
 class NotReady(unittest.TestCase):
     def setUp(self):
-        Finish.setUp(self); self.tty = True
-        for p in (mock.patch.object(F.fc_steps, "STEPS", tuple(NR_ROWS)), mock.patch("sys.stdin.isatty", lambda: self.tty)):
-            p.start(); self.addCleanup(p.stop)
+        Finish.setUp(self)
+        p = mock.patch.object(F.fc_steps, "STEPS", tuple(NR_ROWS)); p.start(); self.addCleanup(p.stop)
         F.finish([], False)  # models merged once, so later endings carry no added line
 
     def end(self, changes, yes, auth=ALL):
@@ -205,7 +205,7 @@ class NotReady(unittest.TestCase):
     def test_stdin_not_a_terminal_is_handled_as_yes(self):
         self.tty = False
         self.assert_not_ready(*self.end({"gh auth": "skipped", "OpenRouter key": "skipped"}, False), "gh auth", "OpenRouter key")
-        lines, code = self.end({}, False, {"workspaces": {"default": {}}})  # keys missing: yes never refuses to finish
+        lines, code = self.end({}, False)  # every required row in place: ready, and no probe as under yes
         self.assertEqual((lines[-2:], code), (READY, 0)); self.probe.assert_not_called()
 
     def test_terminal_without_yes_is_unchanged(self):
