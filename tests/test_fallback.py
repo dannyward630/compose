@@ -890,3 +890,56 @@ class LibrarySection(unittest.TestCase):
 
 class DeleteTasks(unittest.TestCase):
     """Task 015 (NEB-952): delete: applied in the clone, and delete-only tasks with no model turn."""
+    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in files.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
+
+    def tree(self, repo):
+        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", "fast/proj/001"], cwd=repo, capture_output=True, text=True)
+        return out.stdout.split() if out.returncode == 0 else None
+
+    def edit(self, seen, extra=lambda cwd: None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            seen.append(sorted(str(p.relative_to(cwd)) for p in Path(cwd).rglob("*.txt"))); (Path(cwd) / "a.txt").write_text("yes\n"); extra(Path(cwd))
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        return impl
+
+    def test_a_delete_only_task_removes_a_400_line_directory_and_commits_with_no_turn(self):
+        impl = mock.Mock(side_effect=AssertionError("no turn"))
+        files = {"a.txt": "no\n", "old/a.py": "x\n" * 300, "old/sub/b.py": "y\n" * 100}
+        result, repo, _ = self.run_one(impl, {"files": [], "delete": ["old/"], "test": "test ! -e old"}, files=files)
+        impl.assert_not_called()
+        self.assertEqual((result["status"], len(result["log"])), ("passed", 1))
+        self.assertEqual(self.tree(repo), ["a.txt"])
+
+    def test_a_delete_only_task_whose_test_fails_or_touches_other_files_fails_after_one_attempt(self):
+        for test in ("grep -q yes a.txt", "test ! -e gone.txt && touch b.py"):
+            impl = mock.Mock(side_effect=AssertionError("no turn"))
+            result, repo, _ = self.run_one(impl, {"files": [], "delete": ["gone.txt"], "test": test}, files={"a.txt": "no\n", "gone.txt": "z\n"})
+            impl.assert_not_called()
+            self.assertEqual((result["status"], len(result["log"]), self.tree(repo)), ("failed", 1, None), test)
+
+    def test_delete_paths_are_gone_before_the_turn_and_from_the_branch_beside_an_edit(self):
+        seen = []
+        result, repo, _ = self.run_one(self.edit(seen), {"delete": ["gone.txt"]}, files={"a.txt": "no\n", "gone.txt": "z\n", "keep.txt": "k\n"})
+        self.assertEqual((result["status"], seen), ("passed", [["a.txt", "keep.txt"]]))
+        self.assertEqual(self.tree(repo), ["a.txt", "keep.txt"])
+
+    def test_a_turn_deleting_a_file_outside_files_and_delete_is_rejected_for_scope(self):
+        impl = self.edit([], lambda cwd: (cwd / "keep.txt").unlink())
+        result, _, _ = self.run_one(impl, {"delete": ["gone.txt"]}, attempts=1, files={"a.txt": "no\n", "gone.txt": "z\n", "keep.txt": "k\n"})
+        self.assertEqual((result["status"], result["log"][0]["stray"]), ("rejected_scope", ["keep.txt"]))
+
+    def test_a_task_without_delete_and_without_files_still_gets_a_turn_and_no_scope_check(self):
+        seen = []
+        result, repo, _ = self.run_one(self.edit(seen, lambda cwd: (cwd / "b.py").write_text("b\n")), {"files": []})
+        self.assertEqual((result["status"], len(seen), self.tree(repo)), ("passed", 1, ["a.txt", "b.py"]))
