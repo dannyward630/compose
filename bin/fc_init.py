@@ -127,7 +127,9 @@ def cmd_doctor(a):
         print("WARNING: " + ", ".join(f"{name} in {path}" for name, path in old)
               + " still in the old places; each differs from the key auth.json holds, so it was kept: remove the one you do not want")
     if bad:
-        print(f"{len(bad)} required step{'s' if len(bad) > 1 else ''} missing: run compose setup")
+        modes = {row[0]: row[5] for row in fc_steps.STEPS}  # setup fixes every mode but manual
+        print(f"{len(bad)} required step{'s' if len(bad) > 1 else ''} missing"
+              + (": run compose setup" if any(modes.get(n) != "manual" for n in bad) else ""))
         sys.exit(1)
     print("every step compose needs is ready")
 
