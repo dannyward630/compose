@@ -1,6 +1,6 @@
-import json, os, subprocess
+import json, os
 from pathlib import Path
-import fc_mcp, fc_core
+import fc_mcp, fc_core, fc_proc
 
 
 def is_claude(model):
@@ -47,7 +47,7 @@ def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bas
            "--settings", NO_ATTRIBUTION, "--permission-mode", "acceptEdits", "--tools", tools, "--allowedTools", tools, "--safe-mode", "--strict-mcp-config"]
     if own := repo_instructions(cwd):
         cmd += ["--append-system-prompt", own]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=headless_env())
+    p = fc_proc.run(cmd, cwd=cwd, env=headless_env(), timeout=timeout)
     try:
         out = json.loads(p.stdout)
     except json.JSONDecodeError:

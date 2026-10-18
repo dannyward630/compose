@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude
+import fc_core, fc_config, fc_claude, fc_proc
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -13,7 +13,7 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}})
     for attempt in range(4):
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+        p = fc_proc.run(cmd, cwd=cwd, env=env, timeout=timeout)
         # Parallel launches race on opencode's shared SQLite file. Back off and retry; nothing has run yet when this happens.
         if p.returncode and "database is locked" in (p.stdout + p.stderr) and attempt < 3:
             time.sleep(0.7 * (attempt + 1) + 0.3 * (hash(str(cwd)) % 5) / 5)
@@ -88,7 +88,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
            "--no-prompt-templates", "--thinking", "low", "--model", model, prompt]
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+    p = fc_proc.run(cmd, cwd=cwd, env=env, timeout=timeout)
     text, tools, usage, errors, last = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, [], None
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
