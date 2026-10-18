@@ -123,3 +123,60 @@ class AppFixes(unittest.IsolatedAsyncioTestCase):
             await pilot.press("up", key(app, "skip")); self.assertEqual(lines(app), skipped)
             await self.start(app, pilot); app.pop_screen(); await pilot.pause()
             for l in reason: self.assertIn(l, lines(app))
+
+
+LOOK = tuple((n, lambda c: (False, ""), cmd, level, False, mode) for n, level, mode, cmd in (
+    ("gh", "required", "run", "true"), ("figma", "designer", "run", "true"), ("token", "designer", "run", "true"),
+    ("uvtool", "default", "run", "true"), ("brew", "default", "interactive", "fetch-tool --now"), ("longrow", "required", "run", "true")))
+DETAIL = "boom " + " ".join(f"word{i}" for i in range(40)) + " TAILWORD"
+CLEAR = r"\x1b(\[[0-3]?J|c)"
+
+def style_after(app, row, word):  # the style of word on the first screen row that holds row before it
+    for strip in app.screen._compositor.render_strips():
+        col = strip.text.find(word, strip.text.find(row)) if row in strip.text else -1
+        for seg in strip if col >= 0 else ():
+            if col < len(seg.text): return seg.style
+            col -= len(seg.text)
+
+
+class StepsLook(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        AppFixes.setUp(self)
+        self.tty, self.checked = Path(os.environ["HOME"]) / "tty", []
+        def check(row, checkout): self.checked.append((row[0], Path(checkout))); return row[0] in ("gh", "figma"), ""
+        def run_step(row, checkout, yes, claude, terminal):
+            if row[0] == "brew": sys.stdout.flush(); os.write(1, b"<RUN>")
+            return {"brew": ("done", ""), "longrow": ("failed", DETAIL)}.get(row[0], ("ok", ""))
+        @contextmanager
+        def suspend(app):  # the terminal while the app is away: fd 1 and sys.stdout both land in self.tty
+            saved, old, fd = os.dup(1), (sys.stdout, sys.__stdout__), os.open(self.tty, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+            os.dup2(fd, 1); os.close(fd); sys.stdout = sys.__stdout__ = open(os.dup(1), "w")
+            try: yield
+            finally: sys.stdout.close(); sys.stdout, sys.__stdout__ = old; os.dup2(saved, 1); os.close(saved)
+        for p in (mock.patch.object(fc_steps, "STEPS", LOOK), mock.patch.object(fc_steps, "check", check),
+                  mock.patch.object(fc_steprun, "run_step", run_step), mock.patch.object(App, "suspend", suspend)):
+            p.start(); self.addCleanup(p.stop)
+
+    async def test_real_states_header_wrapped_lines_colours_and_framed_interactive_step(self):
+        app = setup_app.SetupApp(ROOT)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(); await app.workers.wait_for_complete(); await pilot.pause()
+            self.assertEqual(sorted(self.checked), sorted((r[0], ROOT) for r in LOOK))
+            screen = lines(app)
+            for name, state in (("gh", "ok"), ("figma", "ok"), ("token", "unchosen"), ("uvtool", "pending"), ("brew", "pending")):
+                self.assertTrue(any(re.search(rf"\b{name}\b.*\b{state}\b", l) for l in screen), (name, state, screen))
+            head = screen[:next(i for i, l in enumerate(screen) if re.search(r"\bgh\b", l))]
+            terms = (r"install", r"configur", r"\bs\b", r"\bc\b", r"\br\b", r"move|↑|↓", r"required", r"default", r"designer")
+            for t in terms: self.assertRegex(" ".join(head).lower(), t)
+            hits = [i for i, l in enumerate(head) if any(re.search(t, l.lower()) for t in terms)]
+            self.assertLessEqual(hits[-1] - hits[0], 2, head)
+            await pilot.press("down", "down", "down", key(app, "skip"), key(app, "start"))
+            await until(pilot, lambda: isinstance(app.screen, KeysScreen)); app.pop_screen(); await pilot.pause()
+            screen = lines(app); n = next(l for l in screen if "longrow" in l).index("longrow")
+            detail = [l for l in screen if re.search(r"boom|word\d|TAILWORD", l)]
+            self.assertIn(DETAIL, " ".join(l.strip() for l in detail), screen)
+            for l in detail: self.assertTrue(n <= len(l) - len(l.lstrip()) <= detail[0].index("boom"), (n, l))
+            skipped, failed, error = style_after(app, "uvtool", "skipped"), style_after(app, "longrow", "failed"), style_after(app, "boom", "boom")
+            self.assertTrue(skipped and failed and error); self.assertNotIn(skipped.color, (failed.color, error.color))
+        before, run, after = self.tty.read_text().partition("<RUN>")
+        self.assertTrue(run); self.assertRegex(before, rf"(?s){CLEAR}.*brew[^\n]*fetch-tool --now"); self.assertRegex(after, CLEAR)
