@@ -382,8 +382,9 @@ def cmd_verify(a):
     t0 = time.time()
     # Review, acceptance, and a fixer read the plan, the criteria, and the protected files from the Linear sync; checks and
     # e2e read only verify.json, so groundwork proves them before planning with --skip-review --fix 0.
-    fc_tasks.load_tasks(proj, required=not a.skip_review or a.fix > 0,
-                        hint=f"; checks and e2e alone run without one: `compose verify --project {proj.name} --skip-review --fix 0`")
+    tasks = fc_tasks.load_tasks(proj, required=not a.skip_review or a.fix > 0,
+                                hint=f"; checks and e2e alone run without one: `compose verify --project {proj.name} --skip-review --fix 0`")
+    left_out = (["tasks"] if not tasks else []) + (["review"] if a.skip_review else []) + (["e2e"] if a.skip_e2e else [])
     fc_core.say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
     root, base, wt = verify_root(repo, proj, cfg)
@@ -397,7 +398,7 @@ def cmd_verify(a):
         cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
         cfg["main_repo"] = repo
     try:
-        verify_rounds(root, proj, cfg, a, rounds, t0)
+        verify_rounds(root, proj, cfg, a, rounds, t0, left_out)
     except fc_models.PaymentRequired as e:
         fc_models.payment_halt(repo, proj, "verify", [], {"fix": a.fix, "skip_e2e": a.skip_e2e, "skip_review": a.skip_review}, e)
     finally:
@@ -418,7 +419,7 @@ def fix_message(reply, files, conv=None):
         return fc_core.typed(line, "fix", conv)
     return fc_core.typed("Fix " + ", ".join(Path(f).name for f in files[:3]), "fix", conv)
 
-def verify_rounds(repo, proj, cfg, a, rounds, t0):
+def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     base = cfg.get("review_base")
     allowed = set(fc_core.sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
     rejected = []
@@ -507,11 +508,14 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0):
         else:
             break
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}
+    if left_out:
+        final["left_out"] = left_out
     (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write((proj / "results" / "verify.json"), json.dumps(final, indent=2))
+    fc_core.atomic_write((proj / "results" / ("smoke.json" if left_out else "verify.json")), json.dumps(final, indent=2))
     (proj / "results" / "resume.json").unlink(missing_ok=True)
-    fc_core.say(f"verify {'PASS' if ok else 'FAIL'}  wall {fc_core.fmt(final['seconds'])}  rounds={len(rounds)}")
-    if ok:
+    fc_core.say((f"smoke {'PASS' if ok else 'FAIL'} ({', '.join('no ' + x for x in left_out)})" if left_out else f"verify {'PASS' if ok else 'FAIL'}")
+                + f"  wall {fc_core.fmt(final['seconds'])}  rounds={len(rounds)}")
+    if ok and not left_out:
         fc_linear.linear_reconcile(proj, verified=True)
     fc_core.say(fc_core.LEDGER.line())
     if not ok:
