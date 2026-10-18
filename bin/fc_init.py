@@ -132,6 +132,30 @@ def cmd_doctor(a):
         sys.exit(1)
     print("every step compose needs is ready")
 
+def move_onto(wt, proj, after, after_name):
+    """Build an existing project on another project's branch (`init --after`): allowed while the project has no commits of its own
+    (init's own "Ignore local tool directories" one aside) and its worktree is clean, then its branch is reset to `after` and
+    verify.json stores the review base and `after`. Exits with the reason otherwise, so the flag is never silently ignored."""
+    cfg = fc_core.project_config(proj)
+    if cfg.get("review_base") == after:
+        return
+    branch = fc_core.project_branch(proj)
+    base = cfg.get("review_base", "main")
+    if fc_core.sh(["git", "branch", "--show-current"], wt, check=False).stdout.strip() != branch:
+        sys.exit(f"{wt} is not on {branch}: check it out, then run init --after again")
+    log = fc_core.sh(["git", "log", "--format=%s", f"{base}..{branch}"], wt, check=False)
+    if log.returncode != 0:
+        sys.exit(f"cannot tell what {branch} holds beyond {base}, so --after {after_name} cannot move it: {log.stderr.strip()}")
+    own = [s for s in log.stdout.splitlines() if not s.endswith("Ignore local tool directories")]
+    if own:
+        sys.exit(f"project {proj.name} has {len(own)} commit{'s' if len(own) > 1 else ''} of its own on {branch}, so --after {after_name} cannot move it: "
+                 f"rebase it onto {after} yourself, or start the project again")
+    if fc_core.sh(["git", "status", "--porcelain"], wt, check=False).stdout.strip():
+        sys.exit(f"{wt} has uncommitted changes, so --after {after_name} cannot move {branch}: commit or discard them first")
+    fc_core.sh(["git", "reset", "-q", "--hard", after], wt)
+    fc_core.atomic_write(proj / "verify.json", json.dumps({**cfg, "review_base": after, "after": after_name}, indent=2))
+    print(f"branch {branch} moved onto {after}")
+
 def cmd_init(a):
     """Create the project's worktree `../compose-<name>` on its branch (`compose/<name>`, or --branch; from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
@@ -168,6 +192,8 @@ def cmd_init(a):
                 if p == proj or cfg.get("review_base") == old:
                     fc_core.atomic_write((p / "verify.json"), json.dumps({**cfg, **({"branch": a.branch} if p == proj else {"review_base": a.branch, "after": fc_core.project_after(p)})}, indent=2))
             print(f"branch {old} renamed to {a.branch}")
+        if after:
+            move_onto(wt, proj, after, a.after)
     elif a.here:
         wt, proj = here, here / ".compose" / name
     else:
