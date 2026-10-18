@@ -1,6 +1,6 @@
 import json, os, re, sys, threading, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_worktree, fc_linear, fc_models, fc_layers
+import fc_core, fc_config, fc_tasks, fc_worktree, fc_linear, fc_models, fc_stack
 
 
 # ---------- changing course: reflect, hold, change ----------
@@ -285,7 +285,7 @@ def change_undo(a, proj, repo):
     if reset:
         fc_core.say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
         try:
-            fc_layers.register_stack(repo, proj, fc_core.current_branch(repo))
+            fc_stack.register_stack(repo, proj, fc_core.current_branch(repo))
         except Exception as e:  # noqa: BLE001  the branches are reset; the stack can be registered by hand
             fc_core.say(f"stack not re-registered ({str(e)[:200]})")
     if stuck:

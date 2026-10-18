@@ -899,6 +899,15 @@ class PrTextDocs(unittest.TestCase):
         for said in ("one line per task", "test commits folded in", "`compose verify passed`", "no attempt or round counts"):
             self.assertIn(said, self.text)
 
+    def test_the_team_lead_writes_each_layers_title_why_and_what_changed_after_verify_and_before_the_preview(self):
+        self.assertRegex(self.text, r"After verify passes and before you show the product owner the preview, write each layer's PR text")
+        for said in ("`[written: .compose/<slug>/pr/<name>.md]`", "`[generated: write ", "never applied", "`# <title>`", "a reviewer who has not read the tickets",
+                     "not one per commit", "is refused on its `pr` line with the reason", "never restate commit subjects", "ticket ids", "layer or groundwork"):
+            self.assertIn(said, self.text)
+        example = self.text.split("```markdown\n", 1)[1].split("```", 1)[0].splitlines()
+        self.assertEqual([l for l in example if l.startswith("#")], ["# Keep the toggle's state across page reloads", "## Why", "## What changed"])
+        self.assertIn("write each layer's PR text and show the `compose stack` preview", read("sections/6.md"))
+
     def test_the_submit_check_and_push_rule_stay_and_house_rules_hold(self):
         for kept in ("`gh stack submit --auto`", "`submit PR #N on <base>`", "`NO PR for <branch>`"):
             self.assertIn(kept, self.text)

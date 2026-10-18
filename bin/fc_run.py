@@ -1,7 +1,7 @@
 import argparse, json, os, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -191,7 +191,7 @@ def run_tasks(repo, proj, tasks, a):
     fc_core.say(f"run done   {passed}/{len(results)} passed  wall {fc_core.fmt(total)}  sum of task time {fc_core.fmt(sum(r['seconds'] for r in results))}")
     fc_core.say(fc_core.LEDGER.line())
     if passed and not a.no_stack:
-        fc_layers.register_stack(repo, proj, a.trunk)
+        fc_stack.register_stack(repo, proj, a.trunk)
     if halt:
         done_ids = {r["id"] for r in results if r["status"] in (*fc_tasks.FINISHED, "already_green")}
         remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)

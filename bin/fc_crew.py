@@ -292,10 +292,11 @@ def cmd_crew(a):
 
 GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 GUARDED_ROLES = ("orchestrator", "planner")
-CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+)$")  # the team lead's own: the CLI's config
+CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+|[^/]+/pr/[^/]+\.md)$")  # the team lead's own: the CLI's config and the layers' PR text
 
 def guard_decision(tool, path, role):
-    """None to allow, else why not. The team lead writes Linear and the CLI's JSON; code, tests, and docs are teammate work."""
+    """None to allow, else why not. The team lead writes Linear, the CLI's JSON, and the layers' PR text; code, tests, and docs
+    are teammate work."""
     if role not in GUARDED_ROLES or tool not in GUARDED_TOOLS or not path:
         return None
     p = Path(path).expanduser().resolve()

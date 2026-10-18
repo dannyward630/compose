@@ -532,7 +532,7 @@ class Guard(unittest.TestCase):
             self.assertIsNotNone(fc.fc_crew.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
 
     def test_team_lead_keeps_its_own_files(self):
-        for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json"):
+        for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json", ".compose/shop/pr/001-002.md"):
             self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
         for role in ("orchestrator", "planner"):
             self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".compose/shop/scratch/sync.json"), role), role)

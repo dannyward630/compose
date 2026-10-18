@@ -67,8 +67,8 @@ if a[:2] == ["pr", "edit"]: json.dump({"title": a[a.index("--title") + 1], "body
         return json.loads((self.dir / "pr.json").read_text())
 
     def sync(self, title, body):
-        before = fc.fc_layers.gh_pr_text(self.dir, "b")
-        return fc.fc_layers.write_pr_text(self.dir, self.dir, "b", before, title, body)
+        before = fc.fc_stack.gh_pr_text(self.dir, "b")
+        return fc.fc_stack.write_pr_text(self.dir, self.dir, "b", before, title, body)
 
     def test_text_is_written_on_a_new_pr_and_on_one_the_cli_wrote_but_never_over_an_edit(self):
         self.assertTrue(self.sync("t1", "b1"))
@@ -143,7 +143,7 @@ class Layers(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            self.assertTrue(fc.fc_layers.register_stack(self.repo, self.proj, "compose/p"))
+            self.assertTrue(fc.fc_stack.register_stack(self.repo, self.proj, "compose/p"))
         return out
 
     def changed(self, branch, below):
@@ -290,7 +290,7 @@ class Layers(unittest.TestCase):
         calls = (self.repo / ".git" / "fake-gh-calls").read_text()
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append), self.assertRaises(SystemExit) as e:
-            fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
         self.assertTrue(e.exception.code)
         self.assertEqual((refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text()), before)
         self.assertEqual((self.repo / ".git" / "fake-gh-calls").read_text(), calls)
@@ -316,7 +316,7 @@ class Layers(unittest.TestCase):
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
             try:
-                fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
+                fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
             except SystemExit as e:
                 return out, e.code
         return out, 0
@@ -357,7 +357,7 @@ class Layers(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({**cache, "feature": {"title": "Build it", "description": "Fixes o/r#9."}}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            fc.fc_layers.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
         prs = [l for l in out if l.startswith("pr ")]
         self.assertEqual([l.split()[1] for l in prs], self.layers())
         for i, l in enumerate(prs, 1):
@@ -370,6 +370,72 @@ class Layers(unittest.TestCase):
         calls =(self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
         self.assertFalse([c for c in calls if not c.startswith("stack ")])
         self.assertFalse((self.proj / "pr_text.json").exists())
+
+    def preview(self, **cfg):
+        """`compose stack`'s pr lines without --submit: ({branch: its pr line and body}, the other pr lines)."""
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
+        out = []
+        with mock.patch.object(fc.fc_core, "say", out.append):
+            fc.fc_stack.register_stack(self.repo, self.proj, "compose/p", preview=True)
+        prs = [l for l in out if l.startswith("pr ")]
+        return {l.split()[1]: l for l in prs if l.split()[1] in self.layers()}, [l for l in prs if l.split()[1] not in self.layers()]
+
+    def pr_file(self, name, text):
+        (self.proj / "pr").mkdir(exist_ok=True)
+        (self.proj / "pr" / f"{name}.md").write_text(text)
+
+    WRITTEN = ("# Keep the toggle's state across reloads\n\n## Why\nThe toggle forgot its state on every reload.\nThis stores it.\n\n"
+               "## What changed\n- Store the toggle's state\n- Read it back on load\n")
+
+    def test_a_layers_written_pr_text_replaces_its_title_why_and_what_changed_and_compose_keeps_the_facts(self):
+        cache = json.loads((self.proj / "results" / "tasks.json").read_text())
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({**cache, "feature": {"title": "Build it", "description": "Fixes o/r#9."}}))
+        self.pr_file("001-002", self.WRITTEN)
+        self.pr_file("groundwork", "# Prepare the build\n\n## Why\nIt needs stubs.\n\n## What changed\n- Add stubs\n\n## Notes\nmore\n")
+        prs, rest = self.preview()
+        self.assertEqual(rest, [])
+        self.assertEqual(prs["compose/p-layer-02"],
+                         "pr     compose/p-layer-02  Keep the toggle's state across reloads (2/3)  [written: .compose/p/pr/001-002.md]\n"
+                         "    ## Why\n    The toggle forgot its state on every reload.\n    This stores it.\n    - Part of o/r#9\n\n"
+                         "    ## What changed\n    - Store the toggle's state\n    - Read it back on load\n\n"
+                         "    ## How it was tested\n    - `make 001`\n    - `make 002`\n\n    ## Tickets\n    - ENG-001\n    - ENG-002")
+        self.assertIn("Build 003 (3/3)  [generated: write .compose/p/pr/003.md]\n", prs["compose/p-layer-03"])
+        self.assertIn("- Fixes o/r#9", prs["compose/p-layer-03"])
+        self.assertIn("  [generated: .compose/p/pr/groundwork.md refused: after the title it must be `## Why` then `## What changed`, nothing else]\n",
+                      prs["compose/p-layer-01"])
+        self.assertNotIn("Prepare the build", prs["compose/p-layer-01"])
+
+    def test_a_pr_text_file_follows_its_tasks_to_a_new_layer_and_one_whose_tasks_were_regrouped_is_never_applied(self):
+        self.pr_file("003", self.WRITTEN)
+        self.pr_file("001-002", self.WRITTEN.replace("Keep the toggle's", "Show the panel's"))
+        prs, rest = self.preview(review_layer_lines=1)  # two groundwork layers, then one layer per task
+        self.assertEqual(list(prs), [f"compose/p-layer-0{i}" for i in range(1, 6)])
+        self.assertIn("Keep the toggle's state across reloads (5/5)  [written: .compose/p/pr/003.md]", prs["compose/p-layer-05"])
+        self.assertIn("[generated: write .compose/p/pr/groundwork-2.md]", prs["compose/p-layer-02"])
+        self.assertFalse([l for l in prs.values() if "Show the panel's" in l])
+        self.assertEqual(rest, ["pr     .compose/p/pr/001-002.md matches no layer, so no PR uses it; the layers' files are "
+                                "groundwork.md, groundwork-2.md, 001.md, 002.md, 003.md"])
+
+    def test_pr_text_is_a_title_why_and_bullets_and_anything_else_is_refused_with_the_reason(self):
+        f = Path(tempfile.mkdtemp()) / "001.md"
+        self.assertIsNone(fc.fc_stack.pr_text(f, 72))
+        f.write_text(self.WRITTEN.replace("\n\n## Why", "\n\n\n## Why\n").replace("on load\n", "on load\n\n\n"))
+        self.assertEqual(fc.fc_stack.pr_text(f, 72), ("Keep the toggle's state across reloads",
+                         ["The toggle forgot its state on every reload.", "This stores it."], ["- Store the toggle's state", "- Read it back on load"]))
+        for text, why in [("Keep it\n## Why\nx\n## What changed\n- y", "line 1 must be `# <title>`"),
+                          ("# JS-7: Keep it\n## Why\nx\n## What changed\n- y", "ticket key or (i/n)"),
+                          ("# Keep it (2/3)\n## Why\nx\n## What changed\n- y", "ticket key or (i/n)"),
+                          ("# " + "x" * 73 + "\n## Why\nx\n## What changed\n- y", "the title is 73 characters, at most 72"),
+                          ("# Keep it\nintro\n## Why\nx\n## What changed\n- y", "`## Why` then `## What changed`, nothing else"),
+                          ("# Keep it\n## What changed\n- y\n## Why\nx", "`## Why` then `## What changed`, nothing else"),
+                          ("# Keep it\n## Why\nx\n## What changed\n- y\n### More\n", "`## Why` then `## What changed`, nothing else"),
+                          ("# Keep it\n## Why\n\n## What changed\n- y", "must not be empty"),
+                          ("# Keep it\n## Why\nx\nFixes o/r#9\n## What changed\n- y", "compose adds the Fixes and Part of lines"),
+                          ("# Keep it\n## Why\nx\n## What changed\n- y\nz", "must be a `- ` bullet")]:
+            f.write_text(text)
+            with self.assertRaises(ValueError) as e:
+                fc.fc_stack.pr_text(f, 72)
+            self.assertIn(why, str(e.exception), text)
 
 
 class LayerNames(unittest.TestCase):
@@ -507,8 +573,8 @@ class PrTitle(unittest.TestCase):
         for s in subjects:
             self.git("commit", "-q", "--allow-empty", "-m", s); commits.append(self.git("rev-parse", "HEAD"))
         l = {"branch": branch, "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": commits}
-        with mock.patch.object(fc.fc_layers, "layer_body", return_value=""):  # the body is not this title's concern
-            return fc.fc_layers.layer_pr(self.repo, self.proj, l, n, self.METAS)[0]
+        with mock.patch.object(fc.fc_stack, "layer_body", return_value=""):  # the body is not this title's concern
+            return fc.fc_stack.layer_pr(self.repo, self.proj, l, n, self.METAS)[0]
 
     def test_each_layer_records_the_commits_it_cherry_picks_oldest_first(self):
         real, built = fc.fc_layers.build_layers, []
@@ -535,6 +601,10 @@ class PrTitle(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more task (3/4)")
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
+        Layers.pr_file(self, "001-002", Layers.WRITTEN)  # a written title gets the key and the count too, within the same cap
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Keep the toggle's state across reloads (3/4)")
+        Layers.pr_file(self, "001-002", Layers.WRITTEN.replace("reloads", "reloads " + "x" * 30))
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more task (3/4)")
         self.linear()
         self.assertEqual(self.title(["001", "002", "003"], ["toggle work", "panel work", "menu work"], 1), "JS-2888: Stacked [PRs]")
 
@@ -606,8 +676,8 @@ class PrBody(unittest.TestCase):
                 self.git("add", "-A"); self.git("commit", "-q", "--allow-empty", "-m", subject, *(["-m", extra] if extra else [])); shas[-1].append(self.git("rev-parse", "HEAD"))
         l = {"branch": "compose/p-layer-01", "tasks": tasks, "keys": tasks, "lines": 40, "generated": {}, "commits": [c for cs in shas for c in cs], "units": shas}
         stack = [l, *({"branch": f"compose/p-layer-{i:02d}", "tasks": t} for i, t in enumerate(layers or [], 2))]
-        with mock.patch.object(fc.fc_layers, "layer_title", return_value=""):  # the title is not this body's concern
-            body = fc.fc_layers.layer_pr(self.repo, self.proj, l, 2, self.METAS, stack if layers is not None else ())[1]
+        with mock.patch.object(fc.fc_stack, "layer_title", return_value=""):  # the title is not this body's concern
+            body = fc.fc_stack.layer_pr(self.repo, self.proj, l, 2, self.METAS, stack if layers is not None else ())[1]
         sections, lines = {}, []
         for line in filter(str.strip, body.splitlines()):
             if line.startswith("## "): sections[line[3:]] = lines = []
