@@ -178,3 +178,65 @@ class LinearList(unittest.TestCase):
     def test_json_prints_only_all_nodes(self):
         out, _ = self.run_list(search="cart", json=True)
         self.assertEqual(out.strip(), json.dumps(self.nodes, indent=1))
+
+
+class LinearCreate(unittest.TestCase):
+    TEAM, CREATE = "team(id: $id) { name states { nodes { id name } } labels(first: 250) { nodes { id name } } }", "issueCreate(input: $in) { issue { id identifier } }"
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir()
+        (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.calls, self.team = [], {"name": "Engineering", "states": {"nodes": [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "In Progress"}]},
+                                     "labels": {"nodes": [{"id": "l1", "name": "Bug"}, {"id": "l2", "name": "ui"}]}}
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        if "issueCreate" in query:
+            return {"issueCreate": {"issue": {"id": "new-id", "identifier": "ENG-12"}}}
+        return {"team": self.team}
+
+    def create(self, **kw):
+        with mock.patch.object(fc.fc_linear, "linear_issue", return_value={"id": "parent-id"}) as issue, mock.patch.object(fc.fc_linear, "linear_blocked_by") as blocked, redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_create(self.args("create", title="Fix it", **kw))
+        self.assertEqual(out.getvalue().strip(), "created ENG-12")
+        self.assertEqual([v for q, v in self.calls if self.TEAM in q], [{"id": "t1"}])
+        return [v["in"] for q, v in self.calls if self.CREATE in q], issue, blocked
+
+    def test_read_body_takes_the_file_then_piped_stdin_then_nothing(self):
+        (body := self.repo / "body.md").write_text("from file\n")
+        with mock.patch("sys.stdin", io.StringIO("from stdin")):
+            self.assertEqual(fc.fc_linear_cmd.read_body(self.args("create", file=str(body))), "from file\n")
+            self.assertEqual(fc.fc_linear_cmd.read_body(self.args("create")), "from stdin")
+        self.assertEqual(fc.fc_linear_cmd.read_body(self.args("create")), "")
+
+    def test_state_and_labels_match_names_case_insensitively_for_the_flags_given(self):
+        sl = lambda **kw: fc.fc_linear_cmd.state_and_labels(self.team, self.args("create", **kw))
+        got = sl(state="in progress", label=["bug", "UI"])
+        self.assertEqual((sorted(got), got["stateId"]), (["labelIds", "stateId"], "s2")); self.assertCountEqual(got["labelIds"], ["l1", "l2"])
+        self.assertEqual((sl(), sl(state="TODO"), sl(label=["Ui"])), ({}, {"stateId": "s1"}, {"labelIds": ["l2"]}))
+        self.assertEqual(self.fails(lambda: sl(state="Doing")), (1, "team Engineering has no state 'Doing'"))
+        self.assertEqual(self.fails(lambda: sl(label=["bug", "perf"])), (1, "team Engineering has no label 'perf'; compose linear labels --create perf makes it"))
+
+    def test_create_sends_every_flag_then_sets_the_blockers(self):
+        (body := self.repo / "body.md").write_text("Steps.")
+        sent, issue, blocked = self.create(file=str(body), parent="ENG-1", state="todo", label=["BUG"], blocked_by="ENG-2,ENG-3")
+        self.assertEqual(sent, [{"teamId": "t1", "projectId": "p1", "title": "Fix it", "description": "Steps.", "parentId": "parent-id", "stateId": "s1", "labelIds": ["l1"]}])
+        issue.assert_any_call("ENG-1"); blocked.assert_called_once_with({"id": "new-id"}, ["ENG-2", "ENG-3"])
+
+    def test_create_without_flags_sends_only_the_base_input(self):
+        with mock.patch("sys.stdin", io.StringIO("piped body")):
+            sent, issue, blocked = self.create()
+        self.assertEqual(sent, [{"teamId": "t1", "projectId": "p1", "title": "Fix it", "description": "piped body"}])
+        issue.assert_not_called(); blocked.assert_not_called()
+
+    def test_refuses_without_a_title_or_with_an_unknown_name_and_creates_nothing(self):
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_create, self.args("create")), (1, "create needs --title"))
+        self.assertIn("has no label 'perf'", self.fails(fc.fc_linear_cmd.verb_create, self.args("create", title="Fix it", label=["perf"]))[1])
+        self.assertFalse([q for q, _ in self.calls if "issueCreate" in q])
