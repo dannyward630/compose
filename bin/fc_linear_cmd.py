@@ -10,7 +10,9 @@ def issue_line(issue):
     return f"{issue['identifier']} {issue['state']['name']} {labels[0]['name'] if labels else '-'} {issue['title']}"
 
 def read_body(a):
-    raise NotImplementedError
+    if a.file:
+        return Path(a.file).read_text()
+    return "" if sys.stdin.isatty() else sys.stdin.read()
 
 def linear_project(repo):
     path = Path(repo) / ".compose" / "linear.json"
@@ -36,7 +38,21 @@ def in_scope(issue, a):
         sys.exit(f"{issue['identifier']} is not in project {p['name']}; pass --any-project to use it")
 
 def state_and_labels(team, a):
-    raise NotImplementedError
+    out = {}
+    if a.state:
+        s = next((s for s in team["states"]["nodes"] if s["name"].lower() == a.state.lower()), None)
+        if not s:
+            sys.exit(f"team {team['name']} has no state '{a.state}'")
+        out["stateId"] = s["id"]
+    if a.label:
+        ids = []
+        for name in a.label:
+            l = next((l for l in team["labels"]["nodes"] if l["name"].lower() == name.lower()), None)
+            if not l:
+                sys.exit(f"team {team['name']} has no label '{name}'; compose linear labels --create {name} makes it")
+            ids.append(l["id"])
+        out["labelIds"] = ids
+    return out
 
 def replace_section(body, heading, text):
     raise NotImplementedError
@@ -89,7 +105,19 @@ def verb_list(a):
         print(issue_line(n))
 
 def verb_create(a):
-    raise NotImplementedError
+    if not a.title:
+        sys.exit("create needs --title")
+    p = linear_project(a.repo)
+    team = fc_linear.linear_gql("query($id: String!) { team(id: $id) { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } }",
+                                {"id": p["team"]["id"]})["team"]
+    inp = {"teamId": p["team"]["id"], "projectId": p["id"], "title": a.title, "description": read_body(a)}
+    inp.update(state_and_labels(team, a))
+    if a.parent:
+        inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
+    issue = fc_linear.linear_gql("mutation($in: IssueCreateInput!) { issueCreate(input: $in) { issue { id identifier } } }", {"in": inp})["issueCreate"]["issue"]
+    if a.blocked_by:
+        fc_linear.linear_blocked_by({"id": issue["id"]}, a.blocked_by.split(","))
+    print(f"created {issue['identifier']}")
 
 def verb_update(a):
     raise NotImplementedError
