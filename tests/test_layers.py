@@ -157,6 +157,25 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.git("show", "fast/p/layer-02:shared.test"), "a\n" * 5 + "b\n" * 4 + "b")
         self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
 
+    def test_groundwork_written_after_a_tasks_test_gets_its_own_layer_above_that_task(self):
+        """A commit no task owns, on a file a task's test commit touched before it, cannot replay in the bottom groundwork: it is a
+        groundwork layer of its own right above that task, never inside the task's layer. A later commit on a file it touched goes
+        to the first task above it that protects the file, not into the task below."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test", "shared.test"], "files": ["003.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("t002.test", "g\n" + "t\n" * 5); self.write("shared.test", "g\n"); self.commit("guard every test")  # no task owns both
+        self.write("shared.test", "g\n" + "a\n" * 5); self.commit("tests for 003")  # protected by 001 and 003, written after the guard
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03", "fast/p/layer-04"])
+        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
+        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t002.test", "shared.test"})
+        self.assertEqual(self.changed("fast/p/layer-04", "fast/p/layer-03"), {"t003.test", "003.src", "shared.test"})
+        self.assertIn("layer-03  groundwork x1: 2 lines", [l for l in out if l.startswith("layer ")][2])
+        self.assertEqual(self.git("diff", "fast/p/layer-04", "fast/p/003"), "")
+
     def test_a_project_with_a_stored_branch_names_its_layers_from_it(self):
         out = self.stack(branch="compose/p")
         self.assertEqual(self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])

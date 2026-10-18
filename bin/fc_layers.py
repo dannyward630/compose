@@ -115,10 +115,11 @@ def commit_facts(repo, c):
 
 def group_units(units, budget):
     """Consecutive units into layers of at most `budget` counted lines, in order. A unit (a task with its tests, or one groundwork
-    commit) is never split, so one bigger than the budget is a layer of its own."""
+    commit) is never split, so one bigger than the budget is a layer of its own; groundwork and a task never share a layer."""
     layers = []
     for u in units:
-        if layers and sum(x["lines"] for x in layers[-1]) + u["lines"] <= budget:
+        if layers and (layers[-1][-1]["name"] == "groundwork") == (u["name"] == "groundwork") \
+                and sum(x["lines"] for x in layers[-1]) + u["lines"] <= budget:
             layers[-1].append(u)
         else:
             layers.append([u])
@@ -128,33 +129,39 @@ def review_units(repo, proj, base, trunk, chain):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; the tests of a task not in the chain yet ride with the
-    last one. Two tasks can protect one file: a commit on it never goes to a task before the one that took an earlier commit on
-    the same file, so every file's commits replay in the trunk's order and the layers apply."""
+    last one. Every file's commits replay in the trunk's order, so the layers apply: a commit on a file an earlier commit placed
+    in a task's unit goes no lower than that. An owned one then goes to the first task at or above that place that protects
+    its files; one no task owns is a groundwork unit of its own right above that task's unit, never inside it."""
     protected = {m["id"]: set(m["protected"]) for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
     ids = [b.rsplit("/", 1)[1] for b in chain]
-    def unit(name, commits):
+    def unit(name, commits, key=None):
         facts = [commit_facts(repo, c) for c in commits]
         gen = {}
         for _, _, g in facts:
             for f, n in g.items():
                 gen[f] = gen.get(f, 0) + n
-        return {"name": name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
-    ground, owned, last = [], {t: [] for t in ids}, {}  # last: file -> position in the chain of the task that took its latest commit
+        return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
+    # slot 2i is task i's unit, 2i+1 the groundwork right above it; last: file -> slot of the latest commit placed on it
+    ground, slots, last = [], {}, {}
     for c in fc_core.sh(["git", "rev-list", "--reverse", "--no-merges", f"{base}..{trunk}"], repo).stdout.split():
         files = set(commit_facts(repo, c)[0])
-        owner = next((t for t in ids + sorted(set(protected) - set(ids)) if files and files <= protected.get(t, set())), None)
-        pos = None if owner is None else ids.index(owner) if owner in owned else len(ids) - 1
+        owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set())]
+        if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
+            owners = [len(ids) - 1]
         floor = max((last[f] for f in files if f in last), default=None)
-        if floor is not None and (pos is None or pos < floor):
-            pos = floor
-        if pos is None:
+        if owners:
+            slot = next((2 * i for i in owners if floor is None or 2 * i >= floor), floor)
+        else:
+            slot = None if floor is None else floor | 1
+        if slot is None:
             ground.append(unit("groundwork", [c]))
         else:
-            owned[ids[pos]].append(c)
-            last.update(dict.fromkeys(files, pos))
+            slots.setdefault(slot, []).append(c)
+            last.update(dict.fromkeys(files, slot))
     units, prev = ground, trunk
-    for b, t in zip(chain, ids):
-        units.append(unit(t, owned[t] + fc_core.sh(["git", "rev-list", "--reverse", "--no-merges", f"{prev}..{b}"], repo).stdout.split()))
+    for i, (b, t) in enumerate(zip(chain, ids)):
+        units.append(unit(t, slots.get(2 * i, []) + fc_core.sh(["git", "rev-list", "--reverse", "--no-merges", f"{prev}..{b}"], repo).stdout.split()))
+        units += [unit("groundwork", [c], f"groundwork after {t}") for c in slots.get(2 * i + 1, [])]
         prev = b
     return units
 
@@ -170,21 +177,21 @@ def cherry_pick_same(wt, c):
 
 def record_layers(proj, layers):
     """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it."""
-    fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l["tasks"])) for l in layers}, indent=2))
+    fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l.get("keys", l["tasks"]))) for l in layers}, indent=2))
 
 def group_by_record(proj, units, budget):
-    """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork), and
+    """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork, or
+    groundwork above that task), and
     units no layer holds yet are grouped as usual into new layers above. [(recorded branch or None, units)]."""
     rec_file = Path(proj) / "layers.json"
     rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
     groups, seen = [], set()
-    for b, names in rec.items():
-        held = [u for u in units if u["name"] in names and u["name"] not in seen]
-        seen |= {u["name"] for u in held}
+    for b, keys in rec.items():
+        held = [i for i, u in enumerate(units) if i not in seen and u.get("key", u["name"]) in keys]
+        seen.update(held)
         if held:
-            groups.append((b, held))
-    new = [u for u in units if u["name"] not in seen]
-    return groups + [(None, g) for g in group_units([u for u in new if u["name"] == "groundwork"], budget) + group_units([u for u in new if u["name"] != "groundwork"], budget)]
+            groups.append((b, [units[i] for i in held]))
+    return groups + [(None, g) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
 
 def build_layers(repo, proj, base, trunk, chain, wt, budget):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
@@ -208,7 +215,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget):
         for u in g:
             for f, n in u["generated"].items():
                 gen[f] = gen.get(f, 0) + n
-        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen})
+        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen})
         prev = branch
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0 \
