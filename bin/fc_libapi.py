@@ -10,7 +10,15 @@ wt, (imports, words) = sys.argv[1], json.load(sys.stdin)
 std = getattr(sys, "stdlib_module_names", sys.builtin_module_names)
 tops = {}
 for d in md.distributions():
-    for t in (d.read_text("top_level.txt") or "").split():
+    names = (d.read_text("top_level.txt") or "").split()
+    if not names:
+        for f in d.files or ():
+            p = str(f)
+            if not p.endswith(".py"): continue
+            first = p.split("/")[0]
+            if first.endswith(".dist-info") or first.endswith(".data") or first in ("..", "__pycache__"): continue
+            names.append(first if "/" in p else first[:-3])
+    for t in names:
         tops.setdefault(t, d)
 def line(label, obj):
     try: sig = str(inspect.signature(obj))
