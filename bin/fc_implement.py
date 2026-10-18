@@ -33,7 +33,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         if old:  # a previous run's agent for this task: its pane goes, the name is reused
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         # No key in the pane's env: pi's tools (the task's test among them) inherit it. pi gets it in --api-key below.
-        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {"GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1"})
+        pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, {"GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1",
+                                                                     "COMPOSE_CONFIG": fc_core.scratch_config()})
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
@@ -193,7 +194,8 @@ HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely 
 def timed(cmd, cwd, limit, env=None):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
-    comes back scrubbed of secrets: it goes on to models and results/."""
+    comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged."""
+    before = fc_core.home_state()
     p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     try:
@@ -210,6 +212,8 @@ def timed(cmd, cwd, limit, env=None):
                 break
         out, err = (fc_core.scrub(x or "") for x in p.communicate())
         return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
+    finally:
+        fc_core.flag_home(before, f"`{cmd}`")
 
 def run_test(meta, wt):
     """A task's test command under the time limit (a task's block can set `test_timeout:`)."""

@@ -41,7 +41,7 @@ CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written a
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
-PROBE_CACHE = Path.home() / ".compose" / "model-probe.json"
+PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
 
 
 def read_config():

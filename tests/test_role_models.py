@@ -180,7 +180,9 @@ class PlannerChain(unittest.TestCase):
             fc.fc_models.probe_once("claude:claude-haiku-5-5", 60)  # its Stop hook would otherwise park the lead's watch in the probe
             fc.fc_claude.claude_once(".", "hi")
         for call in run.call_args_list:
-            self.assertEqual([k for k in call.kwargs.get("env") or os.environ if k.startswith("COMPOSE_")], [])
+            env = call.kwargs.get("env") or os.environ
+            self.assertEqual([k for k in env if k.startswith("COMPOSE_") and k != "COMPOSE_CONFIG"], [])
+            self.assertNotEqual(env["COMPOSE_CONFIG"], str(fc.fc_config.CONFIG_PATH))  # its tools run project code: a scratch config
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:

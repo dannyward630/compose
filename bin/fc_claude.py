@@ -12,10 +12,10 @@ def claude_id(model):
 
 
 def headless_env():
-    """The environment for a Claude Code process the CLI runs headless: no COMPOSE_* at all, above all not the herdr
-    tab's role, project, and worktree, so the plugin's hooks treat it as no one's session (a team lead's Stop hook would
-    park a watch in it, and its guard would block an implementer's edits). No secret vars either: its tools run project code."""
-    return {k: v for k, v in fc_core.clean_env().items() if not k.startswith("COMPOSE_")}
+    """The environment for a Claude Code process the CLI runs headless: no COMPOSE_* but a scratch COMPOSE_CONFIG, above all
+    not the herdr tab's role, project, and worktree, so the plugin's hooks treat it as no one's session (a team lead's Stop hook
+    would park a watch in it, and its guard would block an implementer's edits). No secret vars either: its tools run project code."""
+    return {k: v for k, v in fc_core.clean_env().items() if not k.startswith("COMPOSE_") or k == "COMPOSE_CONFIG"}
 
 NO_ATTRIBUTION = json.dumps({"attribution": {"commit": "", "pr": ""}})  # `--settings` outranks the user settings: no Co-Authored-By trailer or "Generated with" line on any commit a Claude session makes
 def crew_settings(role, cwd):

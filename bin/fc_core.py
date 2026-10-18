@@ -1,4 +1,4 @@
-import hashlib, json, os, re, subprocess, sys, threading, time
+import atexit, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 
@@ -133,8 +133,36 @@ SECRET_VALUES = set()  # apply_config adds the workspace's keys and those in ~/.
 REDACTED = "<redacted>"
 
 def clean_env(env=None):
-    """`env` (the process env by default) without the secret vars: for every process that runs project code, a model's tools included."""
-    return {k: v for k, v in (os.environ if env is None else env).items() if k not in SECRET_VARS}
+    """`env` (the process env by default) without the secret vars, and with a scratch COMPOSE_CONFIG: for every process that
+    runs project code, a model's tools included."""
+    return {**{k: v for k, v in (os.environ if env is None else env).items() if k not in SECRET_VARS}, "COMPOSE_CONFIG": scratch_config()}
+
+# ---------- the user's ~/.compose: project code gets its own, and a write to the user's is flagged ----------
+# When the project is compose itself, the code under test is a compose that reads and writes its config, keys, and caches.
+# HOME stays as it is: git's identity and the toolchains' caches (rustup, uv, npm, gh) live there and tests need them.
+SCRATCH_CONFIGS = []  # removed when the CLI exits
+CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl"}  # what other compose processes write there at any time
+
+def scratch_config():
+    """A COMPOSE_CONFIG in a fresh, empty directory of its own."""
+    if not SCRATCH_CONFIGS:
+        atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in SCRATCH_CONFIGS])
+    SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix="compose-config-"))
+    return str(Path(SCRATCH_CONFIGS[-1]) / "config.json")
+
+def home_state():
+    """name -> (size, mtime) of each entry of the user's ~/.compose, the CLI's own logs and caches left out."""
+    home = Path.home() / ".compose"
+    entries = [p for p in home.iterdir() if p.name not in CLI_OWN and not p.name.endswith(".tmp")] if home.is_dir() else []
+    return {p.name: (st.st_size, st.st_mtime_ns) for p in entries for st in [p.lstat()]}
+
+def flag_home(before, what):
+    """Say which entries of the user's ~/.compose changed since `before` (a home_state()) while `what` ran, if any."""
+    after = home_state()
+    changed = sorted(n for n in before.keys() | after.keys() if before.get(n) != after.get(n))
+    if changed:
+        say(f"WARNING: ~/.compose changed while {what} ran: {', '.join(changed)}. Project code gets its own COMPOSE_CONFIG, "
+            "so this one wrote the user's by its own path; check those files")
 
 def scrub(text):
     """text with the value of every secret var in the process env, and every key apply_config collected, as <redacted>."""

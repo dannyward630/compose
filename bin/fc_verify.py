@@ -267,6 +267,7 @@ def e2e_stage(repo, cfg, panes, report, findings):
 def run_stages(repo, proj, cfg, a):
     """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance."""
     report, ok, findings = {"checks": [], "e2e": [], "review": None, "acceptance": None}, True, []
+    home = fc_core.home_state()
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
     stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
@@ -340,6 +341,7 @@ def run_stages(repo, proj, cfg, a):
     if e2e:
         ok &= e2e.result()
     pool.shutdown()
+    fc_core.flag_home(home, "verify's checks and e2e")
     return ok, report, "\n\n".join(findings)
 
 def verify_root(repo, proj, cfg):

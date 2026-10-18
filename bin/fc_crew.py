@@ -76,6 +76,8 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"or 'unknown' instead of a guess, and report failures and partial results plainly with the evidence.\n"
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
             f"and a test failing on the stubs plus the team lead's read of it is the proof.\n"
+            f"Run tests and the project's own commands through `compose timed <seconds> -- <command>`: it gives them a scratch "
+            f"~/.compose and says if your real one changes.\n"
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
@@ -315,7 +317,7 @@ def cmd_guard(a):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 
 SKILL_DIR = Path.home() / ".claude" / "skills" / "compose"  # the main checkout every live session reads: a merge changes it
-SKILL_SEEN = Path.home() / ".compose" / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
+SKILL_SEEN = fc_config.CONFIG_PATH.parent / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
 # ponytail: never pruned, a few hundred bytes per session; prune by mtime if the directory grows
 SKILL_FILES = ("SKILL.md", "sections/*.md", "commands/*.md")
 

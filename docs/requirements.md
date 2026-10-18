@@ -83,7 +83,8 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 
 | Path | What |
 |---|---|
-| `~/.compose/config.json` | workspaces, their keys, model choices (`COMPOSE_CONFIG` moves it) |
+| `~/.compose/config.json` | workspaces, their keys, model choices (`COMPOSE_CONFIG` moves it and the files below beside it) |
+| `~/.compose/skill-seen/` | the skill files each session last saw |
 | `~/.compose/.env` | verify's model keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
 | `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports, with the issue URL once filed |
@@ -95,7 +96,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 
 | Variable | Effect |
 |---|---|
-| `COMPOSE_CONFIG` | path of the config file |
+| `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING` |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
 | `COMPOSE_NO_TRAIL=1` | skip trail |
 | `COMPOSE_FAKE_402=<provider>` | simulate a billing halt (tests) |

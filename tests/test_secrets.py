@@ -17,6 +17,7 @@ OTHER = "other-test-" + "2" * 32  # any *_API_KEY under `env`
 DOTENV = "dotenv-test-" + "3" * 32  # TEXT_MODEL_API_KEY in ~/.compose/.env
 SECRET_NAMES = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "TYPESAFE_API_KEY", "OPENCODE_CONFIG_CONTENT", "OTHER_API_KEY")
 GIT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+USER_CONFIG = json.dumps({"openrouter_api_key": "sk-or-v1-user" + "4" * 52})  # the user's own ~/.compose/config.json, under the test's HOME
 
 
 class Secrets(unittest.TestCase):
@@ -27,13 +28,21 @@ class Secrets(unittest.TestCase):
         cfg.parent.mkdir()
         cfg.write_text(json.dumps({"openrouter_api_key": KEY, "env": {"TYPESAFE_API_KEY": TYPESAFE, "OTHER_API_KEY": OTHER, "PLAIN": "x"}}))
         (cfg.parent / ".env").write_text(f"TEXT_MODEL_API_KEY={DOTENV}\n")
+        (self.root / "user" / ".compose").mkdir(parents=True)
+        (self.root / "user" / ".compose" / "config.json").write_text(USER_CONFIG)
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc.fc_config, "ENV_FILE", cfg.parent / ".env"),
                   mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None),
                   mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS)), mock.patch.object(fc.fc_core, "SECRET_VALUES", set()),
-                  mock.patch.dict(os.environ, {**GIT, "OPENCODE_CONFIG_CONTENT": "{}"})):
+                  mock.patch.dict(os.environ, {**GIT, "OPENCODE_CONFIG_CONTENT": "{}", "HOME": str(self.root / "user")})):
             p.start()
             self.addCleanup(p.stop)
         fc.fc_config.apply_config()
+
+    def assertScratch(self, config):
+        """config is a COMPOSE_CONFIG in a directory of its own, not the user's ~/.compose and not the CLI's own config."""
+        self.assertNotIn(str(Path.home()), config)
+        self.assertNotEqual(Path(config), fc.fc_config.CONFIG_PATH)
+        self.assertEqual(Path(config).name, "config.json")
 
     def assertClean(self, text, names=True):
         for v in (KEY, TYPESAFE, OTHER, DOTENV):
@@ -71,17 +80,39 @@ class Secrets(unittest.TestCase):
         proj, prompts = self.run_task("python3 -c \"import os; assert open('a.txt').read().strip()=='yes', sorted(os.environ)\"")
         log = (proj / "results" / "001.test.log").read_text()
         self.assertIn("PLAIN", log)  # the rest of the env is there
+        self.assertIn("COMPOSE_CONFIG", log)
         self.assertClean(log)
         self.assertClean(prompts[1])
 
     def test_compose_timed_runs_the_command_without_them(self):
         env = {**os.environ, "OPENROUTER_API_KEY": KEY, "TYPESAFE_API_KEY": TYPESAFE}
+        env.pop("COMPOSE_CONFIG", None)
         p = subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--", "env"], capture_output=True, text=True, env=env)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("PATH=", p.stdout)
         self.assertNotIn("OPENROUTER_API_KEY", p.stdout)
         self.assertNotIn("TYPESAFE_API_KEY", p.stdout)
         self.assertNotIn(KEY, p.stdout)
+
+    def test_compose_code_under_test_keeps_its_state_out_of_the_users_compose_home_and_a_write_there_is_flagged(self):
+        env = {**os.environ}
+        env.pop("COMPOSE_CONFIG", None)
+        timed = lambda cmd: subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--", cmd],
+                                           capture_output=True, text=True, env=env, cwd=self.root)
+        where = ("import sys; sys.path.insert(0, sys.argv[1]); import fc_config, fc_crew; "
+                 "print(fc_config.CONFIG_PATH, fc_config.ENV_FILE, fc_config.PROBE_CACHE, fc_crew.SKILL_SEEN)")
+        p = timed(f"python3 -c '{where}' {ROOT / 'bin'}")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        paths = [Path(x) for x in p.stdout.split()]
+        self.assertScratch(str(paths[0]))
+        self.assertEqual({x.parent for x in paths}, {paths[0].parent})
+        p = timed("python3 -c \"import os, pathlib; pathlib.Path(os.environ['COMPOSE_CONFIG']).write_text('{}')\"")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("WARNING", p.stdout + p.stderr)
+        p = timed("echo '{}' > \"$HOME/.compose/config.json\"; echo x > \"$HOME/.compose/auth.json\"")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("WARNING: ~/.compose changed while", p.stdout)
+        self.assertIn("auth.json, config.json", p.stdout)
 
     def test_verify_checks_and_e2e_drivers_run_without_them(self):
         r = fc.fc_jev.driver_e2e({"name": "d", "setup": f"env > {self.root / 'setup-env'}", "setup_wait": 1, "driver": "env; exit 1"}, self.root)
@@ -95,6 +126,13 @@ class Secrets(unittest.TestCase):
         self.assertIn("PLAIN", report["checks"][0]["output"])
         self.assertClean(report["checks"][0]["output"])
         self.assertClean(findings)
+        self.assertScratch(next(l for l in report["checks"][0]["output"].splitlines() if l.startswith("COMPOSE_CONFIG=")).split("=", 1)[1])
+        self.assertScratch(next(l for l in r["stdout"].splitlines() if l.startswith("COMPOSE_CONFIG=")).split("=", 1)[1])
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}), mock.patch("sys.stdout", out):
+            fc.fc_verify.run_stages(self.root, self.root, {"checks": ["echo x > \"$HOME/.compose/auth.json\""]}, a)
+        self.assertIn("WARNING: ~/.compose changed while", out.getvalue())
+        self.assertIn("auth.json", out.getvalue())
 
     def test_harnesses_get_the_key_but_not_in_the_env_their_tools_inherit(self):
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
@@ -104,6 +142,7 @@ class Secrets(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--api-key") + 1], KEY)
         self.assertIn("PLAIN", env)
         self.assertClean(json.dumps(env))
+        self.assertScratch(env["COMPOSE_CONFIG"])
 
         run = mock.Mock(return_value=mock.Mock(stdout='{"type":"text","sessionID":"s","part":{"text":"ok"}}', stderr="", returncode=0))
         with mock.patch.object(subprocess, "run", run):
@@ -116,6 +155,7 @@ class Secrets(unittest.TestCase):
         self.assertEqual(oct(f.stat().st_mode & 0o777), "0o600")
 
         self.assertClean(json.dumps(fc.fc_claude.headless_env()))
+        self.assertScratch(fc.fc_claude.headless_env()["COMPOSE_CONFIG"])
 
     def test_the_herdr_pi_pane_gets_no_key_in_its_env(self):
         panes, starts = [], []
@@ -127,6 +167,7 @@ class Secrets(unittest.TestCase):
                 fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter-fast/x/y", "hi", None,
                                          {"meta": {"id": "001"}, "proj": self.root / "proj", "space": "s"}, timeout=1)
         self.assertClean(json.dumps(panes[0]))
+        self.assertScratch(panes[0]["COMPOSE_CONFIG"])
         self.assertEqual(starts[0][starts[0].index("--api-key") + 1], KEY)
 
     # ---------- the scrub half ----------
