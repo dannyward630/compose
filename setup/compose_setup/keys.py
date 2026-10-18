@@ -11,7 +11,7 @@ import fc_auth, fc_config, fc_keys, fc_steps
 KINDS = ("openrouter", "typesafe", "linear", "figma")
 REQUIRED = ("openrouter", "typesafe", "linear")
 LABELS = {"openrouter": "OpenRouter", "typesafe": "TypeSafe", "linear": "Linear", "figma": "Figma"}
-MARKS = {"openrouter": "required", "typesafe": "required", "linear": "required, or the claude.ai Linear connector", "figma": "optional"}
+MARKS = {"openrouter": "required", "typesafe": "required", "linear": "required", "figma": "optional"}
 HINTS = {"openrouter": "openrouter.ai/keys", "typesafe": "your TypeSafe account", "linear": "linear.app/settings/api", "figma": "a Figma personal access token"}
 
 
@@ -68,7 +68,6 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         super().__init__()
         self.workspace = workspace
         self.status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), self.workspace, fc_steps.FRAMELINK_ENV)
-        self.state = fc_keys.linear_state(self.status, fc_keys.linear_connected())
         self.saved: List[str] = []
         self.warned = False
 
@@ -90,8 +89,6 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
         """The presence line beside a key, and its color class; never a value."""
         if self.status[kind]:
             return "set", "present"
-        if kind == "linear" and self.state == "connector":
-            return "connector connected", "present"
         return "not set", "absent"
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -120,7 +117,7 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
             shown = self.query_one(f"#{kind}-status", Static)
             shown.update(text)
             shown.set_classes(f"key-status {state_class}")
-        missing = [k for k in REQUIRED if not self.status[k] and not (k == "linear" and self.state == "connector")]
+        missing = [k for k in REQUIRED if not self.status[k]]
         if missing and not self.warned:
             self.warned = True
             warnings = [Static(fc_keys.skipped_line(kind, self.workspace), classes="skipped") for kind in missing]
