@@ -83,6 +83,11 @@ class SetupApp(App[int]):
         if state == "running":
             self.query_one("#steps", ListView).index = i
 
+    def check_action(self, action: str, parameters) -> bool:
+        if action in ("skip", "choose", "start"):
+            return len(self.screen_stack) == 1
+        return True
+
     def action_skip(self) -> None:
         i = self.query_one("#steps", ListView).index
         if i in self.skipped:
