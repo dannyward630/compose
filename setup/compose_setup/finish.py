@@ -73,7 +73,7 @@ class FinishScreen(Screen[str]):
             return "error"
         return ""
 
-    def _show(self, lines: List[str], code: int) -> None:
+    async def _show(self, lines: List[str], code: int) -> None:
         self.code = code
         self.query("#loading").remove()
         if code == 0:
@@ -86,8 +86,9 @@ class FinishScreen(Screen[str]):
                 *(Wrapped(line, classes=self._kind(line), markup=False) for line in lines),
                 id="lines",
         )
-        self.mount(lines_area, Horizontal(*buttons, id="buttons"))
-        self.call_after_refresh(lines_area.focus)
+        await self.mount(lines_area, Horizontal(*buttons, id="buttons"))
+        lines_area.focus()
+        lines_area.scroll_end(animate=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "keys":
