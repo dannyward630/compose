@@ -392,7 +392,7 @@ def cmd_testcrews(a):
               f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}")
 
 def test_branch(proj, tid):
-    return f"fast/{proj.name}/tests-{tid}"
+    return fc_worktree.task_prefix(fc_herdr.project_worktree(proj), proj) + f"tests-{tid}"
 
 def test_open(proj, tid):
     """Whether a test writer's branch is still to be collected."""
