@@ -26,14 +26,17 @@ def version_of(tool):
     return tuple(map(int, m.group().split("."))) if m else None
 
 def owned_link(name, checkout):
-    """(ok, detail) for one of the links compose owns (fc_checks.owned_links): a dangling link names link and raw target."""
+    """(ok, detail) for one of the links compose owns (fc_checks.owned_links): ok when the link resolves to its place in this or any compose checkout (a directory holding bin/compose.py and SKILL.md); a dangling link names link and raw target."""
     link, target = {n: (l, t) for n, l, t in fc_checks.owned_links(checkout)}[name]
     state, seen = fc_checks.link_state(link)
     if state == "dangling":
         return False, f"dangling link {link} -> {seen}"
-    if state != "ok" or seen != str(Path(target).resolve()):
-        return False, f"{link} is not a link to {target}"
-    return True, ""
+    if state == "ok":
+        rel = Path(target).relative_to(Path(checkout))
+        seen = Path(seen)
+        if any((c / "bin/compose.py").exists() and (c / "SKILL.md").exists() and c / rel == seen for c in (seen, *seen.parents)):
+            return True, ""
+    return False, f"{link} is not a link to {target}"
 
 def key_ok(kind):
     """(ok, detail) for one key row: a non-empty key (Linear: or the Connected claude.ai connector); never a key value."""
