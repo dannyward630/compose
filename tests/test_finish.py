@@ -38,11 +38,11 @@ class Finish(unittest.TestCase):
         lines, code = self.run_finish(ALL)
         merged, added = F.fc_defaults.merge_models(before)
         self.assertEqual((code, lines[-2:]), (0, READY))
-        self.assertTrue(set(added) <= set(lines) and added and set(F.fc_defaults.PRESET_STEPS) <= set(lines))
+        self.assertTrue(added and len([l for l in lines if l.startswith(ADDED)]) == 1 and set(F.fc_defaults.PRESET_STEPS) <= set(lines))
         self.assertIn("probe passed", lines); self.assertEqual(SKIPS(lines), [])
         self.assertEqual(json.loads(self.cfg.read_text()), merged); self.assertEqual(merged["models"]["implementer"], "pi:mine")
         again = self.run_finish(ALL)
-        self.assertEqual(again, self.run_finish(ALL)); self.assertFalse(set(added) & set(again[0]))
+        self.assertEqual(again, self.run_finish(ALL)); self.assertFalse([l for l in again[0] if l.startswith(ADDED)])
         self.assertEqual(json.loads(self.cfg.read_text()), merged)
 
     def test_missing_keys_and_linear_states(self):
