@@ -141,6 +141,29 @@ class OwnedLinks(unittest.TestCase):
         (self.home / ".local/bin/compose").write_text("")  # a copy, not a link
         self.assertFalse(fc_steps.check(self.rows["compose CLI link"], self.co)[0])
 
+class AbsentLink(unittest.TestCase):
+    """An owned link that does not exist reads `~/<link> is missing`; dangling links and links outside a checkout keep their details."""
+    LINKS, setUp, checkout, at = OwnedLinks.LINKS, OwnedLinks.setUp, OwnedLinks.checkout, OwnedLinks.at
+
+    def test_absent_link_is_missing_with_home_as_tilde(self):
+        for home in (str(self.home), str(self.home) + "/"):  # a fresh HOME without ~/.local or ~/.claude, then HOME with a trailing slash
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                for name, link, _, _ in self.LINKS:
+                    self.assertEqual(fc_steps.check(self.rows[name], self.co), (False, f"~/{link} is missing"), f"{name} HOME={home}")
+        for name, link, _, _ in self.LINKS:  # parents exist, the link does not
+            self.assertEqual(self.at(name, link, None), (False, f"~/{link} is missing"), name)
+
+    def test_present_links_keep_their_details(self):
+        plain = self.tmp / "plain"; plain.mkdir()
+        for name, link, rel, _ in self.LINKS:
+            raw = self.tmp / "gone" / rel
+            self.assertEqual(self.at(name, link, raw), (False, f"dangling link {self.home / link} -> {raw}"), name)
+            self.assertEqual(self.at(name, link, plain), (False, f"{self.home / link} is not a link to {self.co / rel}"), name)
+            self.assertEqual(self.at(name, link, self.other / rel), (True, ""), name)
+            self.assertEqual(self.at(name, link, self.co / rel), (True, ""), name)
+        p = self.home / ".local/bin/compose"; p.unlink(); p.write_text("")  # a plain file stands there: present, so not missing
+        self.assertEqual(fc_steps.check(self.rows["compose CLI link"], self.co), (False, f"{p} is not a link to {self.co / 'bin/compose'}"))
+
 class RowFixes(unittest.TestCase):
     """superpowers adds its marketplace first; herdr integration details drop the agent; the pi auth.json override row names file and reason."""
     SUPERPOWERS = "claude plugin marketplace add anthropics/claude-plugins-official && claude plugin install superpowers@claude-plugins-official"
