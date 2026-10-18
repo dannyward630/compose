@@ -294,6 +294,17 @@ class Triage(unittest.TestCase):
             else:
                 self.assertEqual((verdict, reason), ("unknown", f"triage failed: reply cut off at max_tokens={budgets[1]}"))
 
+    def test_the_diff_is_read_from_the_helper_named_branch(self):
+        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        git("branch", "-m", "fast/p/001", "team/p-001"); git("branch", "-D", "fast/p/002")
+        (self.proj / "verify.json").write_text(json.dumps({"branch": "team/p"}))
+        seen = []
+        with mock.patch.object(fc.fc_models, "fast_json", lambda env, system, user, **kw: seen.append(user) or {"verdict": "clean"}), \
+                mock.patch.object(fc.fc_core, "say"):
+            out = fc.fc_run.triage(self.repo, self.proj, ["001"])
+        self.assertEqual(out["001"][0], "clean")
+        self.assertIn("+001 change", seen[0])
+
 
 class ReadFailure(unittest.TestCase):
     def test_haiku_writes_the_brief_read_only_and_failures_add_nothing(self):
