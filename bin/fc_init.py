@@ -284,13 +284,31 @@ def live_crew(proj):
     return why
 
 def close_space(proj, name):
-    """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own."""
+    """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own.
+    A tab whose crew record's last report is not done stays open, one line saying so; the team lead gets no exception."""
     space = fc_herdr.herdr_project_space(proj)
-    if space and fc_herdr.space_record(proj).exists():
-        for t in fc_herdr.herdr_project_tabs(proj, space):
-            fc_herdr.herdr("tab", "close", t["tab_id"])
-    elif space and fc_herdr.herdr_space_is(space, name):
-        fc_herdr.herdr("workspace", "close", space)
+    if not space:
+        return
+    crew = {c["tab"]: c for c in (json.loads(f.read_text()) for f in sorted(fc_crew.crew_dir(proj).glob("*.json"))) if c.get("tab")}
+    kept, closed = [], []
+    for t in fc_herdr.herdr_project_tabs(proj, space):
+        c = crew.get(t["tab_id"])
+        if c:
+            last = (fc_crew.crew_reports(proj, c["name"]) or [{}])[-1]
+            if last.get("state") != "done":
+                print(f"clean left {c['name']} open (last report: {last.get('state', 'nothing')})")
+                kept.append(t["tab_id"])
+                continue
+        closed.append(t["tab_id"])
+    if fc_herdr.space_record(proj).exists():
+        for tid in closed:
+            fc_herdr.herdr("tab", "close", tid)
+    elif fc_herdr.herdr_space_is(space, name):
+        if kept:
+            for tid in closed:
+                fc_herdr.herdr("tab", "close", tid)
+        else:
+            fc_herdr.herdr("workspace", "close", space)
 
 def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=False, force=False):
     """The post-merge step. Fetch, then remove what the reviewer's merges made redundant: task clones and the CLI's stack
