@@ -225,7 +225,8 @@ def group_by_record(proj, units, budget, max_prs=None):
 def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
-    generated}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the tasks)."""
+    generated, commits}], or None when the layers do not add up to the same tree as the task chain (the caller then stacks the
+    tasks)."""
     units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs)
     layers, prev, prefix = [], base, layer_prefix(repo, proj)
@@ -235,16 +236,18 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     for i, (rec_branch, g, folded) in enumerate(groups, 1):
         branch = rec_branch or f"{prefix}layer-{i:02d}"
         fc_core.sh(["git", "checkout", "-q", "-B", branch, prev], wt)
+        commits = []
         for c in (c for u in g for c in u["commits"]):
             if not cherry_pick_same(wt, c):
                 fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
                 fc_core.say(f"stack  STOP  {c[:7]} does not apply on layer {i}; stacking task branches as they are")
                 return None
+            commits.append(fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
         gen = {}
         for u in g:
             for f, n in u["generated"].items():
                 gen[f] = gen.get(f, 0) + n
-        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen,
+        layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen, "commits": commits,
                        **({"fold_cap": max_prs} if folded else {})})
         prev = branch
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
@@ -271,22 +274,31 @@ def layer_note(l, budget):
 def layer_title(repo, proj, l, n, metas):
     """A layer's PR title, from its commits: one commit's subject, else the first task's title or first commit's subject plus
     ` and N more`, with the Jira-key prefix and the ` (i/n)` suffix."""
-    raise NotImplementedError("layer_title")
+    subjects = [fc_core.sh(["git", "log", "-1", "--format=%s", c], repo).stdout.strip() for c in l["commits"]]
+    if len(subjects) == 1:
+        first, more = subjects[0], 0
+    else:
+        tasks = [t for t in l["tasks"] if t != "groundwork"]
+        if tasks:
+            names = {m["id"]: commit_message(m) for m in metas}
+            first, more = names.get(tasks[0], tasks[0]), len(tasks) - 1
+        else:
+            first, more = subjects[0], len(subjects) - 1
+    key = re.match(r"([A-Za-z]+-\d+)-", fc_core.project_config(proj).get("branch") or "")
+    idx = int(l["branch"].rsplit("layer-", 1)[1])
+    return f"{key.group(1).upper() + ': ' if key else ''}{first}{f' and {more} more' if more else ''} ({idx}/{n})"
 
 def layer_body(repo, proj, l, budget, metas):
     """A layer's PR body: `## Why`, `## What changed`, `## How it was tested` and `## Tickets`, each left out when empty."""
     raise NotImplementedError("layer_body")
 
 def layer_pr(repo, proj, l, n, budget, metas):
-    """A layer's PR title and body. The title is the layer's tasks (`JS-2888: add a, add b (1/4)` when the project branch starts with a
-    Jira key); the body lists the tasks and the layer's size."""
+    """A layer's PR title and body. The title comes from the layer's commits (`JS-2888: ... (1/4)` when the project branch starts
+    with a Jira key); the body lists the tasks and the layer's size."""
     names = {m["id"]: commit_message(m) for m in metas}
     held = [names.get(t, t) if t != "groundwork" else "groundwork" for t in l["tasks"]]
     held = list(dict.fromkeys(held))
-    key = re.match(r"([A-Za-z]+-\d+)-", fc_core.project_config(proj).get("branch") or "")
-    idx = int(l["branch"].rsplit("layer-", 1)[1])
-    title = f"{key.group(1).upper() + ': ' if key else ''}{', '.join(held)} ({idx}/{n})"
-    return title, "\n".join([*(f"- {h}" for h in held), "", layer_note(l, budget)])
+    return layer_title(repo, proj, l, n, metas), "\n".join([*(f"- {h}" for h in held), "", layer_note(l, budget)])
 
 def gh_pr_text(wt, b):
     """The title and body of the PR on branch b, or None when it has none."""
