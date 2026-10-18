@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, shlex, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -200,10 +200,10 @@ class PlannerChain(unittest.TestCase):
             fc.fc_implement.implementer(str(repo), "claude:claude-haiku-5-5", "build it")
         argv, seen = json.loads((d / "call.json").read_text())
         tools = "Read,Edit,Write,Bash,Grep,Glob"
-        for flags in (["--safe-mode"], ["--strict-mcp-config"], ["--model", "claude-haiku-5-5"], ["--tools", tools], ["--allowedTools", tools],
+        for flags in (["--restricted"], ["--strict-mcp-config"], ["--model", "claude-haiku-5-5"], ["--tools", tools], ["--allowedTools", tools],
                       ["--settings", fc.fc_claude.NO_ATTRIBUTION]):
             self.assertIn(flags, [argv[i:i + len(flags)] for i in range(len(argv))])
-        own = argv[argv.index("--append-system-prompt") + 1]  # --safe-mode drops every CLAUDE.md: the repo's own come back here, the user's do not
+        own = argv[argv.index("--append-system-prompt") + 1]  # --restricted drops every CLAUDE.md: the repo's own come back here, the user's do not
         self.assertEqual([own.index(t) < own.index(u) for t, u in (("Use tabs.", "Run make."), ("Run make.", "Keep it short."))], [True, True])
         self.assertEqual([k for k in seen if k.startswith("ANTHROPIC_") or k == "COMPOSE_ROLE"], [])
         self.assertNotEqual(seen["COMPOSE_CONFIG"], str(fc.fc_config.CONFIG_PATH))
@@ -393,6 +393,44 @@ class ClaudeProcGroup(unittest.TestCase):
 
 class ClaudeReadGuard(unittest.TestCase):
     """Task 008 (NEB-942): claude_once under --restricted, with the read guard hook when a guard file exists."""
+    def claude(self, d):
+        """claude_once in the clone `d / "repo"` with a fake `claude` first on PATH: its argv and its parsed --settings."""
+        (d / "bin").mkdir(); (d / "repo").mkdir(); fake = d / "bin" / "claude"
+        fake.write_text(f"#!{sys.executable}\nimport json, sys\nopen({str(d / 'argv.json')!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+                        "print(json.dumps({'is_error': False, 'result': 'ok'}))\n")
+        fake.chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}"}):
+            self.assertEqual(fc.fc_claude.claude_once(str(d / "repo"), "hi", model="claude-haiku-5-5")[1], "ok")
+        argv = json.loads((d / "argv.json").read_text())
+        self.assertIn("--restricted", argv); self.assertNotIn("--safe-mode", argv)  # under --safe-mode no --settings hook fires
+        tools = "Read,Edit,Write,Bash,Grep,Glob"
+        for flags in (["--strict-mcp-config"], ["--model", "claude-haiku-5-5"], ["--tools", tools], ["--allowedTools", tools]):
+            self.assertIn(flags, [argv[i:i + len(flags)] for i in range(len(argv))])
+        return argv, argv[argv.index("--settings") + 1]
+
+    def test_without_a_guard_file_beside_the_clone_the_settings_stay_no_attribution(self):
+        d = Path(tempfile.mkdtemp()); (d / "other.guard.json").write_text("{}")  # another clone's guard does not count
+        self.assertEqual(self.claude(d)[1], fc.fc_claude.NO_ATTRIBUTION)
+
+    def test_a_guard_file_adds_a_pre_tool_use_hook_that_blocks_whenever_the_guard_fails(self):
+        d = Path(tempfile.mkdtemp()); guard = d / "repo.guard.json"; guard.write_text("{}"); script = d / "guard.sh"
+        line = lambda g: f"sh {shlex.quote(str(script))} {shlex.quote(str(g))}"
+        with mock.patch.object(fc.fc_readguard, "command", side_effect=line) as command:
+            settings = json.loads(self.claude(d)[1])
+        self.assertEqual([str(a) for (a,), _ in command.call_args_list], [str(guard)])
+        hook = line(guard) + " || exit 2"
+        self.assertEqual(settings, {**json.loads(fc.fc_claude.NO_ATTRIBUTION), "hooks": {"PreToolUse": [
+            {"matcher": "Read|Grep|Glob|Bash", "hooks": [{"type": "command", "command": hook}]}]}})
+        event = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "x"}})
+        deny = '{"hookSpecificOutput": {"permissionDecision": "deny"}}'
+        for body, code, out, err in (("echo bad guard >&2; exit 1", 2, "", "bad guard\n"), ("exit 2", 2, "", ""),
+                                     ("kill -9 $$", 2, "", None), ("exec no-such-python-x -I", 2, "", None),
+                                     ("cat > /dev/null", 0, "", ""), (f"echo '{deny}'", 0, deny + "\n", "")):
+            script.write_text(body + "\n")
+            p = subprocess.run(["sh", "-c", hook], input=event, capture_output=True, text=True, cwd=d)
+            self.assertEqual((p.returncode, p.stdout), (code, out), body)
+            if err is not None:
+                self.assertEqual(p.stderr, err, body)
 
 
 if __name__ == "__main__":
