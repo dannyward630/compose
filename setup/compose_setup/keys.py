@@ -94,6 +94,13 @@ class KeysScreen(Screen[Tuple[List[str], List[str]]]):
             return "connector connected", "present"
         return "not set", "absent"
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        kind = event.input.id
+        text, state_class = ("entered", "present") if event.value.strip() else self._status(kind)
+        shown = self.query_one(f"#{kind}-status", Static)
+        shown.update(text)
+        shown.set_classes(f"key-status {state_class}")
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         index = KINDS.index(event.input.id) + 1
         target = KINDS[index] if index < len(KINDS) else "continue"
