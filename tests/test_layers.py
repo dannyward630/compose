@@ -126,7 +126,7 @@ class Layers(unittest.TestCase):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"test {t}")
         self.sizes = {"001": 100, "002": 120, "003": 150}
         for t, base in (("001", "compose/p"), ("002", "compose/p"), ("003", "compose/p")):
-            self.git("checkout", "-q", "-b", f"fast/p/{t}", base)
+            self.git("checkout", "-q", "-b", f"compose/p-{t}", base)
             self.write(f"{t}.src", "c\n" * self.sizes[t]); self.commit(f"task {t}")
             self.git("checkout", "-q", "compose/p")
 
@@ -150,15 +150,15 @@ class Layers(unittest.TestCase):
         return set(self.git("diff", "--name-only", below, branch).splitlines())
 
     def layers(self):
-        return self.git("branch", "--list", "fast/p/layer-*", "--format=%(refname:short)").split()
+        return self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split()
 
     def test_groundwork_is_its_own_layer_and_each_test_lands_with_its_task(self):
         out = self.stack()  # default budget 300: tasks with their tests are 105, 125 and 155 lines
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.changed("fast/p/layer-01", "main"), {"lock.txt", "bun.lock", "setup.txt", "stub.txt"})
-        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src"})
-        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")  # the layers add up to the project's tree
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.changed("compose/p-layer-01", "main"), {"lock.txt", "bun.lock", "setup.txt", "stub.txt"})
+        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")  # the layers add up to the project's tree
         notes = [l for l in out if l.startswith("layer ")]
         self.assertIn("groundwork x2: 40 lines; generated, not counted: bun.lock (4000 lines)", notes[0])
         self.assertIn("task 001, 002: 230 lines", notes[1])
@@ -175,10 +175,10 @@ class Layers(unittest.TestCase):
         self.write("shared.test", "a\n" * 5 + "b\n" * 5); self.commit("more shared tests")  # on 001's file too, written on top of 002's commit
         out = self.stack()
         self.assertEqual([l for l in out if "STOP" in l], [])
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src", "t002.test", "002.src", "shared.test"})
-        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test"), "a\n" * 5 + "b\n" * 4 + "b")
-        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src", "shared.test"})
+        self.assertEqual(self.git("show", "compose/p-layer-02:shared.test"), "a\n" * 5 + "b\n" * 4 + "b")
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
     def test_groundwork_written_after_a_tasks_test_gets_its_own_layer_above_that_task(self):
         """A commit no task owns, on a file a task's test commit touched before it, cannot replay in the bottom groundwork: it is a
@@ -192,12 +192,12 @@ class Layers(unittest.TestCase):
         self.write("shared.test", "g\n" + "a\n" * 5); self.commit("tests for 003")  # protected by 001 and 003, written after the guard
         out = self.stack()
         self.assertEqual([l for l in out if "STOP" in l], [])
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03", "fast/p/layer-04"])
-        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t002.test", "shared.test"})
-        self.assertEqual(self.changed("fast/p/layer-04", "fast/p/layer-03"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03", "compose/p-layer-04"])
+        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t002.test", "shared.test"})
+        self.assertEqual(self.changed("compose/p-layer-04", "compose/p-layer-03"), {"t003.test", "003.src", "shared.test"})
         self.assertIn("layer-03  groundwork x1: 2 lines", [l for l in out if l.startswith("layer ")][2])
-        self.assertEqual(self.git("diff", "fast/p/layer-04", "fast/p/003"), "")
+        self.assertEqual(self.git("diff", "compose/p-layer-04", "compose/p-003"), "")
 
     def test_a_test_commit_goes_to_the_task_its_test_writer_wrote_it_for(self):
         """Tasks 001 and 003 both protect one test file. 003's test writer, teammate tests-003, commits its test on top of 001's
@@ -213,10 +213,10 @@ class Layers(unittest.TestCase):
         self.write("shared.test", "a\n" * 5 + "b\n" * 5); self.git("add", "-A"); self.git("commit", "-qm", "tests for 003", "--date", "2026-01-01T10:02:00")
         out = self.stack()
         self.assertEqual([l for l in out if "STOP" in l], [])
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test"), "a\n" * 4 + "a")
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
-        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.git("show", "compose/p-layer-02:shared.test"), "a\n" * 4 + "a")
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
     def test_a_test_commit_skips_an_earlier_one_on_its_file_it_does_not_build_on(self):
         """Task 004 has not passed: the test its writer made rides in the top layer. 001's test comes after it on the same file, in
@@ -236,59 +236,45 @@ class Layers(unittest.TestCase):
         self.write("shared.test", part("a\n" * 5, "b\n" * 4 + "c\n")); self.commit("fix a test of 004")  # 001 owns it too
         out = self.stack()
         self.assertEqual([l for l in out if "STOP" in l], [])
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.git("show", "fast/p/layer-02:shared.test") + "\n", part("a\n" * 5, ""))
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src", "shared.test"})
-        self.assertEqual(self.git("diff", "fast/p/layer-03", "fast/p/003"), "")
-
-    def test_a_project_with_layer_branches_already_keeps_their_names(self):
-        self.git("branch", "fast/p/layer-09", "main")  # an earlier stack, before the stored branch named layers
-        self.stack(branch="compose/p")
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast/p/")
-        self.git("branch", "-D", *self.layers())
-        self.stack(branch="compose/p", layer_prefix="fast/p/")  # recorded, so no branch is needed to remember it
-        self.assertEqual(len(self.layers()), 3)
-
-    def test_layer_branches_on_the_remote_alone_keep_their_names(self):
-        self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "main")
-        self.stack(branch="compose/p")
-        self.assertEqual(len(self.layers()), 3)
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.git("show", "compose/p-layer-02:shared.test") + "\n", part("a\n" * 5, ""))
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
         self.assertEqual(len(self.layers()), 4)
-        self.assertEqual(self.changed("fast/p/layer-04", "fast/p/layer-03"), {"t003.test", "003.src"})
+        self.assertEqual(self.changed("compose/p-layer-04", "compose/p-layer-03"), {"t003.test", "003.src"})
         self.assertIn("task 003: 155 lines; over the 130-line budget", out[-1])
 
     def test_a_submitted_stack_keeps_each_task_in_its_layer_when_sizes_change(self):
         self.stack(review_layer_lines=300)
-        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001", "002"]), ("fast/p/layer-03", ["003"]))])
-        self.git("checkout", "-q", "fast/p/003")
+        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("compose/p-layer-01", ["groundwork"]), ("compose/p-layer-02", ["001", "002"]), ("compose/p-layer-03", ["003"]))])
+        self.git("checkout", "-q", "compose/p-003")
         self.write("003.src", "c\n"); self.commit("shrink 003")  # 003 now fits with 001 and 002, so a regroup would merge layers 02 and 03
         self.git("checkout", "-q", "compose/p")
         self.stack(review_layer_lines=300)
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t003.test", "003.src"})
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src"})
 
     def test_a_task_new_since_the_submit_gets_a_layer_above(self):
         self.stack()
-        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("fast/p/layer-01", ["groundwork"]), ("fast/p/layer-02", ["001"]))])
+        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("compose/p-layer-01", ["groundwork"]), ("compose/p-layer-02", ["001"]))])
         self.stack()
-        self.assertEqual(self.layers(), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
-        self.assertEqual(self.changed("fast/p/layer-02", "fast/p/layer-01"), {"t001.test", "001.src"})
-        self.assertEqual(self.changed("fast/p/layer-03", "fast/p/layer-02"), {"t002.test", "002.src", "t003.test", "003.src"})
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src"})
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t002.test", "002.src", "t003.test", "003.src"})
 
     def test_a_rebuild_from_unchanged_commits_keeps_the_hashes(self):
         self.stack()
-        before = self.git("rev-parse", "fast/p/layer-01", "fast/p/layer-02")
+        before = self.git("rev-parse", "compose/p-layer-01", "compose/p-layer-02")
         self.stack()
-        self.assertEqual(self.git("rev-parse", "fast/p/layer-01", "fast/p/layer-02"), before)
+        self.assertEqual(self.git("rev-parse", "compose/p-layer-01", "compose/p-layer-02"), before)
 
     def test_the_gh_stack_is_the_layers_on_the_real_base(self):
         self.stack()
         wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")
-        subprocess.run(["git", "checkout", "-q", "fast/p/layer-02"], cwd=wt, check=True)
+        subprocess.run(["git", "checkout", "-q", "compose/p-layer-02"], cwd=wt, check=True)
         data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(data["trunk"], "main")
         self.assertEqual([b["name"] for b in data["branches"]], self.layers())
@@ -318,13 +304,12 @@ class LayerNames(unittest.TestCase):
 
     def rename(self, prefix):
         for t in ("001", "002", "003"):
-            self.git("branch", "-m", f"fast/p/{t}", f"{prefix}{t}")
+            self.git("branch", "-m", f"compose/p-{t}", f"{prefix}{t}")
 
     def layers(self, prefix="compose/p-"):
         return self.git("branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)").split()
 
     def test_a_new_project_cuts_its_task_branches_into_layers_named_from_its_branch(self):
-        self.rename("compose/p-")
         out = self.stack()
         self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
         self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
@@ -337,7 +322,6 @@ class LayerNames(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", *self.layers()), before)
 
     def test_a_task_whose_tip_holds_another_sits_above_it(self):
-        self.rename("compose/p-")
         self.git("checkout", "-q", "-B", "compose/p-001", "compose/p-003")
         self.write("001.src", "c\n" * 100); self.commit("task 001 on 003")
         self.git("checkout", "-q", "compose/p")
@@ -347,7 +331,6 @@ class LayerNames(unittest.TestCase):
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-001"), "")
 
     def test_a_replaced_tip_is_dropped_from_the_layer_above_and_its_ref_deleted(self):
-        self.rename("compose/p-")
         self.git("checkout", "-q", "-B", "compose/p-003", "compose/p-002")
         self.write("003.src", "c\n" * 150); self.commit("task 003 on 002")
         fc.fc_worktree.replace_branch(self.repo, self.proj, "compose/p-002")
@@ -360,7 +343,20 @@ class LayerNames(unittest.TestCase):
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
         self.assertEqual(self.git("for-each-ref", "refs/compose/replaced/"), "")
 
-    def test_a_legacy_project_keeps_fast_names_unless_a_prefix_is_recorded(self):
+    def test_a_legacy_project_never_pushed_takes_the_new_names_before_its_layers_are_cut(self):
+        self.rename("fast/p/")
+        self.git("branch", "fast/p/layer-09", "main")  # an earlier stack's layer, never pushed
+        out = self.stack(branch="compose/p")
+        self.assertIn("names  renamed 4 never-pushed fast/p/* branch(es) to compose/p-*", out)
+        self.assertEqual(self.git("branch", "--list", "fast/*"), "")
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
+        cfg = json.loads((self.proj / "verify.json").read_text())
+        self.assertEqual((cfg["task_prefix"], cfg["layer_prefix"]), ("compose/p-", "compose/p-"))
+
+    def test_a_legacy_project_with_a_pushed_branch_keeps_fast_names_unless_a_prefix_is_recorded(self):
+        self.rename("fast/p/")
+        self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "main")
         self.stack(branch="compose/p")
         self.assertEqual(self.layers("fast/p/"), ["fast/p/layer-01", "fast/p/layer-02", "fast/p/layer-03"])
         self.assertEqual(json.loads((self.proj / "verify.json").read_text())["layer_prefix"], "fast/p/")

@@ -428,7 +428,9 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     stops the chain there and is reported). The stack itself is review layers on the real base (`review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
     too, so the project branch carries nothing the layers do not. Nothing is pushed unless submit=True; preview=True prints each layer's
-    PR title and body as submit would write them, with no gh call."""
+    PR title and body as submit would write them, with no gh call. A project whose fast/<project>/ branches were never pushed
+    first moves onto the names a new project gets (fc_worktree.rename_legacy_branches)."""
+    fc_worktree.rename_legacy_branches(repo, proj)
     if not fc_worktree.stack_order(repo, proj):
         return []
     wt = fc_worktree.stack_worktree(repo, proj, trunk)

@@ -97,6 +97,75 @@ class BranchNames(unittest.TestCase):
             self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/compose/replaced/"), f"refs/compose/replaced/p/001/{tip}")
             self.git("update-ref", "-d", f"refs/compose/replaced/p/001/{tip}")
 
+    def legacy(self):
+        """A project on fast/p/ names, recorded wherever the CLI records a branch, one branch checked out in a worktree."""
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", "task_prefix": "fast/p/", "layer_prefix": "fast/p/"}))
+        for b in ("fast/p/001", "fast/p/002", "fast/p/002-bench-x", "fast/p/tests-003", "fast/p/layer-01", "fast/p/layer-02", "fast/pp/001"):
+            self.git("branch", b)
+        self.git("update-ref", f"refs/compose/replaced/p/001/{self.git('rev-parse', 'HEAD')}", "HEAD")
+        self.wt = Path(tempfile.mkdtemp()) / "wt"
+        self.git("worktree", "add", "-q", str(self.wt), "fast/p/002")
+        (self.proj / "results" / "changes").mkdir(exist_ok=True)
+        files = {"results/002.json": {"branch": "fast/p/002", "base": "fast/p/001", "worktree": "/w/002"},
+                 "results/changes/C1.json": {"results": {"002": {"branch": "fast/p/002", "base": "fast/p/001"}}},
+                 "layers.json": {"fast/p/layer-01": ["groundwork"], "fast/p/layer-02": ["001", "002"]},
+                 "pr_text.json": {"fast/p/layer-01": {"title": "t", "body": "fast/p/layer-01 holds groundwork"}}}
+        for rel, data in files.items():
+            (self.proj / rel).write_text(json.dumps(data))
+        stacks = {"schemaVersion": 1, "stacks": [{"trunk": {"branch": "main"}, "branches": [{"branch": "fast/p/layer-01"}, {"branch": "fast/p/layer-02"}]},
+                                                 {"trunk": {"branch": "main"}, "branches": [{"branch": "fast/pp/001"}]}]}
+        (self.repo / ".git" / "gh-stack").write_text(json.dumps(stacks))
+        return {rel: (self.proj / rel).read_text() for rel in ["verify.json", *files]} | {"gh-stack": json.dumps(stacks)}
+
+    def recorded(self):
+        return {rel: (self.proj / rel).read_text() for rel in ("verify.json", "results/002.json", "results/changes/C1.json", "layers.json", "pr_text.json")} \
+            | {"gh-stack": (self.repo / ".git" / "gh-stack").read_text()}
+
+    def test_never_pushed_fast_branches_take_a_new_projects_names_once_with_every_record(self):
+        self.legacy()
+        self.assertTrue(fc.fc_worktree.rename_legacy_branches(self.repo, self.proj))
+        self.assertEqual(self.git("branch", "--list", "--format=%(refname:short)").split(),
+                         ["compose/p-001", "compose/p-002", "compose/p-002-bench-x", "compose/p-layer-01", "compose/p-layer-02", "compose/p-tests-003", "fast/pp/001", "main"])
+        self.assertEqual(subprocess.run(["git", "branch", "--show-current"], cwd=self.wt, capture_output=True, text=True).stdout.strip(), "compose/p-002")
+        cfg = json.loads((self.proj / "verify.json").read_text())
+        self.assertEqual((cfg["review_base"], cfg["task_prefix"], cfg["layer_prefix"]), ("main", "compose/p-", "compose/p-"))
+        (self.proj / "verify.json").write_text("{}")
+        fresh = fc.fc_layers.layer_prefix(self.repo, self.proj)
+        (self.proj / "verify.json").write_text(json.dumps(cfg))
+        self.assertEqual(fc.fc_layers.layer_prefix(self.repo, self.proj), fresh)  # the layers are named as a new project's
+        self.assertEqual(json.loads((self.proj / "results" / "002.json").read_text()), {"branch": "compose/p-002", "base": "compose/p-001", "worktree": "/w/002"})
+        self.assertEqual(json.loads((self.proj / "results" / "changes" / "C1.json").read_text())["results"]["002"], {"branch": "compose/p-002", "base": "compose/p-001"})
+        self.assertEqual(json.loads((self.proj / "layers.json").read_text()), {"compose/p-layer-01": ["groundwork"], "compose/p-layer-02": ["001", "002"]})
+        self.assertEqual(json.loads((self.proj / "pr_text.json").read_text()), {"compose/p-layer-01": {"title": "t", "body": "fast/p/layer-01 holds groundwork"}})
+        stacks = json.loads((self.repo / ".git" / "gh-stack").read_text())["stacks"]
+        self.assertEqual([[b["branch"] for b in s["branches"]] for s in stacks], [["compose/p-layer-01", "compose/p-layer-02"], ["fast/pp/001"]])
+        self.assertEqual(fc.fc_worktree.replaced_tips(self.repo, self.proj), [("compose/p-001", self.git("rev-parse", "HEAD"))])
+        before = self.recorded()
+        self.git("update-ref", "refs/remotes/origin/fast/p/009", "HEAD")  # someone else's push, fetched later
+        self.assertFalse(fc.fc_worktree.rename_legacy_branches(self.repo, self.proj))  # once
+        self.assertEqual((fc.fc_worktree.task_prefix(self.repo, self.proj), self.recorded()), ("compose/p-", before))
+
+    def test_a_pushed_live_or_blocked_project_keeps_every_name(self):
+        branches = lambda: self.git("branch", "--list", "--format=%(refname:short)").split()
+        for case in ("pushed", "live", "taken"):
+            with self.subTest(case):
+                if case != "pushed":
+                    self.git("worktree", "remove", "--force", str(self.wt))
+                for b in self.git("for-each-ref", "--format=%(refname)", "refs/heads/fast/", "refs/heads/compose/", "refs/remotes/").split():
+                    self.git("update-ref", "-d", b)
+                before = self.legacy()
+                if case == "pushed":
+                    self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "HEAD")
+                if case == "live":
+                    other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.kill)
+                    (self.proj / "results" / "run.json").write_text(json.dumps({"pid": other.pid}))
+                if case == "taken":
+                    (self.proj / "results" / "run.json").unlink()
+                    self.git("branch", "compose/p-001")
+                names = branches()
+                self.assertFalse(fc.fc_worktree.rename_legacy_branches(self.repo, self.proj))
+                self.assertEqual((branches(), self.recorded()), (names, before))
+
 
 class ReviewGate(unittest.TestCase):
     def test_confirmed_review_findings_fail_verify(self):

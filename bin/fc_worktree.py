@@ -19,6 +19,45 @@ def task_prefix(repo, proj):
         return f"fast/{proj.name}/"
     return fc_core.project_branch(proj) + "-"
 
+def rename_legacy_branches(repo, proj):
+    """Move a project whose `fast/<project>/` branches were never pushed onto the names a new project gets, once: every local
+    fast/<project>/ branch becomes `<project branch>-` plus the same rest (`git branch -m` keeps its reflog and config, and moves it
+    in any worktree that has it checked out), and every name recorded for them follows: the project's JSON files (verify.json's
+    prefixes, layers.json, pr_text.json, results and change snapshots) and the local gh stack state. A project with any fast/ ref
+    on a remote keeps its names, since its PRs carry them; so does one whose run is live in another process, which holds the old
+    names, or one where a new name is taken. Returns {old: new}, empty when nothing was renamed."""
+    legacy, new = f"fast/{proj.name}/", fc_core.project_branch(proj) + "-"
+    if task_prefix(repo, proj) != legacy or fc_core.sh(["git", "for-each-ref", "--format=%(refname)", f"refs/remotes/*/fast/{proj.name}/*"],
+                                                        repo, check=False).stdout.strip():
+        return {}
+    olds = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", f"refs/heads/{legacy}"], repo, check=False).stdout.split()
+    names = {b: new + b.removeprefix(legacy) for b in (r.removeprefix("refs/heads/") for r in olds)}
+    run = fc_tasks.run_marker(proj) or {}
+    taken = [n for n in names.values() if fc_core.sh(["git", "rev-parse", "--verify", "-q", f"refs/heads/{n}"], repo, check=False).returncode == 0]
+    if taken or (run.get("pid") not in (None, os.getpid()) and fc_tasks.pid_alive(run["pid"])):
+        fc_core.say(f"names  {legacy} kept for now: " + (f"{taken[0]} already exists" if taken else f"run pid {run['pid']} is live"))
+        return {}
+    for old, n in names.items():
+        fc_core.sh(["git", "branch", "-m", old, n], repo)
+    values = {**names, legacy: new}
+    def rename(v):
+        if isinstance(v, dict):
+            return {names.get(k, k): rename(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [rename(x) for x in v]
+        return values.get(v, v) if isinstance(v, str) else v
+    stack_state = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo).stdout.strip()) / "gh-stack"
+    for f in [*proj.glob("*.json"), *(proj / "results").rglob("*.json"), stack_state]:
+        try:
+            data = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if rename(data) != data:
+            fc_core.atomic_write(f, json.dumps(rename(data), indent=2))
+    if names:
+        fc_core.say(f"names  renamed {len(names)} never-pushed {legacy}* branch(es) to {new}*")
+    return names
+
 def task_branch(repo, proj, tid):
     """Task `tid`'s branch: the task prefix plus the id."""
     return task_prefix(repo, proj) + tid
