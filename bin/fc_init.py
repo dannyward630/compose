@@ -48,9 +48,10 @@ def check_deps(role=None):
     a key row names the key and its fix, never a value. herdr's config is one more row (loud toasts or sounds are the detail),
     optional, fixed by `compose setup`. While `claude` itself is missing, the rows that need it share one `waiting on Claude Code:`
     line instead of a MISSING line each (they still count as missing when required). Returns the required steps that are missing:
-    those stop `init`; the optional ones only warn. With a role, only what that role needs is checked, and it is required
-    (Framelink stops the designer's start)."""
-    bad, waiting = [], []
+    those stop `init`; the optional ones only warn. With no role the designer rows are opt-in: a miss among them gets one
+    `designer extras not set up: compose setup, choose the designer rows` line instead, never the waiting line, never returned.
+    With a role, only what that role needs is checked, and it is required (Framelink stops the designer's start)."""
+    bad, waiting, designer = [], [], False
     checkout = Path(__file__).resolve().parents[1]
     claude = bool(shutil.which("claude"))
     for row in (*fc_steps.STEPS, ("herdr config", lambda co: herdr_loud(), "compose setup", "default", False, "run")):
@@ -60,16 +61,21 @@ def check_deps(role=None):
         required = needed == "required" or (role is not None and needed == role)
         ok, detail = fc_steps.check(row, checkout)
         if not ok:
+            if needed == "designer" and role is None:
+                designer = True
+                continue
             if needs_claude and not claude:
                 waiting.append(name)
                 if required:
                     bad.append(name)
                 continue
-            note = "" if required else f" - needed for the {needed}" if needed == "designer" else " - optional"
+            note = "" if required else " - optional"
             why = "" if mode == "key" else f": {detail}" if detail else ""
             print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
                 bad.append(name)
+    if designer:
+        print("designer extras not set up: compose setup, choose the designer rows")
     if waiting:
         print("waiting on Claude Code: " + ", ".join(waiting))
     return bad
