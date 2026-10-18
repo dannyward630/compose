@@ -127,3 +127,54 @@ class LinearGet(unittest.TestCase):
                 self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get", "ENG-7", **kw)), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
             self.assertEqual(out.getvalue(), "")
         self.assertEqual(self.get("ENG-7", any_project=True), ["ENG-7 In Progress bug Fix the cart"])
+
+
+class LinearList(unittest.TestCase):
+    QUERY = "issues(first: 100, after: $after, filter: $f) { pageInfo { hasNextPage endCursor } nodes { identifier title state { name } labels { nodes { name } } } }"
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir()
+        (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        node = lambda n, state, labels: {"identifier": f"ENG-{n}", "title": f"Task {n}", "state": {"name": state}, "labels": {"nodes": [{"name": x} for x in labels]}}
+        self.pages = {None: ([node(3, "Todo", ["ui"]), node(1, "Done", [])], True, "c1"), "c1": ([node(2, "In Progress", ["bug", "ui"])], True, "c2"), "c2": ([], False, "c3")}
+        self.nodes = [n for page in self.pages.values() for n in page[0]]
+        self.calls = []
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        nodes, more, cursor = self.pages[variables.get("after")]
+        return {"issues": {"pageInfo": {"hasNextPage": more, "endCursor": cursor}, "nodes": nodes}}
+
+    def run_list(self, **kw):
+        with redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_list(self.args("list", **kw))
+        return out.getvalue(), [v for q, v in self.calls if self.QUERY in q]
+
+    def test_without_parent_or_search_it_refuses_and_queries_nothing(self):
+        for kw in ({}, {"state": "Todo", "label": ["ui"]}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_list, self.args("list", **kw)), (1, 'list needs --parent <id> or --search "<terms>"'))
+        self.assertFalse([q for q, _ in self.calls if "issues(" in q])
+
+    def test_reads_every_page_and_prints_each_line_in_order(self):
+        out, sent = self.run_list(parent="ENG-1")
+        self.assertEqual(out.splitlines(), [fc.fc_linear_cmd.issue_line(n) for n in self.nodes])
+        self.assertEqual([v.get("after") for v in sent], [None, "c1", "c2"])
+        self.assertEqual([v["f"] for v in sent], [{"project": {"id": {"eq": "p1"}}, "parent": {"id": {"eq": "ENG-1"}}}] * 3)
+
+    def test_filter_holds_each_flag_given(self):
+        _, sent = self.run_list(search="cart total", state="todo", label=["bug", "ui"])
+        self.assertEqual(sent[0]["f"], {"project": {"id": {"eq": "p1"}}, "searchableContent": {"contains": "cart total"},
+                                        "state": {"name": {"eqIgnoreCase": "todo"}}, "labels": {"some": {"name": {"in": ["bug", "ui"]}}}})
+        self.calls.clear()
+        _, sent = self.run_list(parent="ENG-9", search="cart")
+        self.assertEqual(sent[0]["f"], {"project": {"id": {"eq": "p1"}}, "parent": {"id": {"eq": "ENG-9"}}, "searchableContent": {"contains": "cart"}})
+
+    def test_json_prints_only_all_nodes(self):
+        out, _ = self.run_list(search="cart", json=True)
+        self.assertEqual(out.strip(), json.dumps(self.nodes, indent=1))
