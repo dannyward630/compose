@@ -122,7 +122,7 @@ def task_base(repo, proj, meta):
     head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     unmerged = []
     for dep in after:
-        b = f"fast/{proj.name}/{dep}"
+        b = fc_worktree.task_branch(repo, proj, dep)
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", b], repo, check=False).returncode != 0:
             continue  # no branch: the dependency was merged (or never ran, which `run` refuses earlier)
         if fc_core.sh(["git", "merge-base", "--is-ancestor", b, head], repo, check=False).returncode != 0:
@@ -240,7 +240,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     body = meta.pop("body")
     if model:
         meta["model"] = model
-    tid, branch = meta["id"], f"fast/{proj.name}/{meta['id']}{tag}"
+    tid, branch = meta["id"], fc_worktree.task_branch(repo, proj, meta["id"]) + tag
     wt = proj / "worktrees" / (tid + tag)
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.

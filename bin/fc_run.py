@@ -18,7 +18,7 @@ def triage(repo, proj, ids):
     trunk = fc_core.current_branch(repo)
     layers = list(fc_worktree.task_branches(repo, proj))
     def one(tid):
-        m, branch = metas.get(tid) or {}, f"fast/{proj.name}/{tid}"
+        m, branch = metas.get(tid) or {}, fc_worktree.task_branch(repo, proj, tid)
         try:
             # A stacked task's own change starts at the nearest layer below it, not at the trunk under the whole chain.
             below = [b for b in layers if b != branch
