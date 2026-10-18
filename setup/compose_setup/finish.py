@@ -28,6 +28,13 @@ class FinishScreen(Screen[str]):
     FinishScreen .error {
         color: $error;
     }
+    FinishScreen .failed {
+        color: $error;
+        text-style: bold;
+    }
+    FinishScreen .warning {
+        color: $warning;
+    }
     """
 
     def __init__(self, results: List[Tuple[str, str]]):
@@ -48,6 +55,15 @@ class FinishScreen(Screen[str]):
 
     @staticmethod
     def _kind(line: str) -> str:
+        if line.startswith("failed: "):
+            return "failed"
+        if (
+            line.startswith(("waiting on Claude Code: ", "run by hand: ", "skipped: ", "[", "export "))
+            or " = " in line
+            or "set these lines by hand" in line
+            or "add this line" in line
+        ):
+            return "warning"
         if line == "compose is ready" or line.startswith("implementer "):
             return "success"
         if "not finished" in line or "missing" in line or " key" in line:
@@ -63,13 +79,12 @@ class FinishScreen(Screen[str]):
             keys_case = not any("Claude Code is missing" in line for line in lines)
             buttons = [Button("Back to keys", id="keys")] if keys_case else []
             buttons.append(Button("Quit", id="quit"))
-        self.mount(
-            VerticalScroll(
-                *(Static(line, classes=self._kind(line)) for line in lines),
+        lines_area = VerticalScroll(
+                *(Static(line, classes=self._kind(line), markup=False) for line in lines),
                 id="lines",
-            ),
-            Horizontal(*buttons, id="buttons"),
         )
+        self.mount(lines_area, Horizontal(*buttons, id="buttons"))
+        self.call_after_refresh(lines_area.focus)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "keys":
