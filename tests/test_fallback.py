@@ -718,14 +718,15 @@ class ProcGroupTurns(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"PATH": f"{self.d / 'bin'}{os.pathsep}{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
 
     def test_both_turns_start_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
-        for name, turn, timeout, want, out in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}'),
-                                               ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}')):
+        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {}),
+                                                      ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}',
+                                                       {"OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"})):
             with self.subTest(name), mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
                     mock.patch.object(subprocess, "run", side_effect=AssertionError("went around fc_proc.run")):
                 turn(self.wt, "openrouter/x/y", "hi", timeout=timeout)
                 (argv,), kw = run.call_args
                 self.assertEqual((argv[0], argv[-3:], kw["cwd"], kw["timeout"]), (name, ["--model", "openrouter/x/y", "hi"], self.wt, want))
-                self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in fc.fc_core.clean_env().items() if k != "COMPOSE_CONFIG"})
+                self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in {**fc.fc_core.clean_env(), **extra}.items() if k != "COMPOSE_CONFIG"})
 
     def test_a_turn_past_its_timeout_raises_and_its_whole_group_is_gone(self):
         self.fake("sleep 31.7 >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
