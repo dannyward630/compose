@@ -71,8 +71,8 @@ class FinishScreenTest(unittest.IsolatedAsyncioTestCase):
 HERDR = ["/h/config.toml is a symlink or not writable, so compose left it alone; set these lines by hand:",
          "[ui.sound]", "enabled = false", "[ui.toast]", 'delivery = "off"']
 PATH_LINES = ["~/.local/bin is not on your PATH; add this line to your shell profile:", 'export PATH="$HOME/.local/bin:$PATH"']
-LINEAR = ("No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. Add one later:\n"
-          "  pbpaste | compose workspace key default --linear\n  or connect the claude.ai Linear connector")
+LINEAR = ("No Linear key: without it compose linear, sync, and the CLI's Linear moves cannot run. Add one later:\n"
+          "  pbpaste | compose workspace key default --linear")
 OUTCOME = ["failed: pi", "waiting on Claude Code: superpowers", "run by hand: git, ~/.local/bin on PATH", "skipped: uv"]
 ENDING = OUTCOME + HERDR + PATH_LINES + ["implementer glm ok", "plain line", LINEAR, "setup is not finished"]
 
@@ -87,8 +87,8 @@ class FinishLook(unittest.IsolatedAsyncioTestCase):
             for text in OUTCOME + HERDR + PATH_LINES:
                 self.assertNotIn(style_at(app, text[:30]), (None, ok, err, plain), text)
             rows = [s.text.strip() for s in app.screen._compositor.render_strips()]
-            for command in ("pbpaste | compose workspace key default --linear", "or connect the claude.ai Linear connector"):
-                self.assertTrue(any(r.startswith(command) for r in rows), (command, rows))
+            self.assertTrue(any(r.startswith("pbpaste | compose workspace key default --linear") for r in rows), rows)
+            self.assertFalse(any("connector" in r for r in rows), rows)
         await self.finish(ENDING, 1, "Quit", check)
 
     async def test_long_ending_has_focus_a_scrollbar_and_scrolls_from_the_keyboard(self):
@@ -220,7 +220,7 @@ class FinishVerdict(unittest.IsolatedAsyncioTestCase):  # SetupApp at 80x24: ste
         status = dict.fromkeys(("openrouter", "typesafe", "linear", "figma"), False)
         with mock.patch.object(fc_steps, "STEPS", STEPS), mock.patch.object(fc_steprun, "run_step", return_value=("failed", "boom")), \
                 mock.patch.object(fc_herdrconf, "apply_herdr_config", return_value=("ok", [])), mock.patch.object(fc_keys, "key_status", return_value=status), \
-                mock.patch.object(fc_keys, "linear_connected", return_value=None), mock.patch.object(fc_finish, "finish", return_value=(ending, code)):
+                mock.patch.object(fc_finish, "finish", return_value=(ending, code)):
             async with (app := SetupApp(Path(__file__).resolve().parents[2])).run_test(size=(80, 24)) as pilot:
                 await self.keys(pilot, "r"); await test(app, pilot)
         return app.return_value

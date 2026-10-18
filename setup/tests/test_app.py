@@ -48,7 +48,7 @@ class GuidedSetup(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(fc_steps, "STEPS", ROWS), mock.patch.object(App, "suspend", suspend), mock.patch.object(fc_steprun, "run_step", run_step), \
                 mock.patch.object(fc_herdrconf, "apply_herdr_config", side_effect=lambda *a: log.append("herdr") or ("ok", [])), \
                 mock.patch.object(fc_keys, "key_status", return_value=dict.fromkeys(("openrouter", "typesafe", "linear", "figma"), False)), \
-                mock.patch.object(fc_keys, "linear_connected", return_value=None), mock.patch.object(fc_finish, "finish", return_value=(["all set"], 0)):
+                mock.patch.object(fc_finish, "finish", return_value=(["all set"], 0)):
             app = setup_app.SetupApp(ROOT)
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
@@ -82,7 +82,7 @@ class AppFixes(unittest.IsolatedAsyncioTestCase):
         for p in (mock.patch.object(fc_config, "CONFIG_PATH", cfg), mock.patch.object(fc_config, "AUTH_PATH", cfg.parent / "auth.json"),
                   mock.patch.object(fc_steps, "STEPS", rows), mock.patch.object(fc_steprun, "run_step", return_value=("ok", "")),
                   mock.patch.object(fc_herdrconf, "apply_herdr_config", self.herdr), mock.patch.object(fc_keys, "key_status", self.status),
-                  mock.patch.object(fc_keys, "linear_connected", return_value=None), mock.patch.object(fc_finish, "finish", self.finish)):
+                  mock.patch.object(fc_finish, "finish", self.finish)):
             p.start(); self.addCleanup(p.stop)
 
     async def start(self, app, pilot):

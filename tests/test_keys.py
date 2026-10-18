@@ -8,12 +8,12 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 import fc_auth, fc_keys
 
-HEADER = "Checking MCP server health…\n\n"
-FIGMA = "claude.ai Figma: https://mcp.figma.com/mcp - ✔ Connected\n"
+LINEAR = ("No Linear key: without it compose linear, sync, and the CLI's Linear moves cannot run. Add one later:\n"
+          "  pbpaste | compose workspace key {} --linear")
 
 
 class KeyStatus(unittest.TestCase):
-    """Which keys are set (never their values), whether claude.ai Linear is connected, and the Linear rule."""
+    """Which keys are set (never their values)."""
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.bin = self.tmp / "bin"
@@ -43,24 +43,9 @@ class KeyStatus(unittest.TestCase):
                          {"openrouter": False, "typesafe": False, "linear": True, "figma": False})
         self.assertFalse(self.status({})["figma"])  # no Framelink env file
 
-    def mcp(self, text):
-        (self.tmp / ".claude.json").write_text("{}")  # without it linear_connected never runs claude
-        f = self.bin / "claude"
-        f.write_text(f'#!/bin/sh\n[ "$1 $2" = "mcp list" ] && printf \'%s\' "{text}"\n')
-        f.chmod(stat.S_IRWXU)
-        return fc_keys.linear_connected()
-
-    def test_linear_connected(self):
-        self.assertIsNone(fc_keys.linear_connected())
-        self.assertIs(self.mcp(HEADER + "claude.ai Linear: https://mcp.linear.app/mcp - ✔ Connected\n" + FIGMA), True)
-        self.assertIs(self.mcp(HEADER + FIGMA), False)
-        self.assertIs(self.mcp(HEADER + "claude.ai Linear: https://mcp.linear.app/mcp - ! Needs authentication\n" + FIGMA), False)
-        self.assertIs(self.mcp(HEADER + "claude.ai Linear: https://x.invalid/Connected - ✘ Failed to connect\n" + FIGMA), False)
-
-    def test_linear_state(self):
-        for linear, connected, want in [(True, False, "key"), (True, None, "key"), (False, True, "connector"),
-                                        (False, None, "unknown"), (False, False, "missing")]:
-            self.assertEqual(fc_keys.linear_state({"openrouter": True, "typesafe": True, "linear": linear, "figma": False}, connected), want)
+    def test_module_is_keys_only(self):
+        self.assertEqual(fc_keys.__doc__, "Key presence (never values), and saving entered keys.")
+        self.assertFalse(hasattr(fc_keys, "linear_connected") or hasattr(fc_keys, "linear_state"))
 
 
 class KeySave(unittest.TestCase):
@@ -110,53 +95,41 @@ class KeySave(unittest.TestCase):
     def test_skipped_lines(self):
         fix = "pbpaste | compose workspace key acme"
         for kind, words in [("openrouter", ["run", "verify", fix]), ("typesafe", ["verify", "change", fix + " --typesafe"]),
-                            ("linear", ["linear", "sync --from-linear", fix + " --linear", "claude.ai", "connector"]),
+                            ("linear", ["compose linear", "sync", fix + " --linear"]),
                             ("figma", ["designer", "compose setup"])]:
             line = fc_keys.skipped_line(kind, "acme")
             for word in words: self.assertIn(word, line if " " in word else line.lower())
         self.assertNotIn("--linear", fc_keys.skipped_line("openrouter", "acme"))
-        self.assertNotIn("connector", fc_keys.skipped_line("openrouter", "acme").lower())
+        for word in ("connector", "claude.ai", "--from-linear"): self.assertNotIn(word, fc_keys.skipped_line("linear", "acme"))
         self.assertNotIn("workspace key", fc_keys.skipped_line("figma", "acme"))
 
 
 class KeyLines(unittest.TestCase):
-    """The fix for a skipped key sits on its own indented line, and the connector check never runs claude in a fresh HOME."""
+    """The fix for a skipped key sits on its own indented line, and no key line runs claude."""
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.bin, self.home, self.rec = self.tmp / "bin", self.tmp / "home", self.tmp / "ran"
         self.bin.mkdir()
         self.home.mkdir()
-        claude = self.bin / "claude"  # like the real one: running it creates ~/.claude.json and ~/.claude/backups
-        linear = "claude.ai Linear: https://mcp.linear.app/mcp - ✔ Connected\n"
-        claude.write_text(f'#!/bin/sh\ntouch "{self.rec}"; mkdir -p "$HOME/.claude/backups"\n'
-                          '[ -f "$HOME/.claude.json" ] || echo {} > "$HOME/.claude.json"\n'
-                          f'[ "$1 $2" = "mcp list" ] && printf \'%s\' "{HEADER}{linear}{FIGMA}"\n')
+        claude = self.bin / "claude"
+        claude.write_text(f'#!/bin/sh\ntouch "{self.rec}"\n')
         claude.chmod(stat.S_IRWXU)
+        (self.home / ".claude.json").write_text("{}")
         p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home), "OPENROUTER_API_KEY": "sk-or-test"})
         p.start()
         self.addCleanup(p.stop)
 
-    def test_fresh_home_runs_no_claude(self):
-        self.assertIs(fc_keys.linear_connected(), False)
-        self.assertEqual(sorted(p.name for p in self.home.iterdir()), [])
+    def test_no_claude_for_linear(self):
+        auth = {"workspaces": {"acme": {"openrouter": "sk-or-test"}}}
+        self.assertFalse(fc_keys.key_status(auth, "acme", self.tmp / "none.env")["linear"])
+        self.assertEqual(fc_keys.skipped_line("linear", "acme"), LINEAR.format("acme"))
         self.assertFalse(self.rec.exists())
-
-    def test_with_claude_json_parses_mcp_list(self):
-        (self.home / ".claude.json").write_text("{}")
-        self.assertIs(fc_keys.linear_connected(), True)
-        self.assertTrue(self.rec.exists())
-        os.environ["PATH"] = str(self.tmp / "none")
-        self.assertIsNone(fc_keys.linear_connected())
-
-    def test_no_claude_is_none_in_fresh_home(self):
-        os.environ["PATH"] = str(self.tmp / "none")
-        self.assertIsNone(fc_keys.linear_connected())
 
     def test_lines(self):
         for ws in ("acme", "team-b"):
             fix = f"  pbpaste | compose workspace key {ws}"
             for kind, word, tail in [("openrouter", "run", [fix]),
-                                     ("linear", "linear", [fix + " --linear", "  or connect the claude.ai Linear connector"]),
+                                     ("linear", "linear", [fix + " --linear"]),
                                      ("typesafe", "verify", [fix + " --typesafe"]), ("figma", "designer", ["  compose setup"])]:
                 lines = fc_keys.skipped_line(kind, ws).splitlines()
                 self.assertEqual(lines[-len(tail):], tail, kind)
@@ -171,8 +144,7 @@ class TypeSafeLine(unittest.TestCase):
     """A skipped TypeSafe key names compose workspace key --typesafe; the other kinds' lines stay as they are."""
     OTHERS = {
         "openrouter": "No OpenRouter key: without it run and verify have no model. Add one later:\n  pbpaste | compose workspace key {}",
-        "linear": "No Linear key: without it the CLI's Linear moves and sync --from-linear cannot run. Add one later:\n"
-                  "  pbpaste | compose workspace key {} --linear\n  or connect the claude.ai Linear connector",
+        "linear": LINEAR,
         "figma": "No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n  compose setup",
     }
 
