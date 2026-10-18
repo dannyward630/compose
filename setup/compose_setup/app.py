@@ -1,9 +1,9 @@
 """SetupApp: the steps screen, the herdr config, KeysScreen, then FinishScreen."""
 import shutil
 from pathlib import Path
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
-import fc_config, fc_herdrconf, fc_keys, fc_steprun, fc_steps
+import fc_config, fc_keys, fc_steprun, fc_steps
 from textual.app import App, ComposeResult
 
 from .finish import FinishScreen
@@ -31,6 +31,7 @@ class SetupApp(App[int]):
         self.results: List[Tuple[str, str]] = []
         self.skipped: Set[int] = set()
         self.chosen: Set[int] = set()
+        self._lines: Dict[int, str] = {}
         self._labels: List[Label] = []
 
     def compose(self) -> ComposeResult:
@@ -60,6 +61,10 @@ class SetupApp(App[int]):
 
     def action_skip(self) -> None:
         i = self.query_one("#steps", ListView).index
+        if i in self.skipped:
+            self.skipped.discard(i)
+            self._set_row(i, "unchosen" if self.rows[i][3] == "designer" else "pending")
+            return
         self.skipped.add(i)
         self.chosen.discard(i)
         name, _, install, level, _, mode = self.rows[i]
@@ -70,6 +75,7 @@ class SetupApp(App[int]):
                 line = fc_keys.skipped_line(kind, fc_config.WORKSPACE) or ""
             else:
                 line = f"compose stops working without it; by hand: {install}"
+        self._lines[i] = line
         self._set_row(i, "skipped", line)
 
     def action_choose(self) -> None:
@@ -83,13 +89,16 @@ class SetupApp(App[int]):
     def action_start(self) -> None:
         self.run_worker(self._run_steps, thread=True, exclusive=True)
 
+    def action_quit(self) -> None:
+        self.exit(getattr(self.screen, "code", 1))
+
     def _run_steps(self) -> None:
         claude = shutil.which("claude") is not None
         results = []
         for i, row in enumerate(self.rows):
             level, mode = row[3], row[5]
             if i in self.skipped or (level == "designer" and i not in self.chosen):
-                state, line = "skipped", ""
+                state, line = "skipped", self._lines.get(i, "")
             else:
                 self.call_from_thread(self._set_row, i, "running")
                 if mode == "interactive":
@@ -98,7 +107,6 @@ class SetupApp(App[int]):
                     state, line = fc_steprun.run_step(row, self.checkout, False, claude, False)
             results.append((row[0], state))
             self.call_from_thread(self._set_row, i, state, line)
-        fc_herdrconf.apply_herdr_config(Path.home() / ".config" / "herdr" / "config.toml", self.checkout / "setup" / "herdr.toml")
         self.call_from_thread(self._show_keys, results)
 
     def _run_interactive(self, row, claude: bool):
@@ -107,14 +115,14 @@ class SetupApp(App[int]):
 
     def _show_keys(self, results: List[Tuple[str, str]]) -> None:
         self.results = results
-        self.push_screen(KeysScreen(), self._after_keys)
+        self.push_screen(KeysScreen(fc_config.settings(fc_config.read_config())[0]), self._after_keys)
 
     def _after_keys(self, _result) -> None:
         self.push_screen(FinishScreen(self.results), self._after_finish)
 
     def _after_finish(self, result) -> None:
         if result == "keys":
-            self.push_screen(KeysScreen(), self._after_keys)
+            self.push_screen(KeysScreen(fc_config.settings(fc_config.read_config())[0]), self._after_keys)
 
 
 def main() -> None:
