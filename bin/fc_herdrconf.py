@@ -49,7 +49,13 @@ def _edited(path, loud):
     replaces, inserts, appends = {}, {}, []
     for s, k, line in loud:
         if (n := key_line.get((s, k))) is not None:
-            replaces[n] = line + ("\n" if lines[n].endswith("\n") else "")
+            raw = lines[n]
+            nl = raw[len(raw.rstrip("\r\n")):]  # the line's own newline, kept
+            text = raw[:len(raw) - len(nl)]
+            code = re.sub(r"(^|\s)#.*$", "", text).rstrip(" \t")  # everything after it is the comment and the spacing before it
+            value = re.match(r"[\w.-]+\s*=\s*(.+)$", line).group(1)
+            head = re.match(r"(\s*[\w.-]+\s*=\s*)(.*)$", code).group(1)
+            replaces[n] = head + value + text[len(code):] + nl
         elif s in header_line:
             inserts.setdefault(header_line[s], []).append(line + "\n")
         else:
@@ -59,7 +65,10 @@ def _edited(path, loud):
         out.append(replaces.get(i, line))
         out += inserts.get(i, [])
     if appends:
+        blank = bool(out) and out[-1].endswith("\n") and not out[-1].strip()  # the file already ends with a blank line
         if out and not out[-1].endswith("\n"):
+            out.append("\n")
+        if out and not blank:  # one blank line before the section, unless the file already ends with one
             out.append("\n")
         out += [a + "\n" for a in appends]
     path.write_text("".join(out))
