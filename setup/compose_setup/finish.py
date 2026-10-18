@@ -7,6 +7,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, LoadingIndicator, Static
 
+from .wrap import Wrapped
+
 
 class FinishScreen(Screen[str]):
     """results is the [(row name, state)] of the steps run; dismisses with "keys" for Back to keys, else exits the app with the code."""
@@ -80,7 +82,7 @@ class FinishScreen(Screen[str]):
             buttons = [Button("Back to keys", id="keys")] if keys_case else []
             buttons.append(Button("Quit", id="quit"))
         lines_area = VerticalScroll(
-                *(Static(line, classes=self._kind(line), markup=False) for line in lines),
+                *(Wrapped(line, classes=self._kind(line), markup=False) for line in lines),
                 id="lines",
         )
         self.mount(lines_area, Horizontal(*buttons, id="buttons"))
