@@ -51,8 +51,12 @@ def render_status(repo, projects):
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
         v = proj / "results" / "verify.json"
+        s = proj / "results" / "smoke.json"
         vtxt = ""
-        if v.exists():
+        if s.exists() and (not v.exists() or s.stat().st_mtime > v.stat().st_mtime):
+            sd = json.loads(s.read_text())
+            vtxt = f"  smoke {'PASS' if sd.get('passed') else 'FAIL'} ({', '.join('no ' + x for x in sd.get('left_out', []))}) {fc_core.fmt(sd.get('seconds', 0))} at {time.strftime('%H:%M', time.localtime(s.stat().st_mtime))}"
+        elif v.exists():
             vd = json.loads(v.read_text())
             vtxt = f"  verify {'PASS' if vd.get('passed') else 'FAIL'} {fc_core.fmt(vd.get('seconds', 0))} at {time.strftime('%H:%M', time.localtime(v.stat().st_mtime))}"
         halt = proj / "results" / "resume.json"
