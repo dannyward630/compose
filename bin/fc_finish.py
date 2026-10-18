@@ -10,6 +10,7 @@ CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://cla
 
 def finish(results, yes):
     """(lines, code) from results, the [(row name, state)] of run_step; code 0 when compose is ready, else 1."""
+    fc_config.apply_config()  # the keys auth.json holds now go into the env before anything reads them
     yes = yes or not sys.stdin.isatty()
     state = dict(results)
     groups = {s: [] for s in ("failed", "claude", "manual", "skipped")}
