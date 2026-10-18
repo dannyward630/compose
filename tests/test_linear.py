@@ -124,6 +124,29 @@ class Sync(unittest.TestCase):
         self.assertIn("sync: stdin is not JSON", str(e.exception))
 
 
+class ScopedSyncNames(unittest.TestCase):
+    """A story-scoped sync missing parentId, and the sync and change code, name no Linear MCP tool."""
+    def test_missing_parent_names_the_field_and_ids(self):
+        proj = Path(tempfile.mkdtemp()) / "feat"
+        proj.mkdir()
+        (proj / "linear.json").write_text('{"feature": "ENG-1", "stories": ["ENG-9"]}')
+        issues = [issue("ENG-9", "Story B"), issue("ENG-5", "Task", block(id="003", files="a.go", test="t")),
+                  {**issue("ENG-6", "Task"), "parentId": "ENG-9"}, issue("ENG-7", "Other")]
+        with self.assertRaises(SystemExit) as e:
+            fc.fc_tasks.sync_tasks(proj, {"feature": {"id": "ENG-1", "title": "F"}, "issues": issues})
+        text = str(e.exception)
+        self.assertIn("(the `parentId` field of each issue)", text)
+        self.assertIn("ENG-5", text)
+        self.assertIn("ENG-7", text)
+        self.assertNotIn("ENG-6", text)  # has its parentId
+        self.assertNotIn("get_issue", text)
+
+    def test_sources_name_no_mcp_tool(self):
+        for name in ("fc_tasks.py", "fc_change.py"):
+            src = (Path(__file__).resolve().parents[1] / "bin" / name).read_text()
+            self.assertEqual([w for w in ("save_issue", "get_issue", "list_issues", "Linear MCP") if w in src], [], name)
+
+
 class DesignTasks(unittest.TestCase):
     """A `kind: design` task is built in Figma: it never clones, stacks, or is judged from files."""
     def setUp(self):

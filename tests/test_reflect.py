@@ -720,7 +720,8 @@ class Undo(unittest.TestCase):
     def test_without_a_key_it_prints_the_edits(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None):
             out = change(self.proj, self.repo, "undo", cid="C1")
-        self.assertIn("apply these through Linear (save_issue), then sync:", out)
+        self.assertIn("apply these through `compose linear update`, then sync:", out)
+        self.assertNotIn("save_issue", out)
         self.assertIn('ENG-4: {"status": "Todo", "blockedBy": ["ENG-3"]}', out)
         self.assertEqual(self.lin.issues["ENG-4"]["status"], "Canceled")  # nothing was written
         self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
@@ -732,6 +733,8 @@ class Undo(unittest.TestCase):
         self.assertIn("  ENG-3: ", out)
         self.assertIn("  ENG-1: ", out)
         self.assertNotIn("  ENG-5: ", out)
+        self.assertIn("apply these through `compose linear update`, then sync:", out)  # the leftovers after a failure, too
+        self.assertNotIn("save_issue", out)
         self.assertEqual(fc.fc_change.open_change(self.proj), "C2")
 
     def test_a_branch_git_refuses_to_move_is_listed_and_the_undo_still_finishes(self):
