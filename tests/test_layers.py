@@ -788,5 +788,49 @@ class DeletionBudget(unittest.TestCase):
         self.assertEqual(self.budget(r, ["a.py", "b.py", "yarn.lock", "gone.py"]), (2 + 10 + 1, [], []))
 
 
+class WholeFileDeletion(unittest.TestCase):
+    """Task 018: commit_facts counts a file the commit deletes whole as one line."""
+
+    def facts(self, files, change):
+        r = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, r, True)
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in files.items():
+            (r / f).parent.mkdir(parents=True, exist_ok=True); (r / f).write_bytes(t if isinstance(t, bytes) else "".join(f"line {i}\n" for i in range(t)).encode())
+        git("add", "-A"); git("commit", "-q", "-m", "init")
+        change(r); git("add", "-A"); git("commit", "-q", "-m", "change")
+        return fc.fc_layers.commit_facts(r, "HEAD")
+
+    def test_a_whole_file_deletion_counts_one_line(self):
+        self.assertEqual(self.facts({"old.py": 400, "a.py": 3}, lambda r: (r / "old.py").unlink()), (["old.py"], 1, {}))
+
+    def test_a_deletion_beside_an_edit_counts_one_plus_the_edit(self):
+        def change(r):
+            (r / "old.py").unlink(); (r / "a.py").write_text((r / "a.py").read_text() + "x\n" * 5)
+        files, counted, generated = self.facts({"old.py": 400, "a.py": 3}, change)
+        self.assertEqual((sorted(files), counted, generated), (["a.py", "old.py"], 6, {}))
+
+    def test_an_emptied_file_still_counts_every_line(self):
+        self.assertEqual(self.facts({"old.py": 400}, lambda r: (r / "old.py").write_text("")), (["old.py"], 400, {}))
+
+    def test_a_deleted_lockfile_stays_generated_with_its_full_count(self):
+        got = self.facts({"package-lock.json": 300, "a.py": 3}, lambda r: (r / "package-lock.json").unlink())
+        self.assertEqual(got, (["package-lock.json"], 0, {"package-lock.json": 300}))
+
+    def test_each_deleted_file_counts_one_even_in_a_subdirectory_or_binary(self):
+        files = {"old/a.py": 100, "old/sub/b.py": 50, "logo.png": bytes(range(256)) * 4, "keep.py": 3}
+        got = self.facts(files, lambda r: (shutil.rmtree(r / "old"), (r / "logo.png").unlink()))
+        self.assertEqual((sorted(got[0]), got[1], got[2]), (["logo.png", "old/a.py", "old/sub/b.py"], 3, {}))
+
+    def test_a_moved_file_counts_its_old_path_as_one_and_its_new_path_in_full(self):
+        got = self.facts({"old.py": 400, "a.py": 3}, lambda r: (r / "old.py").rename(r / "new.py"))
+        self.assertEqual((sorted(got[0]), got[1], got[2]), (["new.py", "old.py"], 401, {}))
+
+    def test_a_delete_only_unit_shares_the_layer_of_the_200_line_unit_before_it(self):
+        lines = self.facts({"old.py": 400, "a.py": 3}, lambda r: (r / "old.py").unlink())[1]
+        layers = fc.fc_layers.group_units([unit("001", 200), unit("002", lines)], 300)
+        self.assertEqual([[u["name"] for u in g] for g in layers], [["001", "002"]])
+
+
 if __name__ == "__main__":
     unittest.main()
