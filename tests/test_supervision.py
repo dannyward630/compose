@@ -608,7 +608,7 @@ class JevGaveUpStage(unittest.TestCase):
         driver = {"name": "flow", "exit": 0, "stdout": "", "stderr": ""}
         for record, verdict in ((killed, "TOOL ERROR"), (driver, " ok ")):
             line = self.stage(record)[3]
-            self.assertIn(verdict, line); self.assertTrue(line.endswith("status=?"), line)
+            self.assertIn(verdict, line); self.assertNotIn("assert=", line); self.assertNotIn("status=", line)
 
 
 if __name__ == "__main__":
