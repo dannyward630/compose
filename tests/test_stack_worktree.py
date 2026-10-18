@@ -185,7 +185,7 @@ class BranchNames(unittest.TestCase):
                 if case == "pushed":
                     self.git("update-ref", "refs/remotes/origin/fast/p/layer-01", "HEAD")
                 if case == "live":
-                    other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.kill)
+                    other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.wait); self.addCleanup(other.kill)
                     (self.proj / "results" / "run.json").write_text(json.dumps({"pid": other.pid}))
                 if case == "taken":
                     (self.proj / "results" / "run.json").unlink()
