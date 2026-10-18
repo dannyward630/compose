@@ -109,3 +109,56 @@ class FinishLook(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.workers.wait_for_complete(); await pilot.pause()
                 await run(pilot)
+
+
+NODE = "/Users/reggie/.nvm/versions/node/v22/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js"
+LONG = f"failed: pi: npm cannot link {NODE} into ~/.local/bin, run it again."
+SLASHES = "/opt/homebrew/Cellar/herdr/0.9.3/libexec/share/herdr/integrations/claude-code/" * 2 + "hooks.json"
+
+
+def wrapped_rows(app, line):
+    """The rows the line renders as in #lines, each with what of the line is left after it."""
+    region = app.screen.query_one("#lines").scrollable_content_region
+    strips = app.screen._compositor.render_strips()
+    rows = [strips[y].text[region.x:region.right].strip() for y in range(region.y, region.bottom)]
+    start = next(i for i, row in enumerate(rows) if len(row) > 9 and line.startswith(row))
+    out, rest = [], line
+    for row in rows[start:]:
+        if not rest.startswith(row):
+            break
+        rest = rest[len(row):]
+        out.append((row, rest))
+        rest = rest.lstrip(" ")
+        if not rest:
+            break
+    return out, rest
+
+
+class FinishWrap(unittest.IsolatedAsyncioTestCase):
+    finish = FinishScreenTest.finish
+
+    def assert_breaks_clean(self, app, line):
+        rows, rest = wrapped_rows(app, line)
+        self.assertEqual(rest, "", (line, rows))
+        self.assertGreater(len(rows), 1, rows)
+        for row, after in rows[:-1]:
+            self.assertTrue(row.endswith("/") or after.startswith(" "), (row, after))
+
+    async def test_long_path_lines_show_in_full_and_break_at_a_space_or_after_a_slash(self):
+        def check(app):
+            self.assertEqual(len(LONG), 160)
+            self.assert_breaks_clean(app, LONG)
+            self.assert_breaks_clean(app, SLASHES)  # no space at all: only slashes to break after
+            head, tail, plain = (style_at(app, t) for t in ("failed: pi", "run it again", "plain line"))
+            self.assertEqual(head, tail)  # every row of the line keeps its kind's style
+            self.assertNotEqual(head, plain)
+            self.assertEqual(style_at(app, "hooks.json"), style_at(app, "/opt/homebrew"))
+        app, buttons = await self.finish([LONG, SLASHES, "plain line", "setup is not finished"], 1, "Quit", check)
+        self.assertEqual((buttons, app.return_value), ({"Back to keys", "Quit"}, 1))
+
+    async def test_a_long_ending_with_long_paths_still_scrolls_and_ends_with_done(self):
+        app, buttons = await self.finish([LONG] * 3 + [SLASHES] + [f"step {i}" for i in range(30)] + ["compose is ready"],
+                                         0, "Done", lambda app: self.assert_breaks_clean(app, LONG))
+        self.assertEqual((buttons, app.return_value), ({"Done"}, 0))
+
+    test_long_ending_keeps_focus_a_scrollbar_and_keyboard_scrolling = FinishLook.test_long_ending_has_focus_a_scrollbar_and_scrolls_from_the_keyboard
