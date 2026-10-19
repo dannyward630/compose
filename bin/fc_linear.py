@@ -304,6 +304,11 @@ def linear_mark_ready(feature):
                 fc_core.say(f"linear {n['identifier']} -> not Ready")
     return out
 
+LINEAR_PLAN_TREE = ""
+
+def linear_plan(feature):
+    raise NotImplementedError
+
 def ready_line(items):
     return "can start now: " + (", ".join(f"{i['id']} {i['title']}" for i in items) or "nothing")
 
