@@ -62,6 +62,14 @@ def cmd_tasks(a):
         print("\n  WARNING TASK TOO BIG: split it before `run`; a task is one tiny change a fast model finishes in one short turn:")
         for tid, why in big:
             print(f"    {tid}: {why}")
+    big_stories = [(k, len(fc_tasks.parse_criteria(v.get("description") or "")))
+                   for k, v in (fc_tasks.linear_cache(proj).get("issues") or {}).items()
+                   if (v.get("status") or "").lower() not in fc_tasks.CANCELED and not fc_tasks.task_from_issue(dict(v, id=k))]
+    if any(n > 5 for _, n in big_stories):
+        print("\n  WARNING STORY TOO BIG: split it into thinner stories before cutting its tasks:")
+        for k, n in big_stories:
+            if n > 5:
+                print(f"    {k}: {n} criteria (max 5)")
     # Waves are what `run` still dispatches: an unmerged passed layer can still clash above, but it never runs again.
     to_run = [m for m in open_tasks if not fc_tasks.task_finished(proj, m)]
     waves = run_waves(to_run)
@@ -132,6 +140,8 @@ def spec_check(data):
             gaps = []
             if not bullets:
                 gaps.append("no bullet under `## Acceptance criteria`")
+            if len(bullets) > 5:
+                gaps.append(f"too big: {len(bullets)} criteria under `## Acceptance criteria` (max 5)")
             if story_task and not any(j.get("parentId") == i["id"] for j in issues if fc_tasks.task_from_issue(j)):
                 gaps.append("no task carries this story as its parentId (cut its code, dependency and toolchain changes into tasks)")
             out.append((not gaps, i["id"], "story", gaps))
