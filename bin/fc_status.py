@@ -124,6 +124,9 @@ def render_status(repo, projects):
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {fc_core.project_after(proj)})" if fc_core.project_after(proj) else ""
         out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{fc_change.change_line(proj)}")
+        ready = proj / "results" / "ready.json"
+        if ready.exists():
+            out.append("  " + fc_linear.ready_line(json.loads(ready.read_text())))
         if y := fc_tasks.yolo_state(proj):
             out.append(f"  yolo on{' (push)' if y.get('push') else ''} since {y['since']}")
         t = fc_cost.total(fc_cost.rows(proj))
@@ -149,7 +152,9 @@ def project_summary(repo, proj):
     last = time.strftime("%Y-%m-%d %H:%M", time.localtime(max(stamps))) if stamps else "never run"
     done = counts.get("merged", 0) + counts.get("passed", 0) + counts.get("hand_done", 0) + counts.get("already_green", 0)
     halted = (proj / "results" / "resume.json").exists()
+    ready = proj / "results" / "ready.json"
     return {"name": proj.name, "title": title, "tasks": len(rows), "done": done, "counts": counts, "last": last, "halted": halted,
+            "ready": json.loads(ready.read_text()) if ready.exists() else None,
             "after": fc_core.project_after(proj)}
 
 
@@ -164,8 +169,9 @@ def cmd_projects(a):
         ps = project_summary(wt, proj)
         states = ", ".join(f"{n} {k}" for k, n in sorted(ps["counts"].items(), key=lambda kv: -kv[1]))
         flag = "  HALTED (payment) -> compose resume" if ps["halted"] else ""
+        ready = f"  {fc_linear.ready_line(ps['ready'])}" if ps["ready"] is not None else ""
         after = f"  (after {ps['after']})" if ps["after"] else ""
-        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{after}{flag}")
+        print(f"{ps['name']:24} {ps['done']:>4}/{ps['tasks']:<4}  {ps['last']:17} {str(wt)[-34:]:34} {ps['title'] or '-'}  [{states}]{after}{flag}{ready}")
 
 def cmd_cost(a):
     """Tokens per teammate session and per run provider; --json prints the rows and their total."""
