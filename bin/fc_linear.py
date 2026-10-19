@@ -258,7 +258,14 @@ def linear_reconcile(proj, verified=False):
 
 
 def ready_ids(issues):
-    raise NotImplementedError("ready_ids")
+    """The identifiers, in input order, of the issues that can start now: state Todo or Backlog and every `blocks`
+    blocker finished (Done or Canceled, or In Review carrying the Design label)."""
+    def finished(b):
+        s = (b["state"]["name"] or "").lower()
+        return s in ("done", "canceled") or (s == "in review" and any(l["name"].lower() == "design" for l in b["labels"]["nodes"]))
+    return [i["identifier"] for i in issues
+            if (i["state"]["name"] or "").lower() in ("todo", "backlog")
+            and all(finished(r["issue"]) for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
 LINEAR_READY_TREE = ""
 
