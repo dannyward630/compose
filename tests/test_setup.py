@@ -1,11 +1,11 @@
 import hermetic  # first: no test sees the real home
-import io, os, sys, tempfile, unittest
+import contextlib, inspect, io, os, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_setup
+import fc_prompt, fc_steps, fc_steprun, fc_setup
 
 CHECKOUT = Path(fc_setup.__file__).resolve().parents[1]
 UV_ARGV = ["run", "--project", str(CHECKOUT / "setup"), "python", "-m", "compose_setup"]
@@ -60,3 +60,58 @@ class Setup(unittest.TestCase):
         e, text, ex, cd, plain = self.run_setup(uv=False)
         self.assertEqual((type(e), e.code), (SystemExit, 3)); plain.assert_called_once_with(CHECKOUT, False)
         self.assertIn("uv", text); self.assertEqual(len(text.strip().splitlines()), 1); ex.assert_not_called()
+
+def row(name, level="default", mode="run", ok=False):
+    return (name, lambda c: (ok, ""), f"install {name}", level, False, mode)
+
+ROWS = (row("gh", "required"), row("git", ok=True), row("brew", mode="interactive"), row("figma", "designer"),
+        row("OpenRouter key", "required", mode="key"), row("pi"))
+SIG = {f.__name__: inspect.signature(f) for f in (fc_prompt.confirm, fc_prompt.step, fc_steprun.run_step)}
+arg = lambda f, a, k: SIG[f].bind(*a, **k).arguments
+
+class Walk(unittest.TestCase):
+    def walk(self, custom, yes, answers=None, states=None, claude=True):
+        self.inside, self.runs = None, []
+        @contextlib.contextmanager
+        def spin(label):
+            self.inside = label
+            try: yield
+            finally: self.inside = None
+        def run(*a, **k):
+            got = arg("run_step", a, k); self.runs.append((got["row"][0], got["checkout"], got["yes"], got["claude"], got["terminal"], self.inside))
+            return (states or {}).get(got["row"][0], ("done", ""))
+        with mock.patch.object(fc_steps, "STEPS", ROWS), mock.patch.object(fc_steprun, "run_step", side_effect=run), \
+             mock.patch.object(fc_prompt, "confirm", side_effect=lambda *a, **k: answers[a[0] if a else k["question"]]) as ask, \
+             mock.patch.object(fc_prompt, "spin", spin), mock.patch.object(fc_prompt, "step") as step, \
+             mock.patch("shutil.which", lambda n, *a, **k: f"/bin/{n}" if claude else None), mock.patch("sys.stdout", io.StringIO()):
+            got = fc_setup.walk_steps(CHECKOUT, custom=custom, yes=yes)
+        self.asks = [(b["question"], b["default"]) for b in (arg("confirm", c.args, c.kwargs) for c in ask.call_args_list)]
+        self.steps = [(a["name"], a["word"], list(a.get("lines", ()))) for a in (arg("step", c.args, c.kwargs) for c in step.call_args_list)]
+        return got
+
+    def test_custom_asks_once_per_missing_step(self):
+        answers = {"Set up gh?": False, "Set up brew?": True, "Set up figma?": True, "Set up pi?": False}
+        got = self.walk(True, False, answers, {"figma": ("failed", "boom\nrun by hand: install figma")})
+        self.assertEqual(self.asks, [("Set up gh?", True), ("Set up brew?", True), ("Set up figma?", False), ("Set up pi?", True)])
+        self.assertEqual(self.steps, [("gh", "skipped", ["compose stops working without it; by hand: install gh"]), ("git", "ok", []),
+                                      ("brew", "done", []), ("figma", "failed", ["boom", "run by hand: install figma"]), ("pi", "skipped", [])])
+        self.assertEqual(self.runs, [("brew", CHECKOUT, False, True, True, None), ("figma", CHECKOUT, False, True, True, "figma")])
+        self.assertEqual(got, ([("gh", "skipped"), ("git", "ok"), ("brew", "done"), ("figma", "failed"), ("pi", "skipped")], True))
+
+    def test_custom_with_the_designer_row_declined_is_no_designer(self):
+        got = self.walk(True, False, {"Set up gh?": True, "Set up brew?": True, "Set up figma?": False, "Set up pi?": True})
+        self.assertEqual((got[1], ("figma", "skipped", []) in self.steps, [r[0] for r in self.runs]), (False, True, ["gh", "brew", "pi"]))
+
+    def test_quick_start_and_yes_ask_nothing_and_run_every_row_but_designer_and_keys(self):
+        for yes in (False, True):
+            with self.subTest(yes=yes):
+                got = self.walk(False, yes, {}, {"gh": ("failed", "boom\nrun by hand: install gh"), "git": ("ok", "")}, claude=not yes)
+                self.assertEqual(self.asks, [])
+                self.assertEqual(self.runs, [(n, CHECKOUT, yes, not yes, not yes, None if n == "brew" and not yes else n) for n in ("gh", "git", "brew", "pi")])
+                self.assertEqual(self.steps, [("gh", "failed", ["boom", "run by hand: install gh"]), ("git", "ok", []), ("brew", "done", []),
+                                              ("figma", "skipped", ["designer extra, skipped"]), ("pi", "done", [])])
+                self.assertEqual(got, ([("gh", "failed"), ("git", "ok"), ("brew", "done"), ("figma", "skipped"), ("pi", "done")], False))
+
+    def test_a_claude_state_is_shown_as_waiting_on_claude_code(self):
+        got = self.walk(False, True, {}, {"pi": ("claude", "")}, claude=False)
+        self.assertEqual((self.steps[-1], got[0][-1]), (("pi", "waiting on Claude Code", []), ("pi", "claude")))
