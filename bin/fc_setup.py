@@ -1,10 +1,10 @@
-"""`compose setup [--yes]`: the guided Textual setup on a terminal, the plain path otherwise."""
-import os, shutil, sys
+"""`compose setup [--yes]`: one prompt flow on a terminal, every default otherwise."""
+import shutil, sys
 from pathlib import Path
-import fc_checks, fc_plain
+import fc_checks
 
 
-MODES = ()
+MODES = ("Quick start (every default, designer extras off)", "Custom (choose each step)")
 
 
 def walk_steps(checkout, custom, yes, dry=False):
@@ -38,7 +38,21 @@ def walk_steps(checkout, custom, yes, dry=False):
 
 
 def run_setup(checkout, yes, dry=False):
-    raise NotImplementedError("run_setup")
+    import fc_config, fc_finish, fc_keys, fc_prompt, fc_steps
+    fc_prompt.intro("compose setup")
+    custom = False
+    if not yes:
+        custom = fc_prompt.select("How do you want to set up?", MODES) == 1
+    results, designer = walk_steps(checkout, custom, yes)
+    if not yes:
+        fc_keys.ask_keys(fc_config.settings(fc_config.read_config())[0], fc_steps.FRAMELINK_ENV, designer)
+        with fc_prompt.spin("checking your model"):
+            lines, code = fc_finish.finish(results, yes)
+    else:
+        lines, code = fc_finish.finish(results, yes)
+    fc_prompt.note("Summary", lines[:-1])
+    fc_prompt.outro(lines[-1])
+    return code
 
 
 def cmd_setup(a):
@@ -48,11 +62,4 @@ def cmd_setup(a):
             "fast-coding" in str(Path(link).resolve()) for _, link, _ in fc_checks.owned_links(checkout)):
         print(f"a fast-coding install is still on this machine; run {checkout}/bin/migrate-to-compose.sh to move it to compose first")
         sys.exit(1)
-    guided = sys.stdin.isatty() and sys.stdout.isatty() and not a.yes
-    if guided and shutil.which("uv") is None:
-        print("the guided setup needs uv; running the plain setup instead")
-        guided = False
-    if not guided:
-        sys.exit(fc_plain.run_plain(checkout, a.yes))
-    os.chdir(checkout / "setup")
-    os.execvp("uv", ["uv", "run", "--project", str(checkout / "setup"), "python", "-m", "compose_setup"])
+    sys.exit(run_setup(checkout, a.yes or not (sys.stdin.isatty() and sys.stdout.isatty())))
