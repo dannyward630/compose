@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, re, subprocess, sys, tempfile, threading, time, unittest
+import importlib.machinery, importlib.util, io, json, os, re, string, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -554,6 +554,36 @@ class LeanPlannerBrief(unittest.TestCase):
         for banned in ("—", "Product-Manager-Skills", "deanpeters"):
             self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
             self.assertNotIn(banned, self.brief)
+
+
+class PlanJudgmentBrief(unittest.TestCase):
+    """Step 5 of the planner brief tells the planner to write the delivery plan's judgment sections at each cut."""
+    PHRASES = (
+        'find the map\'s "<map id>: delivery plan" in compose linear doc list',
+        "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut with compose linear doc update <id> --section",
+        "priority is the ranked list under Priority when something has to give; Linear's priority field stays unused",
+        "the CLI rewrites the data sections (Start today, Lanes, Waves, Critical path); never edit them",
+    )
+    setUp = PlannerRules.setUp
+
+    def step5(self):
+        start = self.brief.index("5. After cutting")
+        return self.brief[start:self.brief.index("6. Design stories", start)]
+
+    def test_step_5_holds_each_phrase_and_keeps_its_old_steps(self):
+        flat = " ".join(self.step5().split())
+        for p in self.PHRASES + ("compose spec-check --project p", "compose change done"):
+            self.assertIn(p, flat)
+
+    def test_new_lines_keep_the_wrapped_indented_style(self):
+        for line in self.step5().rstrip("\n").split("\n")[1:]:
+            self.assertTrue(line.startswith("   "), line)
+            self.assertLessEqual(len(line), 130, line)
+
+    def test_brief_keeps_its_placeholders_and_has_no_em_dash(self):
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
+        self.assertNotIn("\u2014", self.brief)
 
 
 class DesignerBrief(unittest.TestCase):
