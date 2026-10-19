@@ -76,9 +76,9 @@ class TestCrewWorktrees(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "compose/p", "task_prefix": "team/p-"}))
         self.assertEqual(fc.fc_briefs.test_branch(self.proj, "007"), "team/p-tests-007")
 
-    def add_task(self, tid, protected, after=""):
+    def add_task(self, tid, protected, after="", test="true"):
         f = self.proj / "results" / "tasks.json"
-        task = {"id": tid, "title": tid, "files": [], "protected": [protected], "test": "true", "body": tid, "after": after}
+        task = {"id": tid, "title": tid, "files": [], "protected": protected.split(), "test": test, "body": tid, "after": after}
         f.write_text(json.dumps({"feature": {}, "tasks": json.loads(f.read_text())["tasks"] + [task]}))
 
     def start_writers(self, started):
@@ -110,11 +110,19 @@ class TestCrewWorktrees(unittest.TestCase):
 
     def test_writers_of_a_protected_file_that_already_exists_start_together(self):
         (self.repo / "a_test.go").write_text("pinned\n"); self.run("add", "a_test.go"); self.run("commit", "-qm", "stubs")  # groundwork wrote it, no writer edits it
-        self.add_task("003", "a_test.go", after="001")
+        self.add_task("003", "c_test.go a_test.go", after="001", test="go test ./c_test.go")  # its test runs c_test.go: a_test.go only pins names
         started = []
         out = self.start_writers(started)
         self.assertEqual(sorted(started), ["tests-001", "tests-002", "tests-003"])
         self.assertNotIn("waits for", out)
+
+    def test_writers_whose_tests_run_one_existing_file_start_one_after_another(self):
+        self.main_commits("a_test.go", "package a\n", "stubs")  # each writer appends its test to it: started together, the second collect conflicted
+        self.add_task("003", "a_test.go", test="go test ./a_test.go -run C")
+        started = []
+        out = self.start_writers(started)
+        self.assertEqual(sorted(started), ["tests-001", "tests-002"])
+        self.assertIn("tests-003 waits for tests-001", out)
 
     def test_collect_skips_a_writer_that_has_not_reported_test_ready(self):
         fc.fc_crew.write_report(self.proj, "p-tests-001", "working", "started")

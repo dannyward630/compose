@@ -1,4 +1,4 @@
-import argparse, json, sys
+import argparse, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import fc_core, fc_config, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug
@@ -408,19 +408,25 @@ def waiting_writers(proj, update=None):
         fc_core.atomic_write(f, json.dumps(have, indent=2))
     return have
 
+def test_written(meta, wt):
+    """The protected files a task's test writer writes: those not on the project branch yet, and those its test command runs
+    (named by path, file name, or module), or every one when the command names none. A file already there that the command
+    does not run (groundwork's pins, say) is only read."""
+    paths = meta.get("protected") or []
+    ran = [p for p in paths if re.search(rf"(?<![\w-]){re.escape(Path(p).stem)}(?![\w-])", meta.get("test") or "")]
+    return set(ran or paths) | {p for p in paths if fc_core.sh(["git", "cat-file", "-e", f"HEAD:{p}"], wt, check=False).returncode}
+
 def test_blockers(proj, tasks, starting):
-    """The writers each task in `starting` waits for: of the tasks sharing one of its protected files, those whose branch is not
+    """The writers each task in `starting` waits for: of the tasks writing one of the files it writes, those whose branch is not
     collected yet, and earlier ones that start now or wait. Started together off one commit, two writers of one file each created
-    it and the second collect conflicted; one after another, each starts off the project branch that holds the test before it.
-    A file already on the project branch (groundwork's, say) is written by no one, so it orders nobody.
-    A task whose own branch is open started long ago and waits for nothing."""
+    it, or each appended to it, and the second collect conflicted; one after another, each starts off the project branch that
+    holds the test before it. A task whose own branch is open started long ago and waits for nothing."""
     queued = {m["id"] for m in starting} | set(waiting_writers(proj))
     wt = fc_herdr.project_worktree(proj)
-    new = lambda paths: {p for p in paths if fc_core.sh(["git", "cat-file", "-e", f"HEAD:{p}"], wt, check=False).returncode}
+    written = {o["id"]: test_written(o, wt) for o in tasks}
     out = {}
     for m in starting:
-        mine = new(m.get("protected") or [])
-        by = [o["id"] for o in tasks if o["id"] != m["id"] and mine & set(o.get("protected") or [])
+        by = [o["id"] for o in tasks if o["id"] != m["id"] and written[m["id"]] & written[o["id"]]
               and ((o["id"] < m["id"] and o["id"] in queued) or test_open(proj, o["id"]))]
         if by and not test_open(proj, m["id"]):
             out[m["id"]] = by
