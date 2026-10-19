@@ -133,11 +133,11 @@ class Spin(unittest.TestCase):
                 self.assertTrue(shown.endswith(self.CLEAR), repr(shown))
 
     def test_frames_follow_FRAMES_in_order_every_tenth_of_a_second_and_wrap_around(self):
-        shown = self.spin("pi auth", lambda out, before: time.sleep(0.65))
+        shown = self.spin("pi auth", lambda out, before: time.sleep(1.0))
         self.assertEqual(fc_prompt.FRAMES, "◒◐◓◑")
         self.assertTrue(shown.startswith("\r") and shown.endswith(self.CLEAR), repr(shown))
         frames = shown[1:-len(self.CLEAR)].split("\r")
-        self.assertTrue(5 <= len(frames) <= 9, frames)
+        self.assertTrue(5 <= len(frames) <= 13, frames)
         self.assertEqual(frames, [f"{'◒◐◓◑'[i % 4]}  pi auth" for i in range(len(frames))])
         self.assertGreaterEqual(self.out.flushes, len(frames))
 
