@@ -53,8 +53,6 @@ def ask_keys(workspace, framelink_env, designer, dry=False):
     """Ask for each key with hidden input after the steps; returns the kinds saved, in order."""
     set_ = key_status(fc_auth.read_auth(fc_config.AUTH_PATH), workspace, framelink_env)
     fc_prompt.note(f"Keys for workspace {workspace}", [])
-    home = str(Path.home())
-    short = lambda p: str(p).replace(home, "~", 1)
     saved = []
     for kind, label, mark, hint in KEYS:
         if kind == "figma" and not designer:
@@ -65,7 +63,7 @@ def ask_keys(workspace, framelink_env, designer, dry=False):
             if value:
                 if dry:
                     what = "the Figma token" if kind == "figma" else f"{kind} key"
-                    print(f"│  would save {what} to {short(framelink_env if kind == 'figma' else fc_config.AUTH_PATH)}")
+                    print(f"│  would save {what} to {fc_core.tilde(str(framelink_env if kind == 'figma' else fc_config.AUTH_PATH))}")
                 else:
                     print("│  " + save_key(kind, value, workspace, framelink_env))
                 saved.append(kind)
