@@ -1,4 +1,4 @@
-"""Run one setup step: the plain path and the Textual app both go through run_step."""
+"""Run one setup step: the setup flow goes through run_step."""
 import subprocess
 import fc_core, fc_config, fc_checks, fc_keys, fc_steps, fc_links, fc_pi
 
@@ -16,7 +16,13 @@ WRITERS = {
     "TEXT_MODEL lines": lambda checkout: fc_pi.write_text_model(fc_config.ENV_FILE),
 }
 
-PREVIEWS = {}
+PREVIEWS = {
+    "pi openrouter-fast provider": lambda checkout: f"would declare openrouter-fast in {fc_pi.PI_MODELS}",
+    "compose CLI link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "compose CLI link"),
+    "compose skill link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "compose skill link"),
+    "bp link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "bp link"),
+    "TEXT_MODEL lines": lambda checkout: f"would append {', '.join(fc_pi.TEXT_MODEL_DEFAULTS)} to {fc_config.ENV_FILE}",
+}
 
 def run_step(row, checkout, yes, claude, terminal, dry=False):
     """(state, line): state is ok, claude, skipped, manual, done, or failed; the line never holds a key value.
@@ -29,8 +35,6 @@ def run_step(row, checkout, yes, claude, terminal, dry=False):
     return state, fc_core.tilde(line)
 
 def _run_step(row, checkout, yes, claude, terminal, dry=False):
-    if dry:
-        raise NotImplementedError("run_step dry")
     name, _, install, level, needs_claude, mode = row
     ok, detail = fc_steps.check(row, checkout)
     if ok:
@@ -46,6 +50,12 @@ def _run_step(row, checkout, yes, claude, terminal, dry=False):
         return "skipped", f"{name}: designer extra, skipped"
     if mode == "interactive" and not terminal:
         return "skipped", f"{name}: run by hand: {install}"
+    if dry:
+        if mode == "write":
+            return "would", PREVIEWS[name](checkout)
+        if mode == "interactive":
+            return "would", f"would run: {install} (it takes the terminal)"
+        return "would", f"would run: {install}"
     said = ""
     if mode == "write":
         got = WRITERS[name](checkout)

@@ -1,4 +1,4 @@
-"""The setup steps table: one row per step, read by doctor, the plain setup path, and the Textual app.
+"""The setup steps table: one row per step, read by doctor and the setup flow.
 A row is (name, check, install, level, needs_claude, mode); level is required, default, or designer; mode is run, interactive,
 manual (never run), write (compose's own writer; install is `compose setup`), or key."""
 import json, re, shutil
