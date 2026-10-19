@@ -28,7 +28,7 @@ class RunStep(unittest.TestCase):
     def test_claude_missing_and_designer_under_yes(self):
         state, line = self.step(self.has, claude_row=True, claude=False)
         skipped = self.step(self.has, level="designer", yes=True)[0]
-        self.assertEqual((state, "waiting on Claude Code" in line, skipped, self.ran.exists()), ("claude", True, "skipped", False))
+        self.assertEqual((state, line, skipped, self.ran.exists()), ("claude", "", "skipped", False))
 
     def test_manual_and_interactive_without_terminal_show_the_command(self):
         for mode in ("manual", "interactive"):
@@ -125,6 +125,31 @@ class PiPreview(unittest.TestCase):
             self.assertEqual(self.step(lambda c: (False, ""), "write", "pi openrouter-fast provider", "compose setup"), ("would", line))
             self.assertEqual(path.read_text(), text)
 
+
+class StepDetail(unittest.TestCase):
+    """A step's line never repeats the step's name, nor only its state: the ◇ header above it shows both."""
+    setUp, step = RunStep.setUp, RunStep.step
+
+    def test_guard_rows_say_only_what_to_do(self):
+        by_hand = f"run by hand: touch {self.ran}"
+        self.assertEqual(self.step(self.has, claude_row=True, claude=False, name="superpowers"), ("claude", ""))
+        self.assertEqual(self.step(self.has, mode="manual", name="git"), ("manual", by_hand))
+        self.assertEqual(self.step(self.has, mode="interactive", name="Homebrew"), ("skipped", by_hand))
+        self.assertEqual(self.step(self.has, level="designer", yes=True, name="figma"), ("skipped", "designer extra, skipped"))
+        self.assertFalse(self.ran.exists())
+
+    def test_key_row_is_the_skipped_line_else_the_install(self):
+        for said in ("Linear key: none for acme\nrun compose setup", ""):
+            with mock.patch.object(fc_keys, "skipped_line", return_value=said) as skipped:
+                self.assertEqual(self.step(self.has, "get one", mode="key", name="Linear key"), ("skipped", said or "get one"))
+            skipped.assert_called_once_with("linear", "acme")
+
+    def test_failed_write_row_is_its_writers_line_else_the_checks_detail(self):
+        for said, detail, want in (("linked bp", "stale", "linked bp"), ("", "points elsewhere", "points elsewhere"), ("", "", "")):
+            with mock.patch.dict(fc_steprun.WRITERS, {"bp link": lambda c, said=said: said}):
+                self.assertEqual(self.step(lambda c, d=detail: (False, d), "compose setup", mode="write", name="bp link"), ("failed", want))
+
+
 class StepLines(unittest.TestCase):
     def setUp(self):
         t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
@@ -153,10 +178,10 @@ class StepLines(unittest.TestCase):
             self.assertEqual(self.step(self.has, "compose setup", "write", name="TEXT_MODEL lines"), ("done", "wrote TEXT_MODEL lines"))
 
     def test_failed_rows_name_the_command_to_run_by_hand(self):
-        boom = "echo first >&2; echo boom >&2; exit 3"
-        self.assertEqual(self.step(self.has, boom), ("failed", f"pi: boom; by hand: {boom}"))
-        self.assertEqual(self.step(self.has, "true", name="gh stack"), ("failed", "gh stack: failed; by hand: true"))
-        self.assertEqual(self.step(self.has, "exit 1", "interactive", True, "gh auth"), ("failed", "gh auth: failed; by hand: exit 1"))
+        boom = "echo 'pi: first' >&2; echo 'pi: boom' >&2; exit 3"
+        self.assertEqual(self.step(self.has, boom), ("failed", f"pi: boom; by hand: {boom}"))  # the output's own words stay
+        self.assertEqual(self.step(self.has, "true", name="gh stack"), ("failed", "by hand: true"))
+        self.assertEqual(self.step(self.has, "exit 1", "interactive", True, "gh auth"), ("failed", "by hand: exit 1"))
 
     def test_each_link_row_makes_only_its_own_link(self):
         for name, (link, target) in self.links.items():
@@ -197,7 +222,7 @@ class HomePaths(unittest.TestCase):
     def test_failed_and_manual_lines_show_home_as_tilde(self):
         h = str(Path.home())
         boom = f"echo 'cannot write {h}/.npm/x' >&2; exit 3"
-        self.assertEqual(self.step(boom), ("failed", f"pi: cannot write ~/.npm/x; by hand: {boom.replace(h + '/', '~/')}"))
+        self.assertEqual(self.step(boom), ("failed", f"cannot write ~/.npm/x; by hand: {boom.replace(h + '/', '~/')}"))
         state, line = self.step(f"{h}/bin/fix", "manual", "git")
         self.assertEqual((state in ("manual", "skipped"), "~/bin/fix" in line, h + "/" in line), (True, True, False))
 
@@ -207,6 +232,6 @@ class HomePaths(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": str(home)}):
             for other in ("a.lex/f", "aXl/f"):
                 boom = f"echo 'no {self.tmp}/{other}' >&2; exit 3"
-                self.assertEqual(self.step(boom), ("failed", f"pi: no {self.tmp}/{other}; by hand: {boom}"))
-        self.assertEqual(self.step("echo boom >&2; exit 3"), ("failed", "pi: boom; by hand: echo boom >&2; exit 3"))
+                self.assertEqual(self.step(boom), ("failed", f"no {self.tmp}/{other}; by hand: {boom}"))
+        self.assertEqual(self.step("echo boom >&2; exit 3"), ("failed", "boom; by hand: echo boom >&2; exit 3"))
         self.assertEqual(self.step("true", check=lambda c: (True, "")), ("ok", ""))

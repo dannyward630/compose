@@ -149,3 +149,19 @@ class DryRun(SetupE2E, unittest.TestCase):
         changes = sum(bool(re.match(r"(◇  [^:]+: |│  )would ", line)) for line in r.lines)
         self.assertEqual((r.code, [line for line in r.lines if line][-1], "sk-or-test-1" in r.text),
                          (1, f"└  dry run: nothing changed; {changes} changes listed above", False))
+
+
+class StepDetail(SetupE2E, unittest.TestCase):
+    """A step's │ lines never repeat the name or only the state of the ◇ header above them (task 023)."""
+
+    def test_detail_lines_never_repeat_their_header(self):
+        r = self.run_setup(answers=[("number [1]: ", "1"), *SKIP * 3])
+        under, head = {}, None
+        for line in r.lines:
+            if not line.startswith("│"):
+                head = (m := re.fullmatch(r"◇  (.+): (\S+)", line)) and m.groups()
+            elif head and line.startswith("│  "):
+                under.setdefault(head, []).append(line[3:])
+        self.assertEqual([(h, l) for h, ls in under.items() for l in ls if l.startswith(f"{h[0]}: ") or l == h[1]], [])
+        self.assertEqual((under.get(("Chromium", "failed"), [""])[0], under.get(("~/.local/bin on PATH", "manual"), [""])[0]),
+                         ("by hand: npx playwright install chromium", 'run by hand: put `export PATH="$HOME/.local/bin:$PATH"` in your shell profile'))
