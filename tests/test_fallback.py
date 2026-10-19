@@ -482,6 +482,13 @@ class Workspaces(unittest.TestCase):
         self.assertIn("preset 'glm-5-3-flash-fast' not found in workspace 'work'", str(cm.exception))
         self.assertNotIn("No project session", str(cm.exception))
 
+    def test_a_429_before_any_token_is_a_rate_limit(self):
+        err = json.dumps({"message": "Provider returned error", "code": 429, "metadata": {"raw": "z-ai/glm-5.3-flash is temporarily rate-limited upstream."}})
+        end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": f"429: {err}"}})
+        run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="", returncode=0))
+        with mock.patch.object(fc.fc_proc, "run", run), self.assertRaises(fc.fc_models.RateLimited):
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+
 
 class PiKeyFromEnv(unittest.TestCase):
     """pi gets the OpenRouter key from its environment only: never in argv, never from .env."""

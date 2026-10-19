@@ -134,13 +134,14 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]
         payment_check("openrouter (pi)", " ".join(real))
         raise RuntimeError(f"pi failed: {' '.join(real)[-400:] or p.stdout.strip()[-400:]}")
-    if not text and not tools and not usage["tokens_in"]:
+    limited = "429" in (p.stderr or "") or any("rate" in e.lower() and "limit" in e.lower() for e in errors)
+    if not text and not tools and not usage["tokens_in"] and not limited:  # a 429 refuses before any token, and is still a rate limit
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]  # pi's session warnings are not the provider's answer
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or ' '.join(real)[-400:] or 'empty reply with no usage'}")
     if model in fc_config.PRICES:
         usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
     fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
-    if "429" in (p.stderr or "") or any("rate" in e.lower() and "limit" in e.lower() for e in errors):
+    if limited:
         raise RateLimited(usage)
     return sid, "\n".join(text), tools, usage
 
