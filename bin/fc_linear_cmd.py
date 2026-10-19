@@ -31,12 +31,12 @@ def linear_project(repo):
         sys.exit(f"project {p['name']} is not on team {link['team']}")
     return {"id": p["id"], "name": p["name"], "url": p["url"], "team": {"id": team["id"], "name": team["name"], "key": team["key"]}}
 
-def in_scope(issue, a):
+def in_scope(item, a, name=None):
     if a.any_project:
         return
     p = linear_project(a.repo)
-    if (issue["project"] or {}).get("id") != p["id"]:
-        sys.exit(f"{issue['identifier']} is not in project {p['name']}; pass --any-project to use it")
+    if (item["project"] or {}).get("id") != p["id"]:
+        sys.exit(f"{name or item['identifier']} is not in project {p['name']}; pass --any-project to use it")
 
 def state_and_labels(team, a):
     out = {}
@@ -67,9 +67,31 @@ def replace_section(body, heading, text):
     parts = [p for p in ("\n".join(lines[:i]).rstrip("\n"), section.rstrip("\n"), "\n".join(lines[end:]).rstrip("\n")) if p]
     return "\n\n".join(parts) + "\n" if parts else ""
 
+def writes_body(a, verb):
+    if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
+        sys.exit(f"{verb} takes one of --section, --append, --description")
+    return bool(a.section or a.append or a.description)
+
+def new_body(a, old):
+    body, old = read_body(a), old or ""
+    if a.section:
+        return replace_section(old, a.section, body)
+    if a.append:
+        return old.rstrip("\n") + "\n\n" + body.strip() + "\n"
+    return body
+
 def verb_project(a):
+    writes = writes_body(a, "project")
     p = linear_project(a.repo)
+    content = fc_linear.linear_gql("query($id: String!) { project(id: $id) { content } }", {"id": p["id"]})["project"]["content"] if writes or a.body else None
+    if writes:
+        fc_linear.linear_gql("mutation($id: String!, $in: ProjectUpdateInput!) { projectUpdate(id: $id, input: $in) { success } }",
+                             {"id": p["id"], "in": {"content": new_body(a, content)}})
+        print(f"updated {p['name']}")
+        return
     print(f"{p['name']} on team {p['team']['name']}: {p['url']}")
+    if a.body:
+        print(content or "")
 
 def verb_get(a):
     if not a.target:
@@ -132,8 +154,7 @@ def verb_create(a):
 def verb_update(a):
     if not a.target:
         sys.exit("update needs an issue id")
-    if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
-        sys.exit("update takes one of --section, --append, --description")
+    writes = writes_body(a, "update")
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
@@ -143,14 +164,8 @@ def verb_update(a):
     if a.parent:
         inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
     inp.update(state_and_labels(issue["team"], a))
-    if a.section or a.append or a.description:
-        body, old = read_body(a), issue["description"] or ""
-        if a.section:
-            inp["description"] = replace_section(old, a.section, body)
-        elif a.append:
-            inp["description"] = old.rstrip("\n") + "\n\n" + body.strip() + "\n"
-        else:
-            inp["description"] = body
+    if writes:
+        inp["description"] = new_body(a, issue["description"])
     fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
     if a.blocked_by is not None:
         fc_linear.linear_blocked_by(issue, [x for x in a.blocked_by.split(",") if x])
@@ -188,13 +203,35 @@ def verb_doc(a):
         doc = fc_linear.linear_gql("mutation($in: DocumentCreateInput!) { documentCreate(input: $in) { document { url } } }",
                                    {"in": {"title": a.title, "content": read_body(a), "projectId": p["id"]}})["documentCreate"]["document"]
         print(doc["url"])
+    elif a.target == ["list"]:
+        p, after = linear_project(a.repo), None
+        while True:
+            page = fc_linear.linear_gql("query($id: String!, $after: String) { project(id: $id) { documents(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id title updatedAt } } } }",
+                                        {"id": p["id"], "after": after})["project"]["documents"]
+            for d in page["nodes"]:
+                print(f"{d['id']} {d['updatedAt'][:10]} {d['title']}")
+            if not page["pageInfo"]["hasNextPage"]:
+                break
+            after = page["pageInfo"]["endCursor"]
+    elif len(a.target) == 2 and a.target[0] == "update":
+        writes = writes_body(a, "doc update")
+        if not writes and not a.title:
+            sys.exit("doc update needs --title, --section, --append, or --description")
+        doc = fc_linear.linear_gql("query($id: String!) { document(id: $id) { id title content url project { id name } } }",
+                                   {"id": a.target[1]})["document"]
+        in_scope(doc, a, f"document {doc['title']}")
+        inp = {"title": a.title} if a.title else {}
+        if writes:
+            inp["content"] = new_body(a, doc["content"])
+        fc_linear.linear_gql("mutation($id: String!, $in: DocumentUpdateInput!) { documentUpdate(id: $id, input: $in) { success } }", {"id": doc["id"], "in": inp})
+        print(f"updated {doc['url']}")
     elif len(a.target) == 2 and a.target[0] == "get":
         doc = fc_linear.linear_gql("query($id: String!) { document(id: $id) { title content url } }",
                                    {"id": a.target[1]})["document"]
         print(doc["title"])
         print(doc["content"])
     else:
-        sys.exit("doc takes create, or get <id>")
+        sys.exit("doc takes create, list, get <id>, or update <id>")
 
 def cmd_linear(a):
     if not fc_config.LINEAR_KEY:

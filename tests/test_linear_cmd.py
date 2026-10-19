@@ -27,6 +27,8 @@ class LinearProject(unittest.TestCase):
 
     def gql(self, query, variables):
         self.calls.append((" ".join(query.split()), variables))
+        if "projectUpdate" in query or "project(id" in query:
+            return {"projectUpdate": {"success": True}} if "projectUpdate" in query else {"project": {"content": self.content}}
         return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": self.teams}}] if self.nodes is None else self.nodes}}
 
     def args(self, action, *target, **kw):
@@ -63,6 +65,21 @@ class LinearProject(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             fc.fc_linear_cmd.verb_project(self.args("project"))
         self.assertEqual(out.getvalue().strip(), f"Shop on team Engineering: {URL}")
+
+    def test_project_body_prints_the_description_and_each_body_flag_writes_it(self):
+        self.content = "# Shop\n\n## Goals\n\nold\n\n## Notes\n\nkeep\n"
+        written = lambda: [v for q, v in self.calls if "projectUpdate(id: $id, input: $in) { success }" in q]
+        (self.repo / "body.md").write_text("new goals\n")
+        for kw, want in (({"body": True}, [f"Shop on team Engineering: {URL}", *self.content.strip().split("\n")]), ({"section": "## Goals"}, ["updated Shop"]),
+                         ({"append": True}, ["updated Shop"]), ({"description": True}, ["updated Shop"])):
+            with redirect_stdout(io.StringIO()) as out:
+                fc.fc_linear_cmd.verb_project(self.args("project", file=str(self.repo / "body.md"), **kw))
+            self.assertEqual(out.getvalue().strip().split("\n"), want)
+        self.assertEqual(written(), [{"id": "p1", "in": {"content": "# Shop\n\n## Goals\n\nnew goals\n\n## Notes\n\nkeep\n"}},
+                                     {"id": "p1", "in": {"content": self.content + "\nnew goals\n"}}, {"id": "p1", "in": {"content": "new goals\n"}}])
+        self.assertEqual([v for q, v in self.calls if "project(id: $id) { content }" in q], [{"id": "p1"}] * 4)
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_project, self.args("project", section="## Goals", description=True)), (1, "project takes one of --section, --append, --description"))
+        self.assertEqual(len(written()), 3)
 
     def test_project_link_as_pasted_resolves_to_its_slug(self):
         for link in (f"{URL}/overview", f"{URL}/", f"{URL}/issues?layout=list", f"{URL}#top", "my-shop-abc123"):
@@ -324,7 +341,7 @@ class LinearCommentLabelsDoc(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp()).resolve()
         (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
-        self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "project": {"id": "p1", "name": "Shop"}}
+        self.calls, self.issue, self.doc = [], {"id": "iid", "identifier": "ENG-7", "project": {"id": "p1", "name": "Shop"}}, None
         self.sent = lambda query: [v for q, v in self.calls if query in q]
         tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
         for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear, "linear_comment", mock.Mock())):
@@ -334,9 +351,11 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.calls.append((" ".join(query.split()), variables))
         replies = {"projects(": {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t0", "name": "Design", "key": "DES"}, {"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}},
                    "issueLabelCreate": {"issueLabelCreate": {"success": True}}, "documentCreate": {"documentCreate": {"document": {"url": self.DOC_URL}}},
-                   "document(": {"document": {"title": "Research", "content": "Line one.\nLine two.", "url": self.DOC_URL}},
+                   "documentUpdate(": {"documentUpdate": {"success": True}}, "documents(": lambda: {"project": {"documents": self.pages.pop(0)}},
+                   "document(": {"document": self.doc or {"title": "Research", "content": "Line one.\nLine two.", "url": self.DOC_URL}},
                    "team(": {"team": {"labels": {"nodes": [{"id": "l2", "name": "ui"}, {"id": "l1", "name": "bug"}, {"id": "l3", "name": "perf"}]}}}, "issue(": {"issue": self.issue}}
-        return next(v for k, v in replies.items() if k in query)
+        reply = next(v for k, v in replies.items() if k in query)
+        return reply() if callable(reply) else reply
 
     def a(self, verb, *target, body=None, **kw):
         if body is not None: (self.repo / "body.md").write_text(body); kw["file"] = str(self.repo / "body.md")
@@ -373,9 +392,33 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.assertEqual((self.run_verb("doc", "get", "d1"), self.sent(self.DOC)), (["Research", "Line one.", "Line two."], [{"id": "d1"}]))
 
     def test_doc_refuses_any_other_target_and_sends_nothing(self):
-        for target in ([], ["get"], ["list"], ["create", "extra"]):
-            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.args("doc", *target, title="T")), (1, "doc takes create, or get <id>"))
+        for target in ([], ["get"], ["update"], ["list", "extra"], ["create", "extra"]):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.args("doc", *target, title="T")), (1, "doc takes create, list, get <id>, or update <id>"))
         self.assertFalse([q for q, _ in self.calls if "document" in q])
+
+    def test_doc_list_prints_every_page_of_the_project_documents(self):
+        self.pages = [{"pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [{"id": "d1", "title": "PRD", "updatedAt": "2026-10-18T17:15:38.008Z"}]},
+                      {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [{"id": "d2", "title": "Architecture", "updatedAt": "2026-10-17T09:00:00.000Z"}]}]
+        self.assertEqual(self.run_verb("doc", "list"), ["d1 2026-10-18 PRD", "d2 2026-10-17 Architecture"])
+        self.assertEqual(self.sent("project(id: $id) { documents(first: 100, after: $after)"), [{"id": "p1", "after": None}, {"id": "p1", "after": "c1"}])
+
+    def test_doc_update_sets_the_title_and_each_body_flag_on_the_read_content(self):
+        content, sent = "# PRD\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", lambda: [v["in"] for v in self.sent("documentUpdate(id: $id, input: $in) { success }")]
+        self.doc = {"id": "did", "title": "PRD", "content": content, "url": self.DOC_URL, "project": {"id": "p1", "name": "Shop"}}
+        self.assertEqual(self.run_verb("doc", "update", "d1", body="new plan", section="## Plan"), [f"updated {self.DOC_URL}"])
+        self.run_verb("doc", "update", "d1", body="\n more \n", append=True, title="PRD v2")
+        self.run_verb("doc", "update", "d1", body="whole\n", description=True)
+        self.run_verb("doc", "update", "d1", title="Only the title")
+        self.assertEqual(sent(), [{"content": "# PRD\n\n## Plan\n\nnew plan\n\n## Notes\n\nkeep\n"}, {"title": "PRD v2", "content": content + "\nmore\n"},
+                                  {"content": "whole\n"}, {"title": "Only the title"}])
+        self.assertEqual(([v["id"] for v in self.sent("documentUpdate(")], self.sent("document(id: $id) { id title content url project { id name } }")), (["did"] * 4, [{"id": "d1"}] * 4))
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", section="## Plan", append=True)), (1, "doc update takes one of --section, --append, --description"))
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1")), (1, "doc update needs --title, --section, --append, or --description"))
+        self.doc["project"] = None
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", description=True)), (1, "document PRD is not in project Shop; pass --any-project to use it"))
+        self.assertEqual(len(sent()), 4)
+        self.run_verb("doc", "update", "d1", body="x", description=True, any_project=True)
+        self.assertEqual(sent()[-1], {"content": "x"})
 
 
 class LinearNoProject(unittest.TestCase):
