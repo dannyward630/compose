@@ -1330,5 +1330,45 @@ class DryRunDocs(unittest.TestCase):
             self.assertEqual(len(text.splitlines()), count, f"{rel}: one row added to README, none to cli.md")
 
 
+FEATURE_HEAD = "- **feature**: if its map is not clear, wayfinder it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
+FEATURE_TAIL = " and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story."
+LEAN_PAREN = "(one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship)"
+PLANNING_MISS = "A second wave for polish or a toolchain fix the first wave could have seen is a planning miss."
+LEAN_LINES = [
+    "Stories are lean: each is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria.",
+    'Split cues in a story: "all", "every", several When/Then pairs, or several outside systems.',
+    "When no split fits, a time-boxed probe answers the unknown first, then the split.",
+]
+
+
+class LeanStoryRule(unittest.TestCase):
+    def test_feature_row_holds_the_lean_parenthesis_and_nothing_else_changes(self):
+        rows = [l for l in read("SKILL.md").splitlines() if l.startswith("- **feature**:")]
+        self.assertEqual(rows, [FEATURE_HEAD + LEAN_PAREN + FEATURE_TAIL])
+        self.assertNotIn("one issue per user-visible slice", rows[0])
+
+    def test_story_row_of_the_table_keeps_its_slice_wording(self):
+        rows = [l for l in read("SKILL.md").splitlines() if l.startswith("| **story** |")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("its description is one user-visible slice with acceptance criteria", rows[0])
+
+    def test_three_lines_right_after_the_planning_miss_line_once_each(self):
+        lines = read("sections/1.md").splitlines()
+        self.assertEqual(lines.count(PLANNING_MISS), 1)
+        i = lines.index(PLANNING_MISS)
+        self.assertEqual(lines[i + 1:i + 4], LEAN_LINES)
+        self.assertTrue(lines[i + 4].startswith("The plan also states the simplicity bar"), "the three lines are added, not swapped in")
+        for line in LEAN_LINES:
+            self.assertEqual(lines.count(line), 1, line)
+
+    def test_skill_stays_under_the_size_cap(self):
+        self.assertLess(len(read("SKILL.md").encode()), 30000)
+
+    def test_no_outside_source_named_in_the_skill(self):
+        for path in [ROOT / "SKILL.md"] + sorted((ROOT / "sections").glob("*.md")):
+            for word in ("Product-Manager-Skills", "deanpeters"):
+                self.assertNotIn(word, path.read_text(), f"{word!r} in {path.name}")
+
+
 if __name__ == "__main__":
     unittest.main()
