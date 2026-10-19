@@ -564,7 +564,7 @@ class DeliveryPlan(unittest.TestCase):
 
 
 class PlanStoredNewline(unittest.TestCase):
-    setUp, gql, writes = DeliveryPlan.setUp, DeliveryPlan.gql, DeliveryPlan.writes
+    setUp, gql, writes, flat = DeliveryPlan.setUp, DeliveryPlan.gql, DeliveryPlan.writes, DeliveryPlan.__dict__["flat"]
     DATA = {h: f"{h[3:]} now." for h in fc_plan.PLAN_SECTIONS[:4]}
 
     def plan(self, sections, content):
