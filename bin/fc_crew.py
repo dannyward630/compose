@@ -22,8 +22,16 @@ def crew_reports(proj, name):
 
 def tab_closed(c, agents):
     """A teammate's tab is closed when herdr's agent list (`agents`; None when herdr cannot say) has no agent of its name in
-    its space. Whatever its last report says, a teammate with a closed tab is not working."""
-    return agents is not None and not any(ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space") for ag in agents)
+    its space. Whatever its last report says, a teammate with a closed tab is not working. A teammate `crew start` is still bringing
+    up (`booting`) is not listed until herdr registers it, so only herdr saying its tab is gone closes it."""
+    if agents is None or any(ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space") for ag in agents):
+        return False
+    if not c.get("booting"):
+        return True
+    try:
+        return fc_herdr.herdr_error("tab", "get", c.get("tab") or "", timeout=10)[1] == "tab_not_found"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 def scratch_dir(proj, name=None):
     return proj / "scratch" / name if name else proj / "scratch"
@@ -243,7 +251,7 @@ def cmd_crew(a):
     except OSError:
         skill = {}
     fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
-                               "reports_to": reports_to, "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), **skill}, indent=2))
+                               "reports_to": reports_to, "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
@@ -270,6 +278,7 @@ def cmd_crew(a):
     except RuntimeError as e:
         if "agent_blocked" in str(e):  # a dialog before the first prompt (an MCP server, trust) is the product owner's to answer: keep the tab for it
             dialog = fc_herdr.herdr_dialog(agent)
+            crew_up(proj, name)
             write_report(proj, name, "blocked", f"waiting at a Claude Code dialog before its brief: {dialog}")
             crew_attention(proj, name, "blocked", dialog)
             sys.exit(f"teammate {name} came up but waits at a Claude Code dialog, so it has not taken its brief: {dialog}\n"
@@ -287,6 +296,7 @@ def cmd_crew(a):
             if len(crew_reports(proj, name)) <= seen and ((fc_herdr.herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") not in ("working", "blocked", "done"):
                 crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
                 sys.exit(f"teammate {name} did not start on its brief: Enter and sending it again did nothing; its tab is closed and nothing is left registered: run the same crew start again")
+    crew_up(proj, name)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `compose report`, `watch` wakes on it")
 
@@ -381,6 +391,12 @@ def crew_unstart(proj, name, pane, tab):
 def crew_record(proj, name):
     f = crew_dir(proj) / f"{name}.json"
     return json.loads(f.read_text()) if f.exists() else None
+
+def crew_up(proj, name):
+    """herdr lists the teammate now: from here on a missing agent means its session ended, so its record is no longer `booting`."""
+    if c := crew_record(proj, name):
+        c.pop("booting", None)
+        fc_core.atomic_write(crew_dir(proj) / f"{name}.json", json.dumps(c, indent=2))
 
 def crew_reporting_to(proj, key):
     """The teammates whose records say they report to this watcher: `manager` for the engineering manager (started with no

@@ -153,8 +153,10 @@ class Crew(unittest.TestCase):
         self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-q-neb-12")[0]["state"], "working")
 
     def test_started_is_written_before_the_agent_can_report(self):
+        booting = []
         def herdr(*args, **kw):
             if args[:2] == ("agent", "start"):  # a fast teammate finishes before start returns
+                booting.append(fc.fc_crew.crew_record(self.proj, "shop-eol").get("booting"))
                 fc.fc_crew.write_report(self.proj, "shop-eol", "done", "one commit")
             if args[:2] == ("agent", "list"):
                 return {"agents": []}
@@ -167,6 +169,8 @@ class Crew(unittest.TestCase):
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         self.assertEqual([r["state"] for r in fc.fc_crew.crew_reports(self.proj, "shop-eol")], ["working", "done"])
+        self.assertEqual(booting, [True])  # herdr does not list it yet: watch must not take it for a closed tab
+        self.assertNotIn("booting", fc.fc_crew.crew_record(self.proj, "shop-eol"))  # up: from now on a missing agent means it ended
 
     def start_with_timeout(self, appears_after, pane_busy=False, finishes=False):
         """crew start where herdr's agent start times out; the agent shows in the agent list on the `appears_after`-th look (None: never).

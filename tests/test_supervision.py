@@ -170,6 +170,16 @@ class WatchTimeout(unittest.TestCase):
             with mock.patch.object(fc.fc_herdr, "herdr", return_value=answer), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
                 self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["closed"], closed)
 
+    def test_a_teammate_still_booting_is_closed_only_when_its_tab_is(self):
+        """crew start writes the record before herdr lists the agent: until it took its brief, only a closed tab ends it."""
+        proj = Path(tempfile.mkdtemp()) / "hw"; (proj / "results" / "crew").mkdir(parents=True)
+        for n, tab in (("hw-tests-001", "w9:t3"), ("hw-tests-002", "w9:t4")):
+            (proj / "results" / "crew" / f"{n}.json").write_text(json.dumps({"name": n, "space": "w9", "tab": tab, "booting": True}))
+        tabs = lambda *a, **k: ({"tab": {"tab_id": "w9:t3"}}, None) if a == ("tab", "get", "w9:t3") else (None, "tab_not_found")
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={"agents": []}), mock.patch.object(fc.fc_herdr, "herdr_error", tabs), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["closed"], ["hw-tests-002"])
+
     def test_the_snapshot_sees_a_team_lead_whose_name_was_cut(self):
         proj = Path(tempfile.mkdtemp()) / "clean-recut-branches"; (proj / "results").mkdir(parents=True)
         live = {"agents": [{"name": "clean-recut-branche-orchestrator", "workspace_id": "w9", "agent_status": "working"},
