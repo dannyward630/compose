@@ -1404,7 +1404,7 @@ class LeanDesignStories(unittest.TestCase):
 
 PLAN_LINES = [
     "**The delivery plan.**",
-    "The planner rewrites its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each re-plan, with `compose linear doc update <id> --section`.",
+    "The planner rewrites its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each re-plan, with `compose linear doc update <id> --section \"<heading>\" --file <path>`.",
     "Priority is the ranked list under Priority when something has to give; Linear's priority field stays unused.",
     "The team lead and the engineering manager never edit the delivery plan by hand: the CLI rewrites its data sections and the planner its judgment sections.",
 ]

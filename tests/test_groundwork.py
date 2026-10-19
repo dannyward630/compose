@@ -524,9 +524,9 @@ class LeanPlannerBrief(unittest.TestCase):
 
     def test_the_stories_missing_step_states_the_lean_story_rule(self):
         step = self.step()
-        for phrase in ("a story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria",
-                       'split cues: "all", "every", several When/Then pairs, several outside systems',
-                       "when no split fits, a time-boxed probe answers the unknown first, then the split",
+        for phrase in ("A story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria.",
+                       'Split cues: "all", "every", several When/Then pairs, several outside systems.',
+                       "When no split fits, a time-boxed probe answers the unknown first, then the split.",
                        "in ship order"):
             self.assertIn(phrase, step)
         self.assertNotIn("one per user-visible slice", self.brief)
@@ -534,7 +534,8 @@ class LeanPlannerBrief(unittest.TestCase):
     def test_the_step_keeps_its_anchors_in_order(self):
         flat = " ".join(self.brief.split())
         at = -1
-        for kw in ("Stories missing", "map", "needs-user", "Then check and cut each story"):
+        for kw in ("Stories missing", "draft the proposal on the map", "in ship order", "with a card id per story",
+                   '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`', "Then check and cut each story"):
             i = flat.find(kw, at + 1)
             self.assertGreater(i, at, f"{kw} missing or out of order")
             at = i
@@ -546,6 +547,8 @@ class LeanPlannerBrief(unittest.TestCase):
         for line in lines[first:last + 1]:
             self.assertRegex(line, r"^ {5}\S")
             self.assertLessEqual(len(line), 130)
+        for line in lines[first:last]:  # no orphan wrap: only the step's last line may be short
+            self.assertGreaterEqual(len(line), 100, line)
 
     def test_the_template_keeps_its_placeholders_and_house_text(self):
         import string
@@ -559,8 +562,9 @@ class LeanPlannerBrief(unittest.TestCase):
 class PlanJudgmentBrief(unittest.TestCase):
     """Step 5 of the planner brief tells the planner to write the delivery plan's judgment sections at each cut."""
     PHRASES = (
-        'find the map\'s "<map id>: delivery plan" in compose linear doc list',
-        "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut with compose linear doc update <id> --section",
+        'find the map\'s "<map id>: delivery plan" in `compose linear doc list`',
+        "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut"
+        ' with `compose linear doc update <id> --section "<heading>" --file <path>`',
         "priority is the ranked list under Priority when something has to give; Linear's priority field stays unused",
         "the CLI rewrites the data sections (Start today, Lanes, Waves, Critical path); never edit them",
     )
@@ -575,10 +579,13 @@ class PlanJudgmentBrief(unittest.TestCase):
         for p in self.PHRASES + ("compose spec-check --project p", "compose change done"):
             self.assertIn(p, flat)
 
-    def test_new_lines_keep_the_wrapped_indented_style(self):
-        for line in self.step5().rstrip("\n").split("\n")[1:]:
-            self.assertTrue(line.startswith("   "), line)
-            self.assertLessEqual(len(line), 130, line)
+    def test_every_line_wraps_at_125_with_a_three_space_indent(self):
+        lines = self.step5().rstrip("\n").split("\n")
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertLessEqual(len(line), 125, line)
+        for line in lines[1:]:
+            self.assertRegex(line, r"^ {3}\S")
 
     def test_brief_keeps_its_placeholders_and_has_no_em_dash(self):
         fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
