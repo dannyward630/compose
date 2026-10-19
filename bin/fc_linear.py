@@ -298,10 +298,20 @@ def linear_mark_ready(feature):
     return out
 
 def ready_line(items):
-    raise NotImplementedError("ready_line")
+    return "can start now: " + (", ".join(f"{i['id']} {i['title']}" for i in items) or "nothing")
 
 def cmd_ready(a):
-    raise NotImplementedError("cmd_ready")
+    """Mark the stories and features that can start now with the Ready label in Linear, and print them."""
+    proj = fc_core.project_dir(a)
+    if not fc_config.LINEAR_KEY:
+        sys.exit(f"ready needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear")
+    feature = json.loads((proj / "linear.json").read_text()).get("feature")
+    try:
+        items = linear_mark_ready(feature)
+    except RuntimeError as e:
+        sys.exit(f"ready: {e}")
+    fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
+    print(ready_line(items))
 
 def refresh_ready(proj, feature=None):
     raise NotImplementedError("refresh_ready")

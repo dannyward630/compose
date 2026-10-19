@@ -91,6 +91,7 @@ def main():
                             ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | labels | project | doc"),
                             ("tasks", fc_spec.cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("spec-check", fc_spec.cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
+                            ("ready", fc_linear.cmd_ready, "mark the stories and features that can start now with the Ready label in Linear, and print them"),
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
                             ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
