@@ -160,3 +160,52 @@ class NoTextualApp(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertIn("usage: compose setup", r.stdout)
         self.assertIn("--yes", r.stdout)
+
+ENDING = ["would add default models to ~/.compose/config.json: a", "copied herdr", "would move linear out of ~/.compose/.env", "not finished"]
+class DryFlow(unittest.TestCase):
+    def flow(self, yes, dry, rows=ROWS, keys=["openrouter"], ending=(ENDING, 1)):
+        self.log, out = [], Out(); out.tty = True
+        def spy(module, name, ret):
+            sig = inspect.signature(getattr(module, name))
+            def call(*a, **k):
+                b = sig.bind(*a, **k); b.apply_defaults(); self.log.append((name, b.arguments["dry"]))
+                return ret(**b.arguments) if callable(ret) else ret
+            return mock.patch.object(module, name, side_effect=call)
+        run = lambda row, checkout, dry, **k: ("ok", "") if row[1](checkout)[0] else ("would", f"would run: {row[2]}") if dry else ("done", "")
+        answers = {"Set up gh?": True, "Set up brew?": True, "Set up figma?": False, "Set up pi?": False}
+        with mock.patch.object(fc_steps, "STEPS", rows), spy(fc_steprun, "run_step", run), spy(fc_keys, "ask_keys", keys), \
+             spy(fc_finish, "finish", ending), mock.patch.object(fc_prompt, "spin", lambda label: contextlib.nullcontext()), \
+             mock.patch.object(fc_prompt, "confirm", side_effect=lambda question, default: answers[question]) as self.confirm, \
+             mock.patch.object(fc_prompt, "select", return_value=1) as self.select, mock.patch.object(fc_prompt, "password", return_value=""), \
+             mock.patch.object(fc_keys, "key_status", return_value=dict.fromkeys(["openrouter", "typesafe", "linear", "figma"], True)), \
+             mock.patch.object(fc_prompt, "intro") as intro, mock.patch.object(fc_prompt, "note") as note, mock.patch.object(fc_prompt, "outro") as outro, \
+             mock.patch("shutil.which", lambda n, *a, **k: f"/bin/{n}"), mock.patch.dict(os.environ, {"NO_COLOR": "1"}), mock.patch("sys.stdout", out):
+            code = fc_setup.run_setup(CHECKOUT, yes, dry=dry)
+        return code, out.getvalue().splitlines(), intro.call_args.args, [c.args for c in note.call_args_list if c.args[0] == "Summary"], outro.call_args.args
+
+    def test_dry_asks_what_a_real_run_asks_and_counts_each_change(self):
+        real = self.flow(False, False), self.confirm.call_args_list, self.select.call_args_list
+        code, lines, intro, summary, outro = self.flow(False, True)
+        self.assertEqual((self.confirm.call_args_list, self.select.call_args_list), real[1:])
+        self.assertEqual(([l for l in lines if "would" in l], {d for _, d in self.log}), (["◇  gh: would run: install gh", "◇  brew: would run: install brew"], {True}))
+        self.assertEqual((code, intro, summary, outro), (1, ("compose setup (dry run)",), [("Summary", ENDING)],
+                                                         ("dry run: nothing changed; 5 changes listed above",)))
+
+    def test_yes_dry_run_asks_nothing(self):
+        code, lines, intro, summary, outro = self.flow(True, True, ending=(ENDING[1:], 0))
+        self.assertEqual((code, outro, self.confirm.call_count + self.select.call_count, [n for n, _ in self.log if n != "run_step"]),
+                         (0, ("dry run: nothing changed; 4 changes listed above",), 0, ["finish"]))
+
+    def test_set_up_machine_lists_no_change(self):
+        rows = tuple(row(r[0], r[3], r[5], ok=True) for r in ROWS if r[3] != "designer")
+        code, lines, intro, summary, outro = self.flow(False, True, rows, fc_keys.ask_keys, (["herdr config is current", "ready"], 0))
+        self.assertEqual([l for l in lines if l.startswith("◇")], [f"◇  {r[0]}: ok" for r in rows if r[5] != "key"])
+        self.assertEqual((code, outro, self.confirm.call_count, sum(l.endswith(" [set]") for l in lines)),
+                         (0, ("dry run: nothing changed; 0 changes listed above",), 0, 3))
+
+    def test_cmd_setup_passes_dry_run(self):
+        with mock.patch.object(fc_setup, "run_setup", return_value=4) as run, mock.patch("os.execvp", side_effect=AssertionError("exec")), \
+             mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: True)), mock.patch.object(sys, "stdout", Out()) as out, \
+             self.assertRaises(SystemExit) as r:
+            out.tty = True; fc_setup.cmd_setup(SimpleNamespace(yes=False, dry_run=True))
+        self.assertEqual((r.exception.code, run.call_args), (4, mock.call(CHECKOUT, False, True)))

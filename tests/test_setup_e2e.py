@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import fcntl, os, pty, select, subprocess, sys, tempfile, termios, time, unittest
+import fcntl, os, pty, re, select, subprocess, sys, tempfile, termios, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 os.environ["HERDR_ENV"] = ""
@@ -139,3 +139,13 @@ class Defaults(SetupE2E, unittest.TestCase):
 
 class DryRun(SetupE2E, unittest.TestCase):
     """`compose setup --dry-run`: the whole HOME tree unchanged, no fake installer called (task 017)."""
+
+    def test_dry_run_answered_changes_nothing_and_installs_nothing(self):
+        before = tree(os.environ["HOME"])
+        r = self.run_setup("--dry-run", answers=[("number [1]: ", "1"), ("(Enter skips): ", "sk-or-test-1"), *SKIP * 2])
+        self.assertEqual(tree(r.home), before)
+        self.assertLessEqual(set(r.calls), {"gh auth status", "gh stack --version", "herdr --version", "treehouse --version",
+                                            "herdr integration status", "git config --global --get rerere.enabled"})
+        changes = sum(bool(re.match(r"(◇  [^:]+: |│  )would ", line)) for line in r.lines)
+        self.assertEqual((r.code, [line for line in r.lines if line][-1], "sk-or-test-1" in r.text),
+                         (1, f"└  dry run: nothing changed; {changes} changes listed above", False))
