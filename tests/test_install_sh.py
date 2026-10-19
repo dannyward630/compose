@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import os, subprocess, tempfile, unittest
+import fcntl, os, pty, subprocess, tempfile, termios, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""
 
@@ -28,10 +28,11 @@ class InstallSh(unittest.TestCase):
         script(self.fake, COMPOSE); self.home.mkdir(); [script(self.bin / n, b) for n, b in FAKES.items()]
     def log(self, name):
         return (self.home / name).read_text() if (self.home / name).exists() else ""
-    def run_install(self, ok=True, **env):  # no /dev/tty in a new session, so setup must get --yes
+    def run_install(self, ok=True, tty=None, **env):  # no /dev/tty in a new session unless tty (a pty fd) becomes it
         env = {"HOME": str(self.home), "PATH": f"{self.bin}:{self.sysbin}", "FAKE_COMPOSE": str(self.fake), **env}
-        p = subprocess.run(["/bin/sh", str(SCRIPT)], env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                           text=True, start_new_session=True, timeout=60)
+        claim = None if tty is None else (lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        p = subprocess.run(["/bin/sh", str(SCRIPT)], env=env, stdin=subprocess.DEVNULL if tty is None else tty,
+                           capture_output=True, text=True, start_new_session=True, preexec_fn=claim, timeout=60)
         self.assertEqual(p.returncode, 0 if ok else 1, p.stdout + p.stderr)
         return p.stdout + p.stderr, self.log("compose.log").strip().split("|")
     def test_refuses_other_systems_and_missing_tools(self):
@@ -91,10 +92,24 @@ class InstallMessages(unittest.TestCase):  # the InstallSh fakes, with a git who
                 self.assertNotIn("hint", out); self.assertNotIn("FETCH_HEAD", out)
                 self.assertIn(f"  ok    checkout: {mine}", lines)
 
-    def test_good_pull_prints_no_git_output_and_no_terminal_names_plain_setup(self):
+    def test_good_pull_prints_no_git_output_and_no_terminal_names_compose_setup(self):
         pulled = "Updating 1a2b3c4..5d6e7f8\nFast-forward\n bin/compose | 2 +-\n"
         out, lines, mine = self.checkout(PULL_OUT=pulled, PULL_ERR=FETCH)
-        for git_said in ("Updating", "Fast-forward", "bin/compose |", "FETCH_HEAD", "From https", "warn", "guided"):
-            self.assertNotIn(git_said, out)
+        for said in ("Updating", "Fast-forward", "bin/compose |", "FETCH_HEAD", "From https", "warn", "guided", "plain", "starting"):
+            self.assertNotIn(said, out)
         self.assertIn(f"  ok    checkout: {mine}", lines)
-        self.assertIn("no terminal; running the plain setup with every default (compose setup --yes)", lines)
+        self.assertEqual(lines[-1], "no terminal; running compose setup with every default (compose setup --yes)", out)
+
+    def test_terminal_says_compose_setup_and_hands_it_the_terminal(self):
+        master, slave = pty.openpty(); self.addCleanup(os.close, master); self.addCleanup(os.close, slave)
+        mine = self.home / "mine"; script(mine / "bin/compose", COMPOSE + '\n[ -t 0 ] && echo stdin-tty >> "$HOME/compose.log"')
+        out, ran = self.run_install(tty=slave, COMPOSE_INSTALL_DIR=str(mine))
+        self.assertEqual(ran[:2], [str(mine / "bin/compose"), "setup"])
+        self.assertEqual(self.log("compose.log").splitlines()[1], "stdin-tty")
+        self.assertEqual(out.splitlines()[-1], "starting compose setup", out)
+        for gone in ("no terminal", "guided", "plain"):
+            self.assertNotIn(gone, out)
+
+    def test_script_never_says_guided_or_plain_setup(self):
+        text = SCRIPT.read_text().lower()
+        self.assertNotIn("guided", text); self.assertNotIn("plain setup", text)
