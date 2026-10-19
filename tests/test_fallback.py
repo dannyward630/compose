@@ -415,7 +415,10 @@ class Workspaces(unittest.TestCase):
                   mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env"),
                   mock.patch.dict(os.environ, {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}, clear=True),  # the real environment may hold real keys
                   mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
-                  mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None)):
+                  mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None),
+                  mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER),
+                  mock.patch.object(fc.fc_config, "WORKSPACE", fc.fc_config.WORKSPACE), mock.patch.object(fc.fc_config, "CREW_MODELS", fc.fc_config.CREW_MODELS),
+                  mock.patch.object(fc.fc_config, "CREW_EFFORT", fc.fc_config.CREW_EFFORT), mock.patch.object(fc.fc_config, "CREW_FALLBACK", fc.fc_config.CREW_FALLBACK)):
             p.start(); self.addCleanup(p.stop)
 
     def keys(self):
