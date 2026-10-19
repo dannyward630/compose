@@ -25,9 +25,11 @@ class PiChecks(unittest.TestCase):
         self.assertEqual((pi.PROVIDER["apiKey"], pi.PROVIDER["baseUrl"]), ("$OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"))
         self.assertEqual(pi.TEXT_MODEL_DEFAULTS, {"TEXT_MODEL": "inception/mercury-2.5", "TEXT_MODEL_BASE_URL": "https://openrouter.ai/api/v1"})
         other = {"anthropic": {"models": [{"id": "claude"}]}}
-        self.assertTrue(pi.provider_declared(self.file({"providers": {**other, "openrouter-fast": {"models": [{"id": "x"}, {"id": MODEL}]}}})))
-        for bad in ({"providers": other}, {"providers": {"openrouter-fast": {"models": [{"id": "x"}]}}},
-                    {"providers": {"openrouter": {"models": [{"id": MODEL}]}}}, {"providers": {"openrouter-fast": {}}}, "{not json", "[]"):
+        key = {"apiKey": "$OPENROUTER_API_KEY"}
+        self.assertTrue(pi.provider_declared(self.file({"providers": {**other, "openrouter-fast": {**key, "models": [{"id": "x"}, {"id": MODEL}]}}})))
+        for bad in ({"providers": other}, {"providers": {"openrouter-fast": {**key, "models": [{"id": "x"}]}}},
+                    {"providers": {"openrouter": {**key, "models": [{"id": MODEL}]}}}, {"providers": {"openrouter-fast": {}}}, "{not json", "[]",
+                    {"providers": {"openrouter-fast": {"models": [{"id": MODEL}]}}}, {"providers": {"openrouter-fast": {"apiKey": "", "models": [{"id": MODEL}]}}}):
             self.assertFalse(pi.provider_declared(self.file(bad)), bad)
         self.assertFalse(pi.provider_declared(self.dir / "missing.json"))
 
@@ -90,15 +92,22 @@ class PiWrites(unittest.TestCase):
         pi.declare_provider(path)
         self.assertEqual(json.loads(path.read_text()), {"version": 2, "providers": {"openrouter-fast": pi.PROVIDER}})
 
-    def test_declare_provider_leaves_existing_and_malformed(self):
+    def test_declare_provider_completes_existing(self):
+        path, model = self.dir / "models.json", pi.PROVIDER["models"][0]
+        mine = {"baseUrl": "http://mine", "api": "openai-completions", "models": [{"id": "x"}, {"id": MODEL, "cost": {"input": 1}}]}
+        for have, want in ((mine, {**mine, "apiKey": "$OPENROUTER_API_KEY"}), ({**mine, "apiKey": "!pass or"}, {**mine, "apiKey": "!pass or"}),
+                           ({"models": []}, {"models": [model], "apiKey": "$OPENROUTER_API_KEY"}), ({"apiKey": ""}, {"apiKey": "$OPENROUTER_API_KEY", "models": [model]})):
+            path.write_text(json.dumps({"version": 2, "providers": {"openrouter-fast": have}}))
+            self.assertIn("openrouter-fast", self.twice(pi.declare_provider, path))
+            self.assertEqual(json.loads(path.read_text()), {"version": 2, "providers": {"openrouter-fast": want}}, have)
+            self.assertTrue(pi.provider_declared(path), have)
+
+    def test_declare_provider_leaves_malformed(self):
         path = self.dir / "models.json"
-        lines = set()
-        for text in ('{"providers": {"openrouter-fast": {"models": []}}}\n', '{"providers": {"openrouter-fast": {}}}', "{not json"):
+        for text in ("{not json", "[]", '{"providers": []}', '{"providers": {"openrouter-fast": []}}', '{"providers": {"openrouter-fast": {"models": {}}}}'):
             path.write_text(text)
-            lines.add(pi.declare_provider(path))
+            self.assertIn("by hand", pi.declare_provider(path), text)
             self.assertEqual(path.read_text(), text)
-        self.assertIn("by hand", pi.declare_provider(path))
-        self.assertGreaterEqual(len(lines), 2)
 
     def test_write_text_model(self):
         env, d = self.dir / ".env", pi.TEXT_MODEL_DEFAULTS

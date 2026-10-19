@@ -75,6 +75,7 @@ Keys never go in git, on Linear issues, or on a command line.
    Use model `z-ai/glm-5.3-flash`, provider order Together then CoreWeave, and fallbacks off.
    An OpenRouter account holds its presets, so setup can only print these steps.
 3. pi gets its key from the environment: setup declares the `openrouter-fast` provider in `~/.pi/agent/models.json` with `"apiKey": "$OPENROUTER_API_KEY"`, base `https://openrouter.ai/api/v1`, api `openai-completions`, and model `z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` priced 0.15/0.50 per million tokens.
+   An `openrouter-fast` already there keeps its fields; setup adds the `apiKey` and that model when it lacks them, and `doctor` fails the provider until it has both.
    `compose` exports the active workspace's key as `OPENROUTER_API_KEY` and `TEXT_MODEL_API_KEY`, and the TypeSafe key as `TYPESAFE_API_KEY`.
    pi reads its own `~/.pi/agent/auth.json` first, so an `openrouter` or `openrouter-fast` entry there overrides the workspace key; remove it (`doctor` and setup flag it).
 4. `~/.compose/.env` keeps only non-secret lines: `TEXT_MODEL`, `TEXT_MODEL_BASE_URL`, and the optional `TEXT_MODEL_REASONING` and `TYPESAFE_MODEL`.

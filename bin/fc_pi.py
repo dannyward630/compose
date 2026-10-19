@@ -10,13 +10,18 @@ PROVIDER = {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completion
 TEXT_MODEL_DEFAULTS = {"TEXT_MODEL": "inception/mercury-2.5", "TEXT_MODEL_BASE_URL": "https://openrouter.ai/api/v1"}
 PI_AUTH = PI_MODELS.parent / "auth.json"
 
+def has_glm(models):
+    """True when models is a list holding the GLM preset model."""
+    return isinstance(models, list) and any(isinstance(m, dict) and m.get("id") == PROVIDER["models"][0]["id"] for m in models)
+
 def provider_declared(path):
-    """True when the models.json at path has providers.openrouter-fast with the GLM preset model."""
+    """True when the models.json at path has providers.openrouter-fast with an apiKey and the GLM preset model."""
     try:
-        models = json.loads(Path(path).read_text())["providers"]["openrouter-fast"]["models"]
+        provider = json.loads(Path(path).read_text())["providers"]["openrouter-fast"]
+        models = provider["models"]
     except (OSError, ValueError, KeyError, TypeError):
         return False
-    return isinstance(models, list) and any(isinstance(m, dict) and m.get("id") == PROVIDER["models"][0]["id"] for m in models)
+    return bool(provider.get("apiKey")) and has_glm(models)
 
 def text_model_set(env_path):
     """True when the .env at env_path has TEXT_MODEL and TEXT_MODEL_BASE_URL lines with values."""
@@ -40,7 +45,8 @@ def pi_auth_overrides(path):
     return [name for name in ("openrouter", "openrouter-fast") if isinstance(auth, dict) and name in auth]
 
 def declare_provider(path):
-    """Add providers.openrouter-fast = PROVIDER to the models.json at path, keeping the rest; one line saying what it did."""
+    """Add providers.openrouter-fast = PROVIDER to the models.json at path, or give an existing one the apiKey and GLM preset
+    model it lacks, keeping the rest; one line saying what it did."""
     path = Path(path)
     try:
         models = json.loads(path.read_text())
@@ -53,12 +59,26 @@ def declare_provider(path):
     providers = models.setdefault("providers", {})
     if not isinstance(providers, dict):
         return f"{path} has no providers object; fix it by hand"
-    if "openrouter-fast" in providers:
-        return f"openrouter-fast already declared in {path}; left as is"
-    providers["openrouter-fast"] = PROVIDER
+    provider = providers.get("openrouter-fast")
+    if provider is None:
+        providers["openrouter-fast"] = PROVIDER
+        line = f"declared openrouter-fast in {path}"
+    else:
+        if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
+            return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
+        added = []
+        if not provider.get("apiKey"):
+            provider["apiKey"] = PROVIDER["apiKey"]
+            added.append("apiKey")
+        if not has_glm(provider["models"]):
+            provider["models"].append(PROVIDER["models"][0])
+            added.append("the GLM preset model")
+        if not added:
+            return f"openrouter-fast already declared in {path}; left as is"
+        line = f"added {' and '.join(added)} to openrouter-fast in {path}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(models, indent=2) + "\n")
-    return f"declared openrouter-fast in {path}"
+    return line
 
 def write_text_model(env_path):
     """Append the TEXT_MODEL_DEFAULTS lines the .env lacks, never changing existing ones; one line saying what it did."""
