@@ -1010,5 +1010,62 @@ class ReadyDocs(unittest.TestCase):
         self.assertNotIn("\u2014", lines[0])
 
 
+class ReadyCheckpoints(unittest.TestCase):
+    def skill_0s(self, body=False):
+        text = read("SKILL.md")
+        sec = text[text.index("### 0s. Every level's state, kept true") :].split("\n### ", 1)[0]
+        return sec if body else [l for l in sec.splitlines()[1:] if not l.startswith("|")]
+
+    def row(self, cmd):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith(f"| `{cmd}`")]
+        self.assertEqual(len(rows), 1, f"one {cmd} row")
+        return rows[0]
+
+    def one_line(self, lines, pred, what):
+        found = [l for l in lines if pred(l)]
+        self.assertEqual(len(found), 1, what)
+        self.assertNotRegex(found[0], r"[.!?] [A-Z`]", "one sentence per line")
+        self.assertNotIn("\u2014", found[0])
+        return found[0]
+
+    def test_0s_tells_the_lead_and_designer_to_run_ready_at_each_checkpoint(self):
+        line = self.one_line(self.skill_0s(), lambda l: "compose ready --project <slug>" in l, "one 0s sentence runs compose ready")
+        for word in ("checkpoint", "team lead", "designer"):
+            self.assertIn(word, line)
+
+    def test_0s_says_which_commands_refresh_the_marks(self):
+        line = self.one_line(self.skill_0s(), lambda l: "`Ready`" in l and "refresh" in l, "one 0s sentence on the CLI's refreshes")
+        self.assertNotIn("compose ready --project", line)
+        for word in (r"roll-?\s?ups?", r"\bsync\b", r"\brun\b", r"\bverify\b.*\bPASS\b", r"\bclean\b"):
+            self.assertRegex(line, word)
+
+    def test_0s_keeps_its_checkpoint_reconcile_and_the_sentences_stay_in_0s(self):
+        lines = self.skill_0s()
+        self.assertTrue(any(l.startswith("Checkpoints, each followed by a reconcile of the whole tree") for l in lines))
+        outside = read("SKILL.md").replace(self.skill_0s(body=True), "")
+        self.assertNotIn("compose ready --project <slug>", outside)
+
+    def test_cli_ready_row_names_the_commands_that_refresh_too(self):
+        row = self.row("ready")
+        for word in ("sync", "run", "verify", "clean"):
+            self.assertRegex(row, rf"`(compose )?{word}`")
+
+    def test_cli_sync_and_clean_rows_name_ready_and_keep_what_they_said(self):
+        tasks = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
+        projects = read("docs/cli.md").split("### Projects\n", 1)[1].split("### Tasks\n", 1)[0]
+        for cmd, sec, kept in (("sync", tasks, "--stdin"), ("clean", projects, "--delete-unmerged")):
+            row = self.row(cmd)
+            self.assertIn(row, sec)
+            self.assertRegex(row, r"\bReady\b")
+            self.assertIn(kept, row)
+            self.assertNotIn("\u2014", row)
+
+    def test_the_other_skill_and_cli_doc_tests_still_pass(self):
+        names = ("CliAndTasksDocs", "HerdrAndWorkspacesDocs", "SkillDoc", "LinearCommands")
+        suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(globals()[n]) for n in names)
+        result = unittest.TextTestRunner(stream=open(os.devnull, "w")).run(suite)
+        self.assertTrue(result.wasSuccessful(), [str(t) for t, _ in result.failures + result.errors])
+
+
 if __name__ == "__main__":
     unittest.main()
