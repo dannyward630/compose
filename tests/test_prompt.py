@@ -49,6 +49,31 @@ class Frame(unittest.TestCase):
         self.assertEqual(self.shown(fc_prompt.step, "pi", "done", ("a",), no_color="1"), "◇  pi: done\n│  a\n")
         self.assertEqual(self.shown(fc_prompt.note, "Empty", [], no_color="1"), "│\n◇  Empty\n")
 
+class NoteBars(unittest.TestCase):
+    shown = Frame.shown
+
+    def test_bars_prints_a_bar_line_per_non_empty_part_and_keeps_its_indent(self):
+        self.assertEqual(self.shown(fc_prompt.bars, ["first\n  indented\n\nlast", "", "\nsecond entry\n"], no_color="1"),
+                         "│  first\n│    indented\n│  last\n│  second entry\n")
+        self.assertEqual(self.shown(fc_prompt.bars, (), no_color="1"), "")
+
+    def test_a_multi_line_note_entry_keeps_the_bar_on_every_line(self):
+        first = "No TypeSafe key: without it verify and change cannot check your code. Add one later:"
+        then = "  pbpaste | compose workspace key default --typesafe"
+        for kw in ({"no_color": "1"}, {"tty": False}):
+            with self.subTest(**kw):
+                self.assertEqual(self.shown(fc_prompt.note, "Summary", [f"{first}\n{then}"], **kw),
+                                 f"│\n◇  Summary\n│  {first}\n│  {then}\n")
+        self.assertEqual(self.shown(fc_prompt.note, "Keys", ["one", "a\n\n  b\n", "", "two"], no_color="1"),
+                         "│\n◇  Keys\n│  one\n│  a\n│    b\n│  two\n")
+
+    def test_note_and_step_print_their_entries_through_bars(self):
+        lines = ["a\n  b"]
+        with mock.patch.object(fc_prompt, "bars") as bars:
+            self.assertEqual(self.shown(fc_prompt.note, "Keys", lines, no_color="1"), "│\n◇  Keys\n")
+            self.assertEqual(self.shown(fc_prompt.step, "pi", "done", lines, no_color="1"), "◇  pi: done\n")
+        self.assertEqual(bars.call_args_list, [mock.call(lines), mock.call(lines)])
+
 class Ask(unittest.TestCase):
     def ask(self, fn, *args, answers=(), getpass=None):
         out = Out(); out.tty = False
