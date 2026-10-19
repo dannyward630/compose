@@ -121,8 +121,11 @@ def cmd_hold(a):
                 print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
                 continue
             hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-            print(f"{tid} held  {a.reason}")
-            fc_linear.linear_note(tasks[tid], f"Held: {a.reason}")
+            res = proj / "results" / f"{tid}.json"
+            running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
+            late = "; it is running now: the hold applies to its next start" if running else ""
+            print(f"{tid} held  {a.reason}{late}")
+            fc_linear.linear_note(tasks[tid], f"Held: {a.reason}{late}")
     tmp = proj / "results" / "hold.json.tmp"
     fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
     os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file

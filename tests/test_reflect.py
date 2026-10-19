@@ -300,6 +300,18 @@ class Holds(unittest.TestCase):
         self.assertEqual(fc.fc_tasks.held(self.proj), {})
         self.assertEqual(self.notes[-2:], [("002", "Released"), ("003", "Released")])
 
+    def test_holding_a_running_task_says_it_applies_to_its_next_start(self):
+        (self.proj / "results" / "002.json").write_text(json.dumps({"id": "002", "status": "running"}))
+        (self.proj / "results" / "003.json").write_text(json.dumps({"id": "003", "status": "running"}))  # its run died
+        late = "; it is running now: the hold applies to its next start"
+        with mock.patch.object(fc.fc_tasks, "run_alive", lambda p: True):
+            out = self.hold(only="001,002", reason="D2 broken")
+        with mock.patch.object(fc.fc_tasks, "run_alive", lambda p: False):
+            out += self.hold(only="003", reason="D2 broken")
+        self.assertEqual(out.splitlines(), ["001 held  D2 broken", "002 held  D2 broken" + late, "003 held  D2 broken"])
+        self.assertEqual(self.notes, [("001", "Held: D2 broken"), ("002", "Held: D2 broken" + late), ("003", "Held: D2 broken")])
+        self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"001", "002", "003"})
+
     def test_hold_needs_ids_and_a_reason(self):
         with self.assertRaises(SystemExit):
             self.hold(only="002")
