@@ -93,6 +93,17 @@ class Stalls(unittest.TestCase):
         for n, st in (("hw-tests-001", "needs-user"), ("hw-tests-002", "working"), ("hw-tests-003", "blocked")):
             self.assertIn(st, got[n])
 
+    def test_a_collected_test_writer_whose_last_report_is_test_ready_has_not_ended(self):
+        """collect closes a test writer's tab after its `working "test ready"` report, the one it is told to end on."""
+        crew = {ORCH: ("working", 600), "hw-tests-001": ("working", 600), "hw-tests-002": ("working", 600)}
+        s = self.snap(crew=crew, last_ago=100)
+        s["crew"]["hw-tests-001"][-1]["message"] = "Test ready: abc123; holdouts: empty input"
+        s["closed"] = ["hw-tests-001", "hw-tests-002"]
+        self.assertEqual(sorted(self.ended(self.stalls(s))), ["hw-tests-002"])  # only the writer that never got to test ready ended
+        s["crew"]["hw-tests-001"][-1]["state"] = "blocked"
+        s["closed"] = ["hw-tests-001"]
+        self.assertEqual(sorted(self.ended(self.stalls(s))), ["hw-tests-001"])
+
     def test_a_closed_team_lead_or_a_done_team_lead_does_not_hide_it(self):
         s = self.snap(tasks=("passed",), crew={ORCH: ("needs-user", 10)}); s["closed"] = [ORCH]
         got = self.ended(self.stalls(s))

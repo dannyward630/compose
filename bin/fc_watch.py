@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status
+import fc_core, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status, fc_briefs
 
 
 YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
@@ -131,7 +131,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
             ev.append(f"event stall={what}; {tail}")
     for n in snap.get("closed", ()):
         r = snap.get("crew", {}).get(n) or []
-        if r and r[-1]["state"] != "done":
+        if r and r[-1]["state"] != "done" and not (re.search(r"-tests-\d+$", n) and fc_briefs.test_ready(r[-1])):  # collect closes a writer after its test ready
             fire(f"ended:{n}:{r[-1]['at']}", f"ended agent={n} its tab closed with its last report {r[-1]['state']}")
     if not (last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values())):  # finished, or waiting on the product owner: silence is expected
         lt, what = snap.get("last") or (0, "")
