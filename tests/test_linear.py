@@ -264,3 +264,43 @@ class DesignTasks(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
             rows = [fc.fc_status.task_state(Path("."), self.proj, self.by[t], "HEAD")["state"] for t in ("001", "002")]
         self.assertEqual(rows, ["passed", "merged"])
+
+
+class ReadyRule(unittest.TestCase):
+    @staticmethod
+    def node(ident, state, *blockers, labels=()):
+        rels = [{"type": t, "issue": {"identifier": i, "state": {"name": s}, "labels": {"nodes": [{"name": n} for n in ls]}}} for t, i, s, ls in blockers]
+        return {"identifier": ident, "title": ident, "state": {"name": state}, "labels": {"nodes": [{"name": n} for n in labels]},
+                "inverseRelations": {"nodes": rels}}
+
+    def ready(self, *nodes):
+        return fc.fc_linear.ready_ids(list(nodes))
+
+    def test_open_states_without_blockers_are_ready_in_input_order(self):
+        nodes = [self.node(i, s) for i, s in (("NEB-9", "Todo"), ("NEB-3", "backlog"), ("NEB-5", "In Progress"), ("NEB-1", "TODO"),
+                                              ("NEB-2", "In Review"), ("NEB-4", "Done"), ("NEB-6", "Canceled"), ("NEB-7", "BACKLOG"))]
+        self.assertEqual(self.ready(*nodes), ["NEB-9", "NEB-3", "NEB-1", "NEB-7"])
+        self.assertEqual(self.ready(), [])
+
+    def test_ready_only_when_every_blocker_is_finished(self):
+        done, canceled = ("blocks", "NEB-1", "Done", ()), ("blocks", "NEB-2", "Canceled", ())
+        self.assertEqual(self.ready(self.node("NEB-3", "Todo", done, canceled)), ["NEB-3"])
+        for open_ in ("Todo", "Backlog", "In Progress", "In Review"):
+            self.assertEqual(self.ready(self.node("NEB-3", "Todo", done, ("blocks", "NEB-4", open_, ()))), [], open_)
+
+    def test_a_blocker_in_review_is_finished_only_with_the_design_label(self):
+        design = lambda state, *ls: ("blocks", "NEB-1", state, ls)
+        self.assertEqual(self.ready(self.node("NEB-2", "Todo", design("In Review", "Design")),
+                                    self.node("NEB-3", "Backlog", design("In Review", "bug", "design")),
+                                    self.node("NEB-4", "Todo", design("In Review", "Bug")),
+                                    self.node("NEB-5", "Todo", design("In Progress", "Design")),
+                                    self.node("NEB-6", "Todo", design("In Review"), labels=("Design",))), ["NEB-2", "NEB-3"])
+
+    def test_a_non_open_issue_is_never_ready_even_with_finished_blockers(self):
+        done = ("blocks", "NEB-1", "Done", ())
+        self.assertEqual(self.ready(*(self.node("NEB-2", s, done) for s in ("In Progress", "In Review", "Done", "Canceled"))), [])
+
+    def test_relations_of_other_types_are_ignored(self):
+        rels = [(t, "NEB-1", "In Progress", ()) for t in ("related", "duplicate", "similar")]
+        self.assertEqual(self.ready(self.node("NEB-2", "Todo", *rels), self.node("NEB-3", "Todo", rels[0], ("blocks", "NEB-4", "Todo", ()))),
+                         ["NEB-2"])
