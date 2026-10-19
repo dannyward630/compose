@@ -4,11 +4,11 @@ from pathlib import Path
 import fc_core, fc_config, fc_steps, fc_tasks, fc_linear, fc_models, fc_herdr, fc_crew, fc_init
 
 
-FIGMA_CONNECTOR = ("Figma tools: the authenticated connector `mcp__claude_ai_Figma__*` is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
+FIGMA_CONNECTOR = ("Figma tools: the authenticated Figma connector, `mcp__claude_ai_Figma__*` or the Figma plugin's `mcp__plugin_figma_figma__*` (the same server; use whichever ToolSearch finds), is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
                    "Every write script returns the facts it set (ids of nodes, variable bindings, component keys), so no read is needed to prove a binding.\n"
                    "Every READ goes through Framelink (`mcp__framelink-figma__get_figma_data` for node trees, `download_figma_images` for images): never `get_screenshot`, `get_metadata`, or `get_design_context`.\n"
                    "Framelink (REST) shows structure, names, layout, sizes, fills, text, fonts, component properties, and component keys; it has no variable bindings and no library flag, so prove a binding from the write's returned facts and library origin by component key. "
-                   "Never use `plugin:*figma*` tools or their authenticate calls.")
+                   "Never use another `plugin:*figma*` server, and never an authenticate call.")
 FRAMELINK_SETUP = (f"Framelink is not set up. Put a Figma personal access token in {fc_steps.FRAMELINK_ENV} as one line `FIGMA_API_KEY=<token>` (chmod 600), then run\n"
                    f"  {fc_steps.FRAMELINK_ADD}\n"
                    "The token never goes on a command line; only --env names the file.")

@@ -653,7 +653,7 @@ class DesignerBrief(unittest.TestCase):
     def test_brief_splits_figma_writes_from_framelink_reads(self):
         brief = " ".join(self.brief().split())
         for text in ("WRITES ONLY", "never a read-only script", "returns the facts it set", "mcp__framelink-figma__get_figma_data", "download_figma_images",
-                     "never `get_screenshot`, `get_metadata`, or `get_design_context`", "Never use `plugin:*figma*`", "compose figma tree --project p --only NNN"):
+                     "never `get_screenshot`, `get_metadata`, or `get_design_context`", "Never use another `plugin:*figma*`", "compose figma tree --project p --only NNN"):
             self.assertIn(text, brief)
 
     def test_design_task_nodes_are_page_and_name_pairs_one_page_per_task(self):
@@ -694,7 +694,7 @@ class DesignCrews(unittest.TestCase):
             self.assertIn(text, out)
         self.assertEqual((out.count("====="), started, space.call_count), (2, [], 0))
         flat = " ".join(out.split())
-        for text in ("WRITES ONLY", "mcp__framelink-figma__get_figma_data", "compose figma tree --project p --only 001", "never a read-only `use_figma` script", "Never use `plugin:*figma*`"):
+        for text in ("WRITES ONLY", "mcp__framelink-figma__get_figma_data", "compose figma tree --project p --only 001", "never a read-only `use_figma` script", "Never use another `plugin:*figma*`"):
             self.assertIn(text, flat)
 
     def test_default_pace_is_three_builders_at_once(self):

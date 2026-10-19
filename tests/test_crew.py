@@ -918,7 +918,7 @@ class RestrictedStart(unittest.TestCase):
         dropped = self.patterns(self.start("designer"))
         for p in ("framelink-figma", "claude_ai_Figma"):
             self.assertNotIn(f"mcp__{p}__*", dropped)
-        self.assertLessEqual({"mcp__claude_ai_Linear__*", "mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # a plugin figma server is never kept
+        self.assertLessEqual({"mcp__claude_ai_Linear__*", "mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # only the Figma plugin's own server is kept
 
     def test_no_role_keeps_the_linear_server(self):
         for role, kw in [("orchestrator", {}), ("wayfinder", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
