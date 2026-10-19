@@ -304,10 +304,37 @@ def linear_mark_ready(feature):
                 fc_core.say(f"linear {n['identifier']} -> not Ready")
     return out
 
-LINEAR_PLAN_TREE = ""
+LINEAR_PLAN_TREE = """query($id: String!) { issue(id: $id) { ...PlanNode parent { ...PlanNode } } }
+fragment PlanNode on Issue { id identifier title url description labels { nodes { name } } project { id documents(first: 250) { nodes { id title content url } } }
+  children { nodes { ...PlanChild children { nodes { ...PlanChild } } } } }
+fragment PlanChild on Issue { id identifier title url state { name } labels { nodes { name } }
+  inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
 def linear_plan(feature):
-    raise NotImplementedError
+    """Keep the map's delivery plan document in step: create and link it once, then rewrite only its data sections."""
+    import fc_plan
+    tree = linear_gql(LINEAR_PLAN_TREE, {"id": feature})["issue"]
+    parent = tree["parent"]
+    names = lambda n: [l["name"] for l in n["labels"]["nodes"]]
+    epic = bool(parent) and "epic" in [x.lower() for x in names(parent)]
+    story = lambda n: {"id": n["identifier"], "title": n["title"], "url": n["url"], "state": n["state"]["name"], "labels": names(n),
+                       "blockers": [{"id": r["issue"]["identifier"], "state": r["issue"]["state"]["name"], "labels": names(r["issue"])}
+                                    for r in n["inverseRelations"]["nodes"] if r["type"] == "blocks"]}
+    lane = lambda n: {"id": n["identifier"], "title": n["title"], "url": n["url"], "stories": [story(c) for c in n["children"]["nodes"]]}
+    map_ = parent if epic else tree
+    lanes = [lane(n) for n in map_["children"]["nodes"] if "feature" in [x.lower() for x in names(n)]] if epic else [lane(tree)]
+    title = f"{map_['identifier']}: delivery plan"
+    doc = next((d for d in map_["project"]["documents"]["nodes"] if d["title"] == title), None)
+    if not doc:
+        doc = linear_gql("mutation($title: String!, $content: String!, $project: String!) { documentCreate(input: {title: $title, content: $content, projectId: $project}) { success document { id title url content } } }",
+                         {"title": title, "content": fc_plan.plan_skeleton(), "project": map_["project"]["id"]})["documentCreate"]["document"]
+        linear_gql("mutation($id: String!, $description: String!) { issueUpdate(id: $id, input: {description: $description}) { success } }",
+                   {"id": map_["id"], "description": fc_plan.with_plan_link(map_["description"], title, doc["url"])})
+    content = doc["content"]
+    for heading, text in fc_plan.plan_sections(lanes).items():
+        content = fc_plan.replace_section(content, heading, text)
+    if content != doc["content"]:
+        linear_gql("mutation($id: String!, $content: String!) { documentUpdate(id: $id, input: {content: $content}) { success } }", {"id": doc["id"], "content": content})
 
 def ready_line(items):
     return "can start now: " + (", ".join(f"{i['id']} {i['title']}" for i in items) or "nothing")
@@ -320,10 +347,11 @@ def cmd_ready(a):
     feature = json.loads((proj / "linear.json").read_text()).get("feature")
     try:
         items = linear_mark_ready(feature)
+        fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
+        print(ready_line(items))
+        linear_plan(feature)
     except RuntimeError as e:
         sys.exit(f"ready: {e}")
-    fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
-    print(ready_line(items))
 
 def refresh_ready(proj, feature=None):
     """The best-effort refresh of the Ready marks after roll-ups, sync, and clean: mark what can start now and store the
@@ -342,6 +370,10 @@ def refresh_ready(proj, feature=None):
         return
     if (proj / "results").exists():
         fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
+    try:
+        linear_plan(feature)
+    except Exception as e:  # noqa: BLE001
+        fc_core.say(f"linear plan: {str(e)[:200]}")
 
 def linear_feature_after(repo, proj):
     """The project this one was built after (`after` in verify.json, or its compose/ branch as review_base) gets its feature to
