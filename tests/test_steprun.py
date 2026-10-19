@@ -111,6 +111,20 @@ class Dry(unittest.TestCase):
             self.assertEqual(self.step(lambda c: (False, ""), "write", "bp link", dry=False), ("failed", "linked bp"))
 
 
+class PiPreview(unittest.TestCase):
+    setUp, step, forbid = RunStep.setUp, Dry.step, Dry.forbid
+
+    def test_dry_pi_row_says_what_declare_would_do(self):
+        path = Path.home() / "pi-dir/models.json"
+        p = mock.patch.object(fc_pi, "PI_MODELS", path); p.start(); self.addCleanup(p.stop)
+        self.forbid()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for text, line in (('{"providers": {"openrouter-fast": {"models": []}}}', "would add apiKey and the GLM preset model to openrouter-fast in ~/pi-dir/models.json"),
+                           ("[]", "~/pi-dir/models.json is not a JSON object; fix it by hand")):
+            path.write_text(text)
+            self.assertEqual(self.step(lambda c: (False, ""), "write", "pi openrouter-fast provider", "compose setup"), ("would", line))
+            self.assertEqual(path.read_text(), text)
+
 class StepLines(unittest.TestCase):
     def setUp(self):
         t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)

@@ -123,3 +123,48 @@ class PiWrites(unittest.TestCase):
         env.write_text(mine)
         self.twice(pi.write_text_model, env)
         self.assertEqual(env.read_text(), mine)
+
+
+class PreviewProvider(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def preview(self, path):
+        """preview_provider's line, checking the file's bytes and whether it and its directory exist stay as they were."""
+        state = lambda: (path.parent.exists(), path.exists(), path.exists() and path.read_bytes())
+        before = state()
+        line = pi.preview_provider(path)
+        self.assertEqual(state(), before)
+        return line
+
+    def test_absent_file_or_provider_would_declare(self):
+        path = self.dir / "agent" / "models.json"
+        self.assertEqual(self.preview(path), f"would declare openrouter-fast in {path}")
+        path.parent.mkdir()
+        self.assertEqual(self.preview(path), f"would declare openrouter-fast in {path}")
+        for models in ({}, {"version": 2}, {"providers": {"openrouter": {"apiKey": "k", "models": [{"id": MODEL}]}}}):
+            path.write_text(json.dumps(models))
+            self.assertEqual(self.preview(path), f"would declare openrouter-fast in {path}", models)
+        self.assertEqual(pi.declare_provider(path), f"declared openrouter-fast in {path}")
+
+    def test_lacking_provider_would_get_what_declare_adds(self):
+        path, glm = self.dir / "models.json", [{"id": "x"}, {"id": MODEL}]
+        for have, what in (({"models": glm}, "apiKey"), ({"apiKey": "", "models": glm}, "apiKey"), ({"apiKey": "k", "models": [{"id": "x"}]}, "the GLM preset model"),
+                           ({"apiKey": "k"}, "the GLM preset model"), ({"models": []}, "apiKey and the GLM preset model"), ({}, "apiKey and the GLM preset model")):
+            path.write_text(json.dumps({"version": 2, "providers": {"openrouter-fast": have}}))
+            self.assertEqual(self.preview(path), f"would add {what} to openrouter-fast in {path}", have)
+            self.assertEqual(pi.declare_provider(path), f"added {what} to openrouter-fast in {path}", have)
+            self.assertEqual(self.preview(path), f"openrouter-fast already declared in {path}; left as is", have)
+            self.assertEqual(pi.declare_provider(path), f"openrouter-fast already declared in {path}; left as is", have)
+
+    def test_broken_file_gets_declares_fix_by_hand_line(self):
+        path = self.dir / "models.json"
+        for text in ("{not json", "[]", '{"providers": []}', '{"providers": {"openrouter-fast": []}}', '{"providers": {"openrouter-fast": {"models": {}}}}'):
+            path.write_text(text)
+            line = self.preview(path)
+            self.assertEqual((line, "by hand" in line), (pi.declare_provider(path), True), text)
+
+    def test_provider_lacks_in_order(self):
+        for have, want in (({"apiKey": "k", "models": [{"id": "x"}, {"id": MODEL}]}, []), ({"models": [{"id": MODEL}]}, ["apiKey"]),
+                           ({"apiKey": "k", "models": [{"id": "x"}]}, ["the GLM preset model"]), ({"apiKey": "", "models": []}, ["apiKey", "the GLM preset model"])):
+            self.assertEqual(list(pi.provider_lacks(have)), want, have)
