@@ -25,12 +25,14 @@ PREVIEWS = {
 }
 
 def run_step(row, checkout, yes, claude, terminal, dry=False):
-    """(state, line): state is ok, claude, skipped, manual, done, or failed; the line never holds a key value.
-    A passing check is never run (ok). A claude row without claude waits (claude). manual, key, and interactive-without-
-    terminal rows are never run (manual or skipped, the line says what to do by hand), a designer row is skipped under yes;
-    run and interactive rows shell out to install, write rows call their writer, then the check runs again: done rows have
-    an empty line but a write row keeps its writer's line, and a failed run or interactive row ends with the install to
-    run by hand after the last error line, or failed; every line shows ~/ wherever the home directory followed by / appears in it."""
+    """(state, line): state is ok, claude, skipped, manual, done, or failed; the line never holds a key value or the
+    step's name (the header above it shows both). A passing check is never run (ok). A claude row without claude waits
+    (claude, no line). manual, key, and interactive-without-terminal rows are never run (manual or skipped, the line
+    says what to do by hand), a designer row is skipped under yes; run and interactive rows shell out to install, write
+    rows call their writer, then the check runs again: done rows have an empty line but a write row keeps its writer's
+    line, and a failed run or interactive row ends with the install to run by hand after the last error line, or just
+    that install; a failed write row keeps its writer's line, else the check's detail, else no line; every line shows
+    ~/ wherever the home directory followed by / appears in it."""
     state, line = _run_step(row, checkout, yes, claude, terminal, dry)
     return state, fc_core.tilde(line)
 
@@ -40,16 +42,16 @@ def _run_step(row, checkout, yes, claude, terminal, dry=False):
     if ok:
         return "ok", ""
     if needs_claude and not claude:
-        return "claude", f"{name}: waiting on Claude Code"
+        return "claude", ""
     if mode == "manual":
-        return "manual", f"{name}: run by hand: {install}"
+        return "manual", f"run by hand: {install}"
     if mode == "key":
         kind = next((k for k in ("openrouter", "typesafe", "linear", "figma") if k in name.lower()), "")
-        return "skipped", f"{name}: {fc_keys.skipped_line(kind, fc_config.WORKSPACE) or install}"
+        return "skipped", fc_keys.skipped_line(kind, fc_config.WORKSPACE) or install
     if level == "designer" and yes:
-        return "skipped", f"{name}: designer extra, skipped"
+        return "skipped", "designer extra, skipped"
     if mode == "interactive" and not terminal:
-        return "skipped", f"{name}: run by hand: {install}"
+        return "skipped", f"run by hand: {install}"
     if dry:
         if mode == "write":
             return "would", PREVIEWS[name](checkout)
@@ -69,7 +71,7 @@ def _run_step(row, checkout, yes, claude, terminal, dry=False):
     if ok:
         return "done", said if mode == "write" else ""
     if mode == "run" and said:
-        return "failed", f"{name}: {said.splitlines()[-1]}; by hand: {install}"
+        return "failed", f"{said.splitlines()[-1]}; by hand: {install}"
     if mode != "write":
-        return "failed", f"{name}: failed; by hand: {install}"
-    return "failed", said or (f"{name}: {detail}" if detail else f"{name}: failed")
+        return "failed", f"by hand: {install}"
+    return "failed", said or detail
