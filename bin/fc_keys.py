@@ -1,7 +1,7 @@
 """Key presence (never values), and saving entered keys."""
 import os
 from pathlib import Path
-import fc_core, fc_auth, fc_config
+import fc_core, fc_auth, fc_config, fc_prompt
 
 
 def key_status(auth, workspace, framelink_env):
@@ -44,7 +44,36 @@ def skipped_line(kind, workspace):
         return ("No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n"
                 "  compose setup")
 
-KEYS = ()
+KEYS = (("openrouter", "OpenRouter key", "required", "openrouter.ai/keys"),
+        ("typesafe", "TypeSafe key", "required", "your TypeSafe account"),
+        ("linear", "Linear key", "required", "linear.app/settings/api"),
+        ("figma", "Figma token", "optional", "Figma settings, personal access tokens"))
 
 def ask_keys(workspace, framelink_env, designer, dry=False):
-    raise NotImplementedError("ask_keys")
+    """Ask for each key with hidden input after the steps; returns the kinds saved, in order."""
+    set_ = key_status(fc_auth.read_auth(fc_config.AUTH_PATH), workspace, framelink_env)
+    fc_prompt.note(f"Keys for workspace {workspace}", [])
+    home = str(Path.home())
+    short = lambda p: str(p).replace(home, "~", 1)
+    saved = []
+    for kind, label, mark, hint in KEYS:
+        if kind == "figma" and not designer:
+            continue
+        print(f"│  {label} ({mark}), from {hint} [{'set' if set_[kind] else 'not set'}]")
+        while True:
+            value = fc_prompt.password(f"{label} (Enter keeps it)" if set_[kind] else f"{label} (Enter skips)")
+            if value:
+                if dry:
+                    what = "the Figma token" if kind == "figma" else f"{kind} key"
+                    print(f"│  would save {what} to {short(framelink_env if kind == 'figma' else fc_config.AUTH_PATH)}")
+                else:
+                    print("│  " + save_key(kind, value, workspace, framelink_env))
+                saved.append(kind)
+                break
+            if set_[kind] or mark == "optional":
+                break
+            for line in skipped_line(kind, workspace).splitlines():
+                print("│  " + line)
+            if fc_prompt.confirm("Continue without it?", False):
+                break
+    return saved
