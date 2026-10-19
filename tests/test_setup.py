@@ -35,7 +35,7 @@ class Flow(unittest.TestCase):
              mock.patch.object(fc_prompt, "spin", spin), mock.patch.object(fc_steps, "STEPS", ()), mock.patch("shutil.which", return_value=None), \
              mock.patch("os.execvp", side_effect=AssertionError("exec")), mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: stdin)), \
              mock.patch.object(sys, "stdout", out), self.assertRaises(SystemExit) as r:
-            fc_setup.cmd_setup(SimpleNamespace(yes=yes))
+            fc_setup.cmd_setup(SimpleNamespace(yes=yes, dry_run=False))
         return r.exception.code, out.getvalue(), log
 
     def assert_leftover(self):
