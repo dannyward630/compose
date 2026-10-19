@@ -1324,7 +1324,7 @@ class DryRunDocs(unittest.TestCase):
         self.assertEqual(rows, [CLI_HEAD + DRY_SENTENCE + CLI_TAIL])
 
     def test_each_file_names_the_flag_once_and_keeps_its_other_lines(self):
-        for rel, count in (("README.md", 220), ("docs/cli.md", 129)):
+        for rel, count in (("README.md", 220), ("docs/cli.md", 131)):
             text = read(rel)
             self.assertEqual(text.count("--dry-run"), 1, rel)
             self.assertEqual(len(text.splitlines()), count, f"{rel}: one row added to README, none to cli.md")
