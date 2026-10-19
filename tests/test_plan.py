@@ -87,7 +87,6 @@ class PlanLanes(unittest.TestCase):
             "3. [NEB-40](u/NEB-40) T NEB-40 (Todo)", "4. [NEB-41](u/NEB-41) T NEB-41 (Todo)"])
 
 
-
 class PlanWaves(unittest.TestCase):
     LANES = [lane("NEB-1", story("NEB-10"), story("NEB-12", "Done"), story("NEB-11", "In Progress", ("NEB-12", "Done"), ("NEB-99", "Todo")),
                   story("NEB-14", "Todo", ("NEB-21", "Todo")), story("NEB-13", "Todo", ("NEB-10", "Todo"), ("NEB-14", "Todo"))),
@@ -108,3 +107,39 @@ class PlanWaves(unittest.TestCase):
         sections = fc_plan.plan_sections(self.LANES)
         self.assertEqual(list(sections)[:3], ["## Start today", "## Lanes", "## Waves"])
         self.assertEqual(sections["## Waves"], fc_plan.waves_text(self.LANES))
+
+
+class CriticalPath(unittest.TestCase):
+    def lines(self, lanes):
+        return fc_plan.critical_path_text(lanes).strip("\n").split("\n")
+
+    def test_longest_chain_runs_across_lanes_first_blocker_first(self):
+        lanes = [lane("NEB-90", story("NEB-2"), story("NEB-3", "Todo", ("NEB-2", "Todo")), story("NEB-5", "In Progress", ("NEB-4", "Todo")),
+                      story("NEB-7", "Todo", ("NEB-6", "Todo"), ("NEB-2", "Todo"))),
+                 lane("NEB-91", story("NEB-6", "Todo", ("NEB-5", "In Progress")), story("NEB-4"))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-4 -> NEB-5 -> NEB-6 -> NEB-7 (4 stories)"])
+        sections = fc_plan.plan_sections(lanes)
+        self.assertEqual(sections["## Critical path"], fc_plan.critical_path_text(lanes))
+        keys = list(sections)
+        self.assertEqual(keys.index("## Critical path"), keys.index("## Waves") + 1)
+
+    def test_every_chain_tied_for_longest_is_listed_by_issue_number(self):
+        lanes = [lane("NEB-90", story("NEB-13"), story("NEB-21", "Todo", ("NEB-20", "Todo")), story("NEB-20", "Todo", ("NEB-9", "Todo"), ("NEB-13", "Todo")),
+                      story("NEB-5"), story("NEB-6", "Todo", ("NEB-5", "Todo"))),
+                 lane("NEB-91", story("NEB-12", "Todo", ("NEB-11", "Todo")), story("NEB-11", "Todo", ("NEB-10", "Todo")), story("NEB-10"), story("NEB-9"))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-9 -> NEB-20 -> NEB-21 (3 stories)", "2. NEB-10 -> NEB-11 -> NEB-12 (3 stories)",
+                                             "3. NEB-13 -> NEB-20 -> NEB-21 (3 stories)"])
+
+    def test_finished_stories_and_blockers_outside_the_map_add_no_step(self):
+        lanes = [lane("NEB-90", story("NEB-3", "Done"), story("NEB-4", "Todo", ("NEB-3", "Done"), ("NEB-50", "Todo")),
+                      story("NEB-5", "Todo", ("NEB-4", "Todo")), story("NEB-6", "Canceled", ("NEB-5", "Todo"))),
+                 lane("NEB-91", story("NEB-7", "In Review", ("NEB-6", "Canceled"), labels=["Design"]),
+                      story("NEB-8", "Todo", ("NEB-7", "In Review", ["Design"])), story("NEB-9", "In Review", ("NEB-5", "Todo")))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-4 -> NEB-5 -> NEB-9 (3 stories)"])
+
+    def test_no_links_or_nothing_unfinished(self):
+        no_links = [lane("NEB-90", story("NEB-2", "Done"), story("NEB-3", "Todo", ("NEB-2", "Done"))), lane("NEB-91", story("NEB-4", "Todo", ("NEB-50", "Todo")))]
+        self.assertEqual(fc_plan.critical_path_text(no_links).strip(), "No blocked-by chains.")
+        for lanes in ([], [lane("NEB-90")], [lane("NEB-90", story("NEB-3", "Done"), story("NEB-4", "Canceled", ("NEB-3", "Done")))]):
+            self.assertEqual(fc_plan.critical_path_text(lanes).strip(), "Nothing left to schedule.")
+            self.assertEqual(fc_plan.plan_sections(lanes)["## Critical path"], fc_plan.critical_path_text(lanes))
