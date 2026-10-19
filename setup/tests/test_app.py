@@ -2,8 +2,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 import hermetic  # first: no test sees the real home
-import html, json, os, re, threading, unittest
-from contextlib import contextmanager
+import html, io, json, os, re, threading, unittest
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -44,7 +44,10 @@ class GuidedSetup(unittest.IsolatedAsyncioTestCase):
             log.append((row[0], terminal, bool(suspended))); return STATES[row[0]]
         @contextmanager
         def suspend(app):
-            suspended.append(1); yield; suspended.pop()
+            suspended.append(1)
+            with redirect_stdout(io.StringIO()):
+                yield
+            suspended.pop()
         with mock.patch.object(fc_steps, "STEPS", ROWS), mock.patch.object(App, "suspend", suspend), mock.patch.object(fc_steprun, "run_step", run_step), \
                 mock.patch.object(fc_herdrconf, "apply_herdr_config", side_effect=lambda *a: log.append("herdr") or ("ok", [])), \
                 mock.patch.object(fc_keys, "key_status", return_value=dict.fromkeys(("openrouter", "typesafe", "linear", "figma"), False)), \
