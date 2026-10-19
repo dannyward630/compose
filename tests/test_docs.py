@@ -967,5 +967,48 @@ class ConfigKeysDocs(unittest.TestCase):
         self.assertNotRegex(self.text, r"\bgraft\b")
 
 
+class ReadyDocs(unittest.TestCase):
+    TASKS = ["sync", "linear <verb>", "tasks", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "bench"]
+
+    def tasks_rows(self):
+        sec = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
+        return [l for l in sec.splitlines() if l.startswith("| `")]
+
+    def skill_0i(self):
+        text = read("SKILL.md")
+        body = text[text.index("### 0i. The levels: project, epic, feature, story, task") :].split("\n### ", 1)[0]
+        return [l for l in body.splitlines()[1:] if not l.startswith("|")]
+
+    def test_ready_row_follows_spec_check_and_the_other_rows_stay(self):
+        rows = self.tasks_rows()
+        self.assertEqual([r.split("`")[1] for r in rows], self.TASKS)
+        self.assertEqual(len([l for l in read("docs/cli.md").splitlines() if l.startswith("| `ready`")]), 1)
+
+    def test_ready_row_states_the_rule_and_its_outputs(self):
+        rows = [r for r in self.tasks_rows() if r.startswith("| `ready`")]
+        self.assertEqual(len(rows), 1, "one ready row in Tasks")
+        row = rows[0]
+        for word in ("`Ready`", "story", "feature", "epic", "Todo", "Backlog", "blocker", "Done", "Canceled", "Design", "In Review"):
+            self.assertIn(word, row)
+        for word in ("can start now:", "results/ready.json", "compose linear labels --create Ready"):
+            self.assertIn(word, row)
+        self.assertNotIn("\u2014", row)
+
+    def test_skill_0i_labels_sentence_names_ready(self):
+        lines = [l for l in self.skill_0i() if all(f"`{w}`" in l for w in ("Epic", "Story", "Task"))]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("`Ready`", lines[0])
+        self.assertIn("compose linear labels --create", lines[0])
+
+    def test_skill_0i_says_what_ready_means_and_who_sets_it(self):
+        lines = [l for l in self.skill_0i() if "`compose ready`" in l]
+        self.assertEqual(len(lines), 1, "one sentence names compose ready in 0i")
+        for word in ("`Ready`", "story", "feature", "can start now"):
+            self.assertIn(word, lines[0])
+        self.assertNotIn("`Epic`", lines[0])
+        self.assertNotRegex(lines[0], r"[.!?] [A-Z`]", "one sentence per line")
+        self.assertNotIn("\u2014", lines[0])
+
+
 if __name__ == "__main__":
     unittest.main()
