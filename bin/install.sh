@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh - one command installs compose: checkout, links, uv, guided setup.
+# install.sh - one command installs compose: checkout, links, uv, compose setup.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/prodoxx/compose/main/bin/install.sh | sh
@@ -70,8 +70,8 @@ else
 fi
 
 if ( : < /dev/tty ) 2>/dev/null; then
-  say "starting the guided setup"
+  say "starting compose setup"
   exec "$CHECKOUT/bin/compose" setup < /dev/tty
 fi
-say "no terminal; running the plain setup with every default (compose setup --yes)"
+say "no terminal; running compose setup with every default (compose setup --yes)"
 exec "$CHECKOUT/bin/compose" setup --yes
