@@ -1,5 +1,7 @@
 """The delivery plan's section text: pure, section text in and section text out; fc_linear reads and writes Linear."""
 
+import fc_tasks
+
 def replace_section(body, heading, text):
     text = text.strip()
     new = text.split("\n")[0] if text.startswith("## ") else heading
@@ -17,13 +19,26 @@ PLAN_SECTIONS = ("## Start today", "## Lanes", "## Waves", "## Critical path", "
 PLAN_NEXT = "Next: the planner writes this at its cut."
 
 def plan_skeleton():
-    raise NotImplementedError
+    return "\n\n".join(f"{h}\n\n{PLAN_NEXT}" for h in PLAN_SECTIONS) + "\n"
 
 def with_plan_link(description, title, url):
-    raise NotImplementedError
+    if url in description:
+        return description
+    line = f"* Delivery plan: [{title}]({url})"
+    lines = description.split("\n")
+    if "## Notes" in lines:
+        i = lines.index("## Notes")
+        end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        ins = max(j for j in range(i, end) if lines[j].strip()) + 1
+        return "\n".join(lines[:ins] + [line] + lines[ins:])
+    return description.rstrip("\n") + "\n\n## Notes\n\n" + line + "\n"
 
 def start_today(lanes):
-    raise NotImplementedError
+    starts = [s for l in lanes for s in l["stories"] if s["state"].lower() in {"todo", "backlog"}
+              and all(fc_tasks.blocker_finished(b["state"], b["labels"]) for b in s["blockers"])]
+    if not starts:
+        return "Nothing can start now."
+    return "\n".join(f"{n}. [{s['id']}]({s['url']}) {s['title']}" for n, s in enumerate(starts, 1))
 
 def lanes_text(lanes):
     raise NotImplementedError
@@ -35,4 +50,4 @@ def critical_path_text(lanes):
     raise NotImplementedError
 
 def plan_sections(lanes):
-    raise NotImplementedError
+    return {"## Start today": start_today(lanes)}
