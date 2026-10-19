@@ -738,5 +738,61 @@ class RunStop(unittest.TestCase):
             fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"})
         self.assertEqual(hooked, [name, [("agent", "send-keys", name, "esc"), ("pane", "close", "p1")]])
 
+
+class ReadyEvent(unittest.TestCase):
+    """Issues that became ready wake the watch with one line naming only the new ones, for the product owner to hear."""
+    LINE = "event ready=NEB-2,NEB-3  (can start now: NEB-2 B, NEB-3 C; tell the product owner)"
+
+    def events(self, before, after):
+        b, a = wsnap(), wsnap()
+        if before is not None:
+            b["ready"] = before
+        a["ready"] = after
+        return fc.fc_watch.watch_events(b, a)
+
+    def test_only_newly_ready_ids_give_the_line(self):
+        self.assertEqual(self.events({"NEB-1": "A"}, {"NEB-1": "A", "NEB-2": "B", "NEB-3": "C"}), [self.LINE])
+        self.assertEqual(self.events(None, {"NEB-2": "B", "NEB-3": "C"}), [self.LINE])  # an older snapshot has no ready key
+        self.assertEqual(self.events({"NEB-1": "A"}, {"NEB-2": "B", "NEB-3": "C"}), [self.LINE])  # one left, two came: only the new
+        self.assertTrue(self.events({}, {"NEB-3": "C", "NEB-2": "B"})[0].startswith("event ready=NEB-3,NEB-2  ("))  # list order, not sorted
+        for before, after in (({"NEB-1": "A", "NEB-2": "B"}, {"NEB-1": "A"}), ({"NEB-1": "A"}, {"NEB-1": "A"}), ({"NEB-1": "A"}, {}), ({}, {})):
+            self.assertEqual(self.events(before, after), [])
+
+    def snapshot(self, text=None):
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        if text is not None:
+            (proj / "results" / "ready.json").write_text(text)
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value=None), mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+            return fc.fc_watch.watch_snapshot(Path("."), proj)["ready"]
+
+    def test_the_snapshot_reads_ready_json(self):
+        items = [{"id": "NEB-3", "title": "C"}, {"id": "NEB-2", "title": "B"}]
+        self.assertEqual(list(self.snapshot(json.dumps(items, indent=2)).items()), [("NEB-3", "C"), ("NEB-2", "B")])
+        self.assertEqual(self.snapshot(), {})
+        self.assertEqual(self.snapshot("[{not json"), {})
+
+    def watch(self, *snaps, **kw):
+        a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.05, interval=0.01, stall=10_000, rewake=False)
+        a.__dict__.update(kw)
+        out, it = [], iter(snaps)
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}  # the engineering manager's watch: the one that notifies
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "p"), mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=lambda *_: next(it, snaps[-1])), mock.patch("builtins.print", out.append):
+            with contextlib.suppress(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        return out
+
+    def test_now_and_from_print_the_line_and_nothing_pops_up(self):
+        none, ready = wsnap(), wsnap()
+        none["ready"], ready["ready"] = {}, {"NEB-2": "B", "NEB-3": "C"}
+        notify = mock.Mock()
+        with mock.patch.object(fc.fc_crew, "desktop_notify", notify):
+            self.assertIn(self.LINE, self.watch(ready, now=True))
+            out = self.watch(none, ready, from_="orchestrator")
+        self.assertTrue(any(line.endswith("] " + self.LINE) for line in out), out)
+        notify.assert_not_called()
+        self.assertEqual(fc.fc_watch.watch_filter([self.LINE], "p", ["p-orchestrator"]), [self.LINE])
+
+
 if __name__ == "__main__":
     unittest.main()
