@@ -30,6 +30,15 @@ class HerdrConfig(unittest.TestCase):
         self.assertEqual(self.apply()[0], "written")
         self.assertEqual(self.path.read_bytes(), SHIPPED.read_bytes())
 
+    def test_shipped_file_has_every_setting(self):
+        self.assertEqual(fc_init.herdr_toml(SHIPPED), {
+            "keys.prefix": "cmd+m", "keys.new_tab": "prefix+c", "keys.close_tab": "prefix+ampersand",
+            "keys.split_horizontal": "prefix+minus", "keys.split_vertical": "prefix+|",
+            "keys.focus_pane_left": "prefix+h", "keys.focus_pane_down": "prefix+j", "keys.focus_pane_up": "prefix+k",
+            "keys.focus_pane_right": "prefix+l", "keys.goto": "prefix+g", "keys.copy_mode": "prefix+y",
+            "keys.workspace_picker": "prefix+w", "theme.name": "terminal", "ui.agent_panel_sort": "spaces",
+            "ui.sound.enabled": "false", "ui.toast.delivery": "off"})
+
     def test_values_in_effect_writes_nothing(self):
         text = '[ui.sound]\nenabled = false\n[keys]\nprefix = "ctrl+b"\n'  # toast absent is herdr's default, off
         self.assertEqual(self.apply(text)[0], "ok")

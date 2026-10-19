@@ -1,3 +1,23 @@
+[keys]
+prefix = "cmd+m"
+new_tab = "prefix+c"
+close_tab = "prefix+ampersand"
+split_horizontal = "prefix+minus"
+split_vertical = "prefix+|"
+focus_pane_left = "prefix+h"
+focus_pane_down = "prefix+j"
+focus_pane_up = "prefix+k"
+focus_pane_right = "prefix+l"
+goto = "prefix+g"
+copy_mode = "prefix+y"
+workspace_picker = "prefix+w"
+
+[theme]
+name = "terminal"
+
+[ui]
+agent_panel_sort = "spaces"
+
 [ui.sound]
 enabled = false
 
