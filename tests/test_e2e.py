@@ -158,6 +158,27 @@ class ToolErrors(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertFalse(report["e2e"][0]["tool_error"])
 
+    def check(self, cmd):
+        with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}):
+            return fc.fc_verify.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), {"checks": [cmd]}, SimpleNamespace(skip_e2e=True, skip_review=True))
+
+    def test_a_failing_check_whose_early_output_names_a_harness_error_is_one_run_and_a_finding(self):
+        d = tempfile.mkdtemp()
+        noisy = f"echo x >> {d}/n; echo 'Chromium not found at /x'; python3 -c \"print('.' * 4000)\"; echo 'FAILED (failures=1)'; exit 1"
+        ok, report, findings = self.check(noisy)
+        self.assertFalse(ok)
+        self.assertEqual(len((Path(d) / "n").read_text().split()), 1)
+        self.assertFalse(report["checks"][0]["tool_error"])
+        self.assertIn("FAILED (failures=1)", findings)
+
+    def test_a_check_that_ends_on_a_harness_error_is_retried_once_and_never_a_finding(self):
+        d = tempfile.mkdtemp()
+        ok, report, findings = self.check(f"echo x >> {d}/n; echo 'bash: nosuchtool: command not found' >&2; exit 127")
+        self.assertFalse(ok)
+        self.assertEqual(len((Path(d) / "n").read_text().split()), 2)
+        self.assertTrue(report["checks"][0]["tool_error"])
+        self.assertEqual(findings, "")
+
 
 class CheckoutBp(unittest.TestCase):
     """The suite runs the checkout's bp, whatever bp sits on PATH."""

@@ -300,10 +300,11 @@ def run_stages(repo, proj, cfg, a):
     for c in cfg.get("checks", []):
         t1 = time.time()
         p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-        if p.returncode and fc_jev.tool_error(p.stdout + p.stderr):
+        out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+        if p.returncode and fc_jev.tool_error(out):
             fc_core.say(f"check  tool error; retrying once  {c}")
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-        out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
+            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
         tool = bool(p.returncode) and fc_jev.tool_error(out)
         report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
         ok &= p.returncode == 0
