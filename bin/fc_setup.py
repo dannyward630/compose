@@ -8,7 +8,33 @@ MODES = ()
 
 
 def walk_steps(checkout, custom, yes, dry=False):
-    raise NotImplementedError("walk_steps")
+    import fc_prompt, fc_steps, fc_steprun
+    claude = shutil.which("claude") is not None
+    results, designer = [], False
+    for row in fc_steps.STEPS:
+        name, _, install, level, _, mode = row
+        if mode == "key":
+            continue
+        lines = []
+        if custom and fc_steps.check(row, checkout)[0]:
+            state = "ok"
+        elif custom and not fc_prompt.confirm(f"Set up {name}?", level != "designer"):
+            state = "skipped"
+            if level == "required":
+                lines = [f"compose stops working without it; by hand: {install}"]
+        elif not custom and level == "designer":
+            state, lines = "skipped", ["designer extra, skipped"]
+        else:
+            designer = designer or level == "designer"
+            if mode == "interactive" and not yes:
+                state, detail = fc_steprun.run_step(row, checkout, yes, claude, True)
+            else:
+                with fc_prompt.spin(name):
+                    state, detail = fc_steprun.run_step(row, checkout, yes, claude, not yes)
+            lines = detail.splitlines()
+        results.append((name, state))
+        fc_prompt.step(name, "waiting on Claude Code" if state == "claude" else state, lines)
+    return results, designer
 
 
 def run_setup(checkout, yes, dry=False):
