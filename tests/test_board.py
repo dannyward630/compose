@@ -1,6 +1,8 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, subprocess, sys, tempfile, time, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
@@ -131,6 +133,66 @@ class Board(unittest.TestCase):
             self.assertEqual(h.call_count, 2)
             fc.fc_watch.watch_snapshot(self.repo, self.proj)  # a one-off read, as `watch --now` does, asks every time
             self.assertEqual(h.call_count, 3)
+
+
+class ReadyList(unittest.TestCase):
+    """`status` and `projects` show what can start now, read from results/ready.json."""
+
+    ITEMS = [{"id": "NEB-1", "title": "A"}, {"id": "NEB-2", "title": "B"}]
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init"), ("checkout", "-q", "-b", "compose/p")):
+            subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "verify.json").write_text(json.dumps({"task_prefix": "compose/p-"}))
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "t001"}]}))
+        # ready_line's wording belongs to another unit; this stand-in shows which items reached it
+        p = mock.patch.object(fc.fc_linear, "ready_line", side_effect=lambda items: "READY " + ", ".join(f"{i['id']} {i['title']}" for i in items))
+        self.line = p.start(); self.addCleanup(p.stop)
+
+    def ready(self, items):
+        tasks, ready = self.proj / "results" / "tasks.json", self.proj / "results" / "ready.json"
+        ready.write_text(json.dumps(items, indent=2))
+        os.utime(ready, ns=(tasks.stat().st_atime_ns, tasks.stat().st_mtime_ns))  # keeps `projects`' last activity as it was
+
+    def status(self):
+        lines = fc.fc_status.render_status(self.repo, [self.proj]).splitlines()
+        return lines, next(n for n, l in enumerate(lines) if l.startswith("project p "))
+
+    def projects(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fc.fc_status.cmd_projects(SimpleNamespace(repo=str(self.repo)))
+        return next(l for l in out.getvalue().splitlines() if l.startswith("p "))
+
+    def test_status_prints_the_ready_line_right_after_the_project_line(self):
+        before, _ = self.status()
+        for items in (self.ITEMS, []):
+            self.ready(items)
+            lines, i = self.status()
+            self.assertEqual(lines[i + 1], "  " + fc.fc_linear.ready_line(items))
+            self.assertEqual(lines[:i + 1] + lines[i + 2:], before)
+
+    def test_projects_ends_the_project_line_with_the_ready_line(self):
+        before = self.projects()
+        for items in (self.ITEMS, []):
+            self.ready(items)
+            self.assertEqual(self.projects(), before + "  " + fc.fc_linear.ready_line(items))
+            self.assertEqual(fc.fc_status.project_summary(self.repo, self.proj)["ready"], items)
+
+    def test_a_halted_projects_line_still_ends_with_the_ready_line(self):
+        (self.proj / "results" / "resume.json").write_text(json.dumps({"halted_at": "2026-10-19 01:00:00", "provider": "x", "remaining": []}))
+        self.ready(self.ITEMS)
+        self.assertTrue(self.projects().endswith("HALTED (payment) -> compose resume  READY NEB-1 A, NEB-2 B"), self.projects())
+
+    def test_without_ready_json_neither_prints_a_ready_line(self):
+        (lines, i), line = self.status(), self.projects()
+        self.assertTrue(lines[i + 1].startswith("  cost ") and line.endswith("]"), (lines, line))
+        self.line.assert_not_called()
 
 
 if __name__ == "__main__":
