@@ -1,6 +1,6 @@
 import json, sys, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_tasks
+import fc_core, fc_config, fc_plan, fc_tasks
 
 
 LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier }
@@ -312,7 +312,6 @@ fragment PlanChild on Issue { id identifier title url state { name } labels { no
 
 def linear_plan(feature):
     """Keep the map's delivery plan document in step: create and link it once, then rewrite only its data sections."""
-    import fc_plan
     tree = linear_gql(LINEAR_PLAN_TREE, {"id": feature})["issue"]
     parent = tree["parent"]
     names = lambda n: [l["name"] for l in n["labels"]["nodes"]]
