@@ -109,8 +109,10 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      numbered steps, each with the files it touches, the test that proves it, and its dependencies; decisions already made are
-     not reopened. Stories missing: draft the proposal on the map (one per user-visible slice, acceptance criteria in each, in
-     ship order) with a card id per story, then name them in one
+     not reopened. Stories missing: draft the proposal on the map, where a story is the thinnest slice that works end to end
+     and unblocks the next story, with at most 5 criteria (split cues: "all", "every", several When/Then pairs, several
+     outside systems; when no split fits, a time-boxed probe answers the unknown first, then the split), in ship order,
+     with a card id per story, then name them in one
      `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line and create them in Linear with
      `compose linear create` only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only; other stories' tasks are not touched.
