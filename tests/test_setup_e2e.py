@@ -97,7 +97,7 @@ class SetupE2E:
 
 
 # Step lines and HOME paths every real run shows and writes with the default fakes.
-STEP_LINES = ["◇  gh: ok", "◇  compose CLI link: done", "◇  Chromium: failed", "◇  ~/.local/bin on PATH: manual", "◇  framelink-figma: skipped"]
+STEP_LINES = ["◇  gh: ok", "◇  compose CLI link: done", "◇  ~/.local/bin on PATH: manual", "◇  Chromium: failed", "◇  framelink-figma: skipped"]
 PATHS = {".local/bin/compose", ".local/bin/bp", ".claude/skills/compose", ".pi/agent/models.json", ".compose/.env", ".compose/config.json",
          ".config/herdr/config.toml"}
 SKIP = [("(Enter skips): ", ""), ("Continue without it? (y/N) ", "y")]
