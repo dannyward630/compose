@@ -18,7 +18,7 @@ PRIMARY, BACKUP = "pi:p/primary", "pi:b/backup"
 
 
 class Fallback(unittest.TestCase):
-    def run_once(self, first, reset_files=False, after=2):
+    def run_once(self, first, reset_files=False, after=2, edit=None):
         """The primary model behaves as `first` ("error", "miss", or "rate"); the fallback writes the answer. Returns (result, models called);
         the prompts land in self.prompts."""
         root = Path(tempfile.mkdtemp())
@@ -36,6 +36,8 @@ class Fallback(unittest.TestCase):
             if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
             if model == PRIMARY and first == "rate":
+                if edit:  # the turn edits, then the provider cuts it short
+                    (Path(cwd) / "a.txt").write_text(edit)
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
@@ -84,6 +86,14 @@ class Fallback(unittest.TestCase):
     def test_rate_limit_switches_at_once(self):
         r, calls = self.run_once("rate")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+
+    def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
+        r, calls = self.run_once("rate", edit="yes\n")
+        self.assertEqual((r["status"], calls), ("passed", [PRIMARY]))
+        r, calls = self.run_once("rate", edit="maybe\n")
+        self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+        self.assertIn("A previous attempt left edits in the files and did not pass", self.prompts[1])
+        self.assertIn("grep -q yes a.txt", self.prompts[1].split("did not pass")[1])
 
     def test_implementer_is_told_not_to_run_the_test(self):
         self.run_once("miss")

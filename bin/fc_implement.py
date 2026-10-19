@@ -378,6 +378,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             switch(why, next_prompt)
             return True
         return False
+    def edited():  # a turn cut short may leave edits: they are tested before the next session reads the brief against them
+        return bool(meta["files"]) and bool(fc_core.sh(["git", "status", "--porcelain", "--", *meta["files"]], wt, check=False).stdout.strip())
     only_delete = bool(delete) and not meta["files"]  # the deletion is the whole task: no model turn, one test run decides
     while attempt < attempts:
         if fc_proc.STOP.is_set():
@@ -385,6 +387,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         attempt += 1
         t0 = time.time()
         ref_before = fc_readguard.refused(wt)
+        cut = None  # the number of a turn cut short whose edits the test and verdict below judge
         try:
             if only_delete:
                 session, reply, tools, usage = None, "", 0, {"cost": 0.0}
@@ -397,19 +400,21 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
                 switch(f"rate-limited by provider", original_prompt)
                 attempt -= 1
+            else:
+                rate_waits += 1
+                if rate_waits > 4:
+                    log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
+                    break
+                wait = 20 * rate_waits
+                fc_core.say(f"{tid} rate-limited by provider; fresh session in {wait}s (wait {rate_waits}/4)")
+                log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
+                session = None  # the compacted session is dead; restart from the original prompt
+                prompt = original_prompt
+                attempt -= 1
+                time.sleep(wait)
+            if not edited():
                 continue
-            rate_waits += 1
-            if rate_waits > 4:
-                log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
-                break
-            wait = 20 * rate_waits
-            fc_core.say(f"{tid} rate-limited by provider; fresh session in {wait}s (wait {rate_waits}/4)")
-            log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
-            session = None  # the compacted session is dead; restart from the original prompt
-            prompt = original_prompt
-            attempt -= 1
-            time.sleep(wait)
-            continue
+            cut = attempt + 1
         except subprocess.TimeoutExpired:
             if fc_proc.STOP.is_set():
                 raise fc_proc.Stopped
@@ -419,7 +424,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             session = None
             prompt = original_prompt
             failed("timed out", original_prompt)
-            continue
+            if not edited():
+                continue
+            cut = attempt
         except fc_models.PaymentRequired as e:
             fc_core.say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
             log.append({"attempt": attempt, "payment_required": {"provider": e.provider, "message": e.message}})
@@ -433,10 +440,16 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if fall():  # a fresh session on the same model until the fallback takes over
                 if not failed("errored", original_prompt):
                     session, prompt = None, original_prompt
-                continue
-            break
+                if not edited():
+                    continue
+                cut = attempt
+            else:
+                break
+        if cut:
+            reply, tools, usage = "", 0, {"cost": 0.0, "tokens_in": 0, "tokens_out": 0}
+        n = cut or attempt
         cost += usage["cost"]
-        found = contradiction(reply)
+        found = None if cut else contradiction(reply)
         if found:  # the brief states something the code disproves: more attempts would only work around it
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
                         "contradiction": found, "reply": reply[-1500:]})
@@ -446,7 +459,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         test = run_test(meta, wt)
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
         lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
-        entry = {"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
+        entry = {"attempt": n, **({"cut_short": True} if cut else {}), "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
                  "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
                  "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
@@ -466,7 +479,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                 entry["reader"] = {"model": fc_config.TEST_READER, "usage": reader}
                 cost += reader["cost"]
                 progress("running")
-        fc_core.say(f"{tid} attempt {attempt} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
+        fc_core.say(f"{tid} attempt {n} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
             + (f"  outside files: {', '.join(stray)}" if stray else ""))
@@ -496,7 +509,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else status) if test.returncode == 0 else status
         prompt = "\n\n".join(problems) + "\nFix it without editing protected files."
         fresh = original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt
-        if not failed("missed", fresh) and session is None:  # nothing to resume (Claude Code turns are one-shot): start from the task too
+        if cut:  # the cut-short turn already counted; its session is gone, so the next one starts from the task and what it left
+            prompt = fresh
+        elif not failed("missed", fresh) and session is None:  # nothing to resume (Claude Code turns are one-shot): start from the task too
             prompt = fresh
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
