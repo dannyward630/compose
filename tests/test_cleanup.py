@@ -108,6 +108,14 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
         self.assertEqual(self.writer_branches(), [])
 
+    def test_writers_of_a_protected_file_that_already_exists_start_together(self):
+        (self.repo / "a_test.go").write_text("pinned\n"); self.run("add", "a_test.go"); self.run("commit", "-qm", "stubs")  # groundwork wrote it, no writer edits it
+        self.add_task("003", "a_test.go", after="001")
+        started = []
+        out = self.start_writers(started)
+        self.assertEqual(sorted(started), ["tests-001", "tests-002", "tests-003"])
+        self.assertNotIn("waits for", out)
+
     def test_collect_skips_a_writer_that_has_not_reported_test_ready(self):
         fc.fc_crew.write_report(self.proj, "p-tests-001", "working", "started")
         wt = fc.fc_briefs.test_worktree(self.proj, "001")  # started, nothing committed yet

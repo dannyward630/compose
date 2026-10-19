@@ -412,11 +412,14 @@ def test_blockers(proj, tasks, starting):
     """The writers each task in `starting` waits for: of the tasks sharing one of its protected files, those whose branch is not
     collected yet, and earlier ones that start now or wait. Started together off one commit, two writers of one file each created
     it and the second collect conflicted; one after another, each starts off the project branch that holds the test before it.
+    A file already on the project branch (groundwork's, say) is written by no one, so it orders nobody.
     A task whose own branch is open started long ago and waits for nothing."""
     queued = {m["id"] for m in starting} | set(waiting_writers(proj))
+    wt = fc_herdr.project_worktree(proj)
+    new = lambda paths: {p for p in paths if fc_core.sh(["git", "cat-file", "-e", f"HEAD:{p}"], wt, check=False).returncode}
     out = {}
     for m in starting:
-        mine = set(m.get("protected") or [])
+        mine = new(m.get("protected") or [])
         by = [o["id"] for o in tasks if o["id"] != m["id"] and mine & set(o.get("protected") or [])
               and ((o["id"] < m["id"] and o["id"] in queued) or test_open(proj, o["id"]))]
         if by and not test_open(proj, m["id"]):
