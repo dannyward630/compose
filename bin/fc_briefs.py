@@ -181,6 +181,11 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    cancel, edit, add; ids stay monotonic, and a canceled task loses its `compose` block.
    Once a task of the feature was dispatched, the edits go inside `compose change start --why "<one line>"` (sync first)
    and `compose change done` (sync first). Before the first dispatch, no change.
+   Each cut's judgment lands on the delivery plan: find the map's "<map id>: delivery plan" in compose linear doc list, then
+   write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut with
+   compose linear doc update <id> --section. In it, priority is the ranked list under Priority when something has to give;
+   Linear's priority field stays unused. After `compose sync` the CLI rewrites the data sections (Start today, Lanes, Waves,
+   Critical path); never edit them.
 
 6. Design stories (label Design) go to the designer role, not cut by you: report the hand-off in one line. Code stories do not
    wait: cut them now, and note on the feature the design stories still open.
