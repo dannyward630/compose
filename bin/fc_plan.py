@@ -41,7 +41,29 @@ def start_today(lanes):
     return "\n".join(f"{n}. [{s['id']}]({s['url']}) {s['title']}" for n, s in enumerate(starts, 1))
 
 def lanes_text(lanes):
-    raise NotImplementedError
+    ids = {s["id"] for l in lanes for s in l["stories"] if s["state"].lower() != "canceled"}
+    blocks = []
+    for l in lanes:
+        stories = [s for s in l["stories"] if s["state"].lower() != "canceled"]
+        mine = {s["id"] for s in stories}
+        num = lambda s: int(s["id"].rsplit("-", 1)[1])
+        done, order = set(), []
+        while True:
+            ready = [s for s in stories if s["id"] not in done
+                     and all(b["id"] in done or b["id"] not in mine for b in s["blockers"])]
+            if not ready:
+                break
+            s = min(ready, key=num)
+            done.add(s["id"])
+            order.append(s)
+        lines = []
+        for n, s in enumerate(order + sorted((s for s in stories if s["id"] not in done), key=num), 1):
+            lines.append(f"{n}. [{s['id']}]({s['url']}) {s['title']} ({s['state']})")
+            needs = [b["id"] for b in s["blockers"] if b["id"] in ids and b["id"] not in mine]
+            if needs:
+                lines.append("   Needs: " + ", ".join(needs))
+        blocks.append("\n".join([f"### [{l['id']}]({l['url']}) {l['title']}", ""] + (lines or ["No stories yet."])))
+    return "\n\n".join(blocks)
 
 def waves_text(lanes):
     raise NotImplementedError
@@ -50,4 +72,4 @@ def critical_path_text(lanes):
     raise NotImplementedError
 
 def plan_sections(lanes):
-    return {"## Start today": start_today(lanes)}
+    return {"## Start today": start_today(lanes), "## Lanes": lanes_text(lanes)}
