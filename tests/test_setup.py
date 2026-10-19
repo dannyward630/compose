@@ -210,3 +210,19 @@ class DryFlow(unittest.TestCase):
              self.assertRaises(SystemExit) as r:
             out.tty = True; fc_setup.cmd_setup(SimpleNamespace(yes=False, dry_run=True))
         self.assertEqual((r.exception.code, run.call_args), (4, mock.call(CHECKOUT, False, True)))
+
+class TopImports(unittest.TestCase):
+    tree = ast.parse(Path(fc_setup.__file__).read_text())
+
+    def test_the_fc_modules_are_imported_on_one_top_level_line(self):
+        lines = [ast.unparse(n) for n in self.tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+        self.assertEqual([l for l in lines if "fc_" in l], ["import fc_checks, fc_config, fc_finish, fc_keys, fc_prompt, fc_steprun, fc_steps"])
+
+    def test_no_function_holds_an_import(self):
+        found = [f"{f.name}: {ast.unparse(i)}" for f in ast.walk(self.tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 for i in ast.walk(f) if isinstance(i, (ast.Import, ast.ImportFrom))]
+        self.assertEqual(found, [])
+
+    def test_the_imports_come_before_everything_else(self):
+        kinds = [isinstance(n, (ast.Import, ast.ImportFrom)) for n in self.tree.body[1:]]
+        self.assertEqual(kinds, sorted(kinds, reverse=True))

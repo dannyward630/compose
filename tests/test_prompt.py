@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, os, sys, threading, time, unittest
+import ast, io, os, sys, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -152,6 +152,21 @@ class Spin(unittest.TestCase):
                 self.assertIs(raised.exception, boom)
                 shown = self.out.getvalue()
                 self.assertTrue(shown.endswith(self.CLEAR) if tty else shown == "", repr(shown))
+
+class TopImports(unittest.TestCase):
+    tree = ast.parse(Path(fc_prompt.__file__).read_text())
+
+    def test_the_stdlib_imports_are_one_top_level_line(self):
+        self.assertEqual([ast.unparse(n) for n in self.tree.body if isinstance(n, (ast.Import, ast.ImportFrom))],
+                         ["import contextlib, getpass, os, sys, threading"])
+
+    def test_no_function_holds_an_import(self):
+        found = [f"{f.name}: {ast.unparse(i)}" for f in ast.walk(self.tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 for i in ast.walk(f) if isinstance(i, (ast.Import, ast.ImportFrom))]
+        self.assertEqual(found, [])
+
+    def test_the_imports_come_right_after_the_docstring(self):
+        self.assertIsInstance(self.tree.body[1], ast.Import)
 
 if __name__ == "__main__":
     unittest.main()
