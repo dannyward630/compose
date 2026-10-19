@@ -270,8 +270,8 @@ def ready_ids(issues):
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
             and all(finished(r["issue"]) for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
-LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } }
-  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } } }
+LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
+  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
 fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
