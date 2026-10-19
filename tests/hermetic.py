@@ -1,7 +1,7 @@
 """Imported first by every test module: no test, and no CLI it runs, sees the real home.
 
-On import the process gets a temp HOME and COMPOSE_CONFIG and loses the key variables, so paths the bin modules compute at
-import land there; each test then runs with its own fresh temp HOME (see temp_home) and COMPOSE_CONFIG, and its environment is restored after.
+On import the process gets a temp HOME and COMPOSE_CONFIG and loses the key variables and the caller's test slot, so paths
+the bin modules compute at import land there; each test then runs with its own fresh temp HOME (see temp_home) and COMPOSE_CONFIG, and its environment is restored after.
 A test that still changes the real ~/.compose files that hold keys or config (created, written, moved or deleted, from the test
 process or any subprocess) fails, naming the files, never their content."""
 import atexit, hashlib, json, os, pwd, shutil, tempfile, time, unittest
@@ -11,6 +11,7 @@ from unittest import mock
 REAL = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".compose"  # the account's home, whatever HOME says
 GUARDED = ("config.json", "auth.json", ".env", "openrouter.key")
 KEYS = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "OPENCODE_CONFIG_CONTENT", "TYPESAFE_API_KEY")
+CALLERS = ("COMPOSE_TEST_SLOT",)  # the slot of a `compose timed` running the suite: a lock under the real home, not a test's
 
 
 INSTALLED = {  # what compose's required tools keep in a home, faked so `compose init` goes ahead without the user's machine
@@ -169,7 +170,7 @@ def run(self, result=None):
 
 run.hermetic = True
 if not getattr(unittest.TestCase.run, "hermetic", False):
-    for k in KEYS:
+    for k in KEYS + CALLERS:
         os.environ.pop(k, None)
     os.environ.update(temp_home())
     unittest.TestCase.run = run

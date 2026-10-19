@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, subprocess, tempfile, time, unittest
+import io, json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""
 
@@ -90,6 +90,15 @@ class HermeticCleanup(unittest.TestCase):
             h = Path(tempfile.mkdtemp()) / "gh"; h.write_text("#!/bin/sh\necho 1.0.0\n"); h.chmod(0o755)
             made["h"] = subprocess.run([str(h)], capture_output=True, text=True).stdout
         self.assertEqual(self.run_case(body), {"f": "2.0.0\n", "g": "#!/bin/sh\necho 1.0.0\n", "h": "1.0.0\n"})
+
+
+class HermeticEnv(unittest.TestCase):
+    def test_a_suite_under_a_timed_slot_holds_none_in_its_tests(self):
+        """A suite run by `compose timed` gets its slot as COMPOSE_TEST_SLOT, a lock under the caller's home: kept, a test's own
+        timed commands would take no slot in the test's temp home, and a test of the slots would see them all run at once."""
+        r = subprocess.run([sys.executable, "-c", "import hermetic, os; print(os.environ.get('COMPOSE_TEST_SLOT'))"],
+                           cwd=Path(__file__).parent, env={**os.environ, "COMPOSE_TEST_SLOT": "0"}, capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "None"), r.stderr)
 
 
 if __name__ == "__main__":
