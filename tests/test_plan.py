@@ -58,3 +58,31 @@ class StartToday(unittest.TestCase):
             self.assertEqual(fc_plan.start_today(lanes).strip(), "Nothing can start now.")
             self.assertEqual(fc_plan.plan_sections(lanes)["## Start today"], fc_plan.start_today(lanes))
 
+
+
+class PlanLanes(unittest.TestCase):
+    def lines(self, lanes):
+        return fc_plan.lanes_text(lanes).strip("\n").split("\n")
+
+    def test_lanes_in_order_with_stories_in_build_order_and_needs_lines(self):
+        lanes = [lane("NEB-1", story("NEB-12", "Todo", ("NEB-5", "Todo")), story("NEB-10"), story("NEB-7", "canceled"),
+                      story("NEB-5", "In Progress", ("NEB-31", "Todo"), ("NEB-99", "Todo"), ("NEB-30", "Done")), story("NEB-9", "Todo", ("NEB-10", "Todo"))),
+                 lane("NEB-2", story("NEB-31", "Todo", ("NEB-30", "Done")), story("NEB-30", "Done")),
+                 lane("NEB-3")]
+        self.assertEqual(self.lines(lanes), [
+            "### [NEB-1](u/NEB-1) L NEB-1", "",
+            "1. [NEB-5](u/NEB-5) T NEB-5 (In Progress)", "   Needs: NEB-31, NEB-30",
+            "2. [NEB-10](u/NEB-10) T NEB-10 (Todo)", "3. [NEB-9](u/NEB-9) T NEB-9 (Todo)", "4. [NEB-12](u/NEB-12) T NEB-12 (Todo)", "",
+            "### [NEB-2](u/NEB-2) L NEB-2", "",
+            "1. [NEB-30](u/NEB-30) T NEB-30 (Done)", "2. [NEB-31](u/NEB-31) T NEB-31 (Todo)", "",
+            "### [NEB-3](u/NEB-3) L NEB-3", "", "No stories yet."])
+        self.assertEqual(list(fc_plan.plan_sections(lanes))[:2], ["## Start today", "## Lanes"])
+        self.assertEqual(fc_plan.plan_sections(lanes)["## Lanes"], fc_plan.lanes_text(lanes))
+
+    def test_stories_caught_in_a_cycle_follow_by_issue_number(self):
+        lanes = [lane("NEB-4", story("NEB-41", "Todo", ("NEB-40", "Todo")), story("NEB-40", "Todo", ("NEB-41", "Todo")),
+                      story("NEB-43", "Todo", ("NEB-45", "Todo")), story("NEB-45", "Backlog"), story("NEB-44", "CANCELED"))]
+        self.assertEqual(self.lines(lanes), [
+            "### [NEB-4](u/NEB-4) L NEB-4", "",
+            "1. [NEB-45](u/NEB-45) T NEB-45 (Backlog)", "2. [NEB-43](u/NEB-43) T NEB-43 (Todo)",
+            "3. [NEB-40](u/NEB-40) T NEB-40 (Todo)", "4. [NEB-41](u/NEB-41) T NEB-41 (Todo)"])
