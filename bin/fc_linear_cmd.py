@@ -2,7 +2,7 @@
 import json, sys, urllib.parse
 from pathlib import Path
 
-import fc_core, fc_config, fc_linear
+import fc_core, fc_config, fc_linear, fc_plan
 
 
 def issue_line(issue):
@@ -55,18 +55,6 @@ def state_and_labels(team, a):
         out["labelIds"] = ids
     return out
 
-def replace_section(body, heading, text):
-    text = text.strip()
-    new = text.split("\n")[0] if text.startswith("## ") else heading
-    section = new + "\n\n" + text.removeprefix(new).strip() if text else ""
-    lines = body.split("\n")
-    if heading not in lines:
-        return body.rstrip("\n") + "\n\n" + section + "\n" if section else body
-    i = lines.index(heading)
-    end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
-    parts = [p for p in ("\n".join(lines[:i]).rstrip("\n"), section.rstrip("\n"), "\n".join(lines[end:]).rstrip("\n")) if p]
-    return "\n\n".join(parts) + "\n" if parts else ""
-
 def writes_body(a, verb):
     if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
         sys.exit(f"{verb} takes one of --section, --append, --description")
@@ -75,7 +63,7 @@ def writes_body(a, verb):
 def new_body(a, old):
     body, old = read_body(a), old or ""
     if a.section:
-        return replace_section(old, a.section, body)
+        return fc_plan.replace_section(old, a.section, body)
     if a.append:
         return old.rstrip("\n") + "\n\n" + body.strip() + "\n"
     return body
