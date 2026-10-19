@@ -1276,9 +1276,9 @@ MACHINE = {
     52: "A machine with one keeps all of it, and setup sets only the two lines `compose` needs, so the only desktop alert is the one `compose` sends itself:",
 }
 REQUIREMENTS = {
-    104: "| `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |",
-    105: "| `~/.config/herdr/config.toml` | herdr's config: copied from `bin/herdr.toml` when absent, else only the two notification lines are set |",
-    106: "",
+    105: "| `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |",
+    106: "| `~/.config/herdr/config.toml` | herdr's config: copied from `bin/herdr.toml` when absent, else only the two notification lines are set |",
+    107: "",
 }
 
 
@@ -1293,7 +1293,7 @@ class MachineDocs(unittest.TestCase):
         self.assertLines("docs/new-machine.md", MACHINE, 86)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 123)
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 125)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):
