@@ -83,7 +83,28 @@ def waves_text(lanes):
     return "\n".join(["| Wave | Stories | Count |", "| -- | -- | -- |"] + rows)
 
 def critical_path_text(lanes):
-    raise NotImplementedError
+    stories = [s for l in lanes for s in l["stories"] if not fc_tasks.blocker_finished(s["state"], s["labels"])]
+    if not stories:
+        return "Nothing left to schedule."
+    mine = {s["id"] for s in stories}
+    num = lambda i: int(i.rsplit("-", 1)[1])
+    after = {s["id"]: {b["id"] for b in s["blockers"] if b["id"] in mine} for s in stories}
+    blocks = {i: sorted((j for j in mine if i in after[j]), key=num) for i in mine}
+    chains = []
+    def walk(i, path):
+        for j in blocks[i]:
+            if j not in path:
+                walk(j, path + [j])
+        if not blocks[i]:
+            chains.append(path)
+    for i in sorted((i for i in mine if not after[i]), key=num):
+        walk(i, [i])
+    best = max(map(len, chains), default=0)
+    if best < 2:
+        return "No blocked-by chains."
+    return "\n".join(f"{n}. {' -> '.join(c)} ({len(c)} stories)"
+                     for n, c in enumerate((c for c in chains if len(c) == best), 1))
 
 def plan_sections(lanes):
-    return {"## Start today": start_today(lanes), "## Lanes": lanes_text(lanes), "## Waves": waves_text(lanes)}
+    return {"## Start today": start_today(lanes), "## Lanes": lanes_text(lanes), "## Waves": waves_text(lanes),
+            "## Critical path": critical_path_text(lanes)}
