@@ -29,8 +29,13 @@ def with_plan_link(description, title, url):
     if "## Notes" in lines:
         i = lines.index("## Notes")
         end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
-        ins = max(j for j in range(i, end) if lines[j].strip()) + 1
-        return "\n".join(lines[:ins] + [line] + lines[ins:])
+        sub = next((j for j in range(i + 1, end) if lines[j].startswith("### ")), end)
+        own = [j for j in range(i + 1, sub) if lines[j].strip()]
+        if own:
+            ins = own[-1] + 1
+            return "\n".join(lines[:ins] + [line] + lines[ins:])
+        j = next((k for k in range(i + 1, end) if lines[k].strip()), end)
+        return "\n".join(lines[:i + 1] + ["", line, ""] + lines[j:])
     return description.rstrip("\n") + "\n\n## Notes\n\n" + line + "\n"
 
 def start_today(lanes):
