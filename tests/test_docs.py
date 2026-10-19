@@ -1370,5 +1370,37 @@ class LeanStoryRule(unittest.TestCase):
                 self.assertNotIn(word, path.read_text(), f"{word!r} in {path.name}")
 
 
+class LeanDesignStories(unittest.TestCase):
+    LEAN = "Design stories are lean: one flow's lowfi or one screen's hifi each, cut just ahead of the code story it unblocks, walking skeleton flow first, lowfi then hifi inside each flow."
+    OLD = "| **epic** | Check for a design system (below). None: write the design-system epic with its features and stories, send its open decisions up as cards, build Foundations once they are answered. One exists: continue at the first story not Done under it or under the epic's features."
+
+    def epic_row(self):
+        lines = read("sections/0d.md").splitlines()
+        rows = [i for i, l in enumerate(lines) if l.startswith("| **epic** |")]
+        self.assertEqual(len(rows), 1, "one epic row in 0d")
+        return lines, rows[0]
+
+    def test_epic_row_ends_its_last_cell_with_the_lean_sentence(self):
+        lines, i = self.epic_row()
+        row = lines[i]
+        self.assertTrue(row.endswith(self.LEAN + " |"), row)
+        self.assertTrue(row.startswith(self.OLD), "the cell keeps its old text before the new sentence")
+        self.assertRegex(row[len(self.OLD):-len(self.LEAN) - 2], r"^ +$")
+
+    def test_row_stays_one_line_with_two_cells(self):
+        lines, i = self.epic_row()
+        row = lines[i]
+        self.assertEqual(row.count("|"), 3)
+        self.assertEqual(row.count(" | "), 1)
+        self.assertEqual(lines[i - 1], "|---|---|")
+        self.assertTrue(lines[i + 1].startswith("| **feature** |"))
+        self.assertNotIn("—", row)
+
+    def test_sentence_appears_once_in_0d(self):
+        text = read("sections/0d.md")
+        self.assertEqual(text.count(self.LEAN), 1)
+        self.assertEqual(text.count("Design stories are lean"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
