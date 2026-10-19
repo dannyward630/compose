@@ -222,3 +222,52 @@ class AskKeys(unittest.TestCase):
         self.assertEqual((got, asked[0], asked[-1]), (["openrouter"], "OpenRouter key (Enter keeps it)", "Figma token (Enter skips)"))
         self.assertEqual(fc_auth.read_auth(self.auth)["workspaces"]["acme"]["openrouter"], "sk-or-test-1")
         self.assertIn("│  Figma token (optional), from Figma settings, personal access tokens [not set]", lines)
+
+
+class DryKeys(unittest.TestCase):
+    """With dry each key question is asked as without it; a typed key is discarded with a would line, and its kind returned."""
+    def setUp(self):
+        self.auth, self.env = Path.home() / "k" / "auth.json", Path.home() / "fl" / ".env"
+        p = mock.patch.object(fc_config, "AUTH_PATH", self.auth)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def ask(self, typed, sure, designer, dry):
+        out = io.StringIO()
+        with mock.patch.object(fc_prompt, "password", side_effect=typed) as pw, \
+             mock.patch.object(fc_prompt, "confirm", side_effect=sure) as ok, mock.patch.object(fc_prompt, "note") as note, \
+             mock.patch.object(fc_keys, "save_key", wraps=fc_keys.save_key) as save, \
+             mock.patch.dict(os.environ, {"NO_COLOR": "1"}), redirect_stdout(out):
+            got = fc_keys.ask_keys("acme", self.env, designer, dry=dry)
+        for value in filter(None, typed): self.assertNotIn(value, out.getvalue())
+        return got, out.getvalue().splitlines(), [pw.call_args_list, ok.call_args_list, note.call_args_list], save
+
+    def both(self, typed, sure, designer, saved):
+        """Dry first, then the same answers without it: the same questions and lines, each saved line its would line."""
+        files = lambda: [p.read_bytes() if p.exists() else None for p in (self.auth, self.env)]
+        before = files()
+        got, lines, asked, save = self.ask(typed, sure, designer, True)
+        save.assert_not_called()
+        self.assertEqual(files(), before)
+        real_got, real_lines, real_asked, _ = self.ask(typed, sure, designer, False)
+        self.assertEqual((got, asked), (real_got, real_asked))
+        self.assertEqual(sum(line in saved for line in real_lines), len(saved), real_lines)
+        self.assertEqual(lines, [saved.get(line, line) for line in real_lines])
+        return got
+
+    def test_each_kind_typed(self):
+        saved = {f"│  {k} key saved to auth.json for workspace acme": f"│  would save {k} key to ~/k/auth.json"
+                 for k in ("openrouter", "typesafe", "linear")}
+        saved["│  Figma token saved to the Framelink env file"] = "│  would save the Figma token to ~/fl/.env"
+        got = self.both(["sk-or-test-1", "ts-test-2", "lin-test-3", "fig-test-4"], [], True, saved)
+        self.assertEqual(got, ["openrouter", "typesafe", "linear", "figma"])
+        self.assertEqual(fc_auth.read_auth(self.auth)["workspaces"]["acme"]["linear"], "lin-test-3")  # dry False saves
+
+    def test_enter_on_set_and_unset_keys(self):
+        fc_auth.write_auth(self.auth, {"workspaces": {"acme": {"openrouter": "sk-or-test-0"}}})
+        self.env.parent.mkdir()
+        self.env.write_text("FIGMA_API_KEY=fig-test-0\n")
+        saved = {f"│  {k} key saved to auth.json for workspace acme": f"│  would save {k} key to ~/k/auth.json"
+                 for k in ("openrouter", "linear")}
+        got = self.both(["sk-or-test-9", "", "", "lin-test-1", ""], [False, True], True, saved)
+        self.assertEqual(got, ["openrouter", "linear"])
