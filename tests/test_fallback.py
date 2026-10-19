@@ -500,6 +500,63 @@ class Workspaces(unittest.TestCase):
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
 
 
+class KeepOldKeys(unittest.TestCase):
+    setUp, same = Workspaces.setUp, Workspaces.same
+
+    def old(self):
+        """Old keys in config.json and .env that apply_config() moves: personal has no auth.json entry, .env's equals default's."""
+        cfg = json.loads(self.path.read_text())
+        cfg["parallel"], cfg["env"] = 4, {"KEEP_X": "1"}
+        cfg["workspaces"]["personal"]["openrouter_api_key"] = "sk-or-test-p3p3"
+        self.path.write_text(json.dumps(cfg))
+        self.env = fc.fc_config.ENV_FILE
+        self.env.write_text("OTHER=1\nTEXT_MODEL_API_KEY=sk-or-test-d0d0\n")
+        return [p.read_bytes() for p in (self.path, self.env, self.auth)]
+
+    def apply(self, **kw):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            ws = fc.fc_config.apply_config(**kw)
+        c = fc.fc_config
+        got = (ws, c.OPENROUTER_KEY, c.LINEAR_KEY, os.environ.get("OPENROUTER_API_KEY"), os.environ.get("TYPESAFE_API_KEY"), os.environ.get("KEEP_X"),
+               c.WORKSPACE, c.DEFAULT_MODEL, c.FALLBACK_MODEL, c.FALLBACK_AFTER, c.TEST_READER, c.PARALLEL)
+        return got, out.getvalue() + err.getvalue()
+
+    def test_move_false_keeps_every_file_and_prints_nothing_but_applies_the_same_settings(self):
+        before = self.old()
+        dry, printed = self.apply(move=False)
+        self.same([p.read_bytes() for p in (self.path, self.env, self.auth)], before)
+        self.assertEqual(printed, "")
+        self.assertEqual(len(fc.fc_config.fc_auth.old_keys(self.path, self.env)), 2)
+        self.same(dry[:6], ("work", "sk-or-test-w1x2", "lin-test-def", "sk-or-test-w1x2", "ts-test", "1"))
+        self.assertEqual(dry[6:], ("work", "pi:a/b", "pi:g/h", 3, "claude:claude-haiku-x", 4))
+        real, printed = self.apply()  # today's move still runs: both old keys leave, one stderr line each
+        self.same(real, dry)
+        self.assertEqual((fc.fc_config.fc_auth.old_keys(self.path, self.env), len(printed.splitlines())), ([], 2))
+        self.assertEqual(self.env.read_text(), "OTHER=1\n")
+
+    def main(self, *argv):
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_config, "apply_config", return_value="default") as applied, mock.patch.object(sys, "argv", ["compose", *argv]), \
+             mock.patch.object(fc.fc_setup, "cmd_setup"), mock.patch.object(fc.fc_init, "cmd_doctor"), \
+             mock.patch.dict(os.environ, {"COLUMNS": "500", "NO_COLOR": "1"}), redirect_stdout(out), redirect_stderr(out):
+            try:
+                fc.main()
+            except SystemExit as e:
+                self.assertEqual(e.code, 0, out.getvalue())
+        moves = [c.kwargs.get("move", c.args[0] if c.args else True) for c in applied.call_args_list]
+        return moves, " ".join(out.getvalue().split())
+
+    def test_only_setup_dry_run_passes_move_false_and_help_names_it(self):
+        for argv, want in ((["setup", "--dry-run"], [False]), (["setup", "--yes", "--dry-run"], [False]), (["setup"], [True]),
+                           (["setup", "--yes"], [True]), (["doctor"], [True])):
+            self.assertEqual(self.main(*argv)[0], want, argv)
+        sub, top = self.main("setup", "--help")[1], self.main("--help")[1]
+        self.assertIn("--dry-run walk the whole setup and change nothing: every change prints as a would line", sub)
+        self.assertIn("setup install and configure everything compose needs, one question at a time on a terminal; --yes takes every default and never prompts", top)
+        self.assertNotIn("guided", sub + top)
+
+
 class PiKeyFromEnv(unittest.TestCase):
     """pi gets the OpenRouter key from its environment only: never in argv, never from .env."""
     KEY, MODELS = "sk-or-test", ("pi:openrouter-fast/z-ai/glm@preset/p", "pi:openrouter/x/y", "pi:x/y")
