@@ -59,7 +59,6 @@ class StartToday(unittest.TestCase):
             self.assertEqual(fc_plan.plan_sections(lanes)["## Start today"], fc_plan.start_today(lanes))
 
 
-
 class PlanLanes(unittest.TestCase):
     def lines(self, lanes):
         return fc_plan.lanes_text(lanes).strip("\n").split("\n")
@@ -86,3 +85,26 @@ class PlanLanes(unittest.TestCase):
             "### [NEB-4](u/NEB-4) L NEB-4", "",
             "1. [NEB-45](u/NEB-45) T NEB-45 (Backlog)", "2. [NEB-43](u/NEB-43) T NEB-43 (Todo)",
             "3. [NEB-40](u/NEB-40) T NEB-40 (Todo)", "4. [NEB-41](u/NEB-41) T NEB-41 (Todo)"])
+
+
+
+class PlanWaves(unittest.TestCase):
+    LANES = [lane("NEB-1", story("NEB-10"), story("NEB-12", "Done"), story("NEB-11", "In Progress", ("NEB-12", "Done"), ("NEB-99", "Todo")),
+                  story("NEB-14", "Todo", ("NEB-21", "Todo")), story("NEB-13", "Todo", ("NEB-10", "Todo"), ("NEB-14", "Todo"))),
+             lane("NEB-2", story("NEB-21", "Todo", ("NEB-10", "Todo")), story("NEB-22", "In Review", labels=["Design"]),
+                  story("NEB-9", "Todo", ("NEB-22", "In Review", ["Design"])), story("NEB-25", "Canceled", ("NEB-10", "Todo")),
+                  story("NEB-30", "Todo", ("NEB-31", "Todo")), story("NEB-31", "Todo", ("NEB-30", "Todo")))]
+
+    def test_waves_group_unfinished_stories_across_lanes_by_issue_number_leaving_out_a_cycle(self):
+        self.assertEqual(fc_plan.waves_text(self.LANES).strip().splitlines(), [
+            "| Wave | Stories | Count |", "| -- | -- | -- |", "| 1 | NEB-9, NEB-10, NEB-11 | 3 |", "| 2 | NEB-21 | 1 |", "| 3 | NEB-14 | 1 |", "| 4 | NEB-13 | 1 |"])
+
+    def test_nothing_left_to_schedule(self):
+        for lanes in ([], [lane("NEB-1")], [lane("NEB-1", story("NEB-3", "Done"), story("NEB-4", "canceled", ("NEB-3", "Done"))),
+                                            lane("NEB-2", story("NEB-5", "In Review", ("NEB-6", "Todo"), labels=["Design"]))]):
+            self.assertEqual(fc_plan.waves_text(lanes).strip(), "Nothing left to schedule.")
+
+    def test_plan_sections_hold_waves_after_lanes(self):
+        sections = fc_plan.plan_sections(self.LANES)
+        self.assertEqual(list(sections)[:3], ["## Start today", "## Lanes", "## Waves"])
+        self.assertEqual(sections["## Waves"], fc_plan.waves_text(self.LANES))
