@@ -109,6 +109,13 @@ def cmd_designcrews(a):
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not figma and not all(m.get("figma") for m in metas):
         sys.exit("no Figma file: compose figma check --figma <url or key>")
+    states = {m["id"]: m.get("linear_state") for m in tasks}
+    waits = {m["id"]: [b for b in (x.strip() for x in str(m.get("after") or "").split(","))
+                       if b and states.get(b) not in ("In Review", "Done")] for m in metas}
+    for m in metas:  # a blocker not yet In Review or Done holds the task back: not started, not briefed, no slot under the cap
+        if waits[m["id"]]:
+            print(f"{m['id']} waits on {','.join(waits[m['id']])}")
+    metas = [m for m in metas if not waits[m["id"]]]
     if a.print_:
         for m in metas:
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
