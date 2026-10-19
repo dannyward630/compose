@@ -1194,5 +1194,39 @@ class LinkFeatures(unittest.TestCase):
         self.assertTrue(lines[epic[0] + 1].startswith("- Feature: "))
 
 
+class DesignWaitsDocs(unittest.TestCase):
+    DESIGNER = "The designer syncs (step 2), then starts every builder at once"
+
+    def test_designcrews_row_starts_only_unblocked_tasks_and_prints_the_rest(self):
+        cli = read("docs/cli.md")
+        sec = cli.split("### Teammates and supervision\n", 1)[1].split("### Workspaces", 1)[0]
+        rows = [l for l in sec.splitlines() if l.startswith("| `designcrews`")]
+        self.assertEqual(len(rows), 1, "one designcrews row in Teammates and supervision")
+        self.assertEqual(len([l for l in cli.splitlines() if l.startswith("| `designcrews`")]), 1)
+        row = rows[0]
+        self.assertRegex(row, r"\bonly\b[^|]*\bblock(ers?|ed by)\b[^|]*In Review or Done")
+        self.assertIn("<id> waits on <ids>", row)
+        self.assertEqual(row.count("waits on"), 1)
+        for kept in ("design-NNN", "--only", "--max N", "--print", "design_concurrency"):
+            self.assertIn(kept, row)
+        self.assertNotIn("—", row)
+        self.assertEqual(row.count(" | "), 1, "still two cells")
+
+    def test_0d_says_a_design_task_waits_right_after_the_designer_line(self):
+        lines = read("sections/0d.md").splitlines()
+        i = next(i for i, l in enumerate(lines) if l.startswith(self.DESIGNER))
+        self.assertIn("compose designcrews --project <slug>", lines[i])
+        self.assertNotIn("In Review or Done", lines[i])
+        line = lines[i + 1]
+        for word in ("design task", "every task", "blocked by", "In Review or Done"):
+            self.assertIn(word, line)
+        self.assertRegex(line, r"\bwaits? until\b")
+        self.assertNotRegex(line, r"[.!?] [A-Z`]", "one sentence per line")
+        self.assertTrue(line.endswith("."))
+        self.assertNotIn("—", line)
+        self.assertEqual([l for l in lines if "In Review or Done" in l], [line], "one such sentence in 0d")
+        self.assertTrue(lines[i + 2].startswith("`--only` picks tasks"))
+
+
 if __name__ == "__main__":
     unittest.main()
