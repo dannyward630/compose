@@ -191,6 +191,18 @@ class WatchTimeout(unittest.TestCase):
                 mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
             self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj)["closed"], ["hw-tests-002"])
 
+    def test_a_teammate_just_up_is_not_judged_by_a_list_from_before(self):
+        """A watch loop keeps herdr's agent list for seconds; crew_up in that time must not make a running teammate look closed."""
+        proj = Path(tempfile.mkdtemp()) / "hw"; (proj / "results" / "crew").mkdir(parents=True)
+        (proj / "results" / "crew" / "hw-tests-001.json").write_text(json.dumps({"name": "hw-tests-001", "space": "w9", "tab": "w9:t3", "booting": True}))
+        agents, listed = fc.fc_watch.Agents(), {"agents": []}
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: listed), mock.patch.object(fc.fc_herdr, "herdr_error", return_value=({}, None)), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]):
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj, agents)["closed"], [])  # booting, its tab is there
+            listed = {"agents": [{"name": "hw-tests-001", "workspace_id": "w9", "agent_status": "working"}]}  # herdr lists it now
+            fc.fc_crew.crew_up(proj, "hw-tests-001")
+            self.assertEqual(fc.fc_watch.watch_snapshot(Path("."), proj, agents)["closed"], [])
+
     def test_the_snapshot_sees_a_team_lead_whose_name_was_cut(self):
         proj = Path(tempfile.mkdtemp()) / "clean-recut-branches"; (proj / "results").mkdir(parents=True)
         live = {"agents": [{"name": "clean-recut-branche-orchestrator", "workspace_id": "w9", "agent_status": "working"},

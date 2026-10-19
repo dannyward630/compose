@@ -11,14 +11,16 @@ FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_
 AGENTS_INTERVAL = 10.0  # seconds between `herdr agent list` calls in one watch loop: a teammate's status moves at the pace of its turns
 
 class Agents:
-    """`herdr agent list` for one watch loop, asked at most once per AGENTS_INTERVAL: one process per poll from every parked watch is too many."""
+    """`herdr agent list` for one watch loop, asked at most once per AGENTS_INTERVAL: one process per poll from every parked watch is too many.
+    Asked again when the crew `records` changed since the last list: a teammate `crew_up` just marked as listed is judged by a list
+    taken after that, never by one from before herdr listed it, which would count it as closed."""
     def __init__(self):
-        self.at, self.listed = None, None
+        self.at, self.listed, self.records = None, None, None
 
-    def __call__(self):
+    def __call__(self, records=None):
         now = time.monotonic()
-        if self.at is None or now - self.at >= AGENTS_INTERVAL:
-            self.listed, self.at = fc_herdr.herdr("agent", "list"), now
+        if self.at is None or now - self.at >= AGENTS_INTERVAL or records != self.records:
+            self.listed, self.at, self.records = fc_herdr.herdr("agent", "list"), now, records
         return self.listed
 
 def watch_snapshot(repo, proj, agents=None):
@@ -43,13 +45,13 @@ def watch_snapshot(repo, proj, agents=None):
         snap["ready"] = {}
     for r in rows:
         snap["tasks"][r["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": r["linear"], "title": r["title"]}
-    listed = agents() if agents else fc_herdr.herdr("agent", "list")
+    records = [json.loads(f.read_text()) for f in sorted((proj / "results" / "crew").glob("*.json"))]  # before the list: it must be as new as they are
+    listed = agents(records) if agents else fc_herdr.herdr("agent", "list")
     agents = None if listed is None else listed.get("agents", [])
     for ag in agents or []:
         n = ag.get("name") or ""
         if fc_herdr.agent_id(proj.name, n):
             snap["agents"][n] = ag.get("agent_status")
-    records = [json.loads(f.read_text()) for f in sorted((proj / "results" / "crew").glob("*.json"))]
     snap["closed"] = [c["name"] for c in records if fc_crew.tab_closed(c, agents)]  # whatever their last report says, not working
     pis = [c for c in records if "skill" in c and c.get("agent", c["name"]) in snap["agents"]]
     try:
