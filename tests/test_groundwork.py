@@ -674,6 +674,56 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual(str(e.exception), "no Figma file: compose figma check --figma <url or key>")
 
 
+class DesignCrewsWait(unittest.TestCase):
+    """designcrews holds back a design task until every blocker is In Review or Done: not started, not briefed, no slot under the cap."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+        def issue(n, status="Todo", kind="design", after=()):
+            block = f"id: {n}\nkind: {kind}\ntest: t\n" + (f"nodes: P{n}/A\n" if kind == "design" else "files: a.go\n")
+            return {"id": f"ENG-{n}", "title": n, "description": f"```compose\n{block}```\n", "status": status, "blockedBy": [f"ENG-{b}" for b in after]}
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            issue("001", "Done", "code"), issue("002", "In Progress", "code"), issue("003", kind="code"), issue("004", after=("001", "002", "003")),
+            issue("005", after=("001", "006")), issue("006", "In Review"), issue("007"), issue("008", after=("006",)), issue("009")]})
+
+    def run_crews(self, only=None, print_=False, max=None):
+        started, out = [], io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+                mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=started.append), mock.patch("sys.stdout", out):
+            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
+        return sorted(ns.role for ns in started), out.getvalue()
+
+    def assert_waits_once(self, out):
+        self.assertIn("004 waits on 002,003", out.splitlines())
+        self.assertEqual(len(re.findall(r"\b004\b", out)), 1)  # no brief, failure, queue or skipped line names it
+
+    def test_tasks_whose_blockers_are_in_review_or_done_start_and_one_with_open_blockers_waits(self):
+        started, out = self.run_crews(max=10)
+        self.assertEqual(started, ["design-005", "design-007", "design-008", "design-009"])
+        self.assert_waits_once(out)
+
+    def test_a_held_back_task_takes_no_slot_under_the_cap(self):
+        started, out = self.run_crews(max=3)
+        self.assertEqual((len(started), "design-004" in started), (3, False))
+        left = ({"005", "007", "008", "009"} - {r.removeprefix("design-") for r in started}).pop()
+        self.assertIn(f"queued past the cap of 3: {left}", out)
+        self.assert_waits_once(out)
+
+    def test_print_briefs_only_the_tasks_that_can_start(self):
+        started, out = self.run_crews(print_=True)
+        self.assertEqual((started, out.count("====="), "===== design-004" in out), ([], 4, False))
+        self.assert_waits_once(out)
+
+    def test_a_held_back_task_named_with_only_prints_its_waits_line_not_skipped(self):
+        started, out = self.run_crews(only="004")
+        self.assertEqual((started, out.strip()), ([], "004 waits on 002,003"))
+        started, out = self.run_crews(only="004,005,003")
+        self.assertEqual(started, ["design-005"])
+        self.assertIn("003 skipped: not a design task (kind code)", out)
+        self.assert_waits_once(out)
+
+
 class ToolsmithBrief(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp()).resolve()
