@@ -141,14 +141,19 @@ def clean_env(env=None):
 # When the project is compose itself, the code under test is a compose that reads and writes its config, keys, and caches.
 # HOME stays as it is: git's identity and the toolchains' caches (rustup, uv, npm, gh) live there and tests need them.
 SCRATCH_CONFIGS = []  # removed when the CLI exits
-CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl"}  # what other compose processes write there at any time
+CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl", "test-slots"}  # what other compose processes write there at any time
 
 def scratch_config():
     """A COMPOSE_CONFIG in a fresh, empty directory of its own."""
     if not SCRATCH_CONFIGS:
-        atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in SCRATCH_CONFIGS])
+        atexit.register(remove_scratch)
     SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix="compose-config-"))
     return str(Path(SCRATCH_CONFIGS[-1]) / "config.json")
+
+def remove_scratch():
+    """Remove every scratch config this process made: at exit, and on a SIGTERM or SIGHUP, which would skip exit otherwise."""
+    while SCRATCH_CONFIGS:
+        shutil.rmtree(SCRATCH_CONFIGS.pop(), ignore_errors=True)
 
 def home_state():
     """name -> (size, mtime) of each entry of the user's ~/.compose, the CLI's own logs and caches left out."""

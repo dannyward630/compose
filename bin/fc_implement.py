@@ -233,26 +233,31 @@ HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely 
 def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
-    comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged."""
-    before = fc_core.home_state()
-    p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         stdin=stdin, start_new_session=True, env=env)
-    try:
-        out, err = p.communicate(timeout=limit)
-        return subprocess.CompletedProcess(cmd, p.returncode, fc_core.scrub(out), fc_core.scrub(err))
-    except subprocess.TimeoutExpired:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(p.pid, sig)
-            except (ProcessLookupError, PermissionError):  # the group is already gone (macOS says EPERM)
-                break
-            time.sleep(0.5)
-            if p.poll() is not None:
-                break
-        out, err = (fc_core.scrub(x or "") for x in p.communicate())
-        return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
-    finally:
-        fc_core.flag_home(before, f"`{cmd}`")
+    comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
+    The command runs under one of the machine's slots (fc_proc.slot) and its group is in fc_proc.RUNNING, so a stop ends it."""
+    with fc_proc.slot(fc_core.say) as held:
+        env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
+        before = fc_core.home_state()
+        p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             stdin=stdin, start_new_session=True, env=env)
+        fc_proc.RUNNING.add(p.pid)
+        try:
+            out, err = p.communicate(timeout=limit)
+            return subprocess.CompletedProcess(cmd, p.returncode, fc_core.scrub(out), fc_core.scrub(err))
+        except subprocess.TimeoutExpired:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(p.pid, sig)
+                except (ProcessLookupError, PermissionError):  # the group is already gone (macOS says EPERM)
+                    break
+                time.sleep(0.5)
+                if p.poll() is not None:
+                    break
+            out, err = (fc_core.scrub(x or "") for x in p.communicate())
+            return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
+        finally:
+            fc_proc.RUNNING.discard(p.pid)
+            fc_core.flag_home(before, f"`{cmd}`")
 
 def run_test(meta, wt):
     """A task's test command under the time limit (a task's block can set `test_timeout:`)."""

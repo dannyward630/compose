@@ -552,6 +552,13 @@ class TestHang(unittest.TestCase):
         self.assertIn("hangs", r.stderr)
 
 
+class Scratch(unittest.TestCase):
+    def test_remove_scratch_removes_every_scratch_config_made_and_forgets_them(self):
+        a, b = fc.fc_core.scratch_config(), fc.fc_core.scratch_config()
+        fc.fc_core.remove_scratch()
+        self.assertEqual((Path(a).parent.exists(), Path(b).parent.exists(), fc.fc_core.SCRATCH_CONFIGS), (False, False, []))
+
+
 class Timed(unittest.TestCase):
     def test_timed_kills_the_whole_group_and_says_it_hangs(self):
         """The check looks only for this run's sleeps: a suite running at the same time has its own alive, and they are not ours to find."""
@@ -571,6 +578,54 @@ class Timed(unittest.TestCase):
         finally:
             other.kill()
             other.wait()
+
+    def test_timed_runs_at_most_the_machines_slots_at_once_and_says_so_while_it_waits(self):
+        """Five teammates each running a suite at once leave the machine doing little else: a timed command holds one of
+        COMPOSE_TEST_SLOTS (default 2) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
+        import subprocess as sp, time
+        d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
+        script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")
+        env = {**os.environ, "COMPOSE_TEST_SLOTS": "1"}
+        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold]
+        a = sp.Popen(cmd("a", "3"), env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        time.sleep(0.5)
+        b = sp.run(cmd("b", "0"), env=env, capture_output=True, text=True)
+        self.assertEqual((a.wait(timeout=30), b.returncode), (0, 0), b.stderr)
+        t = dict(l.split() for l in marks.read_text().splitlines())
+        self.assertGreaterEqual(float(t["b"]) - float(t["a"]), 3.0)
+        self.assertIn("waiting for a test slot", b.stdout + b.stderr)
+        self.assertNotIn("WARNING", a.communicate()[0] + b.stdout + b.stderr)  # the slot files are the CLI's own, not a change to ~/.compose
+        self.assertEqual([x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()], ["0"])
+
+    def test_a_timed_command_under_a_slot_takes_none(self):
+        """A suite under a slot runs compose itself: its timed commands would wait on their parent's slot for ever with one slot."""
+        import subprocess as sp, time
+        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+        t0 = time.time()
+        r = sp.run([compose, "timed", "5", "--", f"{compose} timed 5 -- echo inner"], env={**os.environ, "COMPOSE_TEST_SLOTS": "1"}, capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "inner"), r.stderr)
+        self.assertLess(time.time() - t0, 5)
+
+    def test_a_terminated_timed_removes_its_scratch_config_and_ends_its_command(self):
+        """A closed pane, a timed limit above it, or a kill sends SIGTERM: left to die bare the CLI skips atexit, so its scratch
+        ~/.compose stays in the temp folder and the command runs on without it. It exits 143 with both gone."""
+        import subprocess as sp, time
+        n = 4017 + 2 * os.getpid()  # odd: never the hang test's sleep, and unique to this run while it lives
+        tmp = Path(tempfile.mkdtemp())
+        p = sp.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "timed", "60", "--", f"sleep {n}"],
+                     env={**os.environ, "TMPDIR": str(tmp)}, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        alive = lambda: sp.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True).stdout.strip() != b""
+        for _ in range(100):
+            if any(e.name.startswith("compose-config-") for e in tmp.iterdir()) and alive():
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("the command never started")
+        p.send_signal(signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=10), 143)
+        time.sleep(0.5)
+        self.assertEqual([e.name for e in tmp.iterdir()], [])
+        self.assertFalse(alive())
 
     def test_timed_runs_several_arguments_as_given_and_one_as_a_shell_line(self):
         import subprocess as sp

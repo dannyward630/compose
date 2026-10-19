@@ -642,6 +642,11 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
+        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so |", reqs)
+        timed = [l for l in cli if l.startswith("| `timed <seconds> -- <command>` |")]
+        self.assertEqual(len(timed), 1, "one timed row")
+        for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "SIGTERM"):
+            self.assertIn(part, timed[0])
         # Only the tool word changes: the neighbouring env row stays, and the old graft env row is gone.
         self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)
         self.assertFalse([l for l in reqs if "COMPOSE_NO_GRAFT" in l], "COMPOSE_NO_GRAFT")
