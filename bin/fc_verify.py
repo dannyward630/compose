@@ -227,8 +227,9 @@ def e2e_stage(repo, cfg, panes, report, findings):
     env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
     env.update(E2E_PORT=str(fc_core.free_port()), E2E_CLIENT_PORT=str(fc_core.free_port()))
     # Never the product owner's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
-    # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env).
-    profile = None if "BU_CDP_URL" in env else tempfile.mkdtemp(prefix="fc-e2e-browser-")
+    # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env),
+    # unless the project says its cases need no browser (e2e_browser: false, for example drivers of a terminal app).
+    profile = None if "BU_CDP_URL" in env or cfg.get("e2e_browser") is False else tempfile.mkdtemp(prefix="fc-e2e-browser-")
     if profile:
         cdp = fc_core.free_port()
         env.update(BU_CDP_URL=f"http://127.0.0.1:{cdp}", BU_NAME=f"fc-e2e-{cdp}")

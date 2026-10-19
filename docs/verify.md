@@ -63,6 +63,8 @@ When the harness itself fails, for example a jev or browser crash, a missing too
 It never sends that failure to a fix round.
 
 A case with a `driver` command runs the project's own browser driver instead of jev.
+That driver still gets the stage's browser in `BU_CDP_URL`.
+When no case needs a browser, for example drivers of a terminal app, set `"e2e_browser": false`: the stage then launches none and sets no `BU_CDP_URL`.
 
 ## Extensions
 

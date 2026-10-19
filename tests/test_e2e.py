@@ -95,6 +95,17 @@ class E2eLifecycle(unittest.TestCase):
         time.sleep(0.5)
         self.assertFalse(fc.fc_core.port_listening(port))
 
+    def test_a_project_without_a_browser_launches_none(self):
+        launched = Path(self.dir) / "launched"
+        chromium = Path(os.environ["HOME"]) / "chromium"
+        chromium.write_text(f"#!/bin/sh\necho started >> {launched}\nsleep 5\n"); chromium.chmod(0o755)
+        p = mock.patch.dict(os.environ, {"BP_CHROME": str(chromium)}); p.start(); self.addCleanup(p.stop)
+        out = Path(self.dir) / "cdp"
+        ok, report, _ = self.stage({"e2e_browser": False, "e2e": [{"name": "d", "driver": f"echo ${{BU_CDP_URL:-none}} > {out}"}]})
+        self.assertTrue(ok, report)
+        self.assertFalse(launched.exists())
+        self.assertEqual(out.read_text().strip(), "none")
+
     def test_a_configured_browser_is_used_instead(self):
         out = Path(self.dir) / "cdp"
         self.stage({"e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1", "BU_NAME": "ext"},
