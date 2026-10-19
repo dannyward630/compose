@@ -15,8 +15,8 @@ Setup stops when it finds a fast-coding install, and points to the migration at 
 
 ## What setup does
 
-On a terminal, `compose setup` is a guided screen where you can skip any step.
-With `--yes`, or without a terminal, it takes every default through a plain path and never prompts.
+On a terminal, `compose setup` asks one question at a time: Quick start takes every default, Custom asks a yes or no for each missing step.
+With `--yes`, or without a terminal, it runs the same steps with every default and never prompts.
 A key you did not enter is skipped, and the ending lists it with the command that sets it later.
 Setup never installs Claude Code.
 Without `claude` on the PATH it runs every step that does not need it, skips the rest, and ends by printing the Claude Code install line and asking you to run `compose setup` again.
@@ -43,12 +43,12 @@ Setup ends with a model probe against `models.implementer`, unless you skipped t
 It exits 1 when the probe fails, and prints how to create the OpenRouter preset `glm-5-3-flash-fast` and where to change the model (`models.implementer` in `~/.compose/config.json`).
 `compose doctor` shows the same steps, with one `MISSING` line per gap.
 
-On the plain path, setup ends with `compose is ready`, or with `compose is installed but not ready:` and one line per missing required step.
+With `--yes`, setup ends with `compose is ready`, or with `compose is installed but not ready:` and one line per missing required step.
 Then it tells you the next move: `compose` outside herdr, or `claude` in a pane and `/compose` inside it.
 
 ## herdr settings
 
-A machine without a herdr config gets the config the maintainer uses, from `setup/herdr.toml` in the checkout.
+A machine without a herdr config gets the config the maintainer uses, from `bin/herdr.toml` in the checkout.
 A machine with one keeps all of it, and setup sets only the two lines `compose` needs, so the only desktop alert is the one `compose` sends itself:
 
 ```toml
