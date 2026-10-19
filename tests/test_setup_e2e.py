@@ -96,12 +96,45 @@ class SetupE2E:
                                calls=calls.read_text().splitlines() if calls.exists() else [])
 
 
+# Step lines and HOME paths every real run shows and writes with the default fakes.
+STEP_LINES = ["◇  gh: ok", "◇  compose CLI link: done", "◇  Chromium: failed", "◇  ~/.local/bin on PATH: manual", "◇  framelink-figma: skipped"]
+PATHS = {".local/bin/compose", ".local/bin/bp", ".claude/skills/compose", ".pi/agent/models.json", ".compose/.env", ".compose/config.json",
+         ".config/herdr/config.toml"}
+SKIP = [("(Enter skips): ", ""), ("Continue without it? (y/N) ", "y")]
+
+
+def assert_run(test, r, code, last):
+    test.assertEqual((r.code, [line for line in r.lines if line][-1]), (code, last))
+    test.assertEqual([line for line in r.lines if line in STEP_LINES], STEP_LINES)
+    test.assertLessEqual(PATHS, tree(r.home).keys())
+
+
 class Prompted(SetupE2E, unittest.TestCase):
     """`compose setup` on a terminal, answered in the pty (task 006)."""
+
+    def test_quick_start_with_every_key_skipped(self):
+        r = self.run_setup(answers=[("number [1]: ", "1"), *SKIP * 3])
+        assert_run(self, r, 1, "└  setup is not finished: missing OpenRouter, TypeSafe, Linear")
+        at = [next(i for i, line in enumerate(r.lines) if part in line) for part in
+              ("┌  compose setup", "◆  How do you want to set up?", STEP_LINES[0], "OpenRouter key (Enter skips)", "◇  Summary")]
+        self.assertEqual(at, sorted(at))
+        self.assertNotIn("(Y/n)", r.text)
+        self.assertIn("git config --global rerere.enabled true", r.calls)
 
 
 class Defaults(SetupE2E, unittest.TestCase):
     """`compose setup --yes`, and setup with no terminal (task 006)."""
+
+    def assert_no_question(self, *args, **kw):
+        r = self.run_setup(*args, **kw)
+        assert_run(self, r, 0, "└  run compose setup in a terminal to finish")
+        self.assertNotIn("◆", r.text)
+
+    def test_yes_on_a_terminal_finishes_with_no_input(self):
+        self.assert_no_question("--yes")
+
+    def test_no_terminal_is_the_same_as_yes(self):
+        self.assert_no_question(tty=False)
 
 
 class DryRun(SetupE2E, unittest.TestCase):

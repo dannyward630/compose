@@ -5,35 +5,43 @@ from types import SimpleNamespace
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_prompt, fc_steps, fc_steprun, fc_setup
+import fc_prompt, fc_steps, fc_steprun, fc_keys, fc_finish, fc_config, fc_setup
 
 CHECKOUT = Path(fc_setup.__file__).resolve().parents[1]
-UV_ARGV = ["run", "--project", str(CHECKOUT / "setup"), "python", "-m", "compose_setup"]
+RESULTS = [("gh", "done")]
 
-class Exec(Exception): pass
 class Out(io.StringIO): isatty = lambda self: self.tty
 
-class Setup(unittest.TestCase):
+class Flow(unittest.TestCase):
     def setUp(self):
         t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup); self.home, self.links = Path(os.path.realpath(t.name)), []
-        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}),
+        (self.home / "config.json").write_text('{"workspace": "acme", "workspaces": {"acme": {}}}')
+        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}), mock.patch.object(fc_config, "CONFIG_PATH", self.home / "config.json"),
                   mock.patch.object(fc_setup.fc_checks, "owned_links", side_effect=lambda c: self.links)):
             p.start(); self.addCleanup(p.stop)
 
-    def run_setup(self, yes=False, stdin=True, stdout=True, uv=True):
-        out, err = Out(), io.StringIO(); out.tty = stdout
-        which = lambda tool, *a, **k: "/fake/uv" if uv and tool == "uv" else None
-        with mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: stdin)), mock.patch.object(sys, "stdout", out), \
-             mock.patch.object(sys, "stderr", err), mock.patch.object(fc_setup.shutil, "which", side_effect=which), \
-             mock.patch.object(fc_setup.os, "execvp", side_effect=Exec) as ex, mock.patch.object(fc_setup.os, "chdir") as cd, \
-             mock.patch.object(fc_setup.fc_plain, "run_plain", return_value=3) as plain, self.assertRaises((SystemExit, Exec)) as r:
+    def run_setup(self, yes=False, stdin=True, stdout=True, mode=1, designer=True):
+        log, out = [], Out(); out.tty = stdout
+        def fake(module, name, ret=None):
+            sig = inspect.signature(getattr(module, name))
+            def call(*a, **k):
+                b = sig.bind(*a, **k); b.apply_defaults(); log.append((name, *b.arguments.values())); return ret
+            return mock.patch.object(module, name, side_effect=call)
+        @contextlib.contextmanager
+        def spin(label):
+            log.append(("spin", label)); yield; log.append(("spun",))
+        with fake(fc_prompt, "intro"), fake(fc_prompt, "select", mode), fake(fc_prompt, "note"), fake(fc_prompt, "outro"), \
+             fake(fc_setup, "walk_steps", (RESULTS, designer)), fake(fc_keys, "ask_keys"), fake(fc_finish, "finish", (["a", "b", "end"], 3)), \
+             mock.patch.object(fc_prompt, "spin", spin), mock.patch.object(fc_steps, "STEPS", ()), mock.patch("shutil.which", return_value=None), \
+             mock.patch("os.execvp", side_effect=AssertionError("exec")), mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: stdin)), \
+             mock.patch.object(sys, "stdout", out), self.assertRaises(SystemExit) as r:
             fc_setup.cmd_setup(SimpleNamespace(yes=yes))
-        return r.exception, out.getvalue() + err.getvalue(), ex, cd, plain
+        return r.exception.code, out.getvalue(), log
 
     def assert_leftover(self):
-        e, text, ex, cd, plain = self.run_setup()  # a terminal with uv: only the leftover stops the exec
-        self.assertEqual((type(e), e.code, len(text.strip().splitlines())), (SystemExit, 1, 1))
-        self.assertIn(str(CHECKOUT / "bin" / "migrate-to-compose.sh"), text); ex.assert_not_called(); cd.assert_not_called(); plain.assert_not_called()
+        code, text, log = self.run_setup()
+        self.assertEqual((code, len(text.strip().splitlines()), log), (1, 1, []))
+        self.assertIn(str(CHECKOUT / "bin" / "migrate-to-compose.sh"), text)
 
     def test_fast_coding_dir_stops_setup(self):
         (self.home / ".fast-coding").mkdir(); self.assert_leftover()
@@ -43,23 +51,20 @@ class Setup(unittest.TestCase):
         link = self.home / ".local" / "bin" / "compose"; link.parent.mkdir(parents=True); link.symlink_to(old / "bin" / "compose")
         self.links = [("compose CLI link", link, CHECKOUT / "bin" / "compose")]; self.assert_leftover()
 
-    def test_terminal_with_uv_execs_the_guided_setup_from_setup_dir(self):
-        e, text, ex, cd, plain = self.run_setup()
-        self.assertIsInstance(e, Exec); cd.assert_called_once(); self.assertEqual(Path(cd.call_args[0][0]), CHECKOUT / "setup")
-        (tool, argv), _ = ex.call_args; plain.assert_not_called()
-        self.assertEqual((Path(tool).name, Path(argv[0]).name, list(argv[1:])), ("uv", "uv", UV_ARGV))
+    def test_terminal_runs_each_part_in_order_and_exits_with_finish_code(self):
+        self.assertEqual(fc_setup.MODES, ("Quick start (every default, designer extras off)", "Custom (choose each step)"))
+        for mode, designer in ((1, True), (0, False)):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.run_setup(mode=mode, designer=designer), (3, "", [
+                    ("intro", "compose setup"), ("select", "How do you want to set up?", fc_setup.MODES, 0),
+                    ("walk_steps", CHECKOUT, mode == 1, False, False), ("ask_keys", "acme", fc_steps.FRAMELINK_ENV, designer, False),
+                    ("spin", "checking your model"), ("finish", RESULTS, False, False), ("spun",), ("note", "Summary", ["a", "b"]), ("outro", "end")]))
 
-    def test_plain_path_and_its_exit_code(self):
-        for kw, yes in (({"yes": True}, True), ({"stdin": False}, False), ({"stdout": False}, False)):
+    def test_yes_or_no_terminal_asks_nothing_and_finish_gets_yes(self):
+        for kw in ({"yes": True}, {"stdin": False}, {"stdout": False}):
             with self.subTest(**kw):
-                e, text, ex, cd, plain = self.run_setup(**kw)
-                self.assertEqual((type(e), e.code), (SystemExit, 3)); plain.assert_called_once_with(CHECKOUT, yes)
-                ex.assert_not_called(); self.assertNotIn("uv", text)
-
-    def test_terminal_without_uv_says_so_and_runs_plain(self):
-        e, text, ex, cd, plain = self.run_setup(uv=False)
-        self.assertEqual((type(e), e.code), (SystemExit, 3)); plain.assert_called_once_with(CHECKOUT, False)
-        self.assertIn("uv", text); self.assertEqual(len(text.strip().splitlines()), 1); ex.assert_not_called()
+                self.assertEqual(self.run_setup(**kw), (3, "", [("intro", "compose setup"), ("walk_steps", CHECKOUT, False, True, False),
+                                                                ("finish", RESULTS, True, False), ("note", "Summary", ["a", "b"]), ("outro", "end")]))
 
 def row(name, level="default", mode="run", ok=False):
     return (name, lambda c: (ok, ""), f"install {name}", level, False, mode)
