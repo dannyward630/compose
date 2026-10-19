@@ -11,6 +11,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_plan  # noqa: E402
 
 
 KEY, URL = "lin_api_SECRET_do_not_print", "https://linear.app/acme/project/my-shop-abc123"
@@ -297,17 +298,28 @@ class LinearUpdate(unittest.TestCase):
         self.assertIn(sent["id"], ("iid", "ENG-7")); return sent["in"], issue, blocked
 
     def test_replace_section_swaps_only_that_section_or_appends_it(self):
-        rs, body, want = fc.fc_linear_cmd.replace_section, "# Cart\n\n## Plan\n\nold\n\n### Steps\n\n1. a\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nnew\n\n## Notes\n\nkeep\n"
+        rs, body, want = fc_plan.replace_section, "# Cart\n\n## Plan\n\nold\n\n### Steps\n\n1. a\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nnew\n\n## Notes\n\nkeep\n"
         self.assertEqual((rs(body, "## Plan", "  new \n\n"), rs(body, "## Plan", "## Plan\n\nnew\n")), (want, want))
         self.assertEqual(rs("# Cart\n\n## Plan\nold\n", "## Plan", "new"), "# Cart\n\n## Plan\n\nnew\n")
         self.assertEqual(rs("# Cart\n\n## Planning\n\nx\n\n\n", "## Plan", "new\n"), "# Cart\n\n## Planning\n\nx\n\n## Plan\n\nnew\n")
 
     def test_replace_section_renames_on_a_leading_heading_and_removes_on_an_empty_body(self):
-        rs, body = fc.fc_linear_cmd.replace_section, "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n"
+        rs, body = fc_plan.replace_section, "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n"
         self.assertEqual(rs(body, "## Plan", "## Stories\n\nnew\n"), "# Cart\n\n## Stories\n\nnew\n\n## Notes\n\nkeep\n")
         self.assertEqual(rs(body, "## Notes", "## Later\nkept\n"), "# Cart\n\n## Plan\n\nold\n\n## Later\n\nkept\n")
         self.assertEqual((rs(body, "## Plan", ""), rs(body, "## Notes", " \n")), ("# Cart\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nold\n"))
         self.assertEqual((rs(body, "## Gone", ""), rs("## Plan\n\nold\n", "## Plan", "")), (body, ""))
+
+    def test_replace_section_matches_the_heading_only_as_a_whole_line_wherever_it_sits(self):
+        rs = fc_plan.replace_section
+        self.assertEqual(rs("# Cart\n\nSee ## Plan.\n\n## Planned\nx", "## Plan", "new"), "# Cart\n\nSee ## Plan.\n\n## Planned\nx\n\n## Plan\n\nnew\n")
+        self.assertEqual(rs("## Plan\nold\n## Notes\nkeep", "## Plan", "new"), "## Plan\n\nnew\n\n## Notes\nkeep\n")
+
+    def test_replace_section_lives_only_in_fc_plan_and_update_writes_through_it(self):
+        self.assertFalse(hasattr(fc.fc_linear_cmd, "replace_section"))
+        with mock.patch.object(fc_plan, "replace_section", return_value="via plan\n") as rs:
+            self.assertEqual(self.update("new plan", section="## Plan")[0], {"description": "via plan\n"})
+        rs.assert_called_once_with("# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", "## Plan", "new plan")
 
     def test_fields_come_from_the_issue_team_and_the_parent(self):
         sent, issue, blocked = self.update(title="New", parent="ENG-1", state="in progress", label=["bug"])
@@ -420,6 +432,14 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.run_verb("doc", "update", "d1", body="x", description=True, any_project=True)
         self.assertEqual(sent()[-1], {"content": "x"})
 
+
+    def test_doc_update_section_writes_through_fc_plan_replace_section(self):
+        content = "# PRD\n\n## Plan\n\nold\n"
+        self.doc = {"id": "did", "title": "PRD", "content": content, "url": self.DOC_URL, "project": {"id": "p1", "name": "Shop"}}
+        with mock.patch.object(fc_plan, "replace_section", return_value="via plan\n") as rs:
+            self.assertEqual(self.run_verb("doc", "update", "d1", body="new plan", section="## Plan"), [f"updated {self.DOC_URL}"])
+        rs.assert_called_once_with(content, "## Plan", "new plan")
+        self.assertEqual([v["in"] for v in self.sent("documentUpdate(")], [{"content": "via plan\n"}])
 
 class LinearNoProject(unittest.TestCase):
     REFUSAL = (1, "ENG-7 is not in project Shop; pass --any-project to use it")
