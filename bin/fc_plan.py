@@ -66,10 +66,24 @@ def lanes_text(lanes):
     return "\n\n".join(blocks)
 
 def waves_text(lanes):
-    raise NotImplementedError
+    stories = [s for l in lanes for s in l["stories"] if not fc_tasks.blocker_finished(s["state"], s["labels"])]
+    if not stories:
+        return "Nothing left to schedule."
+    mine = {s["id"] for s in stories}
+    num = lambda s: int(s["id"].rsplit("-", 1)[1])
+    done, waves = set(), []
+    while True:
+        wave = sorted((s for s in stories if s["id"] not in done
+                       and all(b["id"] in done or b["id"] not in mine for b in s["blockers"])), key=num)
+        if not wave:
+            break
+        done.update(s["id"] for s in wave)
+        waves.append(wave)
+    rows = [f"| {n} | {', '.join(s['id'] for s in w)} | {len(w)} |" for n, w in enumerate(waves, 1)]
+    return "\n".join(["| Wave | Stories | Count |", "| -- | -- | -- |"] + rows)
 
 def critical_path_text(lanes):
     raise NotImplementedError
 
 def plan_sections(lanes):
-    return {"## Start today": start_today(lanes), "## Lanes": lanes_text(lanes)}
+    return {"## Start today": start_today(lanes), "## Lanes": lanes_text(lanes), "## Waves": waves_text(lanes)}
