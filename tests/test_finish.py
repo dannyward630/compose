@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import json, sys, tempfile, unittest
+import inspect, json, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import os
@@ -410,3 +410,52 @@ class ShippedHerdr(unittest.TestCase):
             self.assertEqual((lines, code), ([f"copied {shipped} to ~/.config/herdr/config.toml", *base[0]], base[1]))
             self.assertEqual(toml.read_bytes(), shipped.read_bytes())
             self.assertEqual(Finish.run_finish(self, auth, yes), base)  # a rerun finds the copy quiet and adds nothing
+
+
+WOULD, OR_ONLY = "would add default models to ~/.compose/config.json: ", {"workspaces": {"default": {"openrouter": "sk-or-test"}}}
+DRY = lambda c: inspect.signature(lambda path, shipped, dry=False: 0).bind(*c.args, **c.kwargs).arguments.get("dry")
+
+class Dry(unittest.TestCase):
+    """finish(results, yes, dry=True): would lines instead of writes, no probe, today's exit code, every file as it was."""
+    def setUp(self):
+        Finish.setUp(self); self.tmp, self.env = self.cfg.parent, self.cfg.parent / ".env"
+        p = mock.patch.object(F.fc_config, "PROBE_CACHE", self.tmp / "model-probe.json"); p.start(); self.addCleanup(p.stop)
+
+    def dry(self, auth, yes=False):
+        if auth is not None: self.auth.write_text(json.dumps(auth))
+        before = {p.name: p.read_bytes() for p in self.tmp.iterdir()}; self.herdr.reset_mock()
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            lines, code = F.finish([("pi", "ok"), ("OpenRouter key", "skipped")], yes, dry=True)
+        self.assertEqual({p.name: p.read_bytes() for p in self.tmp.iterdir()}, before)  # same bytes, no new file, no probe cache
+        self.probe.assert_not_called(); self.assertEqual([DRY(c) for c in self.herdr.call_args_list], [True])
+        self.assertNotIn("sk-or-test", "\n".join(lines)); return lines, code
+
+    def added(self, lines, prefix):
+        return [l[len(prefix):] for l in lines if l.startswith(prefix)]
+
+    def test_set_up_home_with_old_keys_keeps_them_and_names_the_real_additions(self):
+        cfg = json.loads(self.cfg.read_text()); cfg["openrouter_api_key"] = "sk-or-test-old"; cfg["workspaces"]["w"]["linear_api_key"] = "lin-old"
+        self.cfg.write_text(json.dumps(cfg)); self.env.write_text("TEXT_MODEL_API_KEY=sk-or-test-env\nOTHER=1\n")
+        lines, code = self.dry(ALL)
+        moves = [F.fc_core.tilde(f"would move {n} out of {p} into {self.auth}") for n, p in F.fc_auth.old_keys(self.cfg, self.env)]
+        self.assertEqual((len(moves), [l for l in lines if l.startswith("would move")], code), (3, moves, 0))
+        self.assertIn("would check implementer pi:mine", lines)
+        real = self.added(Finish.run_finish(self, ALL)[0], ADDED)
+        self.assertTrue(real); self.assertEqual(self.added(lines, WOULD), real)
+
+    def test_fresh_home_checks_the_default_implementer(self):
+        self.cfg.unlink()
+        lines, code = self.dry(OR_ONLY)
+        self.assertEqual(code, 1); self.assertFalse([l for l in lines if l.startswith("would move")])
+        self.assertIn("would check implementer " + F.fc_defaults.DEFAULT_MODELS["implementer"], lines)
+        real = self.added(Finish.run_finish(self, OR_ONLY)[0], ADDED)
+        self.assertTrue(real); self.assertEqual(self.added(lines, WOULD), real)
+
+    def test_exit_code_counts_the_probe_as_not_run(self):
+        self.probe.return_value = (False, ["provider: no endpoints"])
+        for auth, yes, tty, claude, want in ((ALL, False, True, True, 0), (OR_ONLY, False, True, True, 1), (ALL, False, True, False, 1),
+                                             ({}, True, True, True, 0), (ALL, True, True, False, 1), ({}, False, False, True, 0)):
+            self.tty, self.claude = tty, claude
+            lines, code = self.dry(auth, yes)
+            self.assertEqual(code, want, (auth, yes, tty, claude, lines))
+        self.assertFalse([l for l in self.dry({}, False)[0] if l.startswith("would check")])  # no OpenRouter key, nothing to check
