@@ -267,10 +267,35 @@ def ready_ids(issues):
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
             and all(finished(r["issue"]) for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
-LINEAR_READY_TREE = ""
+LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } }
+  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } } }
+fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } }
+  inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
 def linear_mark_ready(feature):
-    raise NotImplementedError("linear_mark_ready")
+    """Set the team's Ready label on the feature's children that can start now and take it off the rest, the same for the
+    epic's children when the feature has one; one read, then one update per issue whose labels change. Returns the ready
+    issues, the feature's children first."""
+    tree = linear_gql(LINEAR_READY_TREE, {"id": feature})["issue"]
+    ready_label = next((l["id"] for l in tree["team"]["labels"]["nodes"] if l["name"].lower() == "ready"), None)
+    if not ready_label:
+        raise RuntimeError("team has no label 'Ready'; compose linear labels --create Ready makes it")
+    update = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
+    out = []
+    groups = [tree["children"]["nodes"], *([tree["parent"]["children"]["nodes"]] if tree["parent"] else [])]
+    for group in groups:
+        ready = set(ready_ids(group))
+        for n in group:
+            have = [l["id"] for l in n["labels"]["nodes"]]
+            if n["identifier"] in ready:
+                if ready_label not in have:
+                    linear_gql(update, {"id": n["id"], "labels": have + [ready_label]})
+                    fc_core.say(f"linear {n['identifier']} -> Ready")
+                out.append({"id": n["identifier"], "title": n["title"]})
+            elif ready_label in have:
+                linear_gql(update, {"id": n["id"], "labels": [l for l in have if l != ready_label]})
+                fc_core.say(f"linear {n['identifier']} -> not Ready")
+    return out
 
 def ready_line(items):
     raise NotImplementedError("ready_line")
