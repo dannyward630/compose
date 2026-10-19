@@ -257,6 +257,27 @@ def linear_reconcile(proj, verified=False):
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
 
 
+def ready_ids(issues):
+    raise NotImplementedError("ready_ids")
+
+LINEAR_READY_TREE = ""
+
+def linear_mark_ready(feature):
+    raise NotImplementedError("linear_mark_ready")
+
+def ready_line(items):
+    raise NotImplementedError("ready_line")
+
+def cmd_ready(a):
+    raise NotImplementedError("cmd_ready")
+
+def refresh_ready(proj, feature=None):
+    raise NotImplementedError("refresh_ready")
+
+def linear_feature_after(repo, proj):
+    raise NotImplementedError("linear_feature_after")
+
+
 def cmd_sync(a):
     """Store the feature and its tasks, read from Linear with the workspace key or piped in as JSON (--stdin), and list them."""
     proj = fc_core.project_dir(a)
