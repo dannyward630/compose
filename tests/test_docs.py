@@ -1060,12 +1060,6 @@ class ReadyCheckpoints(unittest.TestCase):
             self.assertIn(kept, row)
             self.assertNotIn("\u2014", row)
 
-    def test_the_other_skill_and_cli_doc_tests_still_pass(self):
-        names = ("CliAndTasksDocs", "HerdrAndWorkspacesDocs", "SkillDoc", "LinearCommands")
-        suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(globals()[n]) for n in names)
-        result = unittest.TextTestRunner(stream=open(os.devnull, "w")).run(suite)
-        self.assertTrue(result.wasSuccessful(), [str(t) for t, _ in result.failures + result.errors])
-
 
 if __name__ == "__main__":
     unittest.main()
