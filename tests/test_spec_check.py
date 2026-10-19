@@ -39,8 +39,8 @@ def data(issues, desc=SETTLED):
     return {"feature": {"id": "ENG-1", "title": "F", "description": desc}, "issues": [STORY, *issues]}
 
 
-def check(issues, desc=SETTLED, root=None):
-    return {i: (ok, level, gaps) for ok, i, level, gaps in fc.fc_spec.spec_check(data(issues, desc), root)}
+def check(issues, desc=SETTLED):
+    return {i: (ok, level, gaps) for ok, i, level, gaps in fc.fc_spec.spec_check(data(issues, desc))}
 
 
 def has(gaps, *kws):
@@ -91,15 +91,12 @@ class SpecCheck(unittest.TestCase):
         self.assertFalse(has(check(issues)["ENG-1"][2], "a.go"))
 
     def test_story_and_task_gaps(self):
-        root = Path(tempfile.mkdtemp())
-        (root / "001_test.go").write_text("")
         r = check([task("ENG-3", "001"), task("ENG-4", "002", files="x.go, y.go, z.go"), task("ENG-5", "003", crit="- a\n" * 6),
-                   task("ENG-6", "004", files=""), task("ENG-7", "005", protected=""), task("ENG-8", "006", protected="gone_test.go"),
+                   task("ENG-6", "004", files=""), task("ENG-7", "005", protected=""),
                    task("ENG-9", "007", crit="- prints the line\n\nSignatures and exact lines come from the contract."),
-                   {**STORY, "id": "ENG-10"}, {**STORY, "id": "ENG-11", "description": "## Acceptance criteria\n\nTBD"}], root=root)
-        self.assertEqual((r["ENG-1"][0], r["ENG-2"][0], r["ENG-3"][:2]), (True, True, (True, "task")))
+                   {**STORY, "id": "ENG-10"}, {**STORY, "id": "ENG-11", "description": "## Acceptance criteria\n\nTBD"}])
+        self.assertEqual((r["ENG-1"][0], r["ENG-2"][0], r["ENG-3"]), (True, True, (True, "task", [])))  # its test is not written yet
         for i, *kws in (("ENG-4", "owns 3 files"), ("ENG-5", "Acceptance criteria"), ("ENG-6", "files"), ("ENG-7", "protected"),
-                        ("ENG-8", "gone_test.go", "protected"),
                         ("ENG-9", "implementers never see"), ("ENG-10", "task"), ("ENG-11", "Acceptance criteria")):
             self.assertTrue(not r[i][0] and has(r[i][2], *kws), (i, r[i]))
         self.assertTrue(check([{**STORY, "id": "ENG-10"}])["ENG-10"][0])  # no issue has parentId: a story needs no task
@@ -120,6 +117,13 @@ class SpecCheck(unittest.TestCase):
     def test_size_lint_counts_top_level_bullets_only(self):
         sub = "".join(f"  * s{n}\n" for n in range(6))
         self.assertFalse(has(check([task("ENG-3", "001", crit=f"* parent:\n{sub}* two")])["ENG-3"][2], "Acceptance criteria"))
+
+    def test_lockfiles_never_count_toward_the_file_cap(self):
+        got = check([task("ENG-3", "001", files="server/go.mod, server/go.sum, server/db/migrate.go"),
+                     task("ENG-4", "002", files="app/package.json, app/package-lock.json, app/src/session.ts"),
+                     task("ENG-5", "003", files="Cargo.toml, Cargo.lock, src/a.rs, src/b.rs")])
+        self.assertEqual((got["ENG-3"], got["ENG-4"]), ((True, "task", []), (True, "task", [])))
+        self.assertTrue(has(got["ENG-5"][2], "owns 3 files"), got["ENG-5"])
 
     def test_serial_chain_and_file_clashes(self):
         chain = [task("ENG-3", "001"), task("ENG-4", "002", ["ENG-3"]), task("ENG-5", "003", [{"id": "ENG-4", "title": "T"}])]
@@ -182,12 +186,11 @@ class SpecCheck(unittest.TestCase):
     def test_synced_cache_prints_what_stdin_prints(self):
         d = data([task("ENG-3", "001"), {**STORY, "id": "ENG-11", "description": "TBD"}])
         repo = Path(tempfile.mkdtemp())
-        (repo / "001_test.go").write_text("")
         proj = repo / ".compose" / "p"
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.fc_tasks.sync_tasks(proj, d)
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=repo):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj):
             lines, e = self.run_cli(repo=str(repo), project="p")
         want, we = self.run_cli(json.dumps(d))
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)

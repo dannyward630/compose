@@ -166,6 +166,7 @@ class DesignTasks(unittest.TestCase):
         self.assertEqual([m["id"] for m in fc.fc_tasks.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
 
     def test_run_stack_and_acceptance_never_see_a_design_task(self):
+        (self.proj / "a_test.go").write_text("")
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_run, "run_tasks") as run, \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
             fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False))

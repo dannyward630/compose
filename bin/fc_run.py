@@ -83,6 +83,9 @@ def cmd_run(a):
     unwritten = [m["id"] for m in tasks if fc_briefs.test_open(proj, m["id"]) or m["id"] in fc_briefs.waiting_writers(proj)]
     if unwritten:  # the collect starts the writers that waited for another writer of the same test file
         sys.exit(f"test-writing teammates still to write: {', '.join('tests-' + t for t in unwritten)}; wait for their done reports, then run again")
+    missing = [f"{m['id']} {p}" for m in tasks for p in m.get("protected") or [] if not (repo / p).exists()]
+    if missing:  # checked here, not in spec-check: the cut is checked before its tests are written
+        sys.exit(f"protected tests not on the project branch: {', '.join(missing)}; write them (compose testcrews) or fix `protected:`, then run again")
     run_tasks(repo, proj, tasks, a)
 
 def preflight(models):

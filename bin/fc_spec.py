@@ -1,6 +1,6 @@
 import json, re, sys
 from pathlib import Path
-import fc_core, fc_tasks, fc_herdr, fc_status
+import fc_core, fc_tasks, fc_worktree, fc_status
 
 
 def file_clashes(tasks):
@@ -85,7 +85,7 @@ def run_waves(tasks):
         done |= set(wave)
     return waves
 
-def spec_check(data, root=None):
+def spec_check(data):
     """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task."""
     issues = [i for i in data["issues"] if (i.get("status") or "").lower() not in fc_tasks.CANCELED]
     tasks = [t for t in (fc_tasks.task_from_issue(i) for i in issues) if t]
@@ -127,10 +127,6 @@ def spec_check(data, root=None):
                 gaps.append("empty `protected:`")
             if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):
                 gaps.append("the brief points at the contract, which implementers never see: state its signatures and exact lines in the brief")
-            if root:
-                for p in meta["protected"]:
-                    if not (root / p).exists():
-                        gaps.append(f"protected path {p} does not exist")
             out.append((not gaps, i["id"], "task", gaps))
         else:
             gaps = []
@@ -148,16 +144,14 @@ def cmd_spec_check(a):
             d = json.loads(sys.stdin.read())
         except ValueError as e:
             sys.exit(f"spec-check: stdin is not JSON ({e}); expected {fc_tasks.SYNC_SHAPE}")
-        root = None
     else:
         proj = fc_core.project_dir(a)
-        root = fc_herdr.project_worktree(proj)
         fc_tasks.load_tasks(proj, required=True)
         cache = fc_tasks.linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
              "issues": [dict(v, id=k) for k, v in (cache.get("issues") or {}).items()]}
     bad = False
-    for ok, ident, level, gaps in spec_check(d, root):
+    for ok, ident, level, gaps in spec_check(d):
         print(f"{'PASS' if ok else 'FAIL'} {ident} {level}" + (f": {'; '.join(gaps)}" if gaps else ""))
         bad = bad or not ok
     if bad:
@@ -166,10 +160,12 @@ def cmd_spec_check(a):
 MAX_TASK_FILES, MAX_TASK_BRIEF = 2, 2500  # the size the fast implementers pass first try; bigger ones are where they miss
 
 def too_big(meta):
-    """Why a task is too big for one fast turn, or None. Cheap signals only: files it owns and the length of its brief."""
+    """Why a task is too big for one fast turn, or None. Cheap signals only: files it owns and the length of its brief.
+    A lockfile it names is regenerated, not written, so it counts toward neither the cap nor the branch's lines."""
     why = []
-    if len(meta["files"]) > MAX_TASK_FILES:
-        why.append(f"owns {len(meta['files'])} files (max {MAX_TASK_FILES})")
+    owned = [f for f in meta["files"] if not fc_worktree.GENERATED_RE.search(f)]
+    if len(owned) > MAX_TASK_FILES:
+        why.append(f"owns {len(owned)} files (max {MAX_TASK_FILES})")
     if len(meta.get("body") or "") > MAX_TASK_BRIEF:
         why.append(f"brief is {len(meta['body'])} chars (max {MAX_TASK_BRIEF})")
     return "; ".join(why) or None

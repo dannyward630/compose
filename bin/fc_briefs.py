@@ -141,7 +141,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    the story.
 
 3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all of these hold:
-   - one or two files in `files:`, one test command, at most five acceptance criteria
+   - one or two files in `files:` (a lockfile it names does not count), one test command, at most five acceptance criteria
    - its brief (the issue description) is under 2500 characters
    - its branch stays within the CLI's 350-line limit (added plus deleted)
    - no documents: no .md, .txt, .rst, or docs/ files

@@ -157,6 +157,7 @@ class TestCrewWorktrees(unittest.TestCase):
     def test_run_collects_finished_test_crews_and_waits_for_busy_ones(self):
         from types import SimpleNamespace
         self.crew_commits("001", "a_test.go", "a\n")
+        self.crew_commits("002", "b_test.go", "b\n")
         a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False)
         with mock.patch.object(fc.fc_run, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "working"}]):
             with self.assertRaises(SystemExit) as e:
@@ -166,6 +167,17 @@ class TestCrewWorktrees(unittest.TestCase):
             fc.fc_run.cmd_run(a)
             rt.assert_called_once()
         self.assertTrue((self.repo / "a_test.go").exists())  # collected before the run
+
+    def test_run_refuses_a_task_whose_protected_test_is_not_on_the_project_branch(self):
+        self.main_commits("a_test.go", "a\n", "Test a")
+        with mock.patch.object(fc.fc_run, "run_tasks") as rt, self.assertRaises(SystemExit) as e:
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False))
+        rt.assert_not_called()
+        self.assertIn("002 b_test.go", str(e.exception))
+        self.assertNotIn("a_test.go", str(e.exception))
+        with mock.patch.object(fc.fc_run, "run_tasks") as rt:
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only="001", redo=False))
+        rt.assert_called_once()
 
     def test_a_conflict_names_the_task_and_keeps_its_branch(self):
         self.crew_commits("001", "a.txt", "teammate\n")
