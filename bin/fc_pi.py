@@ -53,10 +53,9 @@ def pi_auth_overrides(path):
         return []
     return [name for name in ("openrouter", "openrouter-fast") if isinstance(auth, dict) and name in auth]
 
-def declare_provider(path):
-    """Add providers.openrouter-fast = PROVIDER to the models.json at path, or give an existing one the apiKey and GLM preset
-    model it lacks, keeping the rest; one line saying what it did."""
-    path = Path(path)
+def _read_provider(path):
+    """Read the models.json at path: the fix-by-hand line when it cannot be given the provider, else (models, provider, lacks)
+    with provider None (and lacks empty) when openrouter-fast is absent."""
     try:
         models = json.loads(path.read_text())
     except FileNotFoundError:
@@ -70,12 +69,23 @@ def declare_provider(path):
         return f"{path} has no providers object; fix it by hand"
     provider = providers.get("openrouter-fast")
     if provider is None:
-        providers["openrouter-fast"] = PROVIDER
+        return models, None, []
+    if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
+        return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
+    return models, provider, provider_lacks(provider)
+
+def declare_provider(path):
+    """Add providers.openrouter-fast = PROVIDER to the models.json at path, or give an existing one the apiKey and GLM preset
+    model it lacks, keeping the rest; one line saying what it did."""
+    path = Path(path)
+    read = _read_provider(path)
+    if isinstance(read, str):
+        return read
+    models, provider, added = read
+    if provider is None:
+        models["providers"]["openrouter-fast"] = PROVIDER
         line = f"declared openrouter-fast in {path}"
     else:
-        if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
-            return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
-        added = provider_lacks(provider)
         if "apiKey" in added:
             provider["apiKey"] = PROVIDER["apiKey"]
         if "the GLM preset model" in added:
@@ -90,23 +100,12 @@ def declare_provider(path):
 def preview_provider(path):
     """The line declare_provider would give for the models.json at path, without writing anything."""
     path = Path(path)
-    try:
-        models = json.loads(path.read_text())
-    except FileNotFoundError:
-        models = {}
-    except ValueError:
-        return f"{path} is not valid JSON; fix it by hand"
-    if not isinstance(models, dict):
-        return f"{path} is not a JSON object; fix it by hand"
-    providers = models.setdefault("providers", {})
-    if not isinstance(providers, dict):
-        return f"{path} has no providers object; fix it by hand"
-    provider = providers.get("openrouter-fast")
+    read = _read_provider(path)
+    if isinstance(read, str):
+        return read
+    _, provider, lacks = read
     if provider is None:
         return f"would declare openrouter-fast in {path}"
-    if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
-        return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
-    lacks = provider_lacks(provider)
     if not lacks:
         return f"openrouter-fast already declared in {path}; left as is"
     return f"would add {' and '.join(lacks)} to openrouter-fast in {path}"
