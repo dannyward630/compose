@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_plan  # noqa: E402
 
 
 def issue(ident, title, desc="", blocked_by=()):
@@ -384,7 +385,7 @@ class ReadyCommand(unittest.TestCase):
         self.stored, self.mark = self.proj / "results" / "ready.json", mock.Mock(return_value=self.ITEMS)
         for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_config, "WORKSPACE", "acme"), (fc.fc_linear, "linear_mark_ready", self.mark),
                                  (fc.fc_linear, "linear_gql", mock.Mock(side_effect=AssertionError("Linear called"))),
-                                 (fc.fc_core, "project_dir", mock.Mock(return_value=self.proj))):
+                                 (fc.fc_core, "project_dir", mock.Mock(return_value=self.proj)), (fc.fc_linear, "linear_plan", mock.Mock())):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def ready(self):
@@ -437,7 +438,8 @@ class ReadyRefresh(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
         self.mark = mock.Mock(return_value=self.items)
         for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_config, "WORKSPACE", "work"), (fc.fc_core, "say", self.said.append),
-                                 (fc.fc_linear, "linear_mark_ready", self.mark), (fc.fc_linear, "linear_gql", mock.Mock(side_effect=AssertionError("Linear called")))):
+                                 (fc.fc_linear, "linear_mark_ready", self.mark), (fc.fc_linear, "linear_gql", mock.Mock(side_effect=AssertionError("Linear called"))),
+                                 (fc.fc_linear, "linear_plan", mock.Mock())):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
         fc.fc_linear._linear_warned.clear()
 
@@ -490,6 +492,75 @@ class ReadyRefresh(unittest.TestCase):
                 mock.patch("sys.stdout", io.StringIO()), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
             fc.fc_init.clean_project(r, "p", r, proj, explicit=True)
         self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False, scope=None), mock.call.refresh_ready(proj, "ENG-7")])
+
+
+class DeliveryPlan(unittest.TestCase):
+    flat = staticmethod(lambda v: [x for y in (v.values() if isinstance(v, dict) else v) for x in DeliveryPlan.flat(y)] if isinstance(v, (dict, list)) else [v])
+
+    def setUp(self):
+        self.sent, self.sections = [], mock.Mock(return_value={"## Start today": "x"})
+        for mod, name, value in ((fc.fc_linear, "linear_gql", self.gql), (fc_plan, "plan_sections", self.sections)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.sent.append((next((k for k in ("documentCreate", "issueUpdate", "documentUpdate") if k in query), query), variables))
+        doc = {"id": "d-new", "title": "NEB-7: delivery plan", "url": "https://linear.app/x/document/d-new", "content": fc_plan.plan_skeleton()}
+        return {"issue": self.tree} if query == fc.fc_linear.LINEAR_PLAN_TREE else {self.sent[-1][0]: {"success": True, "document": doc}}
+
+    writes = lambda self, name: [self.flat(v) for k, v in self.sent if k == name]
+
+    @staticmethod
+    def node(ident, state="Todo", labels=(), rels=(), kids=(), docs=(), parent=None):
+        return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "url": "u/" + ident, "description": "## Goal\nG.\n", "state": {"name": state},
+                "labels": {"nodes": [{"id": "l-" + n, "name": n} for n in labels]}, "children": {"nodes": list(kids)}, "parent": parent,
+                "inverseRelations": {"nodes": [{"type": t, "issue": {"identifier": i, "state": {"name": s}, "labels": {"nodes": [{"name": n} for n in ls]}}}
+                                               for t, i, s, ls in rels]}, "project": {"id": "p-" + ident, "documents": {"nodes": list(docs)}}}
+
+    def test_a_feature_map_gets_its_plan_created_and_linked_once(self):
+        other = {"id": "d-x", "title": "NEB-1: delivery plan", "content": "old", "url": "u/d-x"}  # the parent is no epic, so not the map
+        self.tree = self.node("NEB-7", labels=["Feature"], docs=[other], parent=self.node("NEB-1", labels=["Initiative"]), kids=[
+            self.node("NEB-8", "Todo", ["Story"], [("blocks", "NEB-9", "Done", ["Design"]), ("related", "NEB-5", "Todo", [])], [self.node("NEB-20")]),
+            self.node("NEB-9", "In Review", ["Design"])])
+        fc.fc_linear.linear_plan("NEB-7")
+        self.assertEqual([self.sent[0]] + [k for k, _ in self.sent[1:]], [(fc.fc_linear.LINEAR_PLAN_TREE, {"id": "NEB-7"}), "documentCreate", "issueUpdate", "documentUpdate"])
+        story = lambda i, s, ls, b: {"id": i, "title": "T " + i, "url": "u/" + i, "state": s, "labels": ls, "blockers": b}
+        self.sections.assert_called_once_with([{"id": "NEB-7", "title": "T NEB-7", "url": "u/NEB-7", "stories": [
+            story("NEB-8", "Todo", ["Story"], [{"id": "NEB-9", "state": "Done", "labels": ["Design"]}]), story("NEB-9", "In Review", ["Design"], [])]}])
+        skeleton, title = fc_plan.plan_skeleton(), "NEB-7: delivery plan"
+        self.assertTrue({skeleton, title, "p-NEB-7"} <= set(self.writes("documentCreate")[0]))
+        self.assertIn(fc_plan.with_plan_link("## Goal\nG.\n", title, "https://linear.app/x/document/d-new"), self.writes("issueUpdate")[0])
+        self.assertIn(fc_plan.replace_section(skeleton, "## Start today", "x"), self.writes("documentUpdate")[0])
+
+    def test_an_epic_map_has_a_lane_per_feature_and_only_its_data_sections_are_rewritten(self):
+        old = "\n\n".join(f"{h}\n\nold {h[3:]}." for h in fc_plan.PLAN_SECTIONS) + "\n"; doc = {"id": "d-1", "title": "NEB-1: delivery plan", "content": old, "url": "u/d-1"}
+        self.tree = self.node("NEB-7", labels=["Feature"], kids=[self.node("NEB-8", "Backlog")], parent=self.node("NEB-1", labels=["epic"], docs=[doc], kids=[
+            self.node("NEB-7", labels=["Feature"], kids=[self.node("NEB-8", "Backlog")]), self.node("NEB-6", labels=["Feature"]),
+            self.node("NEB-5", labels=["Design"], kids=[self.node("NEB-30")])]))
+        self.sections.return_value = {"## Start today": "1. new", "## Lanes": "lanes"}
+        fc.fc_linear.linear_plan("NEB-7")
+        self.assertEqual([(l["id"], l["url"], [s["id"] for s in l["stories"]]) for l in self.sections.call_args.args[0]], [("NEB-7", "u/NEB-7", ["NEB-8"]), ("NEB-6", "u/NEB-6", [])])
+        new = fc_plan.replace_section(fc_plan.replace_section(old, "## Start today", "1. new"), "## Lanes", "lanes")
+        self.assertEqual([k for k, _ in self.sent[1:]], ["documentUpdate"]); self.assertIn(new, self.writes("documentUpdate")[0])
+        self.assertTrue(all(f"{h}\n\nold {h[3:]}." in new for h in fc_plan.PLAN_SECTIONS[2:]))
+        doc["content"] = new; fc.fc_linear.linear_plan("NEB-7")  # nothing changed: no write
+        self.assertEqual(len(self.writes("documentUpdate")), 1)
+
+    def test_ready_and_every_refresh_plan_after_storing_the_list_and_a_plan_failure_keeps_it(self):
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True); stored = proj / "results" / "ready.json"
+        (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"})); order, said, out = [], [], io.StringIO()
+        plan = mock.Mock(side_effect=lambda f: order.append(("plan", f, stored.exists(), out.getvalue().splitlines())))
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_core, "project_dir", mock.Mock(return_value=proj)), (fc.fc_core, "say", said.append), (sys, "stdout", out),
+                                 (fc.fc_linear, "linear_mark_ready", lambda f: order.append(("mark", f)) or [{"id": "ENG-3", "title": "A"}]), (fc.fc_linear, "linear_plan", plan)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        ready = lambda: fc.fc_linear.cmd_ready(SimpleNamespace(repo=".", project="p"))
+        ready(); stored.unlink(); fc.fc_linear.refresh_ready(proj)
+        self.assertEqual(order, [("mark", "ENG-7"), ("plan", "ENG-7", True, ["can start now: ENG-3 A"])] * 2)
+        plan.side_effect = RuntimeError("x"); stored.unlink()
+        with self.assertRaises(SystemExit) as e:
+            ready()
+        self.assertEqual((e.exception.code, stored.exists()), ("ready: x", True))
+        plan.side_effect = RuntimeError("x" * 300); stored.unlink(); fc.fc_linear.refresh_ready(proj, "ENG-9")
+        self.assertEqual((said, stored.exists(), plan.call_args), (["linear plan: " + "x" * 200], True, mock.call("ENG-9")))
 
 
 class FeatureAfterLink(unittest.TestCase):
