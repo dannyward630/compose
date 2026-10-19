@@ -2,7 +2,7 @@
 import getpass, os, sys
 
 
-FRAMES = ""
+FRAMES = "◒◐◓◑"
 
 
 def paint(text, code):
@@ -80,4 +80,33 @@ def password(label):
 
 
 def spin(label):
-    raise NotImplementedError("spin")
+    import contextlib, threading
+
+    @contextlib.contextmanager
+    def spinner():
+        out = sys.stdout
+        if not out.isatty():
+            yield
+            return
+        stop = threading.Event()
+
+        def run():
+            i = 0
+            while not stop.wait(0.1):
+                i += 1
+                out.write(f"\r{FRAMES[i % len(FRAMES)]}  {label}")
+                out.flush()
+
+        out.write(f"\r{FRAMES[0]}  {label}")
+        out.flush()
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            thread.join()
+            out.write("\r\x1b[2K")
+            out.flush()
+
+    return spinner()
