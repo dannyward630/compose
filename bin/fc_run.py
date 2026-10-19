@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -103,6 +103,11 @@ def preflight(models):
         finally:
             shutil.rmtree(root, ignore_errors=True)
     models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
+    # pi takes a provider's key from its own auth.json before the workspace key compose hands it, so such an entry bills elsewhere.
+    shadowing = [p for p in fc_pi.pi_auth_overrides(fc_pi.PI_AUTH) if any(m.startswith(f"pi:{p}/") for m in models)]
+    if shadowing:
+        sys.exit(f"preflight stopped; nothing was cloned or run. {fc_pi.PI_AUTH} holds a key for {' and '.join(shadowing)}, which pi "
+                 f"uses instead of the key of workspace {fc_config.WORKSPACE!r}: remove {'that entry' if len(shadowing) == 1 else 'those entries'} from it")
     fc_core.say(f"preflight  {', '.join(models)}")
     with ThreadPoolExecutor(max_workers=max(1, len(models))) as ex:
         bad = [b for b in ex.map(probe, models) if b]

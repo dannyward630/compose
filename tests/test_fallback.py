@@ -117,6 +117,21 @@ class Preflight(unittest.TestCase):
         self.assertIn(BACKUP, str(cm.exception))
         self.assertIn("not a valid model ID", str(cm.exception))
 
+    def test_a_pi_auth_key_that_shadows_the_workspace_key_stops_before_any_probe(self):
+        auth = Path(tempfile.mkdtemp()) / "auth.json"
+        auth.write_text(json.dumps({"openrouter-fast": {"type": "api_key", "key": "k"}, "anthropic": {}}))
+        probed = []
+        impl = lambda cwd, model, *a, **kw: probed.append(model) or ("s", "OK", 0, {"cost": 0.0})
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_run.fc_pi, "PI_AUTH", auth), \
+                mock.patch.object(fc.fc_config, "WORKSPACE", "personal"):
+            fc.fc_run.preflight({"pi:openrouter/x", "claude"})  # no pi model of this run uses openrouter-fast
+            with self.assertRaises(SystemExit) as cm:
+                fc.fc_run.preflight({"pi:openrouter-fast/z-ai/glm", "pi:openrouter/x"})
+        self.assertEqual(probed, ["pi:openrouter/x"])
+        for words in (str(auth), "openrouter-fast", "'personal'"):
+            self.assertIn(words, str(cm.exception))
+        self.assertNotIn("model id", str(cm.exception))
+
 
 class ReadyCheckout(unittest.TestCase):
     def test_clone_borrows_installs_and_stays_clean(self):
