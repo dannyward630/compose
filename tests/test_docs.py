@@ -1263,5 +1263,49 @@ class SetupDocs(unittest.TestCase):
                 self.assertNotIn(word, read(rel), f"{word!r} in {rel}")
 
 
+MACHINE = {
+    17: "",
+    18: "On a terminal, `compose setup` asks one question at a time: Quick start takes every default, Custom asks a yes or no for each missing step.",
+    19: "With `--yes`, or without a terminal, it runs the same steps with every default and never prompts.",
+    20: "A key you did not enter is skipped, and the ending lists it with the command that sets it later.",
+    45: "",
+    46: "With `--yes`, setup ends with `compose is ready`, or with `compose is installed but not ready:` and one line per missing required step.",
+    47: "Then it tells you the next move: `compose` outside herdr, or `claude` in a pane and `/compose` inside it.",
+    50: "",
+    51: "A machine without a herdr config gets the config the maintainer uses, from `bin/herdr.toml` in the checkout.",
+    52: "A machine with one keeps all of it, and setup sets only the two lines `compose` needs, so the only desktop alert is the one `compose` sends itself:",
+}
+REQUIREMENTS = {
+    104: "| `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |",
+    105: "| `~/.config/herdr/config.toml` | herdr's config: copied from `bin/herdr.toml` when absent, else only the two notification lines are set |",
+    106: "",
+}
+
+
+class MachineDocs(unittest.TestCase):
+    def assertLines(self, rel, want, count):
+        lines = read(rel).splitlines()
+        self.assertEqual(len(lines), count, f"{rel} keeps its {count} lines: edits replace lines, never add or drop")
+        for n, line in want.items():
+            self.assertEqual(lines[n - 1], line, f"{rel}:{n}")
+
+    def test_new_machine_lines_in_place(self):
+        self.assertLines("docs/new-machine.md", MACHINE, 86)
+
+    def test_requirements_line_in_place(self):
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 123)
+
+    def test_old_words_are_gone(self):
+        for rel in ("docs/new-machine.md", "docs/requirements.md"):
+            for word in ("guided", "plain path", "setup/herdr.toml"):
+                self.assertFalse(word in read(rel), f"{word!r} in {rel}")
+
+    def test_each_new_line_once(self):
+        text = read("docs/new-machine.md")
+        for n in (18, 19, 46, 51):
+            self.assertEqual(text.count(MACHINE[n]), 1, MACHINE[n])
+        self.assertEqual(read("docs/requirements.md").count("bin/herdr.toml"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
