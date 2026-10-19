@@ -1211,5 +1211,57 @@ class DesignWaitsDocs(unittest.TestCase):
         self.assertTrue(lines[i + 2].startswith("`--only` picks tasks"))
 
 
+SETUP_STEPS = [
+    "2. Answer `compose setup`.",
+    "   On a terminal it asks one question at a time: Quick start or Custom, a yes or no for each missing step under Custom, then each key with hidden input.",
+    "   With `--yes`, or when there is no terminal, it runs the same steps with every default, never prompts, and ends by listing what is still missing.",
+    "   It installs the tools `compose` needs, links the CLI and the skill, and saves your keys in `~/.compose/auth.json` (mode 600).",
+    "   It sets up herdr with the notification settings `compose` needs, declares pi's OpenRouter provider, writes the default model choices, and ends with a model probe.",
+]
+SETUP_ROW = "| `compose setup [--yes]` | Installs and configures everything `compose` needs, one question at a time on a terminal; `--yes`, or no terminal, takes every default |"
+DEVELOPMENT = [
+    "## Development",
+    "",
+    "Run the CLI tests with `python3 -m unittest discover -s tests`.",
+    "Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).",
+    "Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.",
+    "The CLI core is stdlib; `jev/` is a uv project, and `bp/` is one Node file with no dependencies.",
+    "",
+    "## Credits",
+]
+CLI_HEAD = "| `setup` | Installs and configures everything `compose` needs ([new-machine.md](new-machine.md)). On a terminal it asks one question at a time (Quick start or Custom, a yes or no per missing step under Custom, each key with hidden input); `--yes`, or no terminal, runs the same steps with every default and never prompts."
+CLI_TAIL = " It exits 1 when Claude Code is missing. Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
+
+
+class SetupDocs(unittest.TestCase):
+    def assertBlock(self, lines, block):
+        starts = [i for i, l in enumerate(lines) if l == block[0]]
+        self.assertEqual(len(starts), 1, f"one line {block[0]!r}")
+        self.assertEqual(lines[starts[0]:starts[0] + len(block)], block)
+
+    def test_readme_setup_steps_in_place(self):
+        self.assertBlock(read("README.md").splitlines(), SETUP_STEPS)
+
+    def test_readme_setup_row_in_place(self):
+        lines = read("README.md").splitlines()
+        self.assertBlock(lines, ["| Command | What it does |", "|---|---|", SETUP_ROW])
+        self.assertEqual([l for l in lines if l.startswith("| `compose setup [--yes]`")], [SETUP_ROW])
+        self.assertIn("| `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |", lines)
+
+    def test_readme_development_drops_the_setup_app(self):
+        self.assertBlock(read("README.md").splitlines(), DEVELOPMENT)
+
+    def test_cli_setup_row_keeps_the_rest(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].startswith(CLI_HEAD), rows[0])
+        self.assertTrue(rows[0].endswith(CLI_TAIL), rows[0])
+
+    def test_old_words_are_gone(self):
+        for rel in ("README.md", "docs/cli.md"):
+            for word in ("Textual", "guided", "plain path", "setup/tests"):
+                self.assertNotIn(word, read(rel), f"{word!r} in {rel}")
+
+
 if __name__ == "__main__":
     unittest.main()
