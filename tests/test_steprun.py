@@ -1,11 +1,11 @@
 import hermetic  # first: no test sees the real home
-import sys, tempfile, unittest
+import subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import os
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_config, fc_keys, fc_links, fc_pi, fc_steps, fc_steprun
+import fc_checks, fc_config, fc_core, fc_keys, fc_links, fc_pi, fc_steps, fc_steprun
 
 
 class RunStep(unittest.TestCase):
@@ -62,6 +62,53 @@ class RunStep(unittest.TestCase):
         relink.assert_not_called()
         declare.assert_called_once_with(fc_pi.PI_MODELS)
         text.assert_called_once_with(fc_config.ENV_FILE)
+
+
+class Dry(unittest.TestCase):
+    setUp = RunStep.setUp
+
+    def step(self, check, mode="run", name="pi", install=None, level="required", claude_row=False, yes=False, claude=True, terminal=False, dry=True):
+        return fc_steprun.run_step((name, check, install or f"touch {self.ran}", level, claude_row, mode), self.tmp, yes, claude, terminal, dry=dry)
+
+    def forbid(self):
+        """No subprocess starts and no writer is called: each fails the test."""
+        for target, name in ((subprocess, "run"), (subprocess, "Popen"), (fc_pi, "declare_provider"), (fc_pi, "write_text_model"),
+                             (fc_links, "ensure_link"), (fc_links, "relink_owned")):
+            p = mock.patch.object(target, name, side_effect=AssertionError(f"{name} called with dry")); p.start(); self.addCleanup(p.stop)
+
+    def test_run_and_interactive_rows_say_what_would_run(self):
+        self.forbid()
+        self.assertEqual(self.step(self.has, install=f"{Path.home()}/bin/fix --all"), ("would", "would run: ~/bin/fix --all"))
+        self.assertEqual(self.step(self.has, "interactive", "Homebrew", terminal=True), ("would", f"would run: touch {self.ran} (it takes the terminal)"))
+        self.assertEqual(self.step(self.has, level="designer"), ("would", f"would run: touch {self.ran}"))  # a designer row without yes is past the guards
+        self.assertFalse(self.ran.exists())
+
+    def test_write_rows_say_what_they_would_write(self):
+        home = Path.home()
+        for p in (mock.patch.object(fc_pi, "PI_MODELS", home / "pi-dir/models.json"), mock.patch.object(fc_config, "ENV_FILE", home / "env-dir/.env")):
+            p.start(); self.addCleanup(p.stop)
+        self.forbid()
+        want = {"pi openrouter-fast provider": "would declare openrouter-fast in ~/pi-dir/models.json",
+                "TEXT_MODEL lines": "would append TEXT_MODEL, TEXT_MODEL_BASE_URL to ~/env-dir/.env",
+                **{n: f"would link ~/{link.relative_to(home)} -> {fc_core.tilde(target)}" for n, link, target in fc_checks.owned_links(self.tmp)}}
+        self.assertEqual(set(fc_steprun.PREVIEWS), set(fc_steprun.WRITERS))
+        for name, line in want.items():
+            self.assertEqual(self.step(lambda c: (False, ""), "write", name, "compose setup"), ("would", line))
+
+    def test_guards_return_as_without_dry(self):
+        self.forbid()
+        rows = (dict(check=lambda c: (True, ""), mode="write", name="bp link"), dict(check=self.has, claude_row=True, claude=False),
+                dict(check=self.has, mode="manual"), dict(check=self.has, mode="key", name="OpenRouter key"),
+                dict(check=self.has, level="designer", yes=True), dict(check=self.has, mode="interactive"))
+        for kw in rows:
+            got = self.step(**kw)
+            self.assertEqual((got[0] != "would", got), (True, self.step(**kw, dry=False)))
+        self.assertFalse(self.ran.exists())
+
+    def test_without_dry_the_step_still_runs(self):
+        self.assertEqual((self.step(self.has, dry=False), self.ran.exists()), (("done", ""), True))
+        with mock.patch.dict(fc_steprun.WRITERS, {"bp link": lambda c: "linked bp"}):
+            self.assertEqual(self.step(lambda c: (False, ""), "write", "bp link", dry=False), ("failed", "linked bp"))
 
 
 class StepLines(unittest.TestCase):
