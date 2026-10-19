@@ -97,3 +97,59 @@ class EditKeepsLines(unittest.TestCase):
         text = '[keys]\nprefix = "ctrl+b"  # mine\n\n[ui.sound]\nvolume = 3\n[ui.toast]\ndelivery = "toast" # t\n'
         want = '[keys]\nprefix = "ctrl+b"  # mine\n\n[ui.sound]\nenabled = false\nvolume = 3\n[ui.toast]\ndelivery = "off" # t\n'
         self.edit(text, want)
+
+class Dry(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.path = self.root / "herdr" / "config.toml"
+
+    def tree(self):
+        return {p: (p.is_symlink(), oct(p.lstat().st_mode), p.is_file() and p.read_bytes()) for p in self.root.rglob("*")}
+
+    def dry(self, path=None, text=None):
+        path = path or self.path
+        if text is not None:
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(text)
+        before = self.tree()
+        got = fc_herdrconf.apply_herdr_config(path, SHIPPED, dry=True)
+        self.assertEqual(self.tree(), before)  # nothing written, no directory made
+        return got
+
+    def test_missing_path_would_copy_without_making_its_directory(self):
+        self.assertEqual(self.dry(), ("written", [f"would copy {SHIPPED} to {self.path}"]))
+        self.assertFalse(self.path.parent.exists())
+        locked = self.root / "locked"
+        locked.mkdir(mode=0o555)
+        self.addCleanup(locked.chmod, 0o755)
+        missing = locked / "herdr" / "config.toml"  # a real run could not make this directory
+        self.assertEqual(self.dry(missing), ("written", [f"would copy {SHIPPED} to {missing}"]))
+
+    def test_loud_values_give_one_would_edit_line_each(self):
+        state, lines = self.dry(text=LOUD)
+        self.assertEqual(state, "edited")
+        self.assertCountEqual(lines, [f"would edit {self.path}: [ui.sound] enabled = false",
+                                      f'would edit {self.path}: [ui.toast] delivery = "off"'])
+        text = '[ui.toast]\ndelivery = "off"\n'  # sound absent is herdr's default, on: only that one is loud
+        self.assertEqual(self.dry(text=text), ("edited", [f"would edit {self.path}: [ui.sound] enabled = false"]))
+
+    def test_quiet_file_is_ok(self):
+        self.assertEqual(self.dry(text='[ui.sound]\nenabled = false\n[keys]\nprefix = "ctrl+b"\n'), ("ok", []))
+
+    def test_symlink_or_unwritable_gives_todays_manual_lines(self):
+        ro, link = self.root / "ro.toml", self.root / "link.toml"
+        for f in (ro, self.path): f.parent.mkdir(exist_ok=True); f.write_text(LOUD)
+        ro.chmod(0o444)
+        link.symlink_to(self.path)  # a writable target, but path itself is a symlink
+        for p in (ro, link):
+            with self.subTest(path=p):
+                want = fc_herdrconf.apply_herdr_config(p, SHIPPED)
+                self.assertEqual(want[0], "manual")
+                self.assertEqual(self.dry(p), want)
+
+    def test_dry_false_writes_as_today(self):
+        self.path.parent.mkdir()
+        self.path.write_text(LOUD)
+        self.assertEqual(fc_herdrconf.apply_herdr_config(self.path, SHIPPED, dry=False),
+                         ("edited", [f"edited {self.path}:", "  [ui.sound] enabled = false", '  [ui.toast] delivery = "off"']))
+        self.assertEqual(self.dry(), ("ok", []))  # the real edit made it quiet
