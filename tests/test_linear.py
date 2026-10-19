@@ -357,3 +357,59 @@ class MarkReady(unittest.TestCase):
             fc.fc_linear.linear_mark_ready("ENG-1")
         self.assertEqual(str(e.exception), "team has no label 'Ready'; compose linear labels --create Ready makes it")
         self.assertEqual(self.updates, [])
+
+
+class ReadyCommand(unittest.TestCase):
+    ITEMS = [{"id": "ENG-3", "title": "Login form"}, {"id": "ENG-2", "title": "Sign up"}]
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
+        self.stored, self.mark = self.proj / "results" / "ready.json", mock.Mock(return_value=self.ITEMS)
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_config, "WORKSPACE", "acme"), (fc.fc_linear, "linear_mark_ready", self.mark),
+                                 (fc.fc_linear, "linear_gql", mock.Mock(side_effect=AssertionError("Linear called"))),
+                                 (fc.fc_core, "project_dir", mock.Mock(return_value=self.proj))):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def ready(self):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            fc.fc_linear.cmd_ready(SimpleNamespace(repo=".", project="p"))
+        return out.getvalue().splitlines()
+
+    def test_the_line_lists_each_item_in_order_or_says_nothing(self):
+        line = fc.fc_linear.ready_line
+        self.assertEqual(line([]), "can start now: nothing")
+        self.assertEqual(line([{"id": "NEB-1", "title": "A"}]), "can start now: NEB-1 A")
+        self.assertEqual(line([{"id": "NEB-1", "title": "A"}, {"id": "NEB-2", "title": "B"}]), "can start now: NEB-1 A, NEB-2 B")
+        self.assertEqual(line([{"id": "NEB-9", "title": "Sign up form"}, {"id": "NEB-2", "title": "B"}]), "can start now: NEB-9 Sign up form, NEB-2 B")
+
+    def test_marks_the_project_feature_replaces_the_stored_list_and_prints_the_line(self):
+        self.stored.write_text(json.dumps([{"id": "ENG-1", "title": "stale"}]))
+        self.assertIn("can start now: ENG-3 Login form, ENG-2 Sign up", self.ready())
+        self.mark.assert_called_once_with("ENG-7")
+        self.assertEqual(json.loads(self.stored.read_text()), self.ITEMS)
+        self.mark.return_value = []
+        self.assertIn("can start now: nothing", self.ready())
+        self.assertEqual(json.loads(self.stored.read_text()), [])
+
+    def test_without_a_key_exits_before_marking(self):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
+            self.ready()
+        self.assertEqual(e.exception.code, "ready needs a Linear key for workspace 'acme': pbpaste | compose workspace key acme --linear")
+        self.mark.assert_not_called()
+        self.assertFalse(self.stored.exists())
+
+    def test_a_label_error_exits_with_its_message_and_stores_nothing(self):
+        self.mark.side_effect = RuntimeError("team has no label 'Ready'")
+        with self.assertRaises(SystemExit) as e:
+            self.ready()
+        self.assertEqual(e.exception.code, "ready: team has no label 'Ready'")
+        self.assertFalse(self.stored.exists())
+
+    def test_the_ready_subcommand_runs_cmd_ready_for_the_project(self):
+        with mock.patch.object(sys, "argv", ["compose", "ready", "--project", "p"]), mock.patch.object(fc.fc_linear, "cmd_ready") as c:
+            fc.main()
+        c.assert_called_once()
+        self.assertEqual(c.call_args.args[0].project, "p")
