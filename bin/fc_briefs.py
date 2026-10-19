@@ -105,7 +105,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 
 1. Your level sets the job (read it from the ticket's label, else its parent chain):
    - Project link: list its epics and features with their story and task counts, and ask which one to continue (needs-user).
-   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop.
+   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      numbered steps, each with the files it touches, the test that proves it, and its dependencies; decisions already made are
