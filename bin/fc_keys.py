@@ -43,3 +43,8 @@ def skipped_line(kind, workspace):
     if kind == "figma":
         return ("No Figma token: without it the designer cannot build your designs. Add one later, on a terminal:\n"
                 "  compose setup")
+
+KEYS = ()
+
+def ask_keys(workspace, framelink_env, designer, dry=False):
+    raise NotImplementedError("ask_keys")

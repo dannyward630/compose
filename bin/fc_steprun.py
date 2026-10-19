@@ -16,17 +16,21 @@ WRITERS = {
     "TEXT_MODEL lines": lambda checkout: fc_pi.write_text_model(fc_config.ENV_FILE),
 }
 
-def run_step(row, checkout, yes, claude, terminal):
+PREVIEWS = {}
+
+def run_step(row, checkout, yes, claude, terminal, dry=False):
     """(state, line): state is ok, claude, skipped, manual, done, or failed; the line never holds a key value.
     A passing check is never run (ok). A claude row without claude waits (claude). manual, key, and interactive-without-
     terminal rows are never run (manual or skipped, the line says what to do by hand), a designer row is skipped under yes;
     run and interactive rows shell out to install, write rows call their writer, then the check runs again: done rows have
     an empty line but a write row keeps its writer's line, and a failed run or interactive row ends with the install to
     run by hand after the last error line, or failed; every line shows ~/ wherever the home directory followed by / appears in it."""
-    state, line = _run_step(row, checkout, yes, claude, terminal)
+    state, line = _run_step(row, checkout, yes, claude, terminal, dry)
     return state, fc_core.tilde(line)
 
-def _run_step(row, checkout, yes, claude, terminal):
+def _run_step(row, checkout, yes, claude, terminal, dry=False):
+    if dry:
+        raise NotImplementedError("run_step dry")
     name, _, install, level, needs_claude, mode = row
     ok, detail = fc_steps.check(row, checkout)
     if ok:

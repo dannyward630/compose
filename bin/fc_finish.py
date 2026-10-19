@@ -8,14 +8,16 @@ import fc_core, fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links
 CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://claude.ai/install.sh | bash, log in, then run compose setup again"
 
 
-def finish(results, yes):
+def finish(results, yes, dry=False):
     """(lines, code) from _finish, with ~/ for the home directory followed by / in every line; code 0 when compose is ready, else 1."""
-    lines, code = _finish(results, yes)
+    lines, code = _finish(results, yes, dry)
     return [fc_core.tilde(line) for line in lines], code
 
 
-def _finish(results, yes):
+def _finish(results, yes, dry=False):
     """(lines, code) from results, the [(row name, state)] of run_step; code 0 when compose is ready, else 1."""
+    if dry:
+        raise NotImplementedError("finish dry")
     fc_config.apply_config()  # the keys auth.json holds now go into the env before anything reads them
     yes = yes or not sys.stdin.isatty()
     state = dict(results)

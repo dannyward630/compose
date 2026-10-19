@@ -12,11 +12,13 @@ QUIET = (
 )
 
 
-def apply_herdr_config(path, shipped):
+def apply_herdr_config(path, shipped, dry=False):
     """(state, lines): state is written, ok, manual, or edited; lines say what was done or what to set by hand.
     written: path was missing, so shipped is copied there (parent created). ok: both values already quiet. manual: path is a
     symlink or unwritable while a value is loud, so the lines tell the user the two lines to set and where. edited: a plain
     writable file gets only the loud lines replaced in their section, a missing section or key added, every other line kept."""
+    if dry:
+        raise NotImplementedError("apply_herdr_config dry")
     path = Path(path)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)

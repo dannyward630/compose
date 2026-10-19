@@ -4,6 +4,17 @@ from pathlib import Path
 import fc_checks, fc_plain
 
 
+MODES = ()
+
+
+def walk_steps(checkout, custom, yes, dry=False):
+    raise NotImplementedError("walk_steps")
+
+
+def run_setup(checkout, yes, dry=False):
+    raise NotImplementedError("run_setup")
+
+
 def cmd_setup(a):
     """a.yes: take every default and never prompt. Stops on a fast-coding leftover; exits with setup's code."""
     checkout = Path(__file__).resolve().parents[1]
