@@ -17,7 +17,7 @@ WRITERS = {
 }
 
 PREVIEWS = {
-    "pi openrouter-fast provider": lambda checkout: f"would declare openrouter-fast in {fc_pi.PI_MODELS}",
+    "pi openrouter-fast provider": lambda checkout: fc_pi.preview_provider(fc_pi.PI_MODELS),
     "compose CLI link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "compose CLI link"),
     "compose skill link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "compose skill link"),
     "bp link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "bp link"),

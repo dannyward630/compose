@@ -14,6 +14,15 @@ def has_glm(models):
     """True when models is a list holding the GLM preset model."""
     return isinstance(models, list) and any(isinstance(m, dict) and m.get("id") == PROVIDER["models"][0]["id"] for m in models)
 
+def provider_lacks(provider):
+    """What an existing openrouter-fast provider dict lacks, in order: apiKey, then the GLM preset model."""
+    lacks = []
+    if not provider.get("apiKey"):
+        lacks.append("apiKey")
+    if not has_glm(provider["models"]):
+        lacks.append("the GLM preset model")
+    return lacks
+
 def provider_declared(path):
     """True when the models.json at path has providers.openrouter-fast with an apiKey and the GLM preset model."""
     try:
@@ -66,19 +75,41 @@ def declare_provider(path):
     else:
         if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
             return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
-        added = []
-        if not provider.get("apiKey"):
+        added = provider_lacks(provider)
+        if "apiKey" in added:
             provider["apiKey"] = PROVIDER["apiKey"]
-            added.append("apiKey")
-        if not has_glm(provider["models"]):
+        if "the GLM preset model" in added:
             provider["models"].append(PROVIDER["models"][0])
-            added.append("the GLM preset model")
         if not added:
             return f"openrouter-fast already declared in {path}; left as is"
         line = f"added {' and '.join(added)} to openrouter-fast in {path}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(models, indent=2) + "\n")
     return line
+
+def preview_provider(path):
+    """The line declare_provider would give for the models.json at path, without writing anything."""
+    path = Path(path)
+    try:
+        models = json.loads(path.read_text())
+    except FileNotFoundError:
+        models = {}
+    except ValueError:
+        return f"{path} is not valid JSON; fix it by hand"
+    if not isinstance(models, dict):
+        return f"{path} is not a JSON object; fix it by hand"
+    providers = models.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return f"{path} has no providers object; fix it by hand"
+    provider = providers.get("openrouter-fast")
+    if provider is None:
+        return f"would declare openrouter-fast in {path}"
+    if not isinstance(provider, dict) or not isinstance(provider.setdefault("models", []), list):
+        return f"{path} has an openrouter-fast that is not a provider with a models list; fix it by hand"
+    lacks = provider_lacks(provider)
+    if not lacks:
+        return f"openrouter-fast already declared in {path}; left as is"
+    return f"would add {' and '.join(lacks)} to openrouter-fast in {path}"
 
 def write_text_model(env_path):
     """Append the TEXT_MODEL_DEFAULTS lines the .env lacks, never changing existing ones; one line saying what it did."""
