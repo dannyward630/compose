@@ -104,7 +104,7 @@ class Outcome(unittest.TestCase):
         self.assertEqual((lines[4:], code2), (["herdr: wrote config.toml", *PATH_LINES, *tail], code))
         home, checkout = Path(os.environ["HOME"]), Path(F.__file__).resolve().parents[1]
         self.herdr.assert_called_once()
-        self.assertEqual([str(a) for a in self.herdr.call_args.args], [str(home / ".config/herdr/config.toml"), str(checkout / "setup/herdr.toml")])
+        self.assertEqual([str(a) for a in self.herdr.call_args.args], [str(home / ".config/herdr/config.toml"), str(checkout / "bin/herdr.toml")])
 
     def test_symlinked_config_gets_manual_lines_and_nothing_else_is_added(self):
         F.finish([], False); quiet, _ = F.finish([], False)
@@ -382,7 +382,7 @@ class HomePaths(unittest.TestCase):
     def test_herdr_lines_and_the_path_line(self):
         self.path = EXPORT
         lines, code = F.finish([], False)
-        self.assertEqual((lines[:4], lines[-2:], code), (["copied ~/src/compose/setup/herdr.toml to ~/.config/herdr/config.toml",
+        self.assertEqual((lines[:4], lines[-2:], code), (["copied ~/src/compose/bin/herdr.toml to ~/.config/herdr/config.toml",
                                                           "edited ~/.config/herdr/config.toml and ~/.config/herdr/config.toml", *PATH_LINES], READY, 0))
         self.assertFalse([l for l in lines if str(self.home) + "/" in l], lines)
 
@@ -392,3 +392,21 @@ class HomePaths(unittest.TestCase):
         self.assertEqual(code, 1); self.assertEqual(lines[-1], NOT_DONE + ": the model probe failed")
         for line in ("pi not found at ~/.npm/bin/pi", f"see {self.other}/f", f"HOME is {self.home}"):
             self.assertIn(line, lines)
+
+
+class ShippedHerdr(unittest.TestCase):
+    """With no ~/.config/herdr/config.toml, finish copies the checkout's bin/herdr.toml there; every other line and the code stay."""
+    def setUp(self):
+        real = fc_herdrconf.apply_herdr_config; Finish.setUp(self); self.real = real
+        tmp, cwd = tempfile.mkdtemp(), os.getcwd(); os.chdir(tmp); self.addCleanup(os.chdir, cwd)  # the shipped path is not cwd-relative
+
+    def test_fresh_machine_gets_bin_herdr_toml_and_nothing_else_changes(self):
+        shipped, toml = Path(F.__file__).resolve().parent / "herdr.toml", Path.home() / ".config/herdr/config.toml"
+        bare = {"workspaces": {"default": {}}}
+        for auth, yes in ((ALL, False), (bare, False), (bare, True)):
+            self.herdr.side_effect = None; Finish.run_finish(self, auth, yes); base = Finish.run_finish(self, auth, yes)  # herdr says ok
+            self.herdr.side_effect = self.real; toml.unlink(missing_ok=True)
+            lines, code = Finish.run_finish(self, auth, yes)
+            self.assertEqual((lines, code), ([f"copied {shipped} to ~/.config/herdr/config.toml", *base[0]], base[1]))
+            self.assertEqual(toml.read_bytes(), shipped.read_bytes())
+            self.assertEqual(Finish.run_finish(self, auth, yes), base)  # a rerun finds the copy quiet and adds nothing

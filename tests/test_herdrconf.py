@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import fc_herdrconf, fc_init
 
-SHIPPED = Path(__file__).resolve().parents[1] / "setup" / "herdr.toml"
+SHIPPED = Path(__file__).resolve().parents[1] / "bin" / "herdr.toml"
 LOUD = '# mine\n[keys]\nprefix = "ctrl+b"\n\n[ui.sound]\nenabled = true\n\n[theme]\nname = "x" # kept\n[ui.toast]\ndelivery = "toast"\n[ui.other]\nenabled = true\n'
 
 class HerdrConfig(unittest.TestCase):
