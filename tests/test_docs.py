@@ -1402,5 +1402,48 @@ class LeanDesignStories(unittest.TestCase):
         self.assertEqual(text.count("Design stories are lean"), 1)
 
 
+PLAN_LINES = [
+    "**The delivery plan.**",
+    "The planner rewrites its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each re-plan, with `compose linear doc update <id> --section`.",
+    "Priority is the ranked list under Priority when something has to give; Linear's priority field stays unused.",
+    "The team lead and the engineering manager never edit the delivery plan by hand: the CLI rewrites its data sections and the planner its judgment sections.",
+]
+REPLAN = [
+    "**Re-plan.**",
+    "1. If no change is open: sync, then `compose change start --why \"<one line>\"`.",
+    "2. The planner teammate edits Linear: `## Plan`; it cancels the tasks that rest on the old line (a canceled task loses its `compose` block), edits the briefs that change, and adds new tasks with the next ids, and `compose testcrews --only <new ids>` for their tests.",
+    "3. The 3b gate applies unchanged: a list that matches what the product owner just settled dispatches at once, and anything past it goes back up.",
+    "4. Sync, then `compose change done`: it comments the change on the feature.",
+    "5. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line.",
+]
+
+
+class PlanOwnership(unittest.TestCase):
+    def setUp(self):
+        self.lines = read("sections/8.md").splitlines()
+
+    def test_four_lines_and_a_blank_right_before_undo(self):
+        i = self.lines.index("**Undo and update.**")
+        self.assertEqual(self.lines[i - 5:i], PLAN_LINES + [""])
+
+    def test_each_line_written_once(self):
+        for line in PLAN_LINES:
+            self.assertEqual(self.lines.count(line), 1, line)
+
+    def test_replan_list_unchanged_and_nothing_else_between(self):
+        self.assertEqual(self.lines.count(REPLAN[0]), 1)
+        i = self.lines.index(REPLAN[0])
+        self.assertEqual(self.lines[i:i + 6], REPLAN)
+        self.assertEqual(self.lines.count(PLAN_LINES[0]), 1, "no delivery plan block")
+        j = self.lines.index(PLAN_LINES[0])
+        self.assertGreater(j, i + 5)
+        self.assertEqual([l for l in self.lines[i + 6:j] if l.strip()], [])
+
+    def test_house_rules(self):
+        self.assertNotIn("\u2014", read("sections/8.md"))
+        for line in PLAN_LINES:
+            self.assertNotRegex(line, r"[.!?] [A-Z]")
+
+
 if __name__ == "__main__":
     unittest.main()
