@@ -100,7 +100,7 @@ def spec_check(data):
     if "## Plan" not in desc:
         gaps.append("no `## Plan` section")
     by_issue = {t["linear"]: t["id"] for t in tasks}
-    tasks = [dict(t, after=",".join(by_issue[b] for b in t["blocked_by"] if b in by_issue)) for t in tasks]
+    tasks = [dict(t, after=",".join(by_issue[b["id"]] for b in t["blocked_by"] if b["id"] in by_issue)) for t in tasks]
     clashes = file_clashes(tasks)
     if clashes:
         detail = "; ".join(f"{f}: {', '.join(ids)}" for f, ids in clashes.items())

@@ -35,7 +35,8 @@ class Sync(unittest.TestCase):
             issue("ENG-2", "Story A", "story text"),
             issue("ENG-3", "First", block(id="001", files="a.go, b.go", protected="a_test.go", test="go test ./...")),
             issue("ENG-4", "Second", block(id="002", files="c.go", test="go test", model="claude"), blocked_by=[{"id": "ENG-3", "title": "First"}, "ENG-77"]),
-            issue("ENG-5", "Loose task", block(id="003", files="d.go", test="true")),
+            issue("ENG-5", "Loose task", block(id="003", files="d.go", test="true"),
+                  blocked_by=["ENG-2", {"id": "ENG-80", "status": "Done"}, {"id": "ENG-81", "status": "Canceled"}]),
             issue("ENG-6", "No block: a decision ticket", "## Question\nWhich?")])
         self.assertEqual([t["id"] for t in tasks], ["001", "002", "003"])
         first, second = tasks[0], tasks[1]
@@ -43,7 +44,8 @@ class Sync(unittest.TestCase):
         self.assertEqual(first["protected"], ["a_test.go"])
         self.assertEqual(first["linear"], "ENG-3")
         self.assertEqual(first["body"], "## Goal\nDo it.\n\n## Acceptance criteria\n- works")  # the block is not part of the brief
-        self.assertEqual(second["after"], "001")  # ENG-77 is outside the feature's tasks
+        self.assertEqual(second["after"], "001")  # ENG-77 is outside the feature's tasks: it does not stack, it holds the task
+        self.assertEqual((first["waits_on"], second["waits_on"], tasks[2]["waits_on"]), ([], ["ENG-77 (state unknown)"], ["ENG-2 (Todo)"]))
         self.assertEqual(second["model"], "claude")
         self.assertEqual(fc.fc_tasks.load_tasks(self.proj, required=True), tasks)  # the cache serves every later command
         self.assertEqual(fc.fc_tasks.linear_cache(self.proj)["feature"]["description"], "## Plan\nThe plan.")

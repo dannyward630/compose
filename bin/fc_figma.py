@@ -111,7 +111,7 @@ def cmd_designcrews(a):
         sys.exit("no Figma file: compose figma check --figma <url or key>")
     states = {m["id"]: m.get("linear_state") for m in tasks}
     waits = {m["id"]: [b for b in (x.strip() for x in str(m.get("after") or "").split(","))
-                       if b and states.get(b) not in ("In Review", "Done")] for m in metas}
+                       if b and states.get(b) not in ("In Review", "Done")] + m.get("waits_on", []) for m in metas}
     for m in metas:  # a blocker not yet In Review or Done holds the task back: not started, not briefed, no slot under the cap
         if waits[m["id"]]:
             print(f"{m['id']} waits on {','.join(waits[m['id']])}")

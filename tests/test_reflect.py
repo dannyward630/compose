@@ -324,6 +324,17 @@ class Holds(unittest.TestCase):
         self.assertIn("003 held    after held 002", self.said)
         self.assertNotIn("blocked_by", table)
 
+    def test_a_run_holds_a_task_whose_blocker_outside_the_feature_is_not_finished(self):
+        with_tasks(self.proj, [task("001"), {**task("002", "001"), "waits_on": ["ENG-90 (In Progress)"]}, task("003", "002"), task("004")])
+        calls, table, _ = run_all(self.proj)
+        self.assertEqual(calls, ["001", "004"])
+        self.assertIn("002 held    waits on ENG-90 (In Progress)", self.said)
+        self.assertIn("003 held    after held 002", self.said)
+        self.assertNotIn("blocked_by", table)
+        with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+            row = fc.fc_status.task_state(Path("."), self.proj, fc.fc_tasks.load_tasks(self.proj)[1], "HEAD")
+        self.assertEqual((row["state"], row["note"]), ("held", "waits on ENG-90 (In Progress)"))
+
     def test_a_failure_still_blocks_what_waits_on_it(self):
         self.hold(only="004", reason="x")
         _, table, _ = run_all(self.proj, status={"001": "failed"})

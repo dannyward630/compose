@@ -44,7 +44,7 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     deps = [d.strip() for d in str(meta.get("after") or "").split(",") if d.strip()]
     if state == "pending" and deps:
         note = "after " + ", ".join(deps)
-    hold = fc_tasks.held(proj).get(tid)
+    hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta]).get(tid)
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),

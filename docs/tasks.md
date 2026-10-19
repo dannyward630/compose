@@ -35,6 +35,8 @@ Three more rules apply to the block and the issue around it:
 
 - The `after` field comes from the issue's "blocked by" links to other tasks of the feature.
   Each linked task becomes the layer this task stacks on.
+- Any other "blocked by" link (a design story, another feature's issue) does not stack.
+  `run` holds the task until that blocker is Done or Canceled, or In Review with the Design label, as of the last `sync`.
 - The `model:` field picks another implementer for one task.
   Leave it unset unless the product owner decided otherwise.
 - Only an issue with the block counts as a task.

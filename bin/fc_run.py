@@ -141,11 +141,12 @@ def run_tasks(repo, proj, tasks, a):
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
     results, pending, failed_ids, halt, reflecting = [], dict(deps), set(), None, []
+    waits = fc_tasks.waiting(tasks)  # an unfinished blocker outside the feature's tasks holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
         while pending or running:
-            hold = fc_tasks.held(proj)  # re-read every pass: a hold or a release lands while the run goes on
+            hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
             for p in ready[:a.parallel - len(running)]:  # only into free slots: a task queued inside the pool is out of a hold's reach
                 del pending[p]

@@ -4,7 +4,7 @@ import fc_core, fc_config, fc_tasks
 
 
 LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier }
-  inverseRelations(first: 250) { nodes { type issue { identifier } } }"""
+  inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } }"""
 LINEAR_FEATURE = "query($id: String!) { issue(id: $id) { %s } }" % LINEAR_TREE_FIELDS
 LINEAR_CHILDREN = """query($id: String!, $after: String) { issue(id: $id) { children(first: 50, after: $after) {
   pageInfo { hasNextPage endCursor } nodes { %s } } } }""" % LINEAR_TREE_FIELDS
@@ -43,7 +43,9 @@ def linear_sync_payload(proj):
     return {"feature": {"id": feature["identifier"], "title": feature["title"], "description": feature["description"] or ""},
             "issues": [{"id": i["identifier"], "title": i["title"], "description": i["description"] or "", "status": i["state"]["name"],
                         "parentId": i["parent"]["identifier"] if i["parent"] else None,
-                        "blockedBy": [r["issue"]["identifier"] for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks"]}
+                        "blockedBy": [{"id": r["issue"]["identifier"], "status": r["issue"]["state"]["name"],
+                                       "labels": [l["name"] for l in r["issue"]["labels"]["nodes"]]}
+                                      for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks"]}
                        for i in issues]}
 
 
@@ -267,12 +269,10 @@ def linear_reconcile(proj, verified=False):
 def ready_ids(issues):
     """The identifiers, in input order, of the issues that can start now: state Todo or Backlog and every `blocks`
     blocker finished (Done or Canceled, or In Review carrying the Design label)."""
-    def finished(b):
-        s = (b["state"]["name"] or "").lower()
-        return s in ("done", "canceled") or (s == "in review" and any(l["name"].lower() == "design" for l in b["labels"]["nodes"]))
     return [i["identifier"] for i in issues
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
-            and all(finished(r["issue"]) for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
+            and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
+                    for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
   children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
@@ -376,7 +376,8 @@ def cmd_sync(a):
     f = fc_tasks.linear_cache(proj)["feature"]
     print(f"{f['id']} {f['title']}: {len(tasks)} task(s) synced")
     for m in tasks:
-        print(f"  {m['id']:4} {m['linear']:9} {m['linear_state'][:12]:12} {m['title'][:50]:50} after {m['after'] or '-'}")
+        print(f"  {m['id']:4} {m['linear']:9} {m['linear_state'][:12]:12} {m['title'][:50]:50} after {m['after'] or '-'}"
+              + (f"  waits on {', '.join(m['waits_on'])}" if m.get("waits_on") else ""))
     if not a.stdin:
         refresh_ready(proj)
         linear_feature_after(Path(a.repo).resolve(), proj)

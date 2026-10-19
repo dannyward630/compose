@@ -13,9 +13,11 @@ import fc_core, fc_config
 #   protected: server/graph/validate_test.go
 #   test: cd server && go test ./graph/ -run TestValidateAnswers
 #   ```
-# Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks.
+# Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks;
+# any other blocker is `waits_on` while it is not finished, and holds the task back without stacking it.
 TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
-SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "blockedBy": ["<issue id>"]}]}'
+SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", '
+              '"blockedBy": ["<issue id>" or {"id", "status", "labels"}]}]}'
               ": every issue under the feature, its stories' children included")
 
 def task_from_issue(issue):
@@ -34,7 +36,7 @@ def task_from_issue(issue):
     meta.setdefault("kind", "code")
     meta.setdefault("model", fc_config.DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
-                 "blocked_by": [b["id"] if isinstance(b, dict) else b for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
+                 "blocked_by": [b if isinstance(b, dict) else {"id": b} for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
                  "body": TASK_BLOCK.sub("\n", desc).strip()})
     return meta
 
@@ -62,8 +64,12 @@ def sync_tasks(proj, data):
     if dupes:
         sys.exit(f"{feature}: task ids used twice: {', '.join(dupes)}")
     by_issue = {t["linear"]: t["id"] for t in tasks}
-    for t in tasks:  # blockers outside this feature's tasks do not stack
-        t["after"] = ",".join(sorted(by_issue[b] for b in t.pop("blocked_by") if b in by_issue))
+    states = {i["id"]: i.get("status") for i in data["issues"]}
+    for t in tasks:  # a blocker outside this feature's tasks does not stack: it holds the task back until it is finished
+        blockers = [dict(b, status=b.get("status") or states.get(b["id"])) for b in t.pop("blocked_by")]
+        t["after"] = ",".join(sorted(by_issue[b["id"]] for b in blockers if b["id"] in by_issue))
+        t["waits_on"] = [f"{b['id']} ({b['status'] or 'state unknown'})" for b in blockers
+                         if b["id"] not in by_issue and not blocker_finished(b["status"], b.get("labels") or ())]
     tasks.sort(key=lambda t: t["id"])
     (proj / "results").mkdir(exist_ok=True)
     f = data["feature"]
@@ -89,6 +95,15 @@ def load_tasks(proj, required=False, hint=""):
         sys.exit(f"no tasks synced for {proj.name}: read the feature and its tasks from Linear and pipe them to "
                  f"`compose sync --project {proj.name}` (JSON {SYNC_SHAPE}){hint}")
     return linear_cache(proj)["tasks"]
+
+def blocker_finished(status, labels=()):
+    """A blocker no longer holds back what it blocks: Done or Canceled, or In Review carrying the Design label."""
+    s = (status or "").lower()
+    return s in ("done", *CANCELED) or (s == "in review" and any(l.lower() == "design" for l in labels))
+
+def waiting(tasks):
+    """{task id: {"reason"}} for each task a blocker outside the feature's tasks holds back, as of the last sync."""
+    return {m["id"]: {"reason": "waits on " + ", ".join(m["waits_on"])} for m in tasks if m.get("waits_on")}
 
 def linear_done(meta):
     """Linear says the task is Done: its work is on trunk, whatever this project's own files say."""
