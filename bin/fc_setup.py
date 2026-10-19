@@ -27,31 +27,40 @@ def walk_steps(checkout, custom, yes, dry=False):
         else:
             designer = designer or level == "designer"
             if mode == "interactive" and not yes:
-                state, detail = fc_steprun.run_step(row, checkout, yes, claude, True)
+                state, detail = fc_steprun.run_step(row, checkout, yes, claude, True, dry)
             else:
                 with fc_prompt.spin(name):
-                    state, detail = fc_steprun.run_step(row, checkout, yes, claude, not yes)
+                    state, detail = fc_steprun.run_step(row, checkout, yes, claude, not yes, dry)
             lines = detail.splitlines()
         results.append((name, state))
-        fc_prompt.step(name, "waiting on Claude Code" if state == "claude" else state, lines)
+        if state == "would":
+            fc_prompt.step(name, detail)
+        else:
+            fc_prompt.step(name, "waiting on Claude Code" if state == "claude" else state, lines)
     return results, designer
 
 
 def run_setup(checkout, yes, dry=False):
     import fc_config, fc_finish, fc_keys, fc_prompt, fc_steps
-    fc_prompt.intro("compose setup")
+    fc_prompt.intro("compose setup" + (" (dry run)" if dry else ""))
     custom = False
     if not yes:
         custom = fc_prompt.select("How do you want to set up?", MODES) == 1
-    results, designer = walk_steps(checkout, custom, yes)
+    results, designer = walk_steps(checkout, custom, yes, dry)
+    kinds = []
     if not yes:
-        fc_keys.ask_keys(fc_config.settings(fc_config.read_config())[0], fc_steps.FRAMELINK_ENV, designer)
+        kinds = fc_keys.ask_keys(fc_config.settings(fc_config.read_config())[0], fc_steps.FRAMELINK_ENV, designer, dry)
         with fc_prompt.spin("checking your model"):
-            lines, code = fc_finish.finish(results, yes)
+            lines, code = fc_finish.finish(results, yes, dry)
     else:
-        lines, code = fc_finish.finish(results, yes)
-    fc_prompt.note("Summary", lines[:-1])
-    fc_prompt.outro(lines[-1])
+        lines, code = fc_finish.finish(results, yes, dry)
+    if dry:
+        changes = sum(state == "would" for _, state in results) + len(kinds) + sum(line.startswith("would ") for line in lines)
+        fc_prompt.note("Summary", lines)
+        fc_prompt.outro(f"dry run: nothing changed; {changes} changes listed above")
+    else:
+        fc_prompt.note("Summary", lines[:-1])
+        fc_prompt.outro(lines[-1])
     return code
 
 
@@ -62,4 +71,4 @@ def cmd_setup(a):
             "fast-coding" in str(Path(link).resolve()) for _, link, _ in fc_checks.owned_links(checkout)):
         print(f"a fast-coding install is still on this machine; run {checkout}/bin/migrate-to-compose.sh to move it to compose first")
         sys.exit(1)
-    sys.exit(run_setup(checkout, a.yes or not (sys.stdin.isatty() and sys.stdout.isatty())))
+    sys.exit(run_setup(checkout, a.yes or not (sys.stdin.isatty() and sys.stdout.isatty()), a.dry_run))
