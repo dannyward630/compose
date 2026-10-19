@@ -1307,5 +1307,28 @@ class MachineDocs(unittest.TestCase):
         self.assertEqual(read("docs/requirements.md").count("bin/herdr.toml"), 1)
 
 
+DRY_ROW = "| `compose setup --dry-run` | Walks the same setup and changes nothing: every install, write, and key save prints as a `would` line, and the last line counts them |"
+DRY_SENTENCE = " With `--dry-run` it asks the same questions and runs the same checks but changes nothing on the machine, prints each change as a `would` line, and ends with `dry run: nothing changed; N changes listed above`."
+UPDATE_ROW = "| `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |"
+
+
+class DryRunDocs(unittest.TestCase):
+    def test_readme_row_right_after_the_setup_row(self):
+        lines = read("README.md").splitlines()
+        self.assertEqual(lines.count(SETUP_ROW), 1)
+        i = lines.index(SETUP_ROW)
+        self.assertEqual(lines[i:i + 3], [SETUP_ROW, DRY_ROW, UPDATE_ROW])
+
+    def test_cli_sentence_right_after_the_defaults_sentence(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")]
+        self.assertEqual(rows, [CLI_HEAD + DRY_SENTENCE + CLI_TAIL])
+
+    def test_each_file_names_the_flag_once_and_keeps_its_other_lines(self):
+        for rel, count in (("README.md", 220), ("docs/cli.md", 129)):
+            text = read(rel)
+            self.assertEqual(text.count("--dry-run"), 1, rel)
+            self.assertEqual(len(text.splitlines()), count, f"{rel}: one row added to README, none to cli.md")
+
+
 if __name__ == "__main__":
     unittest.main()
