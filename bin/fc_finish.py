@@ -29,7 +29,7 @@ def _finish(results, yes, dry=False):
              (("failed", groups["failed"]), ("waiting on Claude Code", groups["claude"]),
               ("run by hand", groups["manual"]), ("skipped", groups["skipped"])) if names]
     lines += fc_herdrconf.apply_herdr_config(Path.home() / ".config" / "herdr" / "config.toml",
-                                             Path(__file__).resolve().parents[1] / "setup" / "herdr.toml")[1]
+                                             Path(__file__).resolve().parent / "herdr.toml")[1]
     if (path := fc_links.path_line()):
         lines += ["~/.local/bin is not on your PATH; add this line to your shell profile:", path]
     cfg = fc_config.read_config()
