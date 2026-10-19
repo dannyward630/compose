@@ -36,7 +36,8 @@ Stop and ask the user, never guess, when any of these happen:
 - you cannot tell which epic, feature, story, or ticket the work belongs to, or a search returns more than one plausible match
 
 ### 0i. The levels: project, epic, feature, story, task
-Linear has projects, issues, sub-issues, and labels; these five levels are how compose uses them. Labels `Epic`, `Feature`, `Story`, `Task` live on the Engineering team (`Feature` exists; create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them).
+Linear has projects, issues, sub-issues, and labels; these five levels are how compose uses them. Labels `Epic`, `Feature`, `Story`, `Task`, and `Ready` live on the Engineering team (`Feature` exists; create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them).
+`Ready` marks a story or feature that can start now, and `compose ready` sets it.
 
 | level | in Linear | in compose | holds |
 |---|---|---|---|
