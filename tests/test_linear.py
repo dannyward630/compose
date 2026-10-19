@@ -563,6 +563,35 @@ class DeliveryPlan(unittest.TestCase):
         self.assertEqual((said, stored.exists(), plan.call_args), (["linear plan: " + "x" * 200], True, mock.call("ENG-9")))
 
 
+class PlanStoredNewline(unittest.TestCase):
+    setUp, gql, writes = DeliveryPlan.setUp, DeliveryPlan.gql, DeliveryPlan.writes
+    DATA = {h: f"{h[3:]} now." for h in fc_plan.PLAN_SECTIONS[:4]}
+
+    def plan(self, sections, content):
+        """Runs linear_plan on a feature map whose plan Linear stores as content; returns the names of the writes it sent."""
+        self.doc = {"id": "d-1", "title": "NEB-7: delivery plan", "content": content, "url": "u/d-1"}
+        self.tree = DeliveryPlan.node("NEB-7", labels=["Feature"], docs=[self.doc], kids=[DeliveryPlan.node("NEB-8")])
+        self.sections.return_value, start = sections, len(self.sent)
+        fc.fc_linear.linear_plan("NEB-7")
+        return [k for k, _ in self.sent[start + 1:]]
+
+    def stored(self, data):  # every section in place, as Linear keeps it: no final newline
+        return "\n\n".join(f"{h}\n\n{data.get(h, 'Kept ' + h[3:] + '.')}" for h in fc_plan.PLAN_SECTIONS)
+
+    def test_a_current_plan_stored_without_its_final_newline_gets_no_write(self):
+        self.assertEqual(self.plan(self.DATA, self.stored(self.DATA)), [])
+        self.assertEqual(self.plan({"## Start today": self.DATA["## Start today"]}, self.stored(self.DATA)), [])
+
+    def test_a_changed_section_is_written_once_and_its_stored_copy_is_not_rewritten(self):
+        old, sections = self.stored(self.DATA), {**self.DATA, "## Waves": "Waves changed."}
+        self.assertEqual(self.plan(sections, old), ["documentUpdate"])
+        new = fc_plan.replace_section(old, "## Waves", "Waves changed.")
+        self.assertIn(new, self.writes("documentUpdate")[0])
+        self.assertTrue("Waves changed." in new and all(f"Kept {h[3:]}." in new for h in fc_plan.PLAN_SECTIONS[4:]))
+        self.assertEqual(self.plan(sections, new.rstrip("\n")), [])  # Linear dropped the final newline of what was sent
+        self.assertEqual(self.plan(sections, new), [])
+
+
 class FeatureAfterLink(unittest.TestCase):
     MAKE = "mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }"
 
