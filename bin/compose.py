@@ -80,7 +80,7 @@ def main():
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
-                            ("setup", fc_setup.cmd_setup, "install and configure everything compose needs: the guided setup on a terminal; --yes takes every default and never prompts"),
+                            ("setup", fc_setup.cmd_setup, "install and configure everything compose needs, one question at a time on a terminal; --yes takes every default and never prompts"),
                             ("update", fc_update.cmd_update, "pull this checkout --ff-only, relink the links compose owns, run doctor"),
                             ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
@@ -136,6 +136,7 @@ def main():
             s.add_argument("--after", metavar="PROJECT", help="branch from another project's branch (compose/<PROJECT> unless it chose one): a feature that needs that feature's code")
         if name == "setup":
             s.add_argument("--yes", action="store_true", help="take every default, skip every key, never prompt")
+            s.add_argument("--dry-run", action="store_true", help="walk the whole setup and change nothing: every change prints as a would line")
         if name == "sync":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of Linear")
         if name == "linear":
@@ -276,7 +277,7 @@ def main():
     if a.cmd in DETACHED and not detached:
         return detach(a)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
-        ws = fc_config.apply_config()  # "default" when no workspace is chosen
+        ws = fc_config.apply_config(move=not getattr(a, "dry_run", False))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")
