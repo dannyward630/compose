@@ -191,7 +191,7 @@ class SyncFromLinear(unittest.TestCase):
     def sync(self, stdin=False):
         out = io.StringIO()
         with redirect_stdout(out), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
-            fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin))
+            fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin, repo=str(self.proj)))
         return out.getvalue()
 
     def fails(self, gql=None):

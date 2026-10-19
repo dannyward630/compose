@@ -1,4 +1,5 @@
 import json, sys, urllib.error, urllib.request
+from pathlib import Path
 import fc_core, fc_config, fc_tasks
 
 
@@ -334,7 +335,27 @@ def refresh_ready(proj, feature=None):
         fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
 
 def linear_feature_after(repo, proj):
-    raise NotImplementedError("linear_feature_after")
+    """The project this one was built after (`after` in verify.json, or its compose/ branch as review_base) gets its feature to
+    block this project's feature in Linear: the link is added once and other blockers stand."""
+    after = fc_core.project_after(proj)
+    if not after:
+        return
+    link = proj / "linear.json"
+    feature = json.loads(link.read_text()).get("feature") if link.exists() else None
+    if not feature:
+        return
+    other = fc_core.all_projects(repo).get(after)
+    other_link = other[1] / "linear.json" if other else None
+    other_feature = json.loads(other_link.read_text()).get("feature") if other_link and other_link.exists() else None
+    if not other_feature:
+        fc_core.say(f"linear: no feature for project {after}, so {feature} is not linked")
+        return
+    have = {r["issue"]["identifier"] for r in linear_gql(LINEAR_BLOCKERS, {"id": feature})["issue"]["inverseRelations"]["nodes"] if r["type"] == "blocks"}
+    if other_feature in have:
+        return
+    linear_gql("mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }",
+               {"a": linear_issue(other_feature)["id"], "b": linear_issue(feature)["id"]})
+    fc_core.say(f"linear {feature} blocked by {other_feature}")
 
 
 def cmd_sync(a):
@@ -354,3 +375,4 @@ def cmd_sync(a):
         print(f"  {m['id']:4} {m['linear']:9} {m['linear_state'][:12]:12} {m['title'][:50]:50} after {m['after'] or '-'}")
     if not a.stdin:
         refresh_ready(proj)
+        linear_feature_after(Path(a.repo).resolve(), proj)
