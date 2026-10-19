@@ -49,5 +49,51 @@ class Frame(unittest.TestCase):
         self.assertEqual(self.shown(fc_prompt.step, "pi", "done", ("a",), no_color="1"), "◇  pi: done\n│  a\n")
         self.assertEqual(self.shown(fc_prompt.note, "Empty", [], no_color="1"), "│\n◇  Empty\n")
 
+class Ask(unittest.TestCase):
+    def ask(self, fn, *args, answers=(), getpass=None):
+        out = Out(); out.tty = False
+        with mock.patch("builtins.input", side_effect=list(answers)) as ask, \
+             mock.patch("getpass.getpass", side_effect=getpass) as gp, \
+             mock.patch("sys.stdout", out), mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            got = fn(*args)
+        return got, [c.args[0] for c in (gp if getpass else ask).call_args_list], out.getvalue()
+
+    def test_select_numbers_options_and_returns_the_index(self):
+        got, prompts, shown = self.ask(fc_prompt.select, "How?", ["a", "b", "c"], answers=["3"])
+        self.assertEqual((got, prompts, shown), (2, ["│  number [1]: "], "◆  How?\n│  1) a\n│  2) b\n│  3) c\n"))
+        for answer in ("", EOFError):
+            with self.subTest(answer=answer):
+                got, prompts, _ = self.ask(fc_prompt.select, "How?", ["a", "b", "c"], 1, answers=[answer])
+                self.assertEqual((got, prompts), (1, ["│  number [2]: "]))
+
+    def test_select_reads_again_until_a_number_in_range(self):
+        bad = ["0", "4", "two", "-1", "1.5"]
+        got, prompts, shown = self.ask(fc_prompt.select, "How?", ["a", "b", "c"], answers=[*bad, "2"])
+        self.assertEqual((got, prompts), (1, ["│  number [1]: "] * 6))
+        self.assertEqual(shown, "◆  How?\n│  1) a\n│  2) b\n│  3) c\n" + "│  type a number from 1 to 3\n" * 5)
+
+    def test_confirm_reads_yes_or_no_in_any_case_and_spacing(self):
+        for answer, want in (("y", True), (" YES ", True), ("Yes", True), ("n", False), (" No ", False), ("nO", False)):
+            for default in (True, False):
+                with self.subTest(answer=answer, default=default):
+                    self.assertEqual(self.ask(fc_prompt.confirm, "Go?", default, answers=[answer])[0], want)
+
+    def test_confirm_defaults_on_enter_and_end_of_input(self):
+        for default, prompt in ((True, "◆  Go? (Y/n) "), (False, "◆  Go? (y/N) ")):
+            for answer in ("", EOFError):
+                with self.subTest(default=default, answer=answer):
+                    self.assertEqual(self.ask(fc_prompt.confirm, "Go?", default, answers=[answer])[:2],
+                                     (default, [prompt]))
+
+    def test_confirm_reads_again_on_anything_else(self):
+        got, prompts, _ = self.ask(fc_prompt.confirm, "Go?", False, answers=["maybe", "ye", "yess", "y"])
+        self.assertEqual((got, prompts), (True, ["◆  Go? (y/N) "] * 4))
+
+    def test_password_is_hidden_stripped_and_empty_at_end_of_input(self):
+        got, prompts, shown = self.ask(fc_prompt.password, "OpenRouter key", getpass=[" sk-or-test-x \n"])
+        self.assertEqual((got, prompts), ("sk-or-test-x", ["◆  OpenRouter key: "]))
+        self.assertNotIn("sk-or-test-x", shown)
+        self.assertEqual(self.ask(fc_prompt.password, "Linear key", getpass=EOFError)[:2], ("", ["◆  Linear key: "]))
+
 if __name__ == "__main__":
     unittest.main()
