@@ -154,6 +154,27 @@ class Treehouse(unittest.TestCase):
         refs = self.git("for-each-ref", "--format=%(refname)", "refs/compose/").split()
         self.assertEqual(refs, ["refs/compose/pq/C1/001"])  # the project's change and replaced-tip refs go with it; another project's stay
 
+    def test_clean_run_inside_the_slot_through_a_pipe_finishes_and_leaves_the_project_for_the_team_leads_done(self):
+        wt, proj = self.init()
+        (wt / "b.txt").write_text("b\n")
+        self.git("add", "b.txt", cwd=wt); self.git("commit", "-qm", "Add b", cwd=wt)
+        self.git("merge", "-q", "--ff-only", "compose/p")
+        sitter = subprocess.Popen(["sleep", "60"], cwd=wt)  # the team lead's own processes in its slot (its MCP servers, its shell)
+        self.addCleanup(sitter.kill)
+        p = subprocess.run(["bash", "-c", '"$0" clean --repo "$PWD" --project p 2>&1 | tail -50; echo "exit ${PIPESTATUS[*]}"', CLI],
+                           cwd=wt, capture_output=True, text=True, env=self.env)  # how the team lead ran it: returning the slot ended its tail
+        self.assertIn("exit 0 0", p.stdout, p.stdout + p.stderr)
+        self.assertIn("kept while this command runs inside it", p.stdout)
+        self.assertIsNone(sitter.poll())
+        self.assertEqual(self.status()[wt.resolve()], "leased")
+        r = subprocess.run([CLI, "report", "--repo", str(self.repo), "--project", "p", "--as", "p-orchestrator", "done", "x"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"compose clean --repo {self.repo} --project p", r.stdout)
+        p = subprocess.run([CLI, "clean", "--repo", str(self.repo), "--project", "p"], cwd=self.repo, capture_output=True, text=True, env=self.env)
+        self.assertIn("removed worktree", p.stdout, p.stdout + p.stderr)
+        self.assertEqual(self.status()[wt.resolve()], "available")
+        self.assertEqual(self.git("branch", "--list", "compose/p"), "")
+
     def test_a_crew_in_another_repo_gets_a_slot_on_its_own_branch(self):
         wt, proj = self.init()
         other = self.repo.parent / "tool"

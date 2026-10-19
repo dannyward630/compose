@@ -85,6 +85,7 @@ Each task pane shows its state, such as `attempt 2/3` or `passed`, along with it
 The team lead steers a working or blocked implementer with `herdr agent prompt <slug>-NNN "..."`.
 That prompt lands in the same pi session the CLI drives.
 `clean` closes the project's space along with its worktree, or in a shared space only the project's tabs.
+While the team lead has not reported done, `clean` keeps both, and the team lead's `done` closes them once its turn ends.
 
 ## Supervision
 

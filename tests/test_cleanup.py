@@ -701,6 +701,91 @@ class CleanLinearLine(unittest.TestCase):
         self.assertEqual(self.lines("ENG-1", [], True, linear=linear), ["linear ENG-1 -> Done"])
 
 
+class CleanUnderTheTeamLead(unittest.TestCase):
+    """clean finishes every Linear roll-up before the merged project's worktree goes, and never takes it from under the team lead
+    or from under itself: the team lead's last report still finds the project, and its done finishes the removal."""
+    def setUp(self):
+        self.r, self.run = repo()
+        self.env = {**os.environ, **ENV}
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
+        self.wt = self.r.parent / "compose-p"; self.proj = self.wt / ".compose" / "p"
+        self.run("checkout", "-q", "-b", "compose/p-001", cwd=self.wt)
+        (self.wt / "f.txt").write_text("f\n"); self.run("add", "f.txt", cwd=self.wt); self.run("commit", "-qm", "Add f", cwd=self.wt)
+        self.run("checkout", "-q", "compose/p", cwd=self.wt); self.run("merge", "-q", "--ff-only", "compose/p-001", cwd=self.wt)
+        self.run("merge", "-q", "--ff-only", "compose/p")
+        task = {"id": "001", "title": "f", "files": [], "protected": [], "linear": "ENG-3", "after": ""}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [task]}))
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+
+    def lead(self, state):
+        d = fc.fc_crew.crew_dir(self.proj)
+        (d / "p-orchestrator.json").write_text(json.dumps({"name": "p-orchestrator", "title": "lead", "space": "w1", "tab": "t1", "pane": "p1"}))
+        fc.fc_crew.write_report(self.proj, "p-orchestrator", state, "m")
+
+    def cli(self, *args, cwd=None):
+        return subprocess.run([CLI, *args], cwd=cwd or self.r, capture_output=True, text=True, env=self.env)
+
+    def test_every_roll_up_is_done_while_the_worktree_is_still_there(self):
+        linear, seen = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2")), []
+        def gql(query, variables):
+            if "issueUpdate" in query:
+                seen.append((variables["id"], self.wt.exists()))
+            return linear(query, variables)
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+        self.assertEqual(seen, [("ENG-3", True), ("ENG-2", True), ("ENG-1", True)])
+        self.assertFalse(self.wt.exists())
+
+    def test_run_inside_the_worktree_it_rolls_linear_up_and_keeps_the_worktree(self):
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"))
+        out, here = io.StringIO(), os.getcwd()
+        self.addCleanup(os.chdir, here)
+        os.chdir(self.wt)
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+        os.chdir(here)
+        self.assertEqual(linear.states("ENG-3", "ENG-2", "ENG-1"), ["Done", "Done", "Done"])
+        self.assertIn(f"kept while this command runs inside it: run `compose clean --repo {self.r} --project p` from outside it", out.getvalue())
+        self.assertTrue((self.proj / "results" / "clean.json").exists())
+        self.assertEqual(self.run("branch", "--list", "compose/p", "compose/p-001").stdout.split(), ["+", "compose/p"])
+
+    def test_a_working_team_lead_keeps_the_worktree_until_its_done_and_force_by_name_overrides(self):
+        self.lead("working")
+        out = self.cli("clean").stdout
+        self.assertIn("kept while p-orchestrator last reported working: they go when p-orchestrator reports done", out)
+        self.assertTrue(self.proj.exists())
+        r = self.cli("report", "--project", "p", "--as", "p-orchestrator", "done", "shipped")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("reported p-orchestrator done", r.stdout)
+        self.assertIn(f"run `compose clean --repo {self.r} --project p` from outside {self.wt}", r.stdout)
+        self.assertIn("removed worktree", self.cli("clean", "--project", "p").stdout)
+        self.assertFalse(self.wt.exists())
+
+    def test_force_by_name_removes_it_under_a_working_team_lead(self):
+        self.lead("working")
+        self.cli("clean", "--force")  # --force alone never overrides a repo-wide clean
+        self.assertTrue(self.wt.exists())
+        self.cli("clean", "--project", "p", "--force")
+        self.assertFalse(self.wt.exists())
+
+    def test_inside_herdr_the_team_leads_done_finishes_clean_from_outside_once_its_turn_ends(self):
+        self.lead("working")
+        (self.proj / "results" / "clean.json").write_text("{}")
+        out, started, real = io.StringIO(), [], subprocess.Popen
+        def popen(argv, **kw):  # git still runs; the detached finisher is only recorded
+            return started.append((argv, kw)) if argv[0] == "sh" else real(argv, **kw)
+        with mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_crew.subprocess, "Popen", popen), \
+                mock.patch("sys.stdout", out):
+            fc.fc_crew.finish_clean_after_turn(self.proj, "p-orchestrator")
+        [(argv, kw)] = started
+        self.assertEqual(argv[:3], ["sh", "-c", '"$0" agent wait "$1" --timeout 900000; "$2" clean --repo "$3" --project "$4"'])
+        self.assertEqual(argv[4:], ["p-orchestrator", str(Path(CLI).resolve()), str(self.r), "p"])
+        self.assertEqual((kw["cwd"], kw["start_new_session"]), (self.r, True))
+        self.assertIn(f"clean  p: {self.wt.resolve()} and its branch go once this turn ends", out.getvalue())
+
+
 class MergeChangesNothing(unittest.TestCase):
     """A branch whose merge into a target leaves the target's tree as it is counts as merged, whatever its patches say."""
     def test_a_merge_that_changes_nothing_proves_a_branch_merged_after_the_earlier_proofs(self):

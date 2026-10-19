@@ -491,6 +491,8 @@ def cmd_report(a):
     if a.state == "done":
         if a.as_ == fc_herdr.agent_name(proj.name, "orchestrator"):
             teardown(proj)  # the project is finished: nothing it started should stay open
+            if (proj / "results" / "clean.json").exists():
+                finish_clean_after_turn(proj, a.as_)
         else:
             close_after_turn(proj, a.as_)
 
@@ -516,6 +518,22 @@ def close_after_turn(proj, name):
     if scratch.exists():
         stop_listeners_under(scratch)  # the files stay: Linear comments cite them as evidence
     crew_closed(proj, name, "reported done; tab closes when the turn ends")
+
+def finish_clean_after_turn(proj, name):
+    """A merged project whose worktree clean kept for its team lead (results/clean.json) goes once the turn that reported done has
+    ended: a detached process, in its own session and outside the worktree so neither the tab's hangup nor the slot's return reaches
+    it, waits for the team lead to settle, then runs clean again, which closes the tab and removes the worktree and branch.
+    Outside herdr there is no turn to wait for: one line says how to finish it."""
+    wt = fc_herdr.project_worktree(proj)
+    main = fc_core.worktrees(wt)[0]
+    c = crew_record(proj, name)
+    if not c or not c.get("tab") or not fc_herdr.herdr_env():
+        print(f"clean  {proj.name}: run `compose clean --repo {main} --project {proj.name}` from outside {wt} to remove it and its branch")
+        return
+    subprocess.Popen(["sh", "-c", '"$0" agent wait "$1" --timeout 900000; "$2" clean --repo "$3" --project "$4"',
+                      shutil.which("herdr") or "herdr", c.get("agent", name), str(CLI_REPO / "bin" / "compose"), str(main), proj.name],
+                     cwd=main, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"clean  {proj.name}: {wt} and its branch go once this turn ends")
 
 def crew_closed(proj, name, why):
     f = crew_dir(proj) / f"{name}.json"
