@@ -372,7 +372,7 @@ class HomePaths(unittest.TestCase):
     def setUp(self):
         Finish.setUp(self); self.auth.write_text(json.dumps(ALL))
         tmp = Path(tempfile.mkdtemp()).resolve(); self.home, self.other = tmp / "al", tmp / "alex"  # alex only shares a prefix
-        self.herdr.side_effect = lambda path, shipped: ("edited", [f"copied {shipped} to {path}", f"edited {path} and {path}"])
+        self.herdr.side_effect = lambda path, shipped, dry=False: ("edited", [f"copied {shipped} to {path}", f"edited {path} and {path}"])
         for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}),
                   mock.patch.object(F, "__file__", str(self.home / "src/compose/bin/fc_finish.py")),
                   mock.patch.object(F.fc_steps, "STEPS", ())):
