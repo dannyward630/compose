@@ -37,6 +37,10 @@ def watch_snapshot(repo, proj, agents=None):
         snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or [])]
     except (OSError, json.JSONDecodeError, KeyError):
         pass
+    try:
+        snap["ready"] = {i["id"]: i["title"] for i in json.loads((proj / "results" / "ready.json").read_text())}
+    except (OSError, json.JSONDecodeError):
+        snap["ready"] = {}
     for r in rows:
         snap["tasks"][r["id"]] = {"state": r["state"], "attempts": r["attempts"], "cost": r["cost"], "note": r["note"], "linear": r["linear"], "title": r["title"]}
     listed = agents() if agents else fc_herdr.herdr("agent", "list")
@@ -174,6 +178,11 @@ def watch_events(before, after):
         at_, provider, left = after["halt"]
         ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
                   f"their word, then `compose resume`)")
+    new = {i: t for i, t in after.get("ready", {}).items() if i not in before.get("ready", {})}
+    if new:
+        import fc_linear
+        items = [{"id": i, "title": t} for i, t in new.items()]
+        ev.append(f"event ready={','.join(new)}  ({fc_linear.ready_line(items)}; tell the product owner)")
     if after["verify"] and after["verify"] != before["verify"]:
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
     for n, reports in after.get("crew", {}).items():
@@ -205,6 +214,7 @@ def watch_filter(events, slug, sources, direct=()):
     its needs-user and blocked reach the product owner (manager_attention) while the `--from orchestrator` watch runs."""
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
+                or e.startswith("event ready=")
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
     me = fc_herdr.agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
