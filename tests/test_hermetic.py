@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, os, subprocess, tempfile, unittest
+import io, json, os, subprocess, tempfile, time, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""
 
@@ -23,6 +23,28 @@ class HermeticCleanup(unittest.TestCase):
         made = self.run_case(lambda case, made: made.update(home=os.environ["HOME"]))
         self.assertTrue(made["home"].startswith(tempfile.gettempdir()) or "/compose-home-" in made["home"], made["home"])
         self.assertFalse(Path(made["home"]).exists(), made["home"])
+
+    def test_dirs_named_after_a_tests_mkdtemp_dir_go_with_it(self):
+        """A pi turn keeps its sessions beside the task clone as <clone>.pi-sessions and a crew test adds a <repo>-slot worktree:
+        made by mkdir, not mkdtemp, so only the dir they are named after is tracked; they go when it goes."""
+        def body(case, made):
+            d = tempfile.mkdtemp()
+            for s in (".pi-sessions", "-slot"):
+                Path(d + s).mkdir(); (Path(d + s) / "f").write_text("x")
+                made[s] = d + s
+        self.assertEqual([k for k, d in self.run_case(body).items() if Path(d).exists()], [])
+
+    def test_a_tests_home_gives_trail_nothing_to_do_after_the_test(self):
+        """trail (graft) spawns a detached child to check npm for a newer version when its cache is stale and another to flush
+        telemetry; each writes under HOME after the test removed it, so the home came back as an empty .graft. The test home
+        carries a fresh update cache and DO_NOT_TRACK, so neither child is spawned."""
+        def body(case, made):
+            made["dnt"] = os.environ.get("DO_NOT_TRACK")
+            made["cache"] = json.loads((Path(os.environ["HOME"]) / ".graft" / "update-check.json").read_text())
+        made = self.run_case(body)
+        self.assertEqual(made["dnt"], "1")
+        self.assertEqual(made["cache"]["latest"], None)
+        self.assertLess(abs(made["cache"]["checkedAt"] - time.time() * 1000), 60_000)
 
     def test_the_dirs_of_a_test_survive_while_it_runs(self):
         def body(case, made):

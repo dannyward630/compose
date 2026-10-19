@@ -4,7 +4,7 @@ On import the process gets a temp HOME and COMPOSE_CONFIG and loses the key vari
 import land there; each test then runs with its own fresh temp HOME (see temp_home) and COMPOSE_CONFIG, and its environment is restored after.
 A test that still changes the real ~/.compose files that hold keys or config (created, written, moved or deleted, from the test
 process or any subprocess) fails, naming the files, never their content."""
-import atexit, hashlib, os, pwd, shutil, tempfile, unittest
+import atexit, hashlib, json, os, pwd, shutil, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -31,8 +31,17 @@ def mkdtemp(*a, **kw):
 
 
 def remove_made(since=0):
+    """Remove every directory made since `since`, and whatever sits beside one under its name: a pi turn keeps its sessions
+    as <clone>.pi-sessions and a crew test adds a <repo>-slot worktree, made by mkdir rather than mkdtemp, so only the
+    directory they are named after is tracked. A mkdtemp name is random, so a sibling that starts with it was derived from it."""
     while len(_made) > since:
-        shutil.rmtree(_made.pop(), ignore_errors=True)
+        parent, name = os.path.split(_made.pop())
+        try:
+            kin = [e for e in os.listdir(parent) if e.startswith(name)]
+        except OSError:
+            kin = [name]
+        for e in kin:
+            shutil.rmtree(os.path.join(parent, e), ignore_errors=True)
 
 
 _stubs = None  # one read-only file per distinct executable body a test made; every stub path is a symlink to its body's file
@@ -110,14 +119,19 @@ if tempfile.mkdtemp is not mkdtemp:
 
 
 def temp_home():
-    """{HOME, COMPOSE_CONFIG} for a new temp home that holds only INSTALLED: no keys, no config, no links."""
+    """{HOME, COMPOSE_CONFIG, DO_NOT_TRACK} for a new temp home that holds only INSTALLED and a fresh trail update cache: no keys,
+    no config, no links. trail (graft) spawns a detached child to ask npm for a newer version when ~/.graft/update-check.json
+    is a day old or missing, and another to flush telemetry; each writes under HOME after the test removed it, so the home
+    came back as an empty .graft. A cache checked now and DO_NOT_TRACK spawn neither."""
     home = Path(tempfile.mkdtemp(prefix="compose-home-")).resolve()
     for rel, text in INSTALLED.items():
         f = home / rel
         f.parent.mkdir(parents=True)
         f.write_text(text)
         f.chmod(0o755)
-    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json")}
+    (home / ".graft").mkdir()
+    (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None, "checkedAt": int(time.time() * 1000)}))
+    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1"}
 
 
 def snapshot():
