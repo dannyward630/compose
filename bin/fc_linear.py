@@ -202,9 +202,10 @@ def linear_event(proj, meta, event, result=None):
     except Exception as e:  # noqa: BLE001  Linear never stops a run
         fc_core.say(f"linear {meta.get('linear')}: update failed ({str(e)[:200]}); the run goes on")
 
-def linear_merged(feature, metas, project_merged):
+def linear_merged(feature, metas, project_merged, scope=None):
     """clean's step through the state table: every task proven merged moves to Done, its story rolls up, and the feature is
-    Done once every story is and the project branch is merged; otherwise the feature is left as verify put it. A Canceled
+    Done once every story is and the project branch is merged; otherwise the feature is left as verify put it. A merged
+    project rolls up every story of the feature in `scope` (all of them when None), so a task moved outside clean counts. A Canceled
     task stays Canceled. With a feature and nothing proven merged one line says the states are unchanged; without a key
     one line says so; a Linear failure is said and never stops the clean."""
     if not feature and not metas:
@@ -224,6 +225,9 @@ def linear_merged(feature, metas, project_merged):
             parent = (issue.get("parent") or {}).get("identifier")
             if parent and parent != feature and parent not in stories:
                 stories.append(parent)
+        if feature and project_merged:
+            stories += [c["identifier"] for c in linear_issue(feature)["children"]["nodes"]
+                        if c["identifier"] not in stories and c["state"].get("type") != "canceled" and (not scope or c["identifier"] in scope)]
         for s in stories:
             issue = linear_issue(s)
             target = rollup_state(issue["children"]["nodes"])

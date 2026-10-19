@@ -487,7 +487,7 @@ class ReadyRefresh(unittest.TestCase):
         with mock.patch.object(fc.fc_linear, "linear_merged", calls.linear_merged), mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready), \
                 mock.patch("sys.stdout", io.StringIO()), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
             fc.fc_init.clean_project(r, "p", r, proj, explicit=True)
-        self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False), mock.call.refresh_ready(proj, "ENG-7")])
+        self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False, scope=None), mock.call.refresh_ready(proj, "ENG-7")])
 
 
 class FeatureAfterLink(unittest.TestCase):

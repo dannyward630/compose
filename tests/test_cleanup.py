@@ -737,6 +737,30 @@ class CleanUnderTheTeamLead(unittest.TestCase):
         self.assertEqual(seen, [("ENG-3", True), ("ENG-2", True), ("ENG-1", True)])
         self.assertFalse(self.wt.exists())
 
+    def clean_with_a_second_story(self, linear, task016=None):
+        """Task 016 (ENG-5) in story ENG-4 next to 001's story ENG-2, with no branch of its own, then a clean."""
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"].append({"id": "016", "title": "g", "files": [], "protected": [], "linear": "ENG-5", "after": ""})
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        if task016:
+            self.assertEqual(self.cli(*task016).returncode, 0)
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+        self.assertFalse(self.wt.exists())
+
+    def test_a_merged_project_moves_its_task_done_by_hand_without_a_branch_and_rolls_up(self):
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"),
+                            ENG_4=("In Review", "ENG-1"), ENG_5=("In Review", "ENG-4"))
+        self.clean_with_a_second_story(linear, ("done", "--project", "p", "--only", "016", "--note", "already green in 001's layer"))
+        self.assertEqual(linear.states("ENG-3", "ENG-5", "ENG-2", "ENG-4", "ENG-1"), ["Done"] * 5)
+
+    def test_a_merged_project_rolls_up_the_story_of_a_task_moved_to_done_outside_it(self):
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"),
+                            ENG_4=("In Review", "ENG-1"), ENG_5=("Done", "ENG-4"))
+        self.clean_with_a_second_story(linear)
+        self.assertEqual(linear.states("ENG-3", "ENG-5", "ENG-2", "ENG-4", "ENG-1"), ["Done"] * 5)
+
     def test_run_inside_the_worktree_it_rolls_linear_up_and_keeps_the_worktree(self):
         linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"))
         out, here = io.StringIO(), os.getcwd()

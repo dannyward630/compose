@@ -469,7 +469,10 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             ) + f": worktree kept; --delete-unmerged removes it anyway"
             fu = first_unmatched(main_repo, pbranch, ptargets)
             print(f"clean  {pbranch}: kept unmerged" + (f", {fu}" if fu else ""))
-    fc_linear.linear_merged(link.get("feature"), [metas[t] for t in merged], project_merged)  # before the worktree goes, with all it holds
+    if project_merged:  # the project branch holds every finished task's code, a task with no branch of its own (skipped as green, done by hand) too
+        status = lambda t: json.loads(f.read_text()).get("status") if (f := proj / "results" / f"{t}.json").exists() else None
+        merged += [t for t in metas if t not in merged and status(t) in (*fc_tasks.FINISHED, "already_green")]
+    fc_linear.linear_merged(link.get("feature"), [metas[t] for t in merged], project_merged, scope=link.get("stories"))  # before the worktree goes, with all it holds
     fc_linear.refresh_ready(proj, link.get("feature"))
     if remove:
         remove_project(main_repo, name, wt, proj, pbranch)
