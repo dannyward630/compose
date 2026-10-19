@@ -332,7 +332,7 @@ def linear_plan(feature):
     content = doc["content"]
     for heading, text in fc_plan.plan_sections(lanes).items():
         content = fc_plan.replace_section(content, heading, text)
-    if content != doc["content"]:
+    if content.rstrip("\n") != doc["content"].rstrip("\n"):
         linear_gql("mutation($id: String!, $content: String!) { documentUpdate(id: $id, input: {content: $content}) { success } }", {"id": doc["id"], "content": content})
 
 def ready_line(items):
