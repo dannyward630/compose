@@ -16,9 +16,7 @@ def finish(results, yes, dry=False):
 
 def _finish(results, yes, dry=False):
     """(lines, code) from results, the [(row name, state)] of run_step; code 0 when compose is ready, else 1."""
-    if dry:
-        raise NotImplementedError("finish dry")
-    fc_config.apply_config()  # the keys auth.json holds now go into the env before anything reads them
+    fc_config.apply_config(move=not dry)  # the keys auth.json holds now go into the env before anything reads them
     yes = yes or not sys.stdin.isatty()
     state = dict(results)
     groups = {s: [] for s in ("failed", "claude", "manual", "skipped")}
@@ -29,17 +27,21 @@ def _finish(results, yes, dry=False):
              (("failed", groups["failed"]), ("waiting on Claude Code", groups["claude"]),
               ("run by hand", groups["manual"]), ("skipped", groups["skipped"])) if names]
     lines += fc_herdrconf.apply_herdr_config(Path.home() / ".config" / "herdr" / "config.toml",
-                                             Path(__file__).resolve().parent / "herdr.toml")[1]
+                                             Path(__file__).resolve().parent / "herdr.toml", dry=dry)[1]
+    if dry:
+        lines += [f"would move {name} out of {path} into {fc_config.AUTH_PATH}"
+                  for name, path in fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE)]
     if (path := fc_links.path_line()):
         lines += ["~/.local/bin is not on your PATH; add this line to your shell profile:", path]
     cfg = fc_config.read_config()
     merged, added = fc_defaults.merge_models(cfg)
     if added:
-        fc_config.write_config(merged)
+        if not dry:
+            fc_config.write_config(merged)
         names = [k for k in fc_defaults.DEFAULT_MODELS if k != "crew" and k not in cfg.get("models", {})]
         n = len(merged["models"]["crew"]) - len(cfg.get("models", {}).get("crew", {}))
         if names or n:
-            lines.append("added default models to ~/.compose/config.json: " +
+            lines.append(("would add" if dry else "added") + " default models to ~/.compose/config.json: " +
                          ", ".join(names + ([f"crew ({n} roles)"] if n else [])))
     lines += fc_defaults.PRESET_STEPS
     ws, _ = fc_config.settings(cfg)
@@ -49,7 +51,9 @@ def _finish(results, yes, dry=False):
         lines += [fc_keys.skipped_line(k, ws) for k in missing]
     ready = not missing
     probe_ok = None
-    if not yes and status["openrouter"]:
+    if dry and not yes and status["openrouter"]:
+        lines.append(f"would check implementer {merged['models']['implementer']}")
+    elif not yes and status["openrouter"]:
         ok, probe_lines = fc_defaults.probe_implementer(merged)
         lines += [line for line in probe_lines if line not in fc_defaults.PRESET_STEPS]
         ready = ready and ok
