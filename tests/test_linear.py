@@ -475,3 +475,61 @@ class ReadyRefresh(unittest.TestCase):
                 mock.patch("sys.stdout", io.StringIO()), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
             fc.fc_init.clean_project(r, "p", r, proj, explicit=True)
         self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False), mock.call.refresh_ready(proj, "ENG-7")])
+
+
+class FeatureAfterLink(unittest.TestCase):
+    MAKE = "mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }"
+
+    def setUp(self):
+        self.root, self.said, self.calls, self.blockers = Path(tempfile.mkdtemp()), [], [], {"ENG-1": ["ENG-5"]}
+        self.proj, base, bare = self.root / "p", self.root / "base", self.root / "bare"
+        for d, link in ((self.proj, {"feature": "ENG-1"}), (base, {"feature": "ENG-9"}), (bare, {})):
+            d.mkdir(); (d / "linear.json").write_text(json.dumps(link))
+        self.projects = mock.Mock(return_value={"base": (self.root, base), "bare": (self.root, bare)})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", self.said.append),
+                                 (fc.fc_core, "all_projects", self.projects)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        """Answers every read with the union of LINEAR_ISSUE and LINEAR_BLOCKERS, keyed by identifier or node id; a link it makes shows up after."""
+        self.calls.append((query, variables))
+        if "mutation" in query:
+            self.blockers[variables["b"].removeprefix("id-")].append(variables["a"].removeprefix("id-"))
+            return {"issueRelationCreate": {"success": True}}
+        ident = variables["id"].removeprefix("id-")
+        rels = [{"id": f"r-{b}", "type": "blocks", "issue": {"id": f"id-{b}", "identifier": b}} for b in self.blockers.get(ident, [])]
+        rels.append({"id": "r-rel", "type": "related", "issue": {"id": "id-ENG-9", "identifier": "ENG-9"}})  # related is not blocked by
+        return {"issue": {"id": f"id-{ident}", "identifier": ident, "state": {"name": "Todo", "type": "unstarted"}, "team": {"states": {"nodes": []}},
+                          "parent": None, "children": {"nodes": []}, "inverseRelations": {"nodes": rels}}}
+
+    def link(self, verify, times=1):
+        (self.proj / "verify.json").write_text(json.dumps(verify))
+        self.calls.clear(); self.said.clear()
+        for _ in range(times):
+            fc.fc_linear.linear_feature_after(self.root, self.proj)
+        return [c for c in self.calls if "mutation" in c[0]]
+
+    def test_adds_a_missing_link_once_and_keeps_other_blockers(self):
+        for verify in ({"after": "base"}, {"review_base": "compose/base"}):
+            self.blockers["ENG-1"] = ["ENG-5"]
+            self.assertEqual(self.link(verify, times=2), [(self.MAKE, {"a": "id-ENG-9", "b": "id-ENG-1"})])
+            self.assertEqual(self.said, ["linear ENG-1 blocked by ENG-9"])
+            self.projects.assert_called_with(self.root)
+        self.assertEqual(self.link({"after": "base"}), [])  # already blocked by ENG-9: no mutation, ENG-5 kept
+
+    def test_no_after_calls_nothing_and_a_missing_feature_is_one_line(self):
+        for verify in ({}, {"review_base": "main"}):
+            self.assertEqual((self.link(verify), self.calls, self.said), ([], [], []))
+        for name in ("gone", "bare"):
+            self.assertEqual(self.link({"after": name}), [])
+            self.assertEqual(self.said, [f"linear: no feature for project {name}, so ENG-1 is not linked"])
+
+    def test_sync_from_linear_links_after_refreshing_and_stdin_does_not(self):
+        data = {"feature": {"id": "ENG-1", "title": "F"}, "issues": [issue("ENG-3", "A", block(id="001", test="t"))]}
+        for stdin in (True, False):
+            calls = mock.Mock()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(data))), \
+                    mock.patch.object(fc.fc_linear, "linear_sync_payload", return_value=data), mock.patch("sys.stdout", io.StringIO()), \
+                    mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready), mock.patch.object(fc.fc_linear, "linear_feature_after", calls.after):
+                fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin, repo=str(self.root / "p" / "..")))
+            self.assertEqual(calls.mock_calls[-1:], [] if stdin else [mock.call.after(self.root.resolve(), self.proj)])  # last: after refresh_ready
