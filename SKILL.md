@@ -73,6 +73,8 @@ A parent's state rolls up from its children; set it in the same step as the chil
 A Backlog or Todo parent with an In Progress child is a bug: fix it the moment you see it.
 Canceled children do not count. A re-opened child (a failed fix round, a new task) moves its parents back to In Progress.
 Checkpoints, each followed by a reconcile of the whole tree (`compose linear list --parent <feature>`, then `--parent` each story, compared against this table and `compose status`): the end of planning (step 3b), right before and after every `run`, after every `verify`, after `clean`, and at session start (0r).
+At every checkpoint the team lead, and the designer in its project, runs `compose ready --project <slug>`.
+The CLI also refreshes the `Ready` marks after every roll-up, `sync`, the end of `run`, a `verify` PASS, and `clean`.
 
 ### 0h. Inside herdr, the fleet is visible and steerable: read sections/0h.md
 

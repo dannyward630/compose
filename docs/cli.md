@@ -52,7 +52,7 @@ These commands create, list, and clean up projects.
 | `init` | Creates branch `compose/<name>`, its worktree, and `.compose/<name>/`. `--here` uses this checkout, and `--after <project>` branches from another project |
 | `projects` | Lists every project with done/total, last activity, title, and states |
 | `status` | Shows every project with every task. `--watch` redraws every 2 s, and asks git only when a result file or a branch changed |
-| `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, and removes a fully merged project's worktree and branch. A branch is merged when it is contained in the target, when every commit has its patch there, when merging it would change nothing, or when GitHub has a merged PR for it; the review base is checked first. A kept branch is named with its first unmatched commit. `--delete-unmerged` also drops unreviewed layers |
+| `clean` | Drops merged layers, moves the tasks proven merged to Done in Linear and rolls their story and the feature up, refreshes the `Ready` marks, and removes a fully merged project's worktree and branch. A branch is merged when it is contained in the target, when every commit has its patch there, when merging it would change nothing, or when GitHub has a merged PR for it; the review base is checked first. A kept branch is named with its first unmatched commit. `--delete-unmerged` also drops unreviewed layers |
 | `trail` | Sets trail up again in the project's worktree |
 
 ### Tasks
@@ -61,7 +61,7 @@ These commands load the tasks, dispatch them, and steer the run.
 
 | Command | Does |
 |---|---|
-| `sync` | Stores the feature and its task issues, read from Linear with the workspace's key; `--stdin` reads JSON from stdin instead |
+| `sync` | Stores the feature and its task issues, read from Linear with the workspace's key, and refreshes the `Ready` marks; `--stdin` reads JSON from stdin instead |
 | `linear <verb>` | Reads and writes Linear with the workspace's key and prints compact lines: `get <id> [--body] [--comments]`, `list --parent <id>` or `--search "<terms>"` (with `--state`, `--label`), `create --title ... [--parent] [--label] [--state] [--blocked-by]`, `update <id>` (`--title`, `--state`, `--parent`, `--label`, `--blocked-by`, and `--section "## <heading>"`, `--append`, or `--description` for the body; `--section` replaces that H2 section, renames it when the body starts with another `## ` heading, and removes it when the body is empty), `comment <id>`, `labels [--create <name>]`, `project` (`--body` prints its description; `--section`, `--append`, or `--description` write it), and `doc create --title ...`, `doc list`, `doc get <id>`, or `doc update <id>` (`--title`, and the same body flags as `update`). Bodies come from `--file <path>` or stdin. `list`, `create`, and `doc list` use the project in `.compose/linear.json`; `get`, `update`, `comment`, and `doc update` refuse an issue or document in another project unless `--any-project`. `--json` prints the raw fields |
 | `tasks` | Prints the task list to review, with files, `after`, and tests. It warns on shared files |
 | `run` | Dispatches tasks. The flags are `--only 003,004`, `--attempts 3`, `--parallel N` (default `parallel` in the config, else 3), `--redo`, `--no-stack`, and `--trunk <branch>` |
@@ -72,7 +72,7 @@ These commands load the tasks, dispatch them, and steer the run.
 | `hold` | Holds tasks back from dispatch with `--only <ids> --reason "<why>"`. `--release <ids>` or `all` releases them |
 | `change start\|done\|undo` | Records a change of course. `undo C<n>` puts back what it touched |
 | `spec-check` | Prints one `PASS|FAIL <id> <level>: <gaps>` line per issue of a feature's tree. `--stdin` reads sync JSON with no project. Exits 1 on any FAIL |
-| `ready` | Labels `Ready` each story, and each feature of the epic, that is Todo or Backlog with every blocker Done or Canceled (a Design blocker counts at In Review); it writes `results/ready.json` and prints `can start now:`, and `compose linear labels --create Ready` creates the label |
+| `ready` | Labels `Ready` each story, and each feature of the epic, that is Todo or Backlog with every blocker Done or Canceled (a Design blocker counts at In Review); it writes `results/ready.json` and prints `can start now:`, and `compose linear labels --create Ready` creates the label. `sync`, the end of `run`, a `verify` PASS, and `clean` refresh the marks too |
 | `bench` | Runs a frozen task set across models and reports pass rate, attempts, p50/p95 time, and cost |
 
 ### Verify and stack
