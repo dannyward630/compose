@@ -16,20 +16,23 @@ def intro(title):
     print("│")
 
 
+def bars(lines):
+    for entry in lines:
+        for part in entry.split("\n"):
+            if part:
+                print(f"│  {part}")
+
+
 def note(title, lines):
     print("│")
     print(f"◇  {title}")
-    for line in lines:
-        print(f"│  {line}")
+    bars(lines)
 
 
 def step(name, word, lines=()):
     code = 32 if word in ("ok", "done") else 31 if word == "failed" else 36 if word.startswith("would") else 33
     print(f"◇  {name}: {paint(word, code)}")
-    for entry in lines:
-        for part in entry.split("\n"):
-            if part:
-                print(f"│  {part}")
+    bars(lines)
 
 
 def outro(line):
