@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, os, sys, unittest
+import io, os, sys, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -94,6 +94,64 @@ class Ask(unittest.TestCase):
         self.assertEqual((got, prompts), ("sk-or-test-x", ["◆  OpenRouter key: "]))
         self.assertNotIn("sk-or-test-x", shown)
         self.assertEqual(self.ask(fc_prompt.password, "Linear key", getpass=EOFError)[:2], ("", ["◆  Linear key: "]))
+
+class Spin(unittest.TestCase):
+    CLEAR = "\r\x1b[2K"
+
+    def spin(self, label, body, tty=True, no_color=""):
+        class Tty(Out):
+            flushes = 0
+            def flush(self): self.flushes += 1
+        self.out = out = Tty(); out.tty = tty
+        before = set(threading.enumerate())
+        with mock.patch("sys.stdout", out), mock.patch.dict(os.environ, {"NO_COLOR": no_color}):
+            try:
+                with fc_prompt.spin(label):
+                    body(out, before)
+            finally:
+                self.assertEqual(set(threading.enumerate()), before, "the spinner thread is still running")
+        return out.getvalue()
+
+    def first_frame(self, out):
+        end = time.monotonic() + 2
+        while not out.getvalue() and time.monotonic() < end: time.sleep(0.01)
+        return out.getvalue()
+
+    def test_off_a_terminal_the_block_runs_and_nothing_is_written(self):
+        ran = []
+        self.assertEqual(self.spin("gh", lambda out, before: (time.sleep(0.25), ran.append(1)), tty=False), "")
+        self.assertEqual(ran, [1])
+
+    def test_on_a_terminal_the_first_frame_shows_while_the_block_runs_and_the_line_is_cleared_last(self):
+        for no_color in ("", "1"):
+            with self.subTest(no_color=no_color):
+                seen = []
+                body = lambda out, before: seen.extend([self.first_frame(out)[:11],
+                                                        [t.daemon for t in set(threading.enumerate()) - before]])
+                shown = self.spin("gh auth", body, no_color=no_color)
+                self.assertEqual(seen, ["\r◒  gh auth", [True]])
+                self.assertTrue(shown.endswith(self.CLEAR), repr(shown))
+
+    def test_frames_follow_FRAMES_in_order_every_tenth_of_a_second_and_wrap_around(self):
+        shown = self.spin("pi auth", lambda out, before: time.sleep(0.65))
+        self.assertEqual(fc_prompt.FRAMES, "◒◐◓◑")
+        self.assertTrue(shown.startswith("\r") and shown.endswith(self.CLEAR), repr(shown))
+        frames = shown[1:-len(self.CLEAR)].split("\r")
+        self.assertTrue(5 <= len(frames) <= 9, frames)
+        self.assertEqual(frames, [f"{'◒◐◓◑'[i % 4]}  pi auth" for i in range(len(frames))])
+        self.assertGreaterEqual(self.out.flushes, len(frames))
+
+    def test_a_block_that_raises_still_stops_the_thread_and_the_error_propagates(self):
+        boom = KeyError("boom")
+        for tty, wait in ((True, True), (True, False), (False, False)):
+            def body(out, before):
+                if wait: self.first_frame(out)
+                raise boom
+            with self.subTest(tty=tty, wait=wait):
+                with self.assertRaises(KeyError) as raised: self.spin("uv", body, tty=tty)
+                self.assertIs(raised.exception, boom)
+                shown = self.out.getvalue()
+                self.assertTrue(shown.endswith(self.CLEAR) if tty else shown == "", repr(shown))
 
 if __name__ == "__main__":
     unittest.main()
