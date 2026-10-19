@@ -511,6 +511,51 @@ class PlannerRules(unittest.TestCase):
         self.assertRegex(self.brief, r"(?s)`after`.{0,80}`title`.{0,80}not .{0,20}key|`title`.{0,80}`after`.{0,80}not .{0,20}key")
 
 
+class LeanPlannerBrief(unittest.TestCase):
+    """The planner's "Stories missing" step proposes the thinnest stories, with split cues and a probe when none fits."""
+    setUp = PlannerRules.setUp
+
+    def step(self):
+        flat = " ".join(self.brief.split())
+        start, end = flat.find("Stories missing"), flat.find("Then check and cut each story")
+        self.assertGreater(start, -1)
+        self.assertGreater(end, start)
+        return flat[start:end]
+
+    def test_the_stories_missing_step_states_the_lean_story_rule(self):
+        step = self.step()
+        for phrase in ("a story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria",
+                       'split cues: "all", "every", several When/Then pairs, several outside systems',
+                       "when no split fits, a time-boxed probe answers the unknown first, then the split",
+                       "in ship order"):
+            self.assertIn(phrase, step)
+        self.assertNotIn("one per user-visible slice", self.brief)
+
+    def test_the_step_keeps_its_anchors_in_order(self):
+        flat = " ".join(self.brief.split())
+        at = -1
+        for kw in ("Stories missing", "map", "needs-user", "Then check and cut each story"):
+            i = flat.find(kw, at + 1)
+            self.assertGreater(i, at, f"{kw} missing or out of order")
+            at = i
+
+    def test_the_step_keeps_the_wrapped_line_style(self):
+        lines = self.brief.splitlines()
+        first = next(n for n, l in enumerate(lines) if "Stories missing" in l)
+        last = next(n for n, l in enumerate(lines) if "Then check and cut each story" in l)
+        for line in lines[first:last + 1]:
+            self.assertRegex(line, r"^ {5}\S")
+            self.assertLessEqual(len(line), 130)
+
+    def test_the_template_keeps_its_placeholders_and_house_text(self):
+        import string
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
+        for banned in ("—", "Product-Manager-Skills", "deanpeters"):
+            self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
+            self.assertNotIn(banned, self.brief)
+
+
 class DesignerBrief(unittest.TestCase):
     """The designer's brief names the project, its Figma file, and the tools and gates the designer must use."""
     def setUp(self):
