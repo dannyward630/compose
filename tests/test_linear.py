@@ -304,3 +304,56 @@ class ReadyRule(unittest.TestCase):
         rels = [(t, "NEB-1", "In Progress", ()) for t in ("related", "duplicate", "similar")]
         self.assertEqual(self.ready(self.node("NEB-2", "Todo", *rels), self.node("NEB-3", "Todo", rels[0], ("blocks", "NEB-4", "Todo", ()))),
                          ["NEB-2"])
+
+
+class MarkReady(unittest.TestCase):
+    UPDATE = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
+
+    def setUp(self):
+        self.reads, self.updates, self.said, self.parent = [], [], [], None
+        self.team = [{"id": "l-bug", "name": "Bug"}, {"id": "l-ready", "name": "Ready"}]
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", self.said.append)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        if query == fc.fc_linear.LINEAR_READY_TREE:
+            self.reads.append(variables)
+            return {"issue": {"team": {"labels": {"nodes": self.team}}, "children": {"nodes": self.children}, "parent": self.parent}}
+        self.assertEqual(query, self.UPDATE)
+        self.updates.append(variables)
+        return {"issueUpdate": {"success": True}}
+
+    @staticmethod
+    def node(ident, state, *labels, blocked=False):
+        rels = [{"type": "blocks", "issue": {"identifier": "ENG-99", "state": {"name": "Todo"}, "labels": {"nodes": []}}}] if blocked else []
+        return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "state": {"name": state},
+                "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels}}
+
+    def mark(self, *expected):
+        self.assertEqual(fc.fc_linear.linear_mark_ready("ENG-1"), [{"id": i, "title": "T " + i} for i in expected])
+        self.assertEqual(self.reads, [{"id": "ENG-1"}])
+
+    def test_adds_removes_and_leaves_the_label_keeping_other_labels(self):
+        self.children = [self.node("ENG-2", "Todo", "Bug", "Area"), self.node("ENG-3", "Todo", "Bug", "Ready", "Area", blocked=True),
+                         self.node("ENG-4", "Todo", "Ready"), self.node("ENG-5", "Done", "Bug"), self.node("ENG-6", "Backlog")]
+        self.mark("ENG-2", "ENG-4", "ENG-6")
+        self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-bug", "l-area", "l-ready"]},
+                                             {"id": "id-ENG-3", "labels": ["l-bug", "l-area"]}, {"id": "id-ENG-6", "labels": ["l-ready"]}])
+        self.assertCountEqual(self.said, ["linear ENG-2 -> Ready", "linear ENG-3 -> not Ready", "linear ENG-6 -> Ready"])
+
+    def test_the_epic_children_follow_the_feature_children(self):
+        self.team = [{"id": "l-ready", "name": "READY"}]
+        self.children = [self.node("ENG-9", "Todo")]
+        self.parent = {"children": {"nodes": [self.node("ENG-1", "Todo", "READY"), self.node("ENG-5", "In Progress", "READY"), self.node("ENG-3", "Todo")]}}
+        self.mark("ENG-9", "ENG-1", "ENG-3")
+        self.assertCountEqual(self.updates, [{"id": "id-ENG-9", "labels": ["l-ready"]}, {"id": "id-ENG-5", "labels": []},
+                                             {"id": "id-ENG-3", "labels": ["l-ready"]}])
+        self.assertCountEqual(self.said, ["linear ENG-9 -> Ready", "linear ENG-5 -> not Ready", "linear ENG-3 -> Ready"])
+
+    def test_no_ready_label_on_the_team_raises_before_any_update(self):
+        self.team = [{"id": "l-bug", "name": "Bug"}, {"id": "l-not", "name": "Not Ready"}]
+        self.children = [self.node("ENG-2", "Todo"), self.node("ENG-3", "Done", "Ready")]
+        with self.assertRaises(RuntimeError) as e:
+            fc.fc_linear.linear_mark_ready("ENG-1")
+        self.assertEqual(str(e.exception), "team has no label 'Ready'; compose linear labels --create Ready makes it")
+        self.assertEqual(self.updates, [])
