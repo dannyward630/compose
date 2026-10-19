@@ -1,5 +1,5 @@
 """Setup's line prompts: frame lines, numbered, yes-or-no, and hidden questions, and a spinner line. Stdlib only; imports no fc_ module."""
-import getpass, os, sys
+import contextlib, getpass, os, sys, threading
 
 
 FRAMES = "◒◐◓◑"
@@ -80,8 +80,6 @@ def password(label):
 
 
 def spin(label):
-    import contextlib, threading
-
     @contextlib.contextmanager
     def spinner():
         out = sys.stdout

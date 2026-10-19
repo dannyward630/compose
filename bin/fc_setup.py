@@ -1,14 +1,13 @@
 """`compose setup [--yes]`: one prompt flow on a terminal, every default otherwise."""
 import shutil, sys
 from pathlib import Path
-import fc_checks
+import fc_checks, fc_config, fc_finish, fc_keys, fc_prompt, fc_steprun, fc_steps
 
 
 MODES = ("Quick start (every default, designer extras off)", "Custom (choose each step)")
 
 
 def walk_steps(checkout, custom, yes, dry=False):
-    import fc_prompt, fc_steps, fc_steprun
     claude = shutil.which("claude") is not None
     results, designer = [], False
     for row in fc_steps.STEPS:
@@ -41,7 +40,6 @@ def walk_steps(checkout, custom, yes, dry=False):
 
 
 def run_setup(checkout, yes, dry=False):
-    import fc_config, fc_finish, fc_keys, fc_prompt, fc_steps
     fc_prompt.intro("compose setup" + (" (dry run)" if dry else ""))
     custom = False
     if not yes:
