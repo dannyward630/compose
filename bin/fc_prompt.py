@@ -1,5 +1,5 @@
 """Setup's line prompts: frame lines, numbered, yes-or-no, and hidden questions, and a spinner line. Stdlib only; imports no fc_ module."""
-import os, sys
+import getpass, os, sys
 
 
 FRAMES = ""
@@ -38,15 +38,45 @@ def outro(line):
 
 
 def select(question, options, default=0):
-    raise NotImplementedError("select")
+    print(f"◆  {question}")
+    for number, option in enumerate(options, 1):
+        print(f"│  {number}) {option}")
+    while True:
+        try:
+            answer = input(f"│  number [{default + 1}]: ").strip()
+        except EOFError:
+            return default
+        if not answer:
+            return default
+        try:
+            number = int(answer)
+        except ValueError:
+            number = None
+        if number is not None and 1 <= number <= len(options):
+            return number - 1
+        print(f"│  type a number from 1 to {len(options)}")
 
 
 def confirm(question, default):
-    raise NotImplementedError("confirm")
+    prompt = f"◆  {question} (Y/n) " if default else f"◆  {question} (y/N) "
+    while True:
+        try:
+            answer = input(prompt).strip().lower()
+        except EOFError:
+            return default
+        if not answer:
+            return default
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
 
 
 def password(label):
-    raise NotImplementedError("password")
+    try:
+        return getpass.getpass(f"◆  {label}: ").strip()
+    except EOFError:
+        return ""
 
 
 def spin(label):
