@@ -1,6 +1,0 @@
-[project]
-name = "compose-setup"
-version = "0.0.0"
-description = "The guided `compose setup`"
-requires-python = ">=3.9"
-dependencies = ["textual==8.2.8"]
