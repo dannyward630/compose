@@ -141,8 +141,8 @@ The figures in this README come from small benchmarks and one prototype, and the
    ```
    It clones `compose` into `~/.compose/src` (`COMPOSE_INSTALL_DIR` picks another place), links `compose` and the Claude skill, installs uv when it is missing, and starts `compose setup`.
 2. Answer `compose setup`.
-   On a terminal it is a guided Textual screen: pick the steps, enter the keys, skip what you don't need.
-   With `--yes`, or when there is no terminal, it takes every default through a plain path, never prompts, and ends by listing what is still missing.
+   On a terminal it asks one question at a time: Quick start or Custom, a yes or no for each missing step under Custom, then each key with hidden input.
+   With `--yes`, or when there is no terminal, it runs the same steps with every default, never prompts, and ends by listing what is still missing.
    It installs the tools `compose` needs, links the CLI and the skill, and saves your keys in `~/.compose/auth.json` (mode 600).
    It sets up herdr with the notification settings `compose` needs, declares pi's OpenRouter provider, writes the default model choices, and ends with a model probe.
    Claude Code is not installed for you: setup runs the steps that do not need it, then prints the install line and asks you to run `compose setup` again.
@@ -173,7 +173,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 
 | Command | What it does |
 |---|---|
-| `compose setup [--yes]` | Installs and configures everything `compose` needs: the guided setup on a terminal, the plain path with `--yes` or no terminal |
+| `compose setup [--yes]` | Installs and configures everything `compose` needs, one question at a time on a terminal; `--yes`, or no terminal, takes every default |
 | `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |
 | `compose doctor` | Checks every setup step and prints the fix for each missing one; `init` runs it first |
 | `compose init --project <name> [--branch <branch>]` | Creates the project's branch (`compose/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
@@ -207,8 +207,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 Run the CLI tests with `python3 -m unittest discover -s tests`.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
 Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
-The CLI core is stdlib; `setup/` and `jev/` are uv projects, and `bp/` is one Node file with no dependencies.
-Run the setup app's tests with `uv run --locked --project setup python -m unittest discover -s setup/tests -t setup`.
+The CLI core is stdlib; `jev/` is a uv project, and `bp/` is one Node file with no dependencies.
 
 ## Credits
 
