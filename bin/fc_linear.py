@@ -167,11 +167,13 @@ def linear_roll_up(proj, ident, verified=False, moved=None):
                 target = "In Review" if verified else "In Progress"
             if target:
                 linear_move(issue, target)
+            refresh_ready(proj)
             return
         if target:
             linear_move(issue, target)
             moved[issue["identifier"]] = target
         ident = (issue.get("parent") or {}).get("identifier")
+    refresh_ready(proj)
 
 def linear_event(proj, meta, event, result=None):
     """One task event through the state table: `dispatched` moves the task In Progress, `passed` and `hand_done` In Review
@@ -314,7 +316,22 @@ def cmd_ready(a):
     print(ready_line(items))
 
 def refresh_ready(proj, feature=None):
-    raise NotImplementedError("refresh_ready")
+    """The best-effort refresh of the Ready marks after roll-ups, sync, and clean: mark what can start now and store the
+    list in results/ready.json. `feature` defaults to the project's linear.json feature; a failure is one line, never raised."""
+    if not feature:
+        link = proj / "linear.json"
+        feature = json.loads(link.read_text()).get("feature") if link.exists() else None
+        if not feature:
+            return
+    if not linear_ready():
+        return
+    try:
+        items = linear_mark_ready(feature)
+    except Exception as e:  # noqa: BLE001
+        fc_core.say(f"linear ready: {str(e)[:200]}")
+        return
+    if (proj / "results").exists():
+        fc_core.atomic_write(proj / "results" / "ready.json", json.dumps(items, indent=2))
 
 def linear_feature_after(repo, proj):
     raise NotImplementedError("linear_feature_after")
@@ -335,3 +352,5 @@ def cmd_sync(a):
     print(f"{f['id']} {f['title']}: {len(tasks)} task(s) synced")
     for m in tasks:
         print(f"  {m['id']:4} {m['linear']:9} {m['linear_state'][:12]:12} {m['title'][:50]:50} after {m['after'] or '-'}")
+    if not a.stdin:
+        refresh_ready(proj)

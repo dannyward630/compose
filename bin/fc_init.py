@@ -438,6 +438,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             print(f"clean  {pbranch}: kept unmerged" + (f", {fu}" if fu else ""))
     print(line)
     fc_linear.linear_merged(link.get("feature"), [metas[t] for t in merged], project_merged)
+    fc_linear.refresh_ready(proj, link.get("feature"))
 
 def cmd_clean(a):
     main_repo = Path(a.repo).resolve()
