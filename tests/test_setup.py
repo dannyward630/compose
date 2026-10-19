@@ -131,8 +131,9 @@ def code_nodes(path):
     return [n for n in ast.walk(tree) if id(n) not in docs]
 
 class NoTextualApp(unittest.TestCase):
-    def test_the_setup_directory_is_gone(self):
-        self.assertFalse((CHECKOUT / "setup").exists())
+    def test_git_tracks_nothing_under_setup(self):
+        tracked = subprocess.run(["git", "ls-files", "--", "setup"], cwd=CHECKOUT, capture_output=True, text=True, check=True).stdout
+        self.assertEqual(tracked, "")
 
     def test_no_bin_file_imports_the_app_or_textual(self):
         hits = []
