@@ -26,6 +26,14 @@ def repo():
     return r, run
 
 
+def own_file_commit(run, cwd, base, name, msg):
+    """A commit on `base` that adds one file of its own, so merging it into base changes base's tree."""
+    blob = run("hash-object", "-w", "/dev/null", cwd=cwd).stdout.strip()
+    entries = run("ls-tree", f"{base}^{{tree}}", cwd=cwd).stdout + f"100644 blob {blob}\t{name}\n"
+    tree = subprocess.run(["git", "mktree"], cwd=cwd, input=entries, check=True, capture_output=True, text=True).stdout.strip()
+    return run("commit-tree", tree, "-p", base, "-m", msg, cwd=cwd).stdout.strip()
+
+
 class TestCrewWorktrees(unittest.TestCase):
     """Test-writing teammates write on their own branches; collect brings their commits back in task order."""
     def setUp(self):
@@ -427,7 +435,7 @@ class ProjectBranch(unittest.TestCase):
         (wt / "f.txt").write_text("f\n"); git("add", "f.txt"); git("commit", "-qm", "f")  # unmerged project: its worktree stays
         for b in ("compose/p-001", "compose/p-tests-001", "compose/p-002-bench-x", "compose/p-layer-01", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"):
             git("branch", b, "compose/p")
-        git("branch", "compose/p-003", git("commit-tree", "main^{tree}", "-p", "main", "-m", "unmerged"))
+        git("branch", "compose/p-003", own_file_commit(self.run, wt, "main", "p003.txt", "unmerged"))
         f.write_text(json.dumps({**json.loads(f.read_text()), "task_prefix": "compose/p-"}))
         self.cli("clean", "--project", "p")
         self.assertEqual(sorted(b for b in self.branches() if b.startswith("compose/p-")), ["compose/p-003", "compose/p-2", "compose/p-2-001", "compose/p-2-tests-001"])
@@ -518,8 +526,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.proj = self.r.parent / "compose-p" / ".compose" / "p"
         tip = self.run("rev-parse", "main").stdout.strip()
         for b in ("fast/p/001", "fast/p/002", "fast/p/layer-01", "fast/p/layer-02"):  # commits on top of main: never ancestors of it
-            c = self.run("commit-tree", "main^{tree}", "-p", tip, "-m", b).stdout.strip()
-            self.run("branch", b, c)
+            self.run("branch", b, own_file_commit(self.run, self.r, tip, b.replace("/", "-") + ".txt", b))
         self.run("push", "-q", "origin", "fast/p/layer-01", "fast/p/layer-02")
         (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
 
@@ -659,6 +666,153 @@ class CleanLinearLine(unittest.TestCase):
         linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("Done", "ENG-1"))
         self.assertEqual(self.lines("ENG-1", [], True, linear=linear), ["linear ENG-1 -> Done"])
 
+
+class MergeChangesNothing(unittest.TestCase):
+    """A branch whose merge into a target leaves the target's tree as it is counts as merged, whatever its patches say."""
+    def test_a_merge_that_changes_nothing_proves_a_branch_merged_after_the_earlier_proofs(self):
+        r, run = repo()
+        def branch(name, text, extra=None):
+            run("checkout", "-q", "-b", name, "main"); (r / "a.txt").write_text(text)
+            if extra: (r / "b.txt").write_text(extra)
+            run("add", "-A"); run("commit", "-qm", name)
+        branch("b", "base\nx\n"); branch("same", "base\nx\n", "y\n"); branch("conf", "base\nz\n")  # same: b's change in another patch
+        run("checkout", "-q", "-b", "pick", "main"); run("cherry-pick", "-x", "b")  # -x: a new commit, never b itself
+        why = lambda b, *t: fc.fc_init.merge_evidence(r, b, list(t), False)
+        self.assertEqual(why("b", "nope", "conf", "same"), "merging it into same changes nothing")
+        self.assertEqual(why("main", "same"), "contained in same")
+        self.assertEqual(why("b", "pick", "same"), "contained in pick by patch")
+        self.assertEqual(why("b", "same", "pick"), "merging it into same changes nothing")  # targets in order
+        self.assertIsNone(why("b", "main", "conf"))  # a real change, then a conflict
+
+    GH = """#!/usr/bin/env python3
+import json, subprocess, sys; from pathlib import Path
+git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+a = sys.argv[1:]
+if a[:2] == ["stack", "--version"]: sys.exit(print("gh stack (fake)"))
+f = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "fake-gh-stack.json"; s = json.loads(f.read_text()) if f.exists() else None
+if a[:2] == ["stack", "init"]: f.write_text(json.dumps({"trunk": a[a.index("--base") + 1], "branches": [{"name": b} for b in a[4:]]}))
+elif a[:2] == ["stack", "view"] and s and git("branch", "--show-current") in [b["name"] for b in s["branches"]]: print(json.dumps(s))
+elif a[:2] == ["stack", "unstack"]: f.unlink(missing_ok=True)
+else: sys.exit(1)
+"""
+
+    def test_clean_removes_a_stack_recut_on_a_moved_main_once_it_lands_and_moves_linear(self):
+        r, run = repo()
+        bin_ = Path(tempfile.mkdtemp()).resolve(); (bin_ / "gh").write_text(self.GH); (bin_ / "gh").chmod(0o755)
+        env = {**os.environ, **ENV, "PATH": f"{bin_}:{os.environ['PATH']}"}
+        pins = 'M = {\n    "core": ("now",),\n    "keys": ("key_status", "linear_connected", "save_key"),\n    "steps": ("FLOORS",),\n    "worktree": ("task_prefix", "task_branch"),\n}\n'
+        (r / "pins.py").write_text(pins); run("add", "-A"); run("commit", "-qm", "pins")
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(r)], check=True, capture_output=True, env=env)
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        def commit(f, text, msg, cwd=wt):
+            (cwd / f).parent.mkdir(parents=True, exist_ok=True); (cwd / f).write_text(text)
+            run("add", "-A", cwd=cwd); run("commit", "-qm", msg, cwd=cwd)
+        commit("pins.py", pins.replace('"linear_connected", ', ""), "groundwork")
+        commit("tests/t001.txt", "t\n", "test 001"); commit("tests/t002.txt", "t\n", "test 002")
+        tasks = [{"id": t, "title": t, "files": [f"src{t}.txt"], "protected": [f"tests/t{t}.txt"], "linear": l, "after": "", "test": "true"} for t, l in (("001", "ENG-3"), ("002", "ENG-4"))]
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks})); (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        for t in ("001", "002"):
+            run("checkout", "-q", "-b", f"compose/p-{t}", "compose/p", cwd=wt); commit(f"src{t}.txt", "s\n", f"build {t}")
+            run("checkout", "-q", "compose/p", cwd=wt)
+        commit("pins.py", pins.replace('("task_prefix", "task_branch")', '("task_prefix", "rename", "task_branch")'), "main moves", cwd=r)  # inside the groundwork's diff context
+        subprocess.run([CLI, "stack", "--repo", str(wt), "--project", "p"], check=True, capture_output=True, text=True, env=env)
+        run("merge", "-q", "--ff-only", run("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").stdout.split()[-1])
+        linear, out = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2")), io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True)
+        left = run("branch", "--format=%(refname:short)").stdout.split()
+        self.assertEqual([b for b in left if b in ("compose/p", "compose/p-001", "compose/p-002")], [], out.getvalue())
+        self.assertFalse(wt.exists())
+        self.assertNotIn("UNMERGED", out.getvalue()); self.assertNotIn("kept unmerged", out.getvalue())
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
+
+
+class ReviewBaseFirst(unittest.TestCase):
+    """Task branches are checked against the review base first, and each kept branch names its first commit with no patch there."""
+    def setUp(self):
+        self.r, self.run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        self.wt = self.r.parent / "compose-p"; self.proj = self.wt / ".compose" / "p"
+
+    def commit(self, branch, *subjects):
+        """Commits on a new branch cut from compose/p (on compose/p itself when branch is None); their short shas, oldest first."""
+        if branch:
+            self.run("checkout", "-q", "-b", branch, "compose/p", cwd=self.wt)
+        for s in subjects:
+            (self.wt / s.replace(" ", "_")).write_text(f"{s}\n"); self.run("add", "-A", cwd=self.wt); self.run("commit", "-qm", s, cwd=self.wt)
+        self.run("checkout", "-q", "compose/p", cwd=self.wt)
+        return [self.run("rev-parse", "--short", f"{branch or 'compose/p'}~{i}").stdout.strip() for i in reversed(range(len(subjects)))]
+
+    def clean(self, linear=None):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
+            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+        return out.getvalue().splitlines()
+
+    def test_task_branches_meet_the_review_base_first_and_kept_ones_name_their_first_unmatched_commit(self):
+        self.commit("compose/p-002", "build 002"); self.run("merge", "-q", "--ff-only", "compose/p-002", cwd=self.wt)
+        self.commit("compose/p-001", "build 001"); self.run("branch", "compose/base", "compose/p-001")  # 001 only in the review base
+        three = self.commit("compose/p-003", "add three", "fix three")  # against main, build 002 would come first
+        four, layer = self.commit("compose/p-004", "add four"), self.commit("compose/p-layer-01", "stack one")
+        cfg = json.loads((self.proj / "verify.json").read_text()); cfg["review_base"] = "compose/base"
+        (self.proj / "verify.json").write_text(json.dumps(cfg))
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "linear": f"ENG-{n}", "after": "", "test": "true"} for n, t in enumerate(("001", "002", "003", "004"), 3)]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks})); (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), **{f"ENG_{n}": ("In Review", "ENG-2") for n in range(3, 7)})
+        lines = self.clean(linear)
+        self.assertIn("clean  compose/p-001: contained in compose/base", lines)
+        self.assertIn("clean  compose/p-002: contained in compose/base", lines)  # compose/p holds it too
+        self.assertIn(f"clean  compose/p-003: kept unmerged, first unmatched commit {three[0]} add three and 1 more", lines)
+        self.assertIn(f"clean  compose/p-004: kept unmerged, first unmatched commit {four[0]} add four", lines)
+        self.assertIn(f"clean  compose/p-layer-01: kept unmerged, first unmatched commit {layer[0]} stack one", lines)
+        self.assertEqual(self.run("branch", "--list", "compose/p-*", "--format=%(refname:short)").stdout.split(), ["compose/p-003", "compose/p-004", "compose/p-layer-01"])
+        self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-6"), ["Done", "Done", "In Review", "In Review"])
+
+    def test_a_project_branch_kept_as_not_merged_yet_names_its_first_unmatched_commit_before_the_summary(self):
+        first = self.commit(None, "groundwork one", "groundwork two")
+        lines = self.clean()
+        kept = f"clean  compose/p: kept unmerged, first unmatched commit {first[0]} groundwork one and 1 more"
+        self.assertIn(kept, lines, lines)
+        self.assertLess(lines.index(kept), next(i for i, l in enumerate(lines) if "project branch compose/p not merged yet" in l))
+        self.assertTrue(self.wt.exists())
+
+
+class ProjectBranchNamedFirst(unittest.TestCase):
+    """The summary line of a removed project branch names the branch first, then why clean removed it, whatever the why."""
+    def summary(self, branch, land, delete_unmerged=False):
+        """Init project p on `branch` with one commit of its own, let `land` move main, clean, and return clean's lines and the worktree."""
+        r, run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--branch", branch, "--repo", str(r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        (wt / "a.txt").write_text("base\nx\n"); run("commit", "-qam", "groundwork", cwd=wt)
+        land(r, run, proj)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out):
+            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True, delete_unmerged=delete_unmerged)
+        return out.getvalue().splitlines(), wt
+
+    def same_change_with_more(self, r, run, proj):  # main holds the groundwork's change inside a bigger patch
+        (r / "a.txt").write_text("base\nx\n"); (r / "b.txt").write_text("y\n"); run("add", "-A"); run("commit", "-qm", "more")
+
+    def layer_on_main(self, r, run, proj):  # main moves on its own; the one layer built from the branch sits in it
+        (r / "c.txt").write_text("c\n"); run("add", "-A"); run("commit", "-qm", "main moves")
+        run("branch", "compose/p-layer-01", "main"); (proj / "layers.json").write_text('{"compose/p-layer-01": ["001"]}')
+
+    def test_each_why_reads_after_the_branch_name(self):
+        for branch, land, why, delete_unmerged in (
+                ("compose/p", lambda r, run, proj: run("merge", "-q", "--ff-only", "compose/p"), "contained in main", False),
+                ("js-1-p", lambda r, run, proj: run("merge", "-q", "--ff-only", "js-1-p"), "contained in main", False),
+                ("compose/p", lambda r, run, proj: run("cherry-pick", "-x", "compose/p"), "contained in main by patch", False),
+                ("compose/p", self.same_change_with_more, "merging it into main changes nothing", False),
+                ("compose/p", self.layer_on_main, "every layer built from it is merged (compose/p-layer-01)", False),
+                ("compose/p", lambda r, run, proj: None, "UNMERGED, removed on --delete-unmerged", True)):
+            with self.subTest(why=why, branch=branch):
+                lines, wt = self.summary(branch, land, delete_unmerged)
+                want = f"clean  p: task branches all merged and removed; project branch {branch}: {why}; removed worktree {wt} and branch {branch}"
+                self.assertIn(want, lines, lines)
+                self.assertFalse(wt.exists())
 
 
 if __name__ == "__main__":
