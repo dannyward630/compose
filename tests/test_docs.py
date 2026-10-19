@@ -1101,5 +1101,46 @@ class TellWhatCanStart(unittest.TestCase):
         self.assertTrue(lines[i + 2].startswith("It is never inline"))
 
 
+class ReadyEventDocs(unittest.TestCase):
+    PROJECTS = ["setup", "update", "doctor", "init", "projects", "status", "clean", "trail"]
+
+    def rows(self, start, end):
+        sec = read("docs/cli.md").split(start + "\n", 1)[1].split(end, 1)[0]
+        return [l for l in sec.splitlines() if l.startswith("| `")]
+
+    def row(self, rows, cmd):
+        found = [l for l in rows if l.startswith(f"| `{cmd}`")]
+        self.assertEqual(len(found), 1, f"one {cmd} row in its section")
+        self.assertEqual(len([l for l in read("docs/cli.md").splitlines() if l.startswith(f"| `{cmd}`")]), 1)
+        self.assertNotIn("\u2014", found[0])
+        return found[0]
+
+    def projects_rows(self):
+        return self.rows("### Projects", "### Tasks")
+
+    def test_watch_row_names_the_ready_event_and_only_new_issues(self):
+        row = self.row(self.rows("### Teammates and supervision", "### Workspaces"), "watch")
+        self.assertIn("event ready=<ids>", row)
+        self.assertRegex(row, r"\bonly\b[^|]*\bjust became ready\b")
+        for kept in ("Blocks until something happens", "--now"):
+            self.assertIn(kept, row)
+
+    def test_status_row_shows_the_can_start_now_line_from_the_ready_list(self):
+        row = self.row(self.projects_rows(), "status")
+        self.assertIn("can start now:", row)
+        self.assertIn("results/ready.json", row)
+        self.assertIn("--watch", row)
+
+    def test_projects_row_ends_each_line_with_can_start_now(self):
+        row = self.row(self.projects_rows(), "projects")
+        self.assertRegex(row, r"\bend(s|ing)? with\b[^|]*can start now:")
+        self.assertIn("done/total", row)
+
+    def test_only_existing_rows_change(self):
+        self.assertEqual([r.split("`")[1] for r in self.projects_rows()], self.PROJECTS)
+        sup = self.rows("### Teammates and supervision", "### Workspaces")
+        self.assertFalse([r for r in sup if "ready" in r.split("|")[1]], "no new ready row in supervision")
+
+
 if __name__ == "__main__":
     unittest.main()
