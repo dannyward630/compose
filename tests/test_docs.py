@@ -1142,5 +1142,57 @@ class ReadyEventDocs(unittest.TestCase):
         self.assertFalse([r for r in sup if "ready" in r.split("|")[1]], "no new ready row in supervision")
 
 
+class LinkFeatures(unittest.TestCase):
+    EPIC = "- Epic: one planner per feature, in parallel."
+    LINK = "Link a feature blocked by another feature only when it needs that feature's code."
+
+    def bullet(self):
+        lines = read("sections/0a.md").splitlines()
+        i = next(i for i, l in enumerate(lines) if l.startswith("- A project made with `init --after <other-slug>`"))
+        end = next(j for j in range(i + 1, len(lines)) if not lines[j].startswith("  "))
+        return lines, lines[i:end]
+
+    def one(self, lines, bullet, *words):
+        found = [l for l in bullet if all(w in l for w in words)]
+        self.assertEqual(len(found), 1, f"one line in the --after bullet with {words}")
+        self.assertEqual([l for l in lines if all(w in l for w in words)], found, "and nowhere else in 0a")
+        self.assertNotRegex(found[0], r"[.!?] [A-Z`]", "one sentence per line")
+        return found[0]
+
+    def test_after_bullet_says_sync_links_the_features(self):
+        lines, bullet = self.bullet()
+        line = self.one(lines, bullet, "`sync`", "blocked by")
+        self.assertRegex(line, r"`sync` links\b")
+        self.assertEqual(line.count("feature issue"), 2)
+        self.assertIn("that project's feature issue", line)
+
+    def test_after_bullet_links_only_on_a_code_need(self):
+        lines, bullet = self.bullet()
+        line = self.one(lines, bullet, "only when", "needs that feature's code")
+        self.assertIn("blocked by", line)
+        for verb in ("calls", "imports", "edits"):
+            self.assertIn(verb, line)
+        self.assertIn("what that feature builds", line)
+        self.assertNotIn("`sync`", line)
+
+    def test_after_bullet_keeps_its_lines(self):
+        _, bullet = self.bullet()
+        self.assertIn("records it as `review_base` in its `verify.json`", bullet[0])
+        for kept in ("Its layers stack on that project's branch", "`clean` counts a merge into either."):
+            self.assertTrue(any(kept in l for l in bullet[1:]), kept)
+        self.assertFalse([l for l in bullet if "\u2014" in l])
+
+    def test_planner_epic_line_ends_with_the_link_rule(self):
+        brief = read("bin/fc_briefs.py").split('PLANNER_BRIEF = """', 1)[1].split('"""', 1)[0]
+        lines = [l.strip() for l in brief.splitlines()]
+        epic = [i for i, l in enumerate(lines) if l.startswith(self.EPIC)]
+        self.assertEqual(len(epic), 1)
+        line = lines[epic[0]]
+        self.assertTrue(line.endswith(" " + self.LINK), line)
+        self.assertIn("Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop.", line)
+        self.assertEqual(brief.count(self.LINK), 1)
+        self.assertTrue(lines[epic[0] + 1].startswith("- Feature: "))
+
+
 if __name__ == "__main__":
     unittest.main()
