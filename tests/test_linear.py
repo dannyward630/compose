@@ -545,3 +545,44 @@ class FeatureAfterLink(unittest.TestCase):
                     mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready), mock.patch.object(fc.fc_linear, "linear_feature_after", calls.after):
                 fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin, repo=str(self.root / "p" / "..")))
             self.assertEqual(calls.mock_calls[-1:], [] if stdin else [mock.call.after(self.root.resolve(), self.proj)])  # last: after refresh_ready
+
+
+class ReadyTreeQuery(unittest.TestCase):
+    FRAGMENT = """fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } }
+  inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
+
+    @staticmethod
+    def norm(text):
+        return " ".join(text.replace("{", " { ").replace("}", " } ").split())
+
+    def fields(self, body):
+        """Each top-level selection of body with its block, normalized; text left after the last block is its own item."""
+        out, depth, cur = [], 0, ""
+        for ch in body:
+            cur += ch
+            depth += {"{": 1, "}": -1}.get(ch, 0)
+            if ch == "}" and depth == 0:
+                out.append(self.norm(cur)); cur = ""
+        return out + ([self.norm(cur)] if cur.strip() else [])
+
+    def inner(self, field):
+        return field[field.index("{") + 1:field.rindex("}")]
+
+    def test_braces_balance_and_no_prefix_closes_more_than_it_opens(self):
+        depth = 0
+        for i, ch in enumerate(fc.fc_linear.LINEAR_READY_TREE):
+            depth += {"{": 1, "}": -1}.get(ch, 0)
+            self.assertGreaterEqual(depth, 0, f"closes more than it opens at {i}")
+        self.assertEqual(depth, 0)
+
+    def test_team_holds_only_labels_and_children_and_parent_sit_in_issue(self):
+        op = (self.fields(fc.fc_linear.LINEAR_READY_TREE) or [""])[0]
+        self.assertTrue(op.startswith("query($id: String!) {"), op)
+        issue, *extra = self.fields(self.inner(op))
+        self.assertEqual(extra, [])  # the operation holds only issue
+        self.assertTrue(issue.startswith("issue(id: $id) {"), issue)
+        self.assertEqual(self.fields(self.inner(issue)), ["team { labels { nodes { id name } } }", "children { nodes { ...ReadyNode } }",
+                                                          "parent { children { nodes { ...ReadyNode } } }"])
+
+    def test_the_fragment_is_unchanged_and_follows_the_operation(self):
+        self.assertEqual(self.fields(fc.fc_linear.LINEAR_READY_TREE)[1:], [self.norm(self.FRAGMENT)])
