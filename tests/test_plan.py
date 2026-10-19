@@ -143,3 +143,41 @@ class CriticalPath(unittest.TestCase):
         for lanes in ([], [lane("NEB-90")], [lane("NEB-90", story("NEB-3", "Done"), story("NEB-4", "Canceled", ("NEB-3", "Done")))]):
             self.assertEqual(fc_plan.critical_path_text(lanes).strip(), "Nothing left to schedule.")
             self.assertEqual(fc_plan.plan_sections(lanes)["## Critical path"], fc_plan.critical_path_text(lanes))
+
+
+class PlanLinkPlacement(unittest.TestCase):
+    URL = "https://linear.app/x/document/d1"
+    LINK = "* Delivery plan: [NEB-1: delivery plan](https://linear.app/x/document/d1)"
+
+    def link(self, description):
+        return fc_plan.with_plan_link(description, "NEB-1: delivery plan", self.URL)
+
+    def test_link_follows_notes_own_lines_before_its_first_subsection(self):
+        desc = ("## Goal\n\n### Detail\n\nShip it.\n\n## Notes\n\n* old note\n* second\n\n"
+                "### Risks\n\n* slow\n\n### Later\n\n* more\n\n## Constraints\n\n* none\n")
+        out = self.link(desc)
+        self.assertTrue(out.startswith(desc[:desc.index("\n\n### Risks")] + "\n" + self.LINK + "\n"))
+        self.assertTrue(out.endswith(desc[desc.index("### Risks"):]))
+        self.assertEqual([l for l in out.splitlines() if l.strip()], [
+            "## Goal", "### Detail", "Ship it.", "## Notes", "* old note", "* second", self.LINK, "### Risks", "* slow", "### Later", "* more", "## Constraints", "* none"])
+
+    def test_link_follows_the_last_own_line_of_notes_without_subsections(self):
+        desc = "## Notes\n\n* a\n\nSome text.\n\n\n## Constraints\n\n### Hard\n\n* none\n"
+        out = self.link(desc)
+        self.assertTrue(out.startswith("## Notes\n\n* a\n\nSome text.\n" + self.LINK + "\n"))
+        self.assertTrue(out.endswith(desc[desc.index("## Constraints"):]))
+        self.assertEqual(out.splitlines().count(self.LINK), 1)
+        out = self.link("## Goal\n\nShip it.\n\n## Notes\n\n* a\n\n\n")
+        self.assertTrue(out.startswith("## Goal\n\nShip it.\n\n## Notes\n\n* a\n" + self.LINK))
+        self.assertEqual([l for l in out.splitlines() if l.strip()][-2:], ["* a", self.LINK])
+
+    def test_notes_with_only_subsections_get_the_link_first_between_blank_lines(self):
+        desc = "## Goal\n\nShip it.\n\n## Notes\n\n### Risks\n\n* slow\n\n## Constraints\n\n* none\n"
+        self.assertEqual(self.link(desc), desc.replace("## Notes\n\n", "## Notes\n\n" + self.LINK + "\n\n"))
+        self.assertEqual(self.link("## Notes\n### Risks\n* slow\n"), "## Notes\n\n" + self.LINK + "\n\n### Risks\n* slow\n")
+
+    def test_present_url_leaves_it_unchanged_and_no_notes_adds_a_notes_section(self):
+        for desc in ("## Notes\n\n### Links\n\n* plan " + self.URL + "\n", "## Goal\n\nSee " + self.URL + "\n"):
+            self.assertEqual(self.link(desc), desc)
+        out = self.link("## Goal\n\n### Detail\n\nShip it.\n")
+        self.assertEqual([l for l in out.splitlines() if l.strip()], ["## Goal", "### Detail", "Ship it.", "## Notes", self.LINK])
