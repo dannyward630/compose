@@ -121,6 +121,20 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual(self.writer_branches(), ["compose/p-tests-001"])
         self.assertTrue((self.repo / "b_test.go").exists())
 
+    def test_a_collected_writer_counts_as_done_so_its_ended_session_is_no_stall(self):
+        self.crew_commits("001", "a_test.go", "a\n")  # test ready, still working: collect ends its session
+        self.crew_commits("002", "b_test.go", "b\n", state="done")
+        for n in ("p-tests-001", "p-tests-002"):
+            (self.proj / "results" / "crew" / f"{n}.json").write_text(json.dumps({"name": n, "space": "w9"}))
+        with mock.patch("sys.stdout", io.StringIO()):
+            fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual([r["state"] for r in fc.fc_crew.crew_reports(self.proj, "p-tests-001")], ["working", "done"])
+        self.assertEqual(len(fc.fc_crew.crew_reports(self.proj, "p-tests-002")), 1)  # already done: nothing added
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={"agents": []}):
+            snap = fc.fc_watch.watch_snapshot(self.repo, self.proj)
+        self.assertEqual(snap["closed"], ["p-tests-001", "p-tests-002"])
+        self.assertEqual([e for e in fc.fc_watch.watch_stalls(self.proj, snap, 240) if "stall=ended" in e], [])
+
     def test_each_crew_has_its_own_branch_and_collect_lands_them_in_order(self):
         self.crew_commits("002", "b_test.go", "b\n")
         self.crew_commits("001", "a_test.go", "a\n")

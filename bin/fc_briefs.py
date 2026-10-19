@@ -458,7 +458,8 @@ def collect_tests(proj, only=None):
         branch = test_branch(proj, tid)
         if not test_open(proj, tid):
             continue
-        last = (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{tid}")) or [{}])[-1]
+        writer = fc_herdr.agent_name(proj.name, f"tests-{tid}")
+        last = (fc_crew.crew_reports(proj, writer) or [{}])[-1]
         if not test_ready(last):
             fc_core.say(f"tests-{tid} skipped: it has not reported test ready (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); its branch and worktree are kept")
             continue
@@ -483,6 +484,8 @@ def collect_tests(proj, only=None):
             else:
                 fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
             fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
+            if last.get("state") != "done":  # its session ended with its slot: it is finished, not a teammate that went missing
+                fc_crew.write_report(proj, writer, "done", "test collected onto the project branch")
             fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
     groups = {}

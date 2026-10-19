@@ -63,7 +63,7 @@ class Stalls(unittest.TestCase):
         self.assertTrue(any("stall=undispatched" in e for e in ev), ev)
 
     def test_a_teammate_whose_tab_closed_is_not_working(self):
-        """tests-002 was collected before its `done` report landed: its last report says working, its tab is closed."""
+        """tests-002's tab closed before its `done` report landed: its last report says working."""
         s = self.snap(tasks=("passed",), crew={ORCH: ("working", 600), "hw-tests-002": ("working", 600)}, last_ago=600)
         s["closed"] = ["hw-tests-002"]
         ev = self.stalls(s)
