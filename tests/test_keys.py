@@ -6,7 +6,7 @@ from unittest import mock
 os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_auth, fc_config, fc_keys, fc_prompt
+import fc_auth, fc_config, fc_core, fc_keys, fc_prompt
 
 LINEAR = ("No Linear key: without it compose linear, sync, and the CLI's Linear moves cannot run. Add one later:\n"
           "  pbpaste | compose workspace key {} --linear")
@@ -271,3 +271,51 @@ class DryKeys(unittest.TestCase):
                  for k in ("openrouter", "linear")}
         got = self.both(["sk-or-test-9", "", "", "lin-test-1", ""], [False, True], True, saved)
         self.assertEqual(got, ["openrouter", "linear"])
+
+
+class TildeKeys(unittest.TestCase):
+    """A dry would line shows its path through fc_core.tilde: ~/ under the home, a path that only starts with its name whole."""
+    STATUS = ["│  OpenRouter key (required), from openrouter.ai/keys [not set]",
+              "│  TypeSafe key (required), from your TypeSafe account [not set]",
+              "│  Linear key (required), from linear.app/settings/api [not set]",
+              "│  Figma token (optional), from Figma settings, personal access tokens [not set]"]
+
+    def ask(self, root, typed, sure=(), tilde=fc_core.tilde):
+        auth, env, out = root / "k" / "auth.json", root / "fl" / ".env", io.StringIO()
+        with mock.patch.object(fc_config, "AUTH_PATH", auth), \
+             mock.patch.object(fc_prompt, "password", side_effect=typed) as pw, \
+             mock.patch.object(fc_prompt, "confirm", side_effect=sure) as ok, mock.patch.object(fc_prompt, "note"), \
+             mock.patch.object(fc_core, "tilde", side_effect=tilde), \
+             mock.patch.dict(os.environ, {"NO_COLOR": "1"}), redirect_stdout(out):
+            got = fc_keys.ask_keys("acme", env, True, dry=True)
+        for value in filter(None, typed): self.assertNotIn(value, out.getvalue())
+        self.assertFalse(auth.exists() or env.exists())
+        return got, [c.args[0] for c in pw.call_args_list], ok.call_args_list, out.getvalue().splitlines()
+
+    def test_home_shown_as_tilde(self):
+        got, _, _, lines = self.ask(Path.home(), ["sk-or-test-1", "ts-test-2", "lin-test-3", "fig-test-4"])
+        self.assertEqual(got, ["openrouter", "typesafe", "linear", "figma"])
+        self.assertEqual(lines, [self.STATUS[0], "│  would save openrouter key to ~/k/auth.json",
+                                 self.STATUS[1], "│  would save typesafe key to ~/k/auth.json",
+                                 self.STATUS[2], "│  would save linear key to ~/k/auth.json",
+                                 self.STATUS[3], "│  would save the Figma token to ~/fl/.env"])
+
+    def test_sibling_of_home_printed_whole(self):
+        sib = Path(str(Path.home()) + "2") / "x"
+        got, asked, sure, lines = self.ask(sib, ["sk-or-test-1", "", "ts-test-2", "", "fig-test-4"], [False, True])
+        self.assertEqual(got, ["openrouter", "typesafe", "figma"])
+        self.assertEqual(asked, ["OpenRouter key (Enter skips)", *["TypeSafe key (Enter skips)"] * 2,
+                                 "Linear key (Enter skips)", "Figma token (Enter skips)"])
+        self.assertEqual(sure, [mock.call("Continue without it?", False)] * 2)
+        skipped = lambda kind: ["│  " + line for line in fc_keys.skipped_line(kind, "acme").splitlines()]
+        self.assertEqual(lines, [self.STATUS[0], f"│  would save openrouter key to {sib}/k/auth.json",
+                                 self.STATUS[1], *skipped("typesafe"), f"│  would save typesafe key to {sib}/k/auth.json",
+                                 self.STATUS[2], *skipped("linear"),
+                                 self.STATUS[3], f"│  would save the Figma token to {sib}/fl/.env"])
+        self.assertNotIn("~", "\n".join(lines))
+
+    def test_path_comes_from_tilde(self):
+        home = Path.home()
+        _, _, _, lines = self.ask(home, ["", "", "lin-test-3", "fig-test-4"], [True, True], lambda t: f"<{t}>")
+        self.assertIn(f"│  would save linear key to <{home}/k/auth.json>", lines)
+        self.assertEqual(lines[-1], f"│  would save the Figma token to <{home}/fl/.env>")
