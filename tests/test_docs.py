@@ -1061,5 +1061,45 @@ class ReadyCheckpoints(unittest.TestCase):
             self.assertNotIn("\u2014", row)
 
 
+class TellWhatCanStart(unittest.TestCase):
+    CAN_START = "can start now: NEB-x <title>, ..."
+
+    def one_sentence(self, line):
+        self.assertIn("event ready=", line)
+        self.assertIn(self.CAN_START, line)
+        self.assertIn("product owner", line)
+        self.assertNotRegex(line, r"[.!?] [A-Z`]", "one sentence per line")
+        self.assertNotIn("\u2014", line)
+
+    def test_manager_tells_the_product_owner_unprompted_in_one_line(self):
+        lines = read("sections/0h.md").splitlines()
+        start = next(i for i, l in enumerate(lines) if l.startswith("The engineering manager supervises"))
+        end = next(i for i in range(start, len(lines)) if not lines[i].strip())
+        para = lines[start:end]
+        found = [l for l in para if "event ready=" in l]
+        self.assertEqual(len(found), 1, "one sentence on event ready= in the supervises paragraph")
+        self.assertEqual([l for l in lines if "event ready=" in l], found, "and nowhere else in 0h")
+        line = found[0]
+        self.one_sentence(line)
+        self.assertIn("event ready=<ids>", line)
+        self.assertIn("unprompted", line)
+        self.assertIn("one line", line)
+        self.assertRegex(line, r"\b(no|not|never|without)\b[^.]*desktop notification")
+        self.assertTrue(para[0].startswith("The engineering manager supervises, it does not only relay."))
+        self.assertTrue(any(l.startswith("On a stall, read the team lead's pane") for l in para))
+
+    def test_designer_starter_passes_ready_on_the_same_way(self):
+        lines = read("sections/0d.md").splitlines()
+        i = next(i for i, l in enumerate(lines) if l.startswith("The starter only relays"))
+        self.assertIn("compose watch --project <slug> --from designer", lines[i])
+        self.assertNotIn("event ready=", lines[i])
+        line = lines[i + 1]
+        self.one_sentence(line)
+        self.assertIn("starter", line)
+        self.assertIn("same way", line)
+        self.assertEqual([l for l in lines if "event ready=" in l], [line], "one sentence in 0d")
+        self.assertTrue(lines[i + 2].startswith("It is never inline"))
+
+
 if __name__ == "__main__":
     unittest.main()
