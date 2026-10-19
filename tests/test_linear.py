@@ -413,3 +413,65 @@ class ReadyCommand(unittest.TestCase):
             fc.main()
         c.assert_called_once()
         self.assertEqual(c.call_args.args[0].project, "p")
+
+
+class ReadyRefresh(unittest.TestCase):
+    def setUp(self):
+        self.proj, self.said, self.items = Path(tempfile.mkdtemp()) / "p", [], [{"id": "ENG-3", "title": "Login form"}]
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
+        self.mark = mock.Mock(return_value=self.items)
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_config, "WORKSPACE", "work"), (fc.fc_core, "say", self.said.append),
+                                 (fc.fc_linear, "linear_mark_ready", self.mark), (fc.fc_linear, "linear_gql", mock.Mock(side_effect=AssertionError("Linear called")))):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        fc.fc_linear._linear_warned.clear()
+
+    def test_marks_and_stores_skips_without_a_feature_or_key_and_says_errors(self):
+        fc.fc_linear.refresh_ready(self.proj)
+        fc.fc_linear.refresh_ready(self.proj, "ENG-9")
+        self.assertEqual(self.mark.mock_calls, [mock.call("ENG-1"), mock.call("ENG-9")])
+        self.assertEqual((self.proj / "results" / "ready.json").read_text(), json.dumps(self.items, indent=2))
+        (self.proj / "results").rename(self.proj / "old")
+        fc.fc_linear.refresh_ready(self.proj)  # no results directory: marks, writes nothing
+        self.assertEqual((self.mark.call_count, self.said, (self.proj / "results").exists()), (3, [], False))
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None):
+            (self.proj / "linear.json").write_text("{}"); fc.fc_linear.refresh_ready(self.proj)
+            (self.proj / "linear.json").unlink(); fc.fc_linear.refresh_ready(self.proj)
+            self.assertEqual(self.said, [])  # no feature: not even the no-key line
+            fc.fc_linear.refresh_ready(self.proj, "ENG-1")
+        self.assertEqual((self.mark.call_count, len(self.said)), (3, 1)); self.assertTrue(self.said.pop().startswith("linear skipped: "))
+        self.mark.side_effect = RuntimeError("x" * 300)
+        fc.fc_linear.refresh_ready(self.proj, "ENG-1")
+        self.assertEqual(self.said, ["linear ready: " + "x" * 200])
+
+    def test_roll_up_reconcile_and_sync_from_linear_refresh_once(self):
+        gql = lambda q, v: {"issue": {"id": v["id"], "identifier": v["id"], "state": {"name": "Todo", "type": "unstarted"}, "team": {"states": {"nodes": []}},
+                                      "parent": {"identifier": "ENG-1"} if v["id"] == "ENG-2" else None, "children": {"nodes": []}}}
+        for run in (lambda: fc.fc_linear.linear_roll_up(self.proj, "ENG-2"), lambda: fc.fc_linear.linear_roll_up(self.proj, "ENG-5"),
+                    lambda: fc.fc_linear.linear_reconcile(self.proj, verified=True)):  # exits at the feature, past the top, and through reconcile
+            with mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_linear, "refresh_ready") as r:
+                run()
+            r.assert_called_once_with(self.proj)
+        data = {"feature": {"id": "ENG-1", "title": "F"}, "issues": [issue("ENG-3", "A", block(id="001", test="t"))]}
+        for stdin in (True, False):
+            calls = mock.Mock()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(data))), \
+                    mock.patch.object(fc.fc_linear, "linear_sync_payload", return_value=data), mock.patch.object(fc.fc_linear, "linear_feature_after"), \
+                    mock.patch("builtins.print", calls.print), mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready):
+                fc.fc_linear.cmd_sync(SimpleNamespace(stdin=stdin, repo=str(self.proj)))
+            self.assertEqual(calls.refresh_ready.mock_calls, [] if stdin else [mock.call(self.proj)])
+            self.assertEqual(calls.mock_calls[-1][0], "print" if stdin else "refresh_ready")  # after the task list
+
+    def test_clean_refreshes_the_linked_feature_after_moving_merged_work(self):
+        import subprocess
+        r = Path(tempfile.mkdtemp()).resolve()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        g = lambda *a: subprocess.run(["git", *a], cwd=r, check=True, capture_output=True, env=env)
+        g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "init"); g("checkout", "-q", "-b", "compose/p")
+        proj = r / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        (proj / "verify.json").write_text("{}"); (proj / "linear.json").write_text(json.dumps({"feature": "ENG-7"}))
+        calls = mock.Mock()
+        with mock.patch.object(fc.fc_linear, "linear_merged", calls.linear_merged), mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready), \
+                mock.patch("sys.stdout", io.StringIO()), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
+            fc.fc_init.clean_project(r, "p", r, proj, explicit=True)
+        self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False), mock.call.refresh_ready(proj, "ENG-7")])
