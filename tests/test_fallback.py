@@ -290,6 +290,18 @@ class FixScope(unittest.TestCase):
             self.assertEqual(budgets, [1500, 1500 * fc.fc_models.CUT_RETRY])
             self.assertIn(found, rv["issues"][0]["note"])
 
+    def test_a_review_reply_that_is_not_json_is_asked_again(self):
+        good = json.dumps({"issues": [{"file": "a.go", "severity": "low", "note": "n"}]})
+        for replies, found in ((['{\n  issues": []\n}', good], "n"), (["{issues: []}", "", "never asked"], "did not return usable findings")):
+            asked = []
+            def http(req, provider, timeout=90, replies=replies):
+                asked.append(json.loads(req.data)["max_tokens"])
+                return {"choices": [{"message": {"content": replies[len(asked) - 1]}, "finish_reason": "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["docs"]}, "diff", "plan", "docs", True)
+            self.assertEqual(asked, [1500, 1500])
+            self.assertIn(found, rv["issues"][0]["note"])
+
     def test_review_confirms_only_a_quoted_wrong_line_the_fix_changes(self):
         def review(reply, finding=None, code="build: {\n  fileName: 'x.js',\n}", perspective="spec", cfg=None, users=None):
             def fj(env, system, user, **kw):

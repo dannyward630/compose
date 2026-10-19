@@ -364,11 +364,14 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
 
 CUT_RETRY = 4  # a reply cut off at its budget is asked again with this many times the budget; the same budget would cut it again
 def fast_json_whole(env, system, user, max_tokens=1500, timeout=90):
-    """fast_json, asked once more with CUT_RETRY times the budget when the reply was cut off at it."""
+    """fast_json, asked once more: with CUT_RETRY times the budget when the reply was cut off at it, with the same budget when
+    it was empty or not valid JSON (Mercury returns a key without its opening quote about once in 30 replies)."""
     try:
         return fast_json(env, system, user, max_tokens=max_tokens, timeout=timeout)
     except CutOff:
         return fast_json(env, system, user, max_tokens=max_tokens * CUT_RETRY, timeout=timeout)
+    except (EmptyReply, ValueError):
+        return fast_json(env, system, user, max_tokens=max_tokens, timeout=timeout)
 
 class EmptyReply(Exception):
     pass
