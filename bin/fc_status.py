@@ -23,7 +23,8 @@ def branch_facts(repo, proj, trunk_head):
 
 def task_state(repo, proj, meta, trunk_head, facts=None):
     """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk
-    (`facts`: branch_facts for the whole project; computed here when a caller reads one task)."""
+    (`facts`: branch_facts for the whole project; computed here when a caller reads one task). A design task has no branch, so
+    Linear is its record: In Review or Done there is passed whatever this checkout holds, and it is never merged."""
     tid = meta["id"]
     res = proj / "results" / f"{tid}.json"
     r = json.loads(res.read_text()) if res.exists() else {}
@@ -32,7 +33,13 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     has_branch = branch in facts["have"]
     merged = has_branch and branch in facts["merged"]
     state = r.get("status") or "pending"
-    if state == "pending" and fc_tasks.linear_done(meta):
+    design, linear_note = meta.get("kind") == "design", ""
+    if design and state == "hand_done":
+        state = "passed (hand)"
+    elif design and (meta.get("linear_state") or "").lower() in ("in review", "done") and state != "passed":
+        # a judge pass in another checkout, or a judge failure the designer overruled by hand: what blocks on it may start
+        state, linear_note = "passed", f"{meta['linear_state']} on Linear"
+    elif state == "pending" and fc_tasks.linear_done(meta):
         state = "merged"  # done on Linear (another story's task, or finished earlier): never run again, never a stall
     elif state == "running" and not fc_tasks.run_alive(proj):
         state = "interrupted"  # the run died without writing a final state; `compose resume` re-runs it
@@ -40,7 +47,7 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
         state = "merged"
     elif state == "hand_done":
         state = "hand_done" if has_branch and not merged else "merged (hand)"
-    note = branch if has_branch and not merged else ""
+    note = branch if has_branch and not merged else linear_note
     deps = [d.strip() for d in str(meta.get("after") or "").split(",") if d.strip()]
     if state == "pending" and deps:
         note = "after " + ", ".join(deps)
@@ -48,7 +55,7 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
-            "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or meta.get("model", "")).split("/")[-1],
+            "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or ("" if design else meta.get("model", ""))).split("/")[-1],
             "linear": str(meta.get("linear") or "")}
 
 _git_dirs = {}
