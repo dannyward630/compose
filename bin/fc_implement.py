@@ -50,6 +50,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     fc_proc.HOOKS[name] = lambda: (fc_herdr.herdr("agent", "send-keys", session["name"], "esc"), fc_herdr.herdr("pane", "close", session["pane"]))
+    t0 = time.time()
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -57,6 +58,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt
+        err = fc_herdr.herdr_stalled(session, prompt, t0 + timeout)
     if err == "timeout" or err == "agent_prompt_stalled":
         fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
         fc_herdr.herdr("pane", "close", session["pane"])
@@ -67,13 +70,14 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         got = fc_herdr.herdr("agent", "get", session["name"]) or {}
         session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
     session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
-    if not text and not tools and not usage["tokens_in"]:
+    busy = fc_models.provider_busy(errors, not text and not tools and not usage["tokens_in"])
+    if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or 'empty turn with no usage'}")
     if model in fc_config.PRICES:
         usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
     fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
-    if any("rate" in e.lower() and "limit" in e.lower() for e in errors):
-        raise fc_models.RateLimited(usage)
+    if busy:
+        raise fc_models.RateLimited(usage, busy)
     return session, text, tools, usage
 
 LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `trail ask` output
@@ -416,15 +420,15 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             cost += e.usage["cost"]
             if fall():
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
-                switch(f"rate-limited by provider", original_prompt)
+                switch(e.why, original_prompt)
                 attempt -= 1
             else:
                 rate_waits += 1
                 if rate_waits > 4:
-                    log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
+                    log.append({"attempt": attempt, "error": f"{e.why}; giving up after 4 waits"})
                     break
                 wait = 20 * rate_waits
-                fc_core.say(f"{tid} rate-limited by provider; fresh session in {wait}s (wait {rate_waits}/4)")
+                fc_core.say(f"{tid} {e.why}; fresh session in {wait}s (wait {rate_waits}/4)")
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
                 session = None  # the compacted session is dead; restart from the original prompt
                 prompt = original_prompt
