@@ -116,8 +116,8 @@ def await_setup(setup, env, wait):
     ports = [int(env[k]) for k in ("E2E_PORT", "E2E_CLIENT_PORT") if env.get(k) and re.search(rf"\b(?:{k}|{env[k]})\b", setup)]
     if not ports:
         return time.sleep(wait)
-    deadline = time.time() + max(wait, SETUP_DEADLINE)
-    while time.time() < deadline:
+    deadline = time.monotonic() + max(wait, SETUP_DEADLINE)  # awake time: a machine asleep mid-wait suspends the server too
+    while time.monotonic() < deadline:
         closed = [p for p in ports if not fc_core.port_listening(p)]
         if not closed:
             return
