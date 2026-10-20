@@ -263,35 +263,80 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack="", tasks=()):
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
-        `self.scopes` holds the tests each stage run was given (None: the full checks)."""
+        `self.scopes` holds the tests each stage run was given (None: the full checks). `dirty` (path: text) is in the worktree
+        before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
-        git("init", "-q", "-b", "main")
+        git("init", "-q", "-b", trunk)
         (repo / "a.go").write_text("a\n"); (repo / "yarn.lock").write_text("lock\n")
+        (repo / ".claude").mkdir(); (repo / ".claude" / "settings.json").write_text("{}\n")
         git("add", "-A"); git("commit", "-qm", "init")
         git("checkout", "-qb", "layer")
         (repo / "a.go").write_text("b\n")
         git("commit", "-qam", "layer")
+        for f, text in (dirty or {}).items():
+            (repo / f).write_text(text)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             self.prompt = prompt
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
-        stages, self.scopes = iter([(False, {}, "finding"), (True, {}, "")]), []
+        stages, self.scopes, self.said = iter([(False, {}, "finding"), (True, {}, "")]), [], []
         def run_stages(repo, proj, cfg, a, tests=None):
+            if artifact and not self.scopes:
+                (repo / artifact).write_text("out\n")
             self.scopes.append(tests)
             return next(stages)
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
                 mock.patch.object(fc.fc_verify, "run_stages", run_stages), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_tasks, "load_tasks", return_value=list(tasks)), \
-                mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
+                mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})), \
+                mock.patch.object(fc.fc_core, "say", self.said.append):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
                 fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
+
+    def committed(self, repo):
+        """The files the last commit changed, and what `git status` still shows."""
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True).stdout
+        return git("show", "--name-only", "--format=", "HEAD").split(), git("status", "--porcelain").splitlines()
+
+    def test_a_rewritten_wiring_file_neither_blocks_the_fix_nor_lands_in_its_commit(self):
+        # A session hook rewrites the tracked .claude/settings.json whenever a session starts in the checkout.
+        code, repo, res = self.verify({"a.go": "fixed\n"}, dirty={".claude/settings.json": '{"hooks": {}}\n'})
+        self.assertEqual((code, res["passed"], len(res["rounds"])), (0, True, 2))
+        self.assertEqual(self.committed(repo), (["a.go"], [" M .claude/settings.json"]))
+
+    def test_the_fix_commit_holds_only_what_the_fixer_changed(self):
+        # A check left a report behind and the fixer also rewrote the wiring: neither is the fix, and neither makes it a stray.
+        code, repo, res = self.verify({"a.go": "fixed\n", ".claude/settings.json": '{"x": 1}\n'}, artifact="report.xml")
+        self.assertEqual((code, res["passed"], res["rejected_fixes"]), (0, True, []))
+        self.assertEqual(self.committed(repo), (["a.go"], [" M .claude/settings.json", "?? report.xml"]))
+
+    def test_uncommitted_changes_of_the_user_still_skip_the_fix(self):
+        code, repo, res = self.verify({"a.go": "fixed\n"}, dirty={"a.go": "mine\n"})
+        self.assertEqual((code, len(res["rounds"])), (1, 1))
+        self.assertEqual((repo / "a.go").read_text(), "mine\n")
+        self.assertIn("fix    skip  repo has uncommitted changes (a.go); commit first so a bad fix can be reverted", self.said)
+
+    def test_a_recorded_base_that_names_no_branch_scopes_the_fix_to_the_default_branch(self):
+        # A project made before init recorded its start branch holds review_base "main", also in a repository whose trunk is master.
+        code, repo, res = self.verify({"a.go": "fixed\n", "b.go": "new\n"}, trunk="master")
+        self.assertEqual((code, res["rejected_fixes"]), (1, [{"round": 1, "files": ["b.go"]}]))
+        self.assertEqual(((repo / "a.go").read_text(), (repo / "b.go").exists()), ("b\n", False))  # the round is reverted
+
+    def test_a_recorded_base_that_names_no_branch_reviews_the_diff_against_the_default_branch(self):
+        _, repo, _ = self.verify({"a.go": "fixed\n"}, trunk="master")
+        proj = Path(tempfile.mkdtemp())
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[{"id": "001", "title": "t", "body": "", "files": ["a.go"], "protected": []}]):
+            self.assertEqual(fc.fc_verify.verify_root(repo, proj, {"review_base": "main"})[1], "master")
+            diff, _, _, _ = fc.fc_verify.review_inputs(repo, proj, {"review_base": "main"})
+        self.assertIn("+fixed", diff)  # the stack's diff, not every named file whole
+        self.assertNotIn("==== a.go ====", diff)
 
     def test_fix_inside_the_stack_commits_and_passes(self):
         code, repo, res = self.verify({"a.go": "fixed\n"})

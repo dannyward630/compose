@@ -25,6 +25,7 @@ Verify reads `.compose/<project>/verify.json`.
 
 `commit_convention` (`{"types": [...], "example": "feat: ..."}`) makes every commit the CLI makes, and every teammate brief, start with a type prefix: tests are `test`, docs `docs`, dependencies and config `chore` or `build`, fixes `fix`, the rest `feat`.
 `review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.
+One that names no branch (a project made before init recorded it holds `main`, also in a repository whose trunk is `master`) reads as the repository's default branch.
 `fix_model` overrides the fix model, which defaults to the implementer.
 `env_file` replaces `~/.compose/.env` for this project.
 
@@ -43,6 +44,8 @@ Verify reads `.compose/<project>/verify.json`.
    Then the case's `assert` checks the real DOM or log.
 5. **fix** sends confirmed findings to the fix model.
    Protected files are reverted, and the stages rerun for up to `--fix` rounds before they escalate.
+   A fix commit holds only the files the fixer changed: never the agent wiring (`.claude/settings.json`), which a session hook rewrites, nor files a check left behind.
+   Uncommitted changes of your own skip the fix, so a bad fix can always be reverted.
    A verify passes only once the full checks pass on the final code, so the fixes' scoped tests never hide a regression.
 
 Review, jev, and e2e run in parallel after checks.
