@@ -186,7 +186,7 @@ def verify_failed(proj, rounds, findings):
             fc_core.say(f"verify reflect failed ({str(e)[:200]})")
 
 def review_inputs(repo, proj, cfg):
-    base = cfg.get("review_base", "main")
+    base = fc_worktree.review_base(repo, cfg) or "main"
     diff = fc_core.sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
     tasks = fc_tasks.load_tasks(proj)
     named = sorted({f for t in tasks for f in t["files"] + t["protected"]})
@@ -358,16 +358,14 @@ def run_stages(repo, proj, cfg, a, tests=None):
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
-        gate_review = True
-        if gate_review:
-            ok &= rv["pass"]
-        fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
-        fc_core.say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
+        ok &= rv["pass"]  # review always gates; the jev acceptance stage below is advisory unless asked to gate
+        fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
+        fc_core.say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
                     + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
-        for i in rv["confirmed"] if gate_review else []:
+        for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
                             + (f"\nMust read: {i['fix'] or '(remove the line)'}" if "fix" in i else ""))
     if not a.skip_review and cfg.get("jev_acceptance", True):
@@ -412,18 +410,18 @@ def run_stages(repo, proj, cfg, a, tests=None):
 def verify_root(repo, proj, cfg):
     """Where verify runs. Task branches are never merged locally, so with unmerged layers verify runs in the CLI worktree
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
-    base is the trunk. With no open layers it runs on the user's checkout against `review_base`. A chain whose rebase stopped
-    fails verify here, before any stage and with no result recorded."""
+    base is the trunk. With no open layers it runs on the user's checkout against fc_worktree.review_base. A chain whose
+    rebase stopped fails verify here, before any stage and with no result recorded."""
     trunk = fc_core.current_branch(repo)
     if not fc_worktree.stack_order(repo, proj):
-        return repo, cfg.get("review_base", trunk), None
+        return repo, fc_worktree.review_base(repo, cfg) or trunk, None
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     chain = fc_layers.linearize(repo, proj, trunk, wt)
     if fc_layers.STACK_STOP:  # the top of a partial chain lacks every layer above the stop: a pass there would claim the feature
         fc_core.say(f"verify FAIL  nothing verified or recorded: {fc_layers.STACK_STOP}")
         sys.exit(1)
     if not chain:
-        return repo, cfg.get("review_base", trunk), None
+        return repo, fc_worktree.review_base(repo, cfg) or trunk, None
     fc_core.sh(["git", "checkout", "-q", chain[-1]], wt)
     fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
     fc_core.say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
@@ -485,9 +483,16 @@ def fix_message(reply, files, conv=None):
         return fc_core.typed(line, "fix", conv)
     return fc_core.typed("Fix " + ", ".join(Path(f).name for f in files[:3]), "fix", conv)
 
+def changed_files(repo):
+    """Each file differing from HEAD, tracked or untracked (not ignored), with its digest; never the agent wiring (fc_worktree.WIRING)."""
+    out = lambda *c: fc_core.sh(["git", *c, "-z"], repo, check=False).stdout.split("\0")
+    files = set(out("diff", "--name-only", "--no-renames", "HEAD") + out("ls-files", "--others", "--exclude-standard"))
+    return fc_core.digests(repo, sorted(files - {"", *fc_worktree.WIRING}))
+
 def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
-    base = cfg.get("review_base")
+    base = fc_worktree.review_base(repo, cfg)
     allowed = set(fc_core.sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
+    dirty = fc_worktree.dirty_paths(repo)  # the user's own changes, read before any stage: what a check leaves behind is verify's
     rejected, tests = [], None  # the first round runs the full checks; a fix round only the tests of what its fix changed
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
@@ -500,11 +505,11 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             fc_core.say("fix    skip  only tool errors failed (see TOOL ERROR above); nothing for a fixer to change in the app")
             break
         # Fix loop: hand confirmed findings to the fast implementer in the repo itself, then re-run every stage.
-        if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip() and rnd == 0:
-            fc_core.say("fix    skip  repo has uncommitted changes; commit first so a bad fix can be reverted")
+        if dirty and rnd == 0:
+            fc_core.say(f"fix    skip  repo has uncommitted changes ({', '.join(dirty[:5])}); commit first so a bad fix can be reverted")
             break
         _, _, _, protected = review_inputs(repo, proj, cfg)
-        before = fc_core.digests(repo, protected)
+        before, pending = fc_core.digests(repo, protected), changed_files(repo)
         t1 = time.time()
         model = cfg.get("fix_model") or os.environ.get("COMPOSE_FIX_MODEL") or fc_config.DEFAULT_MODEL
         if rnd and fc_models.fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
@@ -549,28 +554,29 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         if tampered:
             fc_core.sh(["git", "checkout", "--"] + tampered, repo, check=False)
             fc_core.say(f"fix    reverted protected files the fixer touched: {', '.join(tampered)}")
-        new_docs = [f for f in fc_core.sh(["git", "ls-files", "--others", "--exclude-standard"], repo, check=False).stdout.split() if fc_config.DOC_RE.search(f)]
+        fixed = [f for f, d in changed_files(repo).items() if f not in pending or pending[f] != d]  # its turn's change alone: no check's leftovers
+        added = set(fc_core.sh(["git", "ls-files", "--others", "--exclude-standard", "-z"], repo).stdout.split("\0")) & set(fixed)
+        new_docs = [f for f in fixed if f in added and fc_config.DOC_RE.search(f)]
         for f in new_docs:  # fixers, like implementers, never add documents
             (repo / f).unlink()
         if new_docs:
             fc_core.say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
-        fc_core.sh(["git", "add", "-A"], repo)
-        stray = fix_strays(fc_core.sh(["git", "diff", "--cached", "--name-only", "HEAD"], repo).stdout.splitlines(), allowed,
-                           {f for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) for f in t["files"]})
+        fixed = [f for f in fixed if f not in new_docs]
+        stray = fix_strays(fixed, allowed, {f for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) for f in t["files"]})
         if stray:
             # The whole round goes: an out-of-scope edit means the fixer worked around something (an install, the toolchain)
             # instead of fixing a finding, and its other edits rest on that. The last stage run failed, so verify ends FAIL.
-            fc_core.sh(["git", "reset", "-q", "--hard", "HEAD"], repo)
-            fc_core.sh(["git", "clean", "-fdq"], repo)
+            if set(fixed) - added:
+                fc_core.sh(["git", "--literal-pathspecs", "checkout", "-q", "HEAD", "--", *sorted(set(fixed) - added)], repo)
+            for f in added & set(fixed):
+                (repo / f).unlink()
             rejected.append({"round": rnd + 1, "files": stray})
             fc_core.say(f"fix    REJECTED round {rnd + 1}: touched files outside the stack ({', '.join(stray[:8])}); reverted the round")
             break
-        changed = fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip()
-        fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
-        if changed:
-            fc_core.sh(["git", "add", "-A"], repo)
-            fixed = fc_core.sh(["git", "diff", "--cached", "--name-only"], repo).stdout.splitlines()
-            fc_core.sh(["git", "commit", "-qm", fix_message(reply, fixed, fc_core.commit_convention(proj))], repo, check=False)
+        fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if fixed else 'no'}  ${usage['cost']:.4f}")
+        if fixed:
+            fc_core.sh(["git", "--literal-pathspecs", "add", "-A", "--", *fixed], repo)
+            fc_core.sh(["git", "--literal-pathspecs", "commit", "-qm", fix_message(reply, fixed, fc_core.commit_convention(proj)), "--", *fixed], repo, check=False)
             fc_core.say("fix    committed on " + (fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
             tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
             if tests is None:
