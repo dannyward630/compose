@@ -27,7 +27,8 @@ Use the name `compose crew list` shows in every `herdr agent` command; `watch --
 
 The engineering manager is the session you started, so compose sets neither its model nor its compaction.
 It relays and supervises while planning goes to the wayfinder on the strongest model, so Sonnet serves it well.
-Cap its context with `modelSettings.<model>.autoCompactWindow` in `~/.claude/settings.json` (for example `200000`), as compose caps every teammate at 150k.
+Cap its context with `"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"` in the `env` of `~/.claude/settings.json`, as compose caps every teammate at 150k.
+That variable outranks `modelSettings.<model>.autoCompactWindow` and the `--autocompact` flag, and a session reads it only when it starts.
 
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
