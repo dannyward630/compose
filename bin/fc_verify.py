@@ -494,7 +494,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         try:
             _, reply, tools, usage = fc_implement.implementer(repo, model, prompt)
         except fc_models.RateLimited as e:
-            fc_core.say("fix    rate-limited by provider; " + (f"retrying on {fc_models.fallback_for(model)}" if fc_models.fallback_for(model) else "waiting 30s and retrying once"))
+            fc_core.say(f"fix    {e.why}; " + (f"retrying on {fc_models.fallback_for(model)}" if fc_models.fallback_for(model) else "waiting 30s and retrying once"))
             if not fc_models.fallback_for(model):
                 time.sleep(30)
             try:

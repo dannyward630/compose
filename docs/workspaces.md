@@ -61,7 +61,7 @@ OpenRouter presets belong to an account, so create `glm-5-3-flash-fast` in each 
 If an id or preset is wrong, the run stops with the provider's message.
 
 `fallback_after` is how many failed attempts a task gets on its own model before `fallback` takes over.
-A rate limit switches at once.
+A rate limit, or a provider too busy to start the turn (a 429 or a 5xx before any token), switches at once.
 `test_reader` reads each failed test run and writes the implementer's fix brief.
 It must be a `claude:` model, since it runs in Claude Code with read-only tools.
 It bills to the Claude Code subscription, never an API key or OpenRouter: every headless Claude call the CLI makes drops `ANTHROPIC_*` (key, auth token, base URL, model overrides) from its environment.

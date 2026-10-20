@@ -170,6 +170,9 @@ A project whose build output depends on where `node_modules` lives sets `install
 
 Since 2026-10-10, the default implementer is `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast`, with no fallback.
 With `models.fallback` set, a task gets `models.fallback_after` failed attempts (default 2) on its own model before the fallback takes the rest; a rate limit switches at once.
+A provider too busy to start a turn counts as a rate limit: a 429, or a 5xx such as `overloaded_error`, before any token.
+Without a fallback, such a turn gets a fresh session after 20 s, then 40 s, 60 s and 80 s, and spends no attempt.
+A refusal that stays, such as a wrong model id, a missing preset, or a bad key, ends the task, or moves it to the fallback.
 Implementers never run tests: an implementer waiting on a test run pays for the wait, and every later turn re-reads the output as input tokens.
 The CLI runs the test after each turn, and on a failure the test reader (`models.test_reader`, default `claude:claude-haiku-5-5`) writes the implementer's fix brief.
 

@@ -87,6 +87,29 @@ class Fallback(unittest.TestCase):
         r, calls = self.run_once("rate")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
 
+    def test_a_busy_provider_without_a_fallback_waits_and_costs_no_attempt(self):
+        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")])
+        said, slept = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            err = next(busy, None)
+            if err:
+                raise err
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", slept.append), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            r = fc.fc_implement.run_task(repo, proj, task, 1)
+        self.assertEqual((r["status"], slept), ("passed", [20]))  # one attempt allowed, and the busy turn did not spend it
+        self.assertIn("001 provider busy: 503 overloaded_error; fresh session in 20s (wait 1/4)", said)
+
     def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
         r, calls = self.run_once("rate", edit="yes\n")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY]))
@@ -526,6 +549,13 @@ class Workspaces(unittest.TestCase):
         with mock.patch.object(fc.fc_proc, "run", run), self.assertRaises(fc.fc_models.RateLimited):
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
 
+    def test_a_503_overloaded_before_any_token_waits_like_a_rate_limit(self):
+        end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": HerdrPiTurn.BUSY}})
+        run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="", returncode=0))
+        with mock.patch.object(fc.fc_proc, "run", run), self.assertRaises(fc.fc_models.RateLimited) as cm:
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+        self.assertIn("overloaded_error", cm.exception.why)
+
 
 class KeepOldKeys(unittest.TestCase):
     setUp, same = Workspaces.setUp, Workspaces.same
@@ -742,6 +772,8 @@ class HerdrPiKey(unittest.TestCase):
 class HerdrPiTurn(unittest.TestCase):
     """One turn of the herdr pi implementer once its agent is up, on a fake clock: herdr answers the prompt, pi writes the session file."""
     USER = {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}
+    BUSY = ('503: {"error":{"message":"Provider returned error","code":503,"metadata":{"raw":"{\\"type\\":\\"overloaded_error\\",\\"code\\":'
+            '\\"start_generation_failed\\",\\"message\\":\\"Failed to start generation: tcp connect error\\"}","provider_name":"Together"}}}')
 
     def reply(self, text="done", stop="stop", error=None):
         m = {"role": "assistant", "content": [{"type": "text", "text": text}] if text else [], "stopReason": stop,
@@ -816,6 +848,21 @@ class HerdrPiTurn(unittest.TestCase):
         self.assertEqual(len(self.sent("agent", "prompt")), 2)
         self.assertEqual([a for a, _ in self.calls[-2:]], [("agent", "send-keys", "shop-028", "esc"), ("pane", "close", "p1")])
         self.assertLess(self.now - 1000, 180)
+
+    def test_a_busy_provider_or_a_429_before_any_token_waits_like_a_rate_limit(self):
+        for err, why in ((self.BUSY, "provider busy: 503"), ("429 Provider returned error: rate limit exceeded", "rate-limited by provider")):
+            with self.subTest(why=why):
+                self.sfile.write_text("")
+                with self.assertRaises(fc.fc_models.RateLimited) as cm:
+                    self.turn(lambda n: self.write(self.USER, self.reply(None, stop="error", error=err)))
+                self.assertTrue(cm.exception.why.startswith(why), cm.exception.why)
+
+    def test_a_definite_refusal_still_ends_the_turn_with_the_providers_message(self):
+        err = '404: {"message":"Preset \\"glm\\" not found for this user.","code":404}'
+        with self.assertRaises(RuntimeError) as cm:
+            self.turn(lambda n: self.write(self.USER, self.reply(None, stop="error", error=err)))
+        self.assertNotIsInstance(cm.exception, fc.fc_models.RateLimited)
+        self.assertIn("provider refused the request: 404", str(cm.exception))
 
 
 class TypeSafeKey(unittest.TestCase):
