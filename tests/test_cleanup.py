@@ -441,6 +441,12 @@ class ProjectBranch(unittest.TestCase):
         self.cli("clean", "--project", "p", "--delete-unmerged")
         self.assertEqual(self.branches(), ["main"])
 
+    def test_init_names_the_cut_team_lead_a_long_project_name_gets(self):
+        """herdr names stop at 32 characters: a project name over 19 cuts `<slug>-orchestrator`, so init says the name herdr will hold."""
+        out = self.cli("init", "--project", "clean-recut-branches").stdout
+        self.assertIn("clean-recut-branche-orchestrator", out)
+        self.assertNotIn("orchestrator", self.cli("init", "--project", "clean-recut-branche").stdout)  # 19 characters: uncut, nothing to say
+
     def test_a_project_without_a_stored_branch_keeps_compose_slash_slug(self):
         self.cli("init", "--project", "old")
         f = self.r.parent / "compose-old" / ".compose" / "old" / "verify.json"

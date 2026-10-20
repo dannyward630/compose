@@ -21,6 +21,10 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 | teammates | explore, wayfinder, groundwork, test writers, helpers, implementers | one tab each in the project's space |
 | planner | continues specing a ticket at step 1, 2, or 8 and cuts the task issues | tab `planner`, agent `<slug>-planner` |
 
+herdr agent names stop at 32 characters, so a longer `<slug>-<role>` keeps its role and cuts the slug.
+Project `clean-recut-branches` has team lead `clean-recut-branche-orchestrator`, and `init` says so when it creates such a project.
+Use the name `compose crew list` shows in every `herdr agent` command; `watch --from` takes the role.
+
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
 The team lead's and the planner's tabs are both marked (`COMPOSE_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`compose guard`), except the CLI's JSON under `.compose/`.
