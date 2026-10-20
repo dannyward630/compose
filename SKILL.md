@@ -153,7 +153,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 ```
 ````
 
-- `id` is the stack order a reviewer reads in; ids are unique within the feature.
+- `id` is the stack order a reviewer reads in, except that a task always sits above its `after` tasks; ids are unique within the feature.
 - `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs. Any other blocker (a design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
 - A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `compose figma judge --project <slug> --only NNN`. An optional `figma:` line (file key or url) names the task's own Figma file when it is not the stored one.

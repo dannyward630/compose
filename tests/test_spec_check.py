@@ -25,7 +25,7 @@ TASKS_OUT = """project p   3 tasks   stack order (bottom first): 001 <- 002 <- 0
 
   run waves (each wave in parallel): 001, 002  then  003
 
-  WARNING SERIAL CHAIN: 3 tasks run in 2 waves, mostly one after another. Keep an `after:` (blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.
+  WARNING SERIAL CHAIN: 3 tasks run in 2 waves, mostly one after another. Keep an `after:` (blocked-by) only where a task needs another task's code or file; the stack puts a task above its `after:` tasks and orders the rest by id, so review order needs no `after:`.
 """
 
 
@@ -157,6 +157,33 @@ class SpecCheck(unittest.TestCase):
             fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
         self.assertIn("run waves (each wave in parallel): 003\n", out.getvalue())
         self.assertNotIn("SERIAL CHAIN", out.getvalue())
+
+    def test_tasks_prints_the_stack_order_the_chain_builds_with_a_task_above_a_higher_id_it_is_after(self):
+        """A re-plan made 012 and 013 wait on 025: `tasks` stacks them above it, before and after their branches exist, as the chain
+        does, and a merged task is no layer."""
+        repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "init")
+        proj = repo / ".compose" / "p"
+        (proj / "results").mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.fc_tasks.sync_tasks(proj, data([task("ENG-3", "011"), task("ENG-4", "012", ["ENG-3", "ENG-7"]), task("ENG-5", "013", ["ENG-3", "ENG-7"]),
+                                           task("ENG-6", "024"), task("ENG-7", "025", ["ENG-6"]), task("ENG-8", "026", files="z.go")]))
+        def header():
+            out = io.StringIO()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+                fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+            return out.getvalue().splitlines()[0].partition("stack order (bottom first): ")[2]
+        git("branch", "fast/p/026", git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "026"))
+        git("merge", "-q", "fast/p/026")
+        (proj / "results" / "026.json").write_text('{"status": "passed"}')
+        self.assertEqual(header(), "011 <- 024 <- 025 <- 012 <- 013")  # no layer is built yet
+        for tid in ("011", "012", "013", "024", "025"):
+            git("branch", f"fast/p/{tid}", git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", tid))
+            (proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
+        chain = [b.removeprefix("fast/p/") for b in fc.fc_worktree.stack_order(repo, proj)]
+        self.assertEqual((header(), " <- ".join(chain)), ("011 <- 024 <- 025 <- 012 <- 013",) * 2)
 
     def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
         clash = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"), task("ENG-5", "003", ["ENG-3"], files="b.go")]
