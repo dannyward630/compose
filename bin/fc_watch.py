@@ -305,16 +305,29 @@ def cmd_rewake(a):
     cmd_watch(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
 
+def crew_in_pane(proj, pane):
+    """The teammate whose record says it runs in herdr pane `pane`, else None."""
+    for f in sorted(fc_crew.crew_dir(proj).glob("*.json")) if pane else ():
+        try:
+            c = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if isinstance(c, dict) and c.get("pane") == pane:
+            return c.get("name")
+    return None
+
 def cmd_reenter(a):
     """Claude Code SessionStart hook (matcher compact): after a compaction the session continues by re-entering through 0r, not from scratch.
-    Its herdr tab carries the role, project, and worktree. Every other session returns at once, a headless one (`claude -p`,
-    which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
+    Its herdr tab carries the role, the teammate's name, project, and worktree. COMPOSE_ROLE is `crew` for every teammate but the
+    guarded ones, so the brief is found by the name (a session started before its tab carried one: by the pane its record names).
+    Every other session returns at once, a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
     project, role = os.environ.get("COMPOSE_PROJECT"), os.environ.get("COMPOSE_ROLE")
     if not role or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
     proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project))
+    name = os.environ.get("COMPOSE_TEAMMATE") or crew_in_pane(proj, os.environ.get("HERDR_PANE_ID")) or fc_herdr.agent_name(project, role)
     print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
-    print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{fc_herdr.agent_name(project, role)}.brief.md'} now.")
+    print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{name}.brief.md'} now.")
     print(f"Run `compose status --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project}` and "
           f"`compose watch --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project} --now` to see the board.")
     print("Re-read the feature's Decisions so far and Plan on Linear before acting.")

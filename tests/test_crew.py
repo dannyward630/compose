@@ -138,6 +138,7 @@ class Crew(unittest.TestCase):
                                  ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
         self.assertIn("COMPOSE_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("COMPOSE_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
+        self.assertIn("COMPOSE_TEAMMATE=shop-q-neb-12", calls[1])  # the compaction hook finds its brief from the tab: COMPOSE_ROLE is only `crew`
         self.assertIn(f"COMPOSE_REPO={fc.fc_herdr.project_worktree(self.proj)}", calls[1])
         start = calls[2]
         self.assertEqual(start[2], "shop-q-neb-12")

@@ -237,7 +237,7 @@ def cmd_crew(a):
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
-    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", fc_herdr.tab_label(proj, title), "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", fc_herdr.tab_label(proj, title), "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief

@@ -56,7 +56,7 @@ MODULES = {
     "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "RUN_PARALLEL", "cmd_run", "preflight", "run_tasks", "reflect_task", "cmd_resume"),
     "fc_status": ("project_head", "branch_facts", "task_state", "_git_dirs", "git_dirs", "board_stamp", "_board", "board", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
     "fc_spec": ("file_clashes", "cmd_tasks", "run_waves", "spec_check", "cmd_spec_check", "MAX_TASK_FILES", "MAX_TASK_BRIEF", "too_big"),
-    "fc_watch": ("YOLO_HINT", "FINAL_STATES", "AGENTS_INTERVAL", "Agents", "watch_snapshot", "STALL_SECONDS", "watch_mem", "watch_save", "watch_lock", "watch_stalls", "watch_events", "yolo_mark", "watch_filter", "WATCH_INTERVAL", "cmd_watch", "cmd_rewake", "cmd_reenter"),
+    "fc_watch": ("YOLO_HINT", "FINAL_STATES", "AGENTS_INTERVAL", "Agents", "watch_snapshot", "STALL_SECONDS", "watch_mem", "watch_save", "watch_lock", "watch_stalls", "watch_events", "yolo_mark", "watch_filter", "WATCH_INTERVAL", "cmd_watch", "cmd_rewake", "crew_in_pane", "cmd_reenter"),
     "fc_yolo": ("YOLO_NEVER", "yolo_digest", "cmd_yolo"),
     "fc_bench": ("pct", "cmd_bench"),
 }

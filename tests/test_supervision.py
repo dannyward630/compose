@@ -433,6 +433,20 @@ class Reenter(unittest.TestCase):
         out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "orchestrator"})
         self.assertIn("hw-orchestrator.brief.md", out)
 
+    def test_a_crew_teammate_is_pointed_at_its_own_brief_not_its_roles(self):
+        """Every unguarded teammate's tab carries COMPOSE_ROLE=crew: the brief is named for the teammate, `<slug>-<role>.brief.md`."""
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        (crew / "hw-designer.brief.md").write_text("brief")
+        out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "crew", "COMPOSE_TEAMMATE": "hw-designer"})
+        self.assertIn(str(crew / "hw-designer.brief.md"), out)
+        self.assertNotIn("hw-crew", out)
+        # a session started before its tab carried the name: its record says which pane it runs in
+        (crew / "hw-designer.json").write_text(json.dumps({"name": "hw-designer", "pane": "w9:p4"}))
+        (crew / "hw-research.json").write_text(json.dumps({"name": "hw-research", "pane": "w9:p5"}))
+        out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "crew", "HERDR_PANE_ID": "w9:p4"})
+        self.assertIn(str(crew / "hw-designer.brief.md"), out)
+        self.assertNotIn("hw-crew", out)
+
     def test_no_role_or_a_headless_session_prints_nothing(self):
         for env in ({k: v for k, v in self.env.items() if k != "COMPOSE_ROLE"}, {**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
             out, pd = self.reenter(env)

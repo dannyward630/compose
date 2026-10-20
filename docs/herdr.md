@@ -107,6 +107,8 @@ The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the 
 A lock keeps one watch per watcher.
 A second hook exits at once, and a second `watch` waits its turn.
 The hook does nothing in any other session, and its watch ends with the session that parked it.
+After a context compaction, the plugin's SessionStart hook (`compose reenter`) points any teammate back at its own brief, `results/crew/<agent>.brief.md`.
+Every teammate's tab carries its name in `COMPOSE_TEAMMATE` for that, since `COMPOSE_ROLE` is `crew` for all but the team lead and the planner.
 
 Restarting the team lead in its tab loses nothing, because its first turn end reports whatever happened while it was down.
 A `run` or `verify` it started keeps going meanwhile.
