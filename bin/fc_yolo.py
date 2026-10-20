@@ -76,7 +76,8 @@ def cmd_yolo(a):
                  f"  compose yolo decided --project {proj.name} \"<question>: <answer taken>\"\n"
                  f"words that themselves say ` decided ` are taken for a mislaid `yolo decided`: reword them")
     y = y or {"since": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": []}
-    y.update(push=bool(a.push), words=" ".join(words) if words else y.get("words", ""))
+    y.update(push=bool(a.push), words=" ".join(words) if words else y.get("words", ""),
+             by={"role": os.environ.get("COMPOSE_ROLE") or "manager", "session": fc_core.session_id()})  # watch and status say who: fc_tasks.yolo_by
     path.parent.mkdir(parents=True, exist_ok=True)
     fc_core.atomic_write(path, json.dumps(y, indent=2))
     print(f"yolo on for {proj.name} since {y['since']}: the engineering manager answers with the recommendation and logs each answer")

@@ -27,10 +27,12 @@ class Yolo(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         self.file = self.proj / "results" / "yolo.json"
 
-    def yolo(self, *words, push=False, clear_words=False, snapshot=None):
+    def yolo(self, *words, push=False, clear_words=False, snapshot=None, pane="w1:p1"):
+        """Run as the engineering manager session in herdr pane `pane`."""
         out = io.StringIO()
         a = SimpleNamespace(repo=".", project="hw", push=push, clear_words=clear_words, words=list(words))
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+        env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_ROLE", "HERDR_PANE_ID")} | {"HERDR_PANE_ID": pane}
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snapshot or snap()), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
                 mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
@@ -153,11 +155,13 @@ class Yolo(unittest.TestCase):
             fc.fc_crew.manager_attention(self.proj, [f"event crew={ORCH} state=blocked message='no key'"])
         self.assertEqual(calls, [("hw: the engineering manager is blocked", f"no key  (from {ORCH})")])
 
-    def watch_now(self, s):
+    def watch_now(self, s, pane="w1:p1"):
+        """`watch --now` as the engineering manager session in herdr pane `pane`."""
         out = []
         a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
+        env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_ROLE", "HERDR_PANE_ID")} | {"HERDR_PANE_ID": pane}
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=s), \
-                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}):
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
             fc.fc_watch.cmd_watch(a)
         return out
 
@@ -166,9 +170,20 @@ class Yolo(unittest.TestCase):
         self.yolo("ship", "it", push=True)
         out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}))
         self.assertTrue(out[0].startswith("event yolo=on push=yes since="), out)
+        self.assertIn("by='this session'", out[0])
         self.assertIn("words='ship it'", out[0])
         line = next(l for l in out if "state=needs-user" in l)
         self.assertTrue(line.endswith("  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"), line)
+
+    def test_another_session_sees_who_set_yolo(self):
+        """yolo is per project: a second engineering manager session on it is told the posture is not its own."""
+        self.yolo("ship", "it", pane="w1:p2")
+        self.assertEqual(json.loads(self.file.read_text())["by"], {"role": "manager", "session": "w1:p2"})
+        out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}), pane="w1:p1")
+        self.assertIn("by='an engineering manager session in herdr pane w1:p2'", out[0])
+        line = next(l for l in out if "state=needs-user" in l)
+        self.assertTrue(line.endswith("  yolo=on set by an engineering manager session in herdr pane w1:p2 (answer with the recommendation; "
+                                      "log it: compose yolo decided ...)"), line)
 
     def test_status_shows_the_header(self):
         self.yolo(push=True)
@@ -177,8 +192,8 @@ class Yolo(unittest.TestCase):
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
             lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
-            self.assertIn(f"  yolo on (push) since {since}", lines)
-            self.file.write_text(json.dumps({"since": since, "push": False, "words": "", "decisions": []}))
+            self.assertIn(f"  yolo on (push) since {since}, set by an engineering manager session in herdr pane w1:p1", lines)  # the status tab is no session's
+            self.file.write_text(json.dumps({"since": since, "push": False, "words": "", "decisions": []}))  # from before `by` was recorded
             lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
         self.assertIn(f"  yolo on since {since}", lines)
 

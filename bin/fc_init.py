@@ -229,6 +229,9 @@ def cmd_init(a):
         print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
+    if (lead := fc_herdr.agent_name(name, "orchestrator")) != f"{name}-orchestrator":
+        print(f"herdr agent names stop at 32 characters, so this project's are cut: its team lead is {lead}, not {name}-orchestrator; "
+              f"use the names `compose crew list --project {name}` shows in every `herdr agent` command")
 
 def merge_evidence(repo, branch, targets, has_remote):
     """Why a branch counts as merged, or None. Four independent signals, any suffices:

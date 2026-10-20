@@ -67,6 +67,14 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
     def section(self, rel, title):
         return read(rel).split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
 
+    def test_the_docs_give_the_agent_name_herdr_registers_for_a_long_slug(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_herdr
+        lead = fc_herdr.agent_name("clean-recut-branches", "orchestrator")
+        for rel in ("docs/herdr.md", "sections/0h.md"):
+            self.assertIn(f"project `clean-recut-branches` has team lead `{lead}`", read(rel).lower())
+            self.assertIn("`compose crew list` shows", read(rel))
+
     def test_roles_table_names_the_design_roles(self):
         rows = {l.split("|")[1].strip(): l for l in self.section("docs/herdr.md", "Roles").splitlines() if l.startswith("|")}
         self.assertIn("tab `designer`, agent `<slug>-designer`", rows.get("designer", ""))
