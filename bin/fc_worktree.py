@@ -95,23 +95,18 @@ def task_branches(repo, proj):
         out[b] = base if base in branches else None
     return out
 
-def stack_order(repo, proj, tasks=None):
-    """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
-    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are synced, a
-    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone.
-    `tasks`: the synced tasks when the caller holds them already, else they are read here."""
-    bases = task_branches(repo, proj)
-    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj) if tasks is None else tasks)}
-    synced = (proj / "results" / "tasks.json").exists()
-    prefix = task_prefix(repo, proj)
-    ids = sorted(t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced)
+def layer_order(tasks):
+    """The ids of `tasks` bottom to top as one stack: a task after its `after:` tasks among them, then by id. The one rule the
+    chain (stack_order, then chain_order) and `compose tasks` share, so the order a planner reviews is the order the stack gets."""
+    metas = {m["id"]: m for m in tasks}
+    ids = sorted(metas)
     order, placed = [], set()
     while len(order) < len(ids):
         progressed = False
         for tid in ids:
             if tid in placed:
                 continue
-            deps = [d.strip() for d in str(metas.get(tid, {}).get("after") or "").split(",") if d.strip() in ids]
+            deps = [d.strip() for d in str(metas[tid].get("after") or "").split(",") if d.strip() in metas]
             if all(d in placed for d in deps):
                 order.append(tid)
                 placed.add(tid)
@@ -119,7 +114,19 @@ def stack_order(repo, proj, tasks=None):
         if not progressed:  # a dependency cycle in `after:`; fall back to id order for the rest
             order += [t for t in ids if t not in placed]
             break
-    return [task_branch(repo, proj, t) for t in order]
+    return order
+
+def stack_order(repo, proj, tasks=None):
+    """All unmerged task branches of the project as one chain, bottom to top, in layer_order: a task after its `after:` tasks,
+    then by id. One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are
+    synced, a branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone.
+    `tasks`: the synced tasks when the caller holds them already, else they are read here."""
+    bases = task_branches(repo, proj)
+    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj) if tasks is None else tasks)}
+    synced = (proj / "results" / "tasks.json").exists()
+    prefix = task_prefix(repo, proj)
+    ids = [t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced]
+    return [task_branch(repo, proj, t) for t in layer_order([metas.get(t, {"id": t}) for t in ids])]
 
 TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
 
