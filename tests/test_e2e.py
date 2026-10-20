@@ -182,6 +182,20 @@ class JevCases(unittest.TestCase):
         (jev / "jev_ultrafast" / "__init__.py").write_text(FAKE_AGENT)
         shutil.copy(fc.fc_config.JEV_DIR / "jev_ultrafast" / "__main__.py", jev / "jev_ultrafast" / "__main__.py")
         p = mock.patch.object(fc.fc_config, "JEV_DIR", jev); p.start(); self.addCleanup(p.stop)
+        k = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); k.start(); self.addCleanup(k.stop)  # what apply_config sets from auth.json
+
+    def test_a_case_without_a_typesafe_key_says_why_instead_of_running_jev(self):
+        """Under `compose timed` the scratch config holds no keys: the case fails as a harness error naming that, never jev's bare KeyError."""
+        seen = self.dir / "seen"
+        del os.environ["TYPESAFE_API_KEY"]
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", Path(fc.fc_core.scratch_config())):
+            ok, r, findings, out = self.stage({"env": {"FAKE_JEV": json.dumps({"seen": str(seen)})}})
+        self.assertFalse(ok)
+        self.assertFalse(seen.exists())  # jev never started
+        self.assertTrue(r["tool_error"]); self.assertEqual(findings, [])
+        self.assertIn("jev case flow needs a TypeSafe key, but runs on a scratch config", r["stderr"])
+        self.assertIn("run compose's own commands directly", r["stderr"])
+        self.assertNotIn("KeyError", r["stdout"] + r["stderr"])
 
     def stage(self, case, results=None, **cfg):
         report, findings, out = {"e2e": []}, [], io.StringIO()

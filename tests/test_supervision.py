@@ -674,6 +674,9 @@ class Timed(unittest.TestCase):
 
 
 class JevLeash(unittest.TestCase):
+    def setUp(self):
+        k = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); k.start(); self.addCleanup(k.stop)  # what apply_config sets from auth.json
+
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):
         self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev ended blocked after 60 steps\n"))
         self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))

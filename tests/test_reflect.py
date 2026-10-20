@@ -82,7 +82,8 @@ class Reflect(unittest.TestCase):
         proj = project()
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
             _, rec = fc.fc_change.reflect(proj, "verify", "x")
-        self.assertIn("TYPESAFE_API_KEY", rec["error"])
+        self.assertIn(f"Jev reflect needs a TypeSafe key, and {fc.fc_config.AUTH_PATH} has none", rec["error"])  # keys live in auth.json, not .env
+        self.assertIn("--typesafe", rec["error"])
         with mock.patch.object(fc.fc_models, "jev_ask", side_effect=fc.fc_models.PaymentRequired("typesafe", "out of credits")):
             _, rec = fc.fc_change.reflect(proj, "verify", "x")
         self.assertIn("out of credits", rec["error"])
@@ -90,6 +91,15 @@ class Reflect(unittest.TestCase):
         path, rec = fc.fc_change.reflect(proj, "verify", "x")
         self.assertTrue(rec["error"])
         self.assertTrue(path.exists())
+
+    def test_jev_without_a_key_says_why_instead_of_a_key_error(self):
+        """Under `compose timed` the scratch config holds no keys by design: a Jev call says so and sends nothing."""
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", Path(fc.fc_core.scratch_config())), \
+                mock.patch("urllib.request.urlopen") as sent, self.assertRaises(RuntimeError) as e:
+            fc.fc_models.jev_ask({}, {}, {}, {}, "Jev acceptance")
+        sent.assert_not_called()
+        self.assertEqual(str(e.exception), "Jev acceptance needs a TypeSafe key, but runs on a scratch config with no workspace and no keys, "
+                                           "as every command under `compose timed` does: run compose's own commands directly")
 
     def test_parallel_screens_neither_wait_on_each_other_nor_share_a_file(self):
         proj, recs = project(), []

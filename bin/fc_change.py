@@ -75,8 +75,7 @@ def reflect(proj, trigger, evidence, against=()):
         lines = decision_lines(desc) + quoted
         if lines:
             env = {**fc_core.load_env(fc_config.ENV_FILE), **os.environ}
-            if not env.get("TYPESAFE_API_KEY"):
-                raise RuntimeError(f"no TYPESAFE_API_KEY in {fc_config.ENV_FILE} or the environment")
+            fc_config.typesafe_key(env, "Jev reflect")
             cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
             questions = {f"d{i}": {"type": "choice", "criteria": REFLECT_CHOICES, "instructions": {"line": l, "rules": REFLECT_RULES}}
                          for i, l in enumerate(lines)}

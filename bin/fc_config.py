@@ -31,7 +31,7 @@ JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent ve
 PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75),
           "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast": (0.15, 0.50)}
 CONFIG_PATH = Path(os.environ.get("COMPOSE_CONFIG", Path.home() / ".compose" / "config.json"))
-ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (Mercury review, jev's text helper) and TYPESAFE_* (jev, acceptance); the process env wins
+ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (Mercury review, jev's text helper) and TYPESAFE_MODEL; keys live in auth.json; the process env wins
 AUTH_PATH = CONFIG_PATH.parent / "auth.json"  # every key: see fc_auth; mode 600 in a 700 directory
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
@@ -122,6 +122,17 @@ def needs_linear_key(what):
         return (f"{what} needs a Linear key, but runs on a scratch config with no workspace and no keys, as every command under "
                 f"`compose timed` does: run compose's own commands directly")
     return f"{what} needs a Linear key for workspace {WORKSPACE!r}: pbpaste | compose workspace key {WORKSPACE} --linear"
+
+def typesafe_key(env, what):
+    """The TypeSafe key in `env` (apply_config puts auth.json's there), for every Jev call. Missing, it raises the line saying
+    why: on a scratch config (a compose under `compose timed`) there are no keys by design, so the fix is to run the command
+    directly; otherwise the command that stores it in auth.json."""
+    if key := env.get("TYPESAFE_API_KEY"):
+        return key
+    if fc_core.is_scratch(CONFIG_PATH):
+        raise RuntimeError(f"{what} needs a TypeSafe key, but runs on a scratch config with no workspace and no keys, as every "
+                           f"command under `compose timed` does: run compose's own commands directly")
+    raise RuntimeError(f"{what} needs a TypeSafe key, and {AUTH_PATH} has none: pbpaste | compose workspace key {WORKSPACE} --typesafe")
 
 def openrouter_key():
     """The OpenRouter key a harness bills to: the workspace's from auth.json, else the shell's. None leaves the harness on its own auth store."""

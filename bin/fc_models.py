@@ -446,10 +446,11 @@ def confirm_call(env, system, user, max_tokens=500):
 
 def jev_ask(env, cfg, state, questions, label):
     """One TypeSafe (Jev) request: choice questions against one state, on the cost ledger. Returns Jev's whole reply."""
+    key = fc_config.typesafe_key(env, label)
     req = urllib.request.Request("https://api.typesafe.ai/v1/systemone",
                                  data=fc_core.scrub(json.dumps({"model": env.get("TYPESAFE_MODEL", "jev-latest"), "state": state,
                                                                 "questions": questions})).encode(),
-                                 headers={"Authorization": f"Bearer {env['TYPESAFE_API_KEY']}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     out = http_json(req, f"typesafe ({label})")
     u = out.get("usage", {}) or {}
     price = (cfg.get("prices") or {}).get("typesafe_per_call")

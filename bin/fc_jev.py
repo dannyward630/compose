@@ -174,6 +174,10 @@ def jev_e2e(case, repo):
     # setup and assert are project code: no CLI keys, but the rest of ~/.compose/.env (a test user's password, say), which
     # jev reads through --env-file too. The process env wins over the file, as it does for uv.
     dotenv = {**fc_core.load_env(fc_config.ENV_FILE), **env}
+    try:  # jev itself would stop on a bare KeyError: say why there is no key, as a harness failure no fixer gets
+        fc_config.typesafe_key(dotenv, f"jev case {case.get('name')}")
+    except RuntimeError as e:
+        return {"name": case.get("name"), "exit": 1, "stdout": "", "stderr": f"JEV_GAVE_UP: {e}\n"}
     project_env = fc_core.clean_env(dotenv)
     for ref in (case.get("secrets") or {}).values():  # nothing verify prints or keeps shows one, not even an assert's output
         name = re.fullmatch(r"\$\{?(\w+)\}?", str(ref))
