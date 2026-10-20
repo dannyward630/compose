@@ -627,7 +627,7 @@ class Timed(unittest.TestCase):
         n = 4017 + 2 * os.getpid()  # odd: never the hang test's sleep, and unique to this run while it lives
         tmp = Path(tempfile.mkdtemp())
         p = sp.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "timed", "60", "--", f"sleep {n}"],
-                     env={**os.environ, "TMPDIR": str(tmp)}, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+                     env={**os.environ, "TMPDIR": str(tmp)}, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
         alive = lambda: sp.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True).stdout.strip() != b""
         for _ in range(100):
             if any(e.name.startswith("compose-config-") for e in tmp.iterdir()) and alive():
