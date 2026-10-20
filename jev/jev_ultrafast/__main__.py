@@ -1,4 +1,5 @@
-"""Run one goal to its end: `python -m jev_ultrafast <url> <goal> [<goal> ...] [--secrets JSON] [--record DIR] [--progress]`.
+"""Run one goal to its end: `python -m jev_ultrafast <url> <goal> [<goal> ...] [--secrets JSON] [--record DIR] [--progress]
+[--hold]`.
 
 verify's e2e cases and `bp goal` both run jev this way. The last line printed is always `JEV_RESULT {json}`: status (done,
 blocked, or error), stop_reason, elapsed_ms, steps, url, usage, and a compact history of what jev did (step, kind, label,
@@ -7,6 +8,8 @@ is 0 only when the goal is done.
 
 --secrets maps field labels to env vars ({"Password": "$E2E_PASSWORD"}): the values are read here, from the environment, so
 they never sit on a command line, and jev types them itself, so they never reach a model or the history.
+
+--hold keeps the run's tab open after JEV_RESULT, a crashed run's too, until stdin closes: verify's assert reads that tab.
 """
 
 import argparse
@@ -66,24 +69,40 @@ def main(argv=None):
     ap.add_argument("--secrets", default="{}", help='JSON {"field label": "$ENV_VAR"}')
     ap.add_argument("--record", help="keep a screenshot of every step in this directory")
     ap.add_argument("--progress", action="store_true", help="print one line per step")
+    ap.add_argument("--hold", action="store_true", help="keep the tab open after JEV_RESULT until stdin closes")
     a = ap.parse_args(argv)
-    agent, error = None, None
+    agent, r = None, None
+
+    def failed(e):  # a budget ends the run blocked; anything raised is the harness's failure, said and summed up
+        traceback.print_exc()
+        return f"{type(e).__name__}: {e}"
+
+    def finish(error=None):
+        r = result(agent.snapshot() if agent else None, a.url, error)
+        if a.progress and r["status"] != "done":
+            print(f"{r['status']}: {r['stop_reason']}", flush=True)
+        print("JEV_RESULT " + json.dumps(r), flush=True)
+        return r
+
     try:
         secrets = secret_values(json.loads(a.secrets), os.environ)
         agent = Agent(a.url, a.goals, record_dir=a.record, secrets=secrets)
         with agent:
-            for s in agent.run():
-                if a.progress:
-                    h = s["history"][-1] if s["history"] else None
-                    print(f"{s['elapsed_ms']:>5} ms  {len(s['history'])} actions  {s['status']}"
-                          + (f"  {h['kind']} {h['action'][:60]}" if h else ""), flush=True)
-    except Exception as e:  # a budget ends the run blocked; anything raised is the harness's failure, said and summed up
-        traceback.print_exc()
-        error = f"{type(e).__name__}: {e}"
-    r = result(agent.snapshot() if agent else None, a.url, error)
-    if a.progress and r["status"] != "done":
-        print(f"{r['status']}: {r['stop_reason']}", flush=True)
-    print("JEV_RESULT " + json.dumps(r), flush=True)
+            error = None
+            try:
+                for s in agent.run():
+                    if a.progress:
+                        h = s["history"][-1] if s["history"] else None
+                        print(f"{s['elapsed_ms']:>5} ms  {len(s['history'])} actions  {s['status']}"
+                              + (f"  {h['kind']} {h['action'][:60]}" if h else ""), flush=True)
+            except Exception as e:
+                error = failed(e)
+            r = finish(error)
+            if a.hold:
+                sys.stdin.read()
+    except Exception as e:
+        error = failed(e)
+        r = r or finish(error)
     return 0 if r["status"] == "done" else 1
 
 

@@ -76,6 +76,7 @@ Every run ends with time and cost per provider.
 
 A case without a `driver` runs jev to its `goal`, then runs its `assert`.
 The `assert` runs after every jev run, also one that gave up, crashed, or hit its limit, so an assert that resets the app for the next case always runs.
+It runs while jev's tab is still open, so it can read the page jev left over `BU_CDP_URL`; jev closes the tab once it ends.
 
 jev never sends a password to a model.
 To log in through a form, name the field's value in `secrets`, keyed by the field's label, and keep the value in the environment, for example in `e2e_env` or `~/.compose/.env`:

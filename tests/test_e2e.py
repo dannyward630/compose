@@ -149,6 +149,8 @@ class Agent:
         self.status, self.reason = "ready", None
         if self.spec.get("seen"):
             pathlib.Path(self.spec["seen"]).write_text(json.dumps({"secrets": secrets, "bu": os.environ.get("BU_CDP_URL")}))
+        if self.spec.get("tab"):  # the case's tab, open until the agent closes
+            pathlib.Path(self.spec["tab"]).write_text(url)
         if record_dir:
             pathlib.Path(record_dir).mkdir(parents=True, exist_ok=True)
             (pathlib.Path(record_dir) / "000000.jpg").write_bytes(b"jpg")
@@ -169,7 +171,8 @@ class Agent:
         return self
 
     def __exit__(self, *_):
-        pass
+        if self.spec.get("tab"):
+            pathlib.Path(self.spec["tab"]).unlink()
 '''
 
 
@@ -234,6 +237,15 @@ class JevCases(unittest.TestCase):
         self.assertTrue(r["tool_error"]); self.assertEqual(findings, [])
         self.assertIn("status=error assert=0  stop: ValueError: Stopped at the 60-action demo budget", out)
 
+    def test_the_assert_reads_the_case_tab_before_jev_closes_it(self):
+        # jev closed its tab on leaving `with agent:`, before verify ran the assert: every assert that read the page found no tab.
+        tab = self.dir / "tab"
+        for spec in ({}, {"statuses": ["ready"], "raise": "Model provider returned HTTP 500"}):
+            ok, r, _, _ = self.stage({"env": {"FAKE_JEV": json.dumps({**spec, "tab": str(tab)})}, "assert": f"test -f {tab}"})
+            self.assertEqual(r["assert_exit"], 0, r)
+            self.assertEqual(ok, not spec)
+            self.assertFalse(tab.exists())  # and closed once the assert is done
+
     def test_a_blocked_case_says_why_and_where_and_keeps_its_steps_and_screenshots(self):
         url = "https://app.test/billing?" + "&".join(f"p{i}=v{i}" for i in range(40))
         spec = {"statuses": ["ready"] * 4 + ["blocked"] * 3, "reason": "The last 3 actions did not change the page", "url": url}
@@ -253,8 +265,8 @@ class JevCases(unittest.TestCase):
 
     def test_secrets_reach_jev_from_the_env_and_nowhere_else(self):
         seen, password = self.dir / "seen", "pw-Sekr3t-0042"
-        timed = mock.patch.object(fc.fc_implement, "timed", wraps=fc.fc_implement.timed)
-        with timed as t:
+        held = mock.patch.object(fc.fc_jev, "run_held", wraps=fc.fc_jev.run_held)
+        with held as t:
             ok, r, _, out = self.stage({"secrets": {"Password": "$E2E_PASSWORD"}, "env": {"FAKE_JEV": json.dumps({"seen": str(seen)})},
                                         "assert": "echo logged in with $E2E_PASSWORD"},
                                        e2e_env={"BU_CDP_URL": "http://127.0.0.1:1", "E2E_PASSWORD": password})
