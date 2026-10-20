@@ -361,10 +361,12 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
+    # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
+    spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e})
     def progress(state):  # `compose status --watch` reads this while the task runs
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
-            "attempts": len(log), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
+            "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
     res = proj / "results" / f"{tid}.json"
     last = res.read_text() if res.exists() else None
@@ -425,7 +427,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             else:
                 rate_waits += 1
                 if rate_waits > 4:
-                    log.append({"attempt": attempt, "error": f"{e.why}; giving up after 4 waits"})
+                    log.append({"attempt": attempt, "rate_limited": True, "error": f"{e.why}; giving up after 4 waits"})
                     break
                 wait = 20 * rate_waits
                 fc_core.say(f"{tid} {e.why}; fresh session in {wait}s (wait {rate_waits}/4)")
@@ -568,12 +570,12 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_worktree.adopt_installs(repo, wt)
     diff = fc_core.sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
-    fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={len(log)}  ${cost:.4f}")
+    fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={spent()}  ${cost:.4f}")
     if isinstance(session, dict):
         fc_herdr.herdr_label(session, status, cost, state="idle")
         if status == "passed":  # its branch is the record; a missed task's pane stays for the team lead to read and steer
             fc_herdr.herdr("pane", "close", session["pane"])
-    result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
+    result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": spent(),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)

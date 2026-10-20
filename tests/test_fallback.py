@@ -86,10 +86,11 @@ class Fallback(unittest.TestCase):
     def test_rate_limit_switches_at_once(self):
         r, calls = self.run_once("rate")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+        self.assertEqual(r["attempts"], 1)  # the refused turn cost no attempt
 
-    def test_a_busy_provider_without_a_fallback_waits_and_costs_no_attempt(self):
-        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")])
-        said, slept = [], []
+    def busy_run(self, refusals, said, slept):
+        """One task with one attempt allowed and no fallback, whose provider turns the first `refusals` turns away as busy."""
+        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             err = next(busy, None)
             if err:
@@ -106,15 +107,25 @@ class Fallback(unittest.TestCase):
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", slept.append), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            r = fc.fc_implement.run_task(repo, proj, task, 1)
+            return fc.fc_implement.run_task(repo, proj, task, 1), proj
+
+    def test_a_busy_provider_without_a_fallback_waits_and_costs_no_attempt(self):
+        said, slept = [], []
+        r, proj = self.busy_run(1, said, slept)
         self.assertEqual((r["status"], slept), ("passed", [20]))  # one attempt allowed, and the busy turn did not spend it
         self.assertIn("001 provider busy: 503 overloaded_error; fresh session in 20s (wait 1/4)", said)
+        # The wait is in the log, but the count every reader shows (the result, its json, the final line) is the one attempt spent.
+        self.assertEqual((r["attempts"], len(r["log"])), (1, 2))
+        self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["attempts"], 1)
+        self.assertTrue(any(s.startswith("001 passed") and "attempts=1 " in s for s in said), said)
+        r, _ = self.busy_run(5, [], [])  # the provider never answers: four waits, then the task gives up having spent none
+        self.assertEqual((r["status"], r["attempts"], len(r["log"])), ("failed", 0, 5))
 
     def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
         r, calls = self.run_once("rate", edit="yes\n")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY]))
         r, calls = self.run_once("rate", edit="maybe\n")
-        self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+        self.assertEqual((r["status"], calls, r["attempts"]), ("passed", [PRIMARY, BACKUP], 1))  # the cut-short turn cost no attempt
         self.assertIn("A previous attempt left edits in the files and did not pass", self.prompts[1])
         self.assertIn("grep -q yes a.txt", self.prompts[1].split("did not pass")[1])
 
