@@ -141,7 +141,8 @@ def created_from(repo, branch):
 
 def move_onto(wt, proj, after, after_name):
     """Build an existing project on another project's branch (`init --after`): allowed while the project has no commits of its own
-    (init's own "Ignore local tool directories" one aside) and its worktree is clean, then its branch is reset to `after` and verify.json stores the review base and `after`. A commit of its own is one in neither
+    (init's own "Ignore local tool directories" one aside) and its worktree is clean but for agent wiring (fc_worktree.dirty_paths),
+    then its branch is reset to `after` and verify.json stores the review base and `after`. A commit of its own is one in neither
     its review base (fc_worktree.review_base) nor the commit the branch was created on, so a project made before init recorded the
     branch it started from is read right too. Exits with the reason otherwise, so the flag is never silently ignored."""
     cfg = fc_core.project_config(proj)
@@ -159,9 +160,11 @@ def move_onto(wt, proj, after, after_name):
     if own:
         sys.exit(f"project {proj.name} has {len(own)} commit{'s' if len(own) > 1 else ''} of its own on {branch}, so --after {after_name} cannot move it: "
                  f"rebase it onto {after} yourself, or start the project again")
-    if fc_core.sh(["git", "status", "--porcelain"], wt, check=False).stdout.strip():
-        sys.exit(f"{wt} has uncommitted changes, so --after {after_name} cannot move {branch}: commit or discard them first")
-    fc_core.sh(["git", "reset", "-q", "--hard", after], wt)
+    if dirty := fc_worktree.dirty_paths(wt):
+        shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
+        sys.exit(f"{wt} has uncommitted changes ({shown}), so --after {after_name} cannot move {branch}: commit or discard them first")
+    if fc_core.sh(["git", "reset", "-q", "--keep", after], wt, check=False).returncode:  # --keep holds a session hook's wiring rewrite
+        fc_core.sh(["git", "reset", "-q", "--hard", after], wt)  # `after` changed that file too: the hook writes it again next session
     fc_core.atomic_write(proj / "verify.json", json.dumps({**cfg, "review_base": after, "after": after_name}, indent=2))
     print(f"branch {branch} moved onto {after}")
 

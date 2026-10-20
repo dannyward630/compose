@@ -91,7 +91,7 @@ class InitAfter(unittest.TestCase):
 
 class InitBase(unittest.TestCase):
     """init records the branch a project starts from as its review base, whatever the repo's trunk is called, and `init --after`
-    reads it back: a base that names no branch is the default branch."""
+    reads it back: a base that names no branch is the default branch, and agent wiring a session hook rewrote is no change."""
     fc = InitAfter.fc
 
     def setUp(self):
@@ -155,6 +155,22 @@ class InitBase(unittest.TestCase):
         for p in ("c", "d"):
             self.fc("init", "--project", p, "--after", "a")
             self.assertEqual(self.git(self.wt(p), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"), p)
+
+    def test_after_moves_a_project_whose_only_change_is_the_agent_wiring_and_keeps_it(self):
+        self.fc("init", "--project", "a")
+        self.fc("init", "--project", "b")
+        self.commit("a", "feature_a.txt")
+        wiring = self.wt("b") / ".claude" / "settings.json"
+        wiring.write_text('{"hooks": {"SessionStart": []}}\n')  # a graph tool's session hook rewrote the tracked file
+        (self.wt("b") / "notes.txt").write_text("mine\n")
+        p = self.fc("init", "--project", "b", "--after", "a", check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("uncommitted changes (notes.txt)", p.stderr)
+        self.assertNotIn("settings.json", p.stderr)
+        (self.wt("b") / "notes.txt").unlink()
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
+        self.assertEqual(wiring.read_text(), '{"hooks": {"SessionStart": []}}\n')
 
 
 if __name__ == "__main__":
