@@ -992,6 +992,13 @@ class RestrictedStart(unittest.TestCase):
             self.assertNotIn(f"mcp__{p}__*", dropped)
         self.assertLessEqual({"mcp__claude_ai_Linear__*", "mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # only the Figma plugin's own server is kept
 
+    def test_designer_gets_the_frame0_tools_without_the_flag_and_design_builders_do_not(self):
+        self.assertNotIn("mcp__frame0__*", self.patterns(self.start("designer")))
+        self.frame0.assert_called_once()
+        for role in ("design-003", "design-review"):
+            with self.subTest(role=role):
+                self.assertIn("mcp__frame0__*", self.patterns(self.start(role)))
+
     def test_no_role_keeps_the_linear_server(self):
         for role, kw in [("orchestrator", {}), ("wayfinder", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
                          ("design-003", {}), ("design-review", {})]:

@@ -219,11 +219,12 @@ def cmd_crew(a):
     cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
     if not model.startswith("pi:") and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
+    frame0 = getattr(a, "frame0", False) or a.role == "designer"  # the designer's first step reads the wireframes through the frame0 tools
     work = None  # with --work-repo the session starts in the project worktree, which Claude Code trusts; only its work is in the repo
     if repo:
         work, branch = fc_worktree.repo_worktree(repo, name)
     try:
-        if getattr(a, "frame0", False):
+        if frame0:
             fc_frame0.frame0_register(cwd, fc_frame0.frame0_port(proj))  # before the session starts: it reads its MCP servers once
     except (RuntimeError, OSError) as e:
         print(f"teammate {name} starts without the project's frame0 tools: {e}")
@@ -261,7 +262,7 @@ def cmd_crew(a):
         else:
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
+                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=frame0)) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
