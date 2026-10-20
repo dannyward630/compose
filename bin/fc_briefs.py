@@ -89,7 +89,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside
    `prompt`), not as a data field. If the poll is interrupted, or your Bash call ends first (Claude stops a call at 10 minutes),
    run it again at once, as often as it takes: queued answers wait for you.
-5. Record each answer in the map's Decisions so far as it arrives: one line each. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path>`; never a whole-description write.
+5. Record each answer in the map's Decisions so far as it arrives: one line each. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write.
 6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
    are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
@@ -123,7 +123,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    2. `### Codebase brief` in the feature's Notes; without it no file may be named.
    3. Acceptance criteria present, each a behavior a test can check, each traceable to a decision line or the spec's words.
    4. Every criterion maps to a file or symbol via `trail ask` or `trail callers` in the worktree; new files are listed as new.
-   5. The test command is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
+   5. The test runner is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
    6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
    7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers, and implementers never see it.
       Name the test paths, and state in the brief every signature, export name, and exact line its test asserts; never point
@@ -143,6 +143,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 
 3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all of these hold:
    - one or two files in `files:` (a lockfile it names does not count), one test command, at most five acceptance criteria
+   - its test command runs only its own test (its file, or a name filter), never the whole suite: verify runs the full checks
    - its brief (the issue description) is under 2500 characters
    - its branch stays within the CLI's 350-line limit (added plus deleted)
    - no documents: no .md, .txt, .rst, or docs/ files
@@ -170,7 +171,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    id: 001
    files: <the one or two paths>
    protected: <the test path>
-   test: <the test command>
+   test: <the command that runs only this task's test>
    ```
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.
@@ -227,7 +228,7 @@ The screen that raised it: {reflect}
    this pane. Never background or kill it, never reopen a session the product owner ended. Answers arrive in the poll's `text`
    column (and as JSON after "Context data:" inside `prompt`), not as a data field. If the poll is interrupted, or your Bash call
    ends first (Claude stops a call at 10 minutes), run it again at once: queued answers wait for you.
-5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path>`; never a whole-description write. A line that changes is struck through
+5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write. A line that changes is struck through
    and tagged, with the new line right after it:
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
@@ -248,7 +249,7 @@ Write a codebase brief of at most 40 lines:
 - existing patterns and helpers to reuse instead of rewriting
 - test setup: frameworks, where tests live, the exact commands
 - risks and unknowns the plan must settle
-Read the Notes section with `compose linear get <id> --body`, then write the whole section back, its lines plus the brief as `### Codebase brief`, with `compose linear update <id> --section "## Notes" --file <path>`; never a whole-description write. Then report `done "<one-line summary>"`.
+Read the Notes section with `compose linear get <id> --body`, then write the whole section back, its lines plus the brief as `### Codebase brief`, with `compose linear update <id> --section "## Notes" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write. Then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
@@ -319,14 +320,17 @@ def cmd_toolsmith(a):
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 
-def test_brief(meta, contract, budget=None, conv=None):
+def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
+    """`rebuilt`: the task passed before a re-plan changed its brief (testcrews --redo), so its file holds the old brief's test."""
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
     args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
+    files = ", ".join(meta.get("files") or [])
+    fails = (f"Its brief changed after it was built: rewrite the test {paths} holds to the TASK BRIEF. It must fail on the project "
+             f"branch for what the brief changed, and pass once {files} implement the new brief.\n" if rebuilt else
+             f"It must fail on the current stubs for the reason this task fixes, and pass once {files} implement the brief.\n")
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
-            f"Test file: {paths}. Test command: {meta.get('test')}\n"
-            f"It must fail on the current stubs for the reason this task fixes, and pass once {', '.join(meta.get('files') or [])} "
-            "implement the brief.\n"
+            f"Test file: {paths}. Test command: {meta.get('test')}\n" + fails +
             "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
             "(report `blocked` naming what is missing instead).\n"
             "Assert only what the TASK BRIEF states or the code already shows: its implementer gets the brief, the stubs, and your test, "
@@ -344,25 +348,30 @@ def test_brief(meta, contract, budget=None, conv=None):
 
 def cmd_testcrews(a):
     """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
-    `--print` shows the briefs instead."""
+    `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
+    their briefs needs their tests rewritten first."""
     proj = fc_core.project_dir(a)
     if getattr(a, "collect", False):
         return collect_tests(proj, a.only)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
         sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (compose groundwork, phase C)")
-    contract, budget = contract_file.read_text(), getattr(a, "budget", None)
+    contract, budget, redo = contract_file.read_text(), getattr(a, "budget", None), bool(getattr(a, "redo", False))
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
-    finished = lambda m: fc_tasks.task_finished(proj, m)  # a finished task needs no test writer
+    finished = lambda m: fc_tasks.task_finished(proj, m, redo)  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
+    rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
-            print(f"{tid} skipped: " + (finished(m) if m else "no such task"))
+            why = finished(m) if m else "no such task"
+            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith("its result") else ""))
+    brief = lambda m: test_brief(m, contract, budget, fc_core.commit_convention(proj), m["id"] in rebuilt)
+    again = " --redo" if redo else ""
     if a.print_:
         for m in metas:
-            print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, fc_core.commit_convention(proj))}\n")
+            print(f"===== tests-{m['id']}\n{brief(m)}\n")
         return
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
@@ -374,7 +383,7 @@ def cmd_testcrews(a):
         if short:
             sys.exit(f"testcrews: {short}")
     asked = only or {m["id"] for m in tasks}
-    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget} for t in blocked}})
+    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget, "redo": redo} for t in blocked}})
     for tid, by in blocked.items():
         print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
     if not metas:
@@ -385,7 +394,7 @@ def cmd_testcrews(a):
     def start(m):
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=test_brief(m, contract, budget, fc_core.commit_convention(proj)), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
+                                        brief=brief(m), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")
@@ -393,11 +402,11 @@ def cmd_testcrews(a):
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
     if failed:
-        print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}")
+        print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}{again}")
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} test writer(s) queued past the cap of {cap} (parallel in {fc_config.CONFIG_PATH}): {ids}\n"
-              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}")
+              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}{again}")
 
 def test_branch(proj, tid):
     return fc_worktree.task_prefix(fc_herdr.project_worktree(proj), proj) + f"tests-{tid}"
@@ -407,7 +416,8 @@ def test_open(proj, tid):
     return fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, tid)], fc_herdr.project_worktree(proj), check=False).returncode == 0
 
 def waiting_writers(proj, update=None):
-    """The test writers waiting for another writer of the same test file, by task id, with the contract and budget to start them with."""
+    """The test writers waiting for another writer of the same test file, by task id, with the contract, budget, and --redo to start
+    them with."""
     f = proj / "results" / "tests-waiting.json"
     have = json.loads(f.read_text()) if f.exists() else {}
     if update is not None:
@@ -506,8 +516,9 @@ def collect_tests(proj, only=None):
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
     groups = {}
     for tid, how in waiting_writers(proj).items():
-        groups.setdefault((how["contract"], how["budget"]), []).append(tid)
-    for (contract, budget), tids in groups.items():
-        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False))
+        groups.setdefault((how["contract"], how["budget"], bool(how.get("redo"))), []).append(tid)
+    for (contract, budget, redo), tids in groups.items():
+        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
+                                         redo=redo))
     if conflicts:
         sys.exit("\n".join(conflicts))

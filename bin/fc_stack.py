@@ -95,7 +95,7 @@ def issue_refs(text):
 
 def linear_url(proj, ident):
     """A Linear issue's link, in the workspace of the repo's `.compose/linear.json` project; the bare id when that is unknown."""
-    f = Path(proj).parent / "linear.json"
+    f = fc_core.repo_link(Path(proj).parent.parent)
     m = re.match(r"https://linear\.app/([^/]+)/", json.loads(f.read_text()).get("project") or "" if f.exists() else "")
     return f"[{ident}](https://linear.app/{m.group(1)}/issue/{ident})" if m else ident
 
@@ -264,7 +264,7 @@ def write_pr_text(proj, wt, b, before, title, body):
 def register_stack(repo, proj, trunk, submit=False, preview=False):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
-    stops the chain there, is reported, and nothing is built or registered). The stack itself is review layers on the real base (`review_base`, else the default
+    stops the chain there, is reported, and nothing is built or registered). The stack itself is review layers on the real base (fc_worktree.review_base: `review_base`, else the default
     branch), not one PR per task and not the project branch as a PR: groundwork and each task's tests are cut into the layers
     too, so the project branch carries nothing the layers do not; when they cannot be built (build_layers' STOP), the layers and
     the registered stack stay as they were. Nothing is pushed unless submit=True; preview=True prints each layer's
@@ -275,7 +275,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     if not fc_worktree.stack_order(repo, proj):
         return []
     cfg = fc_core.project_config(proj)
-    base = cfg.get("review_base") or fc_worktree.default_branch(repo) or trunk
+    base = fc_worktree.review_base(repo, cfg) or trunk
     if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
         base = trunk
     up = fc_core.sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{base}@{{upstream}}"], repo, check=False)

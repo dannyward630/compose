@@ -145,7 +145,7 @@ def main():
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project"):
                 s.add_argument(flag, action="store_true")
             s.add_argument("--label", action="append")
-            for flag in ("--parent", "--search", "--state", "--title", "--blocked-by", "--file", "--section", "--create"):
+            for flag in ("--parent", "--search", "--state", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
                 s.add_argument(flag)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
@@ -201,6 +201,7 @@ def main():
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting teammates")
             s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
             s.add_argument("--collect", action="store_true", help="cherry-pick every test-writing teammate's commits onto the project branch in task order")
+            s.add_argument("--redo", action="store_true", help="rewrite the tests of passed tasks too, for a re-plan that changed their briefs (as run --redo)")
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "reflect":
@@ -226,6 +227,7 @@ def main():
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
             s.add_argument("--cwd", help="start: run the session in its own new worktree of this repo (a plain folder: in it) instead of the project worktree")
+            s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
         if name == "models":

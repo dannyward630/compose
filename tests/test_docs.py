@@ -67,6 +67,14 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
     def section(self, rel, title):
         return read(rel).split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
 
+    def test_the_docs_give_the_agent_name_herdr_registers_for_a_long_slug(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_herdr
+        lead = fc_herdr.agent_name("clean-recut-branches", "orchestrator")
+        for rel in ("docs/herdr.md", "sections/0h.md"):
+            self.assertIn(f"project `clean-recut-branches` has team lead `{lead}`", read(rel).lower())
+            self.assertIn("`compose crew list` shows", read(rel))
+
     def test_roles_table_names_the_design_roles(self):
         rows = {l.split("|")[1].strip(): l for l in self.section("docs/herdr.md", "Roles").splitlines() if l.startswith("|")}
         self.assertIn("tab `designer`, agent `<slug>-designer`", rows.get("designer", ""))
@@ -233,11 +241,12 @@ class BriefsNameFiles(unittest.TestCase):
             self.assertNotIn("sections/", line)
             self.assertNotIn("herdr/SKILL.md", line)
             self.assertNotRegex(line, r"invoke the `?compose`? skill")
-        for command in ("compose toolsmith --project <slug> | compose crew start --project <slug> --role toolsmith --cwd <cli_repo> --brief -",
+        for command in ("compose toolsmith --project <slug> | compose crew start --project <slug> --role toolsmith --work-repo <cli_repo> --brief -",
                         "compose tool-bug file --project <slug> --body", "--approved", "gh issue close <n> --comment"):
             self.assertIn(command, block)
         self.assertIn("never edits or commits", block)
         self.assertIn("no `Fixes #n`", block)
+        self.assertNotIn("--role toolsmith --cwd", block)  # a session started in the CLI's checkout waits at the trust prompt
 
     def test_herdr_is_read_as_a_file(self):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md; it carries the safety rules for panes and agents.", self.text.replace("\\~", "~"))
@@ -1411,7 +1420,7 @@ PLAN_LINES = [
 REPLAN = [
     "**Re-plan.**",
     "1. If no change is open: sync, then `compose change start --why \"<one line>\"`.",
-    "2. The planner teammate edits Linear: `## Plan`; it cancels the tasks that rest on the old line (a canceled task loses its `compose` block), edits the briefs that change, and adds new tasks with the next ids, and `compose testcrews --only <new ids>` for their tests.",
+    "2. The planner teammate edits Linear: `## Plan`; it cancels the tasks that rest on the old line (a canceled task loses its `compose` block), edits the briefs that change, and adds new tasks with the next ids, and `compose testcrews --only <new and changed ids> --redo` for their tests: `--redo` rewrites the test of a passed task whose brief changed.",
     "3. The 3b gate applies unchanged: a list that matches what the product owner just settled dispatches at once, and anything past it goes back up.",
     "4. Sync, then `compose change done`: it comments the change on the feature.",
     "5. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line.",

@@ -89,6 +89,90 @@ class InitAfter(unittest.TestCase):
         self.assertFalse((self.repo.parent / "compose-b").exists())
 
 
+class InitBase(unittest.TestCase):
+    """init records the branch a project starts from as its review base, whatever the repo's trunk is called, and `init --after`
+    reads it back: a base that names no branch is the default branch, and agent wiring a session hook rewrote is no change."""
+    fc = InitAfter.fc
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()) / "repo"
+        self.repo.mkdir()
+        self.git(self.repo, "init", "-q", "-b", "master")
+        (self.repo / "a.txt").write_text("base\n")
+        (self.repo / ".claude").mkdir()
+        (self.repo / ".claude" / "settings.json").write_text("{}\n")
+        self.git(self.repo, "add", "-A"); self.git(self.repo, "commit", "-qm", "init")
+
+    def git(self, wt, *a):
+        return subprocess.run(["git", *a], cwd=wt, check=True, capture_output=True, text=True, env=ENV).stdout.strip()
+
+    def wt(self, name):
+        return self.repo.parent / f"compose-{name}"
+
+    def cfg(self, name, **change):
+        f = self.wt(name) / ".compose" / name / "verify.json"
+        if change:
+            f.write_text(json.dumps({**json.loads(f.read_text()), **change}))
+        return json.loads(f.read_text())
+
+    def commit(self, name, file):
+        (self.wt(name) / file).write_text(f"{file}\n")
+        self.git(self.wt(name), "add", "-A"); self.git(self.wt(name), "commit", "-qm", file)
+
+    def test_a_master_trunk_repo_records_master_and_after_moves_the_project(self):
+        self.fc("init", "--project", "a")
+        self.fc("init", "--project", "b")
+        self.assertEqual(self.cfg("b")["review_base"], "master")
+        self.commit("a", "feature_a.txt")
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
+        self.assertEqual((self.cfg("b")["review_base"], self.cfg("b")["after"]), ("compose/a", "a"))
+
+    def test_a_project_init_recorded_main_for_in_a_master_trunk_repo_reads_the_default_branch(self):
+        self.fc("init", "--project", "a")
+        self.fc("init", "--project", "b")
+        self.fc("init", "--project", "c")
+        for p in ("b", "c"):
+            self.cfg(p, review_base="main")  # as init wrote it for every project not made with --after
+        self.commit("a", "feature_a.txt")
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
+        self.commit("c", "feature_c.txt")
+        p = self.fc("init", "--project", "c", "--after", "a", check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("1 commit of its own", p.stderr)
+
+    def test_a_project_started_on_a_feature_branch_is_based_on_it(self):
+        self.fc("init", "--project", "a")
+        self.commit("a", "feature_a.txt")
+        self.git(self.repo, "checkout", "-q", "-b", "feat")
+        (self.repo / "f.txt").write_text("f\n")
+        self.git(self.repo, "add", "-A"); self.git(self.repo, "commit", "-qm", "feat")
+        self.assertIn("(from feat)", self.fc("init", "--project", "c").stdout)
+        self.assertEqual(self.cfg("c")["review_base"], "feat")
+        self.fc("init", "--project", "d")
+        self.cfg("d", review_base="master")  # recorded before init knew the branch it started from: feat's commit is still not d's own
+        for p in ("c", "d"):
+            self.fc("init", "--project", p, "--after", "a")
+            self.assertEqual(self.git(self.wt(p), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"), p)
+
+    def test_after_moves_a_project_whose_only_change_is_the_agent_wiring_and_keeps_it(self):
+        self.fc("init", "--project", "a")
+        self.fc("init", "--project", "b")
+        self.commit("a", "feature_a.txt")
+        wiring = self.wt("b") / ".claude" / "settings.json"
+        wiring.write_text('{"hooks": {"SessionStart": []}}\n')  # a graph tool's session hook rewrote the tracked file
+        (self.wt("b") / "notes.txt").write_text("mine\n")
+        p = self.fc("init", "--project", "b", "--after", "a", check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("uncommitted changes (notes.txt)", p.stderr)
+        self.assertNotIn("settings.json", p.stderr)
+        (self.wt("b") / "notes.txt").unlink()
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
+        self.assertEqual(wiring.read_text(), '{"hooks": {"SessionStart": []}}\n')
+
+
 if __name__ == "__main__":
     unittest.main()
 

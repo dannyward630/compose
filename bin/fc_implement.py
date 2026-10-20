@@ -50,6 +50,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     fc_proc.HOOKS[name] = lambda: (fc_herdr.herdr("agent", "send-keys", session["name"], "esc"), fc_herdr.herdr("pane", "close", session["pane"]))
+    t0 = time.time()
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -57,6 +58,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt
+        err = fc_herdr.herdr_stalled(session, prompt, t0 + timeout)
     if err == "timeout" or err == "agent_prompt_stalled":
         fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
         fc_herdr.herdr("pane", "close", session["pane"])
@@ -67,13 +70,14 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         got = fc_herdr.herdr("agent", "get", session["name"]) or {}
         session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
     session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
-    if not text and not tools and not usage["tokens_in"]:
+    busy = fc_models.provider_busy(errors, not text and not tools and not usage["tokens_in"])
+    if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or 'empty turn with no usage'}")
     if model in fc_config.PRICES:
         usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
     fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
-    if any("rate" in e.lower() and "limit" in e.lower() for e in errors):
-        raise fc_models.RateLimited(usage)
+    if busy:
+        raise fc_models.RateLimited(usage, busy)
     return session, text, tools, usage
 
 LEARNING_RE = re.compile(r"^from (a learning|.+'s learning)")  # heads a trail learning block in `trail ask` output
@@ -257,7 +261,7 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
             return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
         finally:
             fc_proc.RUNNING.discard(p.pid)
-            fc_core.flag_home(before, f"`{cmd}`")
+            fc_core.flag_home(before, f"`{cmd}`", sid=p.pid)  # the command runs in a session of its own
 
 def run_test(meta, wt):
     """A task's test command under the time limit (a task's block can set `test_timeout:`)."""
@@ -357,12 +361,27 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
+    # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
+    spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e})
     def progress(state):  # `compose status --watch` reads this while the task runs
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
-            "attempts": len(log), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
+            "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
+    res = proj / "results" / f"{tid}.json"
+    last = res.read_text() if res.exists() else None
     progress("running")
+    # A hold placed while the run cloned, based, and installed lands here, before any turn. `running` is on disk before the
+    # holds are read, and `hold` writes the hold before it reads `running`: either this sees the hold, or `hold` says it runs.
+    hold = None if tag else fc_tasks.held(proj).get(tid)
+    if hold:
+        if last is None:
+            res.unlink(missing_ok=True)
+        else:
+            fc_core.atomic_write(res, last)  # the task never started: its last run's result stands
+        shutil.rmtree(wt, ignore_errors=True)
+        fc_core.say(f"{tid} held    before its first turn: {hold.get('reason', '')}")
+        return {"id": tid, "title": meta.get("title"), "status": "held", "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": []}
     fc_core.say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
     if not reset_files and not tag:  # bench runs leave Linear alone
         fc_linear.linear_event(proj, meta, "dispatched")
@@ -403,15 +422,15 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             cost += e.usage["cost"]
             if fall():
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
-                switch(f"rate-limited by provider", original_prompt)
+                switch(e.why, original_prompt)
                 attempt -= 1
             else:
                 rate_waits += 1
                 if rate_waits > 4:
-                    log.append({"attempt": attempt, "error": "rate limited 4 times; giving up"})
+                    log.append({"attempt": attempt, "rate_limited": True, "error": f"{e.why}; giving up after 4 waits"})
                     break
                 wait = 20 * rate_waits
-                fc_core.say(f"{tid} rate-limited by provider; fresh session in {wait}s (wait {rate_waits}/4)")
+                fc_core.say(f"{tid} {e.why}; fresh session in {wait}s (wait {rate_waits}/4)")
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
                 session = None  # the compacted session is dead; restart from the original prompt
                 prompt = original_prompt
@@ -521,7 +540,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
     # Only this task's own files are reverted: the team lead may be editing other files in the main checkout meanwhile.
-    dirty = [l.split()[-1] for l in fc_core.sh(["git", "status", "--porcelain"], repo, check=False).stdout.splitlines()]
+    dirty = fc_worktree.dirty_paths(repo)
     mine = [f for f in dirty if f in meta["files"] or f in meta["protected"]]
     others = [f for f in dirty if f not in mine]
     if mine:
@@ -551,12 +570,12 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_worktree.adopt_installs(repo, wt)
     diff = fc_core.sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
-    fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={len(log)}  ${cost:.4f}")
+    fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={spent()}  ${cost:.4f}")
     if isinstance(session, dict):
         fc_herdr.herdr_label(session, status, cost, state="idle")
         if status == "passed":  # its branch is the record; a missed task's pane stays for the team lead to read and steer
             fc_herdr.herdr("pane", "close", session["pane"])
-    result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": len(log),
+    result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": spent(),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)

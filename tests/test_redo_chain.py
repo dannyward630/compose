@@ -188,6 +188,52 @@ class KeepFinishedLayers(unittest.TestCase):
         self.assertIn("resume 2 task(s): 002, 004", said)
 
 
+class RunDirtyCheck(unittest.TestCase):
+    """`run` and `resume` need the tests committed, so they refuse a dirty project worktree and name what is dirty. A graph
+    tool's session hook rewriting a tracked .claude/settings.json is no change of the user's and blocks neither."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        (self.repo / ".claude").mkdir()
+        for name in ("settings.json", "settings.local.json"):
+            (self.repo / ".claude" / name).write_text('{"statusLine": {}}\n')
+        (self.repo / "a.txt").write_text("base\n")
+        git("add", "-A"); git("commit", "-qm", "init")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        tasks = [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": "", "model": "m"}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.ran = []
+        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_core, "say"),
+                  mock.patch.object(fc.fc_run, "run_tasks", lambda repo, proj, ts, a: self.ran.append([m["id"] for m in ts]))):
+            p.start(); self.addCleanup(p.stop)
+
+    def go(self, cmd):
+        if cmd == "resume":
+            (self.proj / "results" / "resume.json").write_text(json.dumps({"command": "run", "remaining": ["001"], "halted_at": "x", "provider": "p",
+                                                                           "args": {"attempts": 3, "parallel": 3, "trunk": None, "no_stack": False}}))
+        getattr(fc.fc_run, f"cmd_{cmd}")(mock.Mock(repo=str(self.repo), project="p", only=None, redo=False, parallel=None))
+
+    def test_a_rewritten_agent_wiring_file_does_not_block_run_or_resume(self):
+        for name in ("settings.json", "settings.local.json"):
+            (self.repo / ".claude" / name).write_text("{}\n")  # what graft's SessionStart hook does
+        self.go("run"); self.go("resume")
+        self.assertEqual(self.ran, [["001"], ["001"]])
+
+    def test_run_and_resume_name_the_dirty_files_they_refuse_on(self):
+        (self.repo / ".claude" / "settings.json").write_text("{}\n")
+        subprocess.run(["git", "mv", "a.txt", "b.txt"], cwd=self.repo, check=True)  # a rename lists only its new path
+        (self.repo / "new_test.py").write_text("x\n")
+        for cmd in ("run", "resume"):
+            with self.assertRaises(SystemExit) as e:
+                self.go(cmd)
+            self.assertIn("uncommitted changes (b.txt, new_test.py)", str(e.exception))
+        self.assertEqual(self.ran, [])
+
+
 class RewrittenTrunk(unittest.TestCase):
     """The trunk itself was rebased onto a moved main: the chain still carries the trunk's old commits, which must not replay."""
     def setUp(self):

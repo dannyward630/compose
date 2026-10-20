@@ -3,7 +3,7 @@ import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, te
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
-import sys, time
+import sys, time, types
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 os.environ["HERDR_ENV"] = ""
 os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
@@ -86,12 +86,46 @@ class Fallback(unittest.TestCase):
     def test_rate_limit_switches_at_once(self):
         r, calls = self.run_once("rate")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+        self.assertEqual(r["attempts"], 1)  # the refused turn cost no attempt
+
+    def busy_run(self, refusals, said, slept):
+        """One task with one attempt allowed and no fallback, whose provider turns the first `refusals` turns away as busy."""
+        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            err = next(busy, None)
+            if err:
+                raise err
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", slept.append), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, 1), proj
+
+    def test_a_busy_provider_without_a_fallback_waits_and_costs_no_attempt(self):
+        said, slept = [], []
+        r, proj = self.busy_run(1, said, slept)
+        self.assertEqual((r["status"], slept), ("passed", [20]))  # one attempt allowed, and the busy turn did not spend it
+        self.assertIn("001 provider busy: 503 overloaded_error; fresh session in 20s (wait 1/4)", said)
+        # The wait is in the log, but the count every reader shows (the result, its json, the final line) is the one attempt spent.
+        self.assertEqual((r["attempts"], len(r["log"])), (1, 2))
+        self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["attempts"], 1)
+        self.assertTrue(any(s.startswith("001 passed") and "attempts=1 " in s for s in said), said)
+        r, _ = self.busy_run(5, [], [])  # the provider never answers: four waits, then the task gives up having spent none
+        self.assertEqual((r["status"], r["attempts"], len(r["log"])), ("failed", 0, 5))
 
     def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
         r, calls = self.run_once("rate", edit="yes\n")
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY]))
         r, calls = self.run_once("rate", edit="maybe\n")
-        self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
+        self.assertEqual((r["status"], calls, r["attempts"]), ("passed", [PRIMARY, BACKUP], 1))  # the cut-short turn cost no attempt
         self.assertIn("A previous attempt left edits in the files and did not pass", self.prompts[1])
         self.assertIn("grep -q yes a.txt", self.prompts[1].split("did not pass")[1])
 
@@ -240,30 +274,80 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack=""):
-        """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass."""
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None):
+        """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
+        `self.scopes` holds the tests each stage run was given (None: the full checks). `dirty` (path: text) is in the worktree
+        before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True)
-        git("init", "-q", "-b", "main")
+        git("init", "-q", "-b", trunk)
         (repo / "a.go").write_text("a\n"); (repo / "yarn.lock").write_text("lock\n")
+        (repo / ".claude").mkdir(); (repo / ".claude" / "settings.json").write_text("{}\n")
         git("add", "-A"); git("commit", "-qm", "init")
         git("checkout", "-qb", "layer")
         (repo / "a.go").write_text("b\n")
         git("commit", "-qam", "layer")
+        for f, text in (dirty or {}).items():
+            (repo / f).write_text(text)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             self.prompt = prompt
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
-        stages = iter([(False, {}, "finding"), (True, {}, "")])
+        stages, self.scopes, self.said = iter([(False, {}, "finding"), (True, {}, "")]), [], []
+        def run_stages(repo, proj, cfg, a, tests=None):
+            if artifact and not self.scopes:
+                (repo / artifact).write_text("out\n")
+            self.scopes.append(tests)
+            return next(stages)
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
-                mock.patch.object(fc.fc_verify, "run_stages", lambda *a: next(stages)), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
-                mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
+                mock.patch.object(fc.fc_verify, "run_stages", run_stages), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", return_value=list(tasks)), \
+                mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})), \
+                mock.patch.object(fc.fc_core, "say", self.said.append):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
                 fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
+
+    def committed(self, repo):
+        """The files the last commit changed, and what `git status` still shows."""
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True).stdout
+        return git("show", "--name-only", "--format=", "HEAD").split(), git("status", "--porcelain").splitlines()
+
+    def test_a_rewritten_wiring_file_neither_blocks_the_fix_nor_lands_in_its_commit(self):
+        # A session hook rewrites the tracked .claude/settings.json whenever a session starts in the checkout.
+        code, repo, res = self.verify({"a.go": "fixed\n"}, dirty={".claude/settings.json": '{"hooks": {}}\n'})
+        self.assertEqual((code, res["passed"], len(res["rounds"])), (0, True, 2))
+        self.assertEqual(self.committed(repo), (["a.go"], [" M .claude/settings.json"]))
+
+    def test_the_fix_commit_holds_only_what_the_fixer_changed(self):
+        # A check left a report behind and the fixer also rewrote the wiring: neither is the fix, and neither makes it a stray.
+        code, repo, res = self.verify({"a.go": "fixed\n", ".claude/settings.json": '{"x": 1}\n'}, artifact="report.xml")
+        self.assertEqual((code, res["passed"], res["rejected_fixes"]), (0, True, []))
+        self.assertEqual(self.committed(repo), (["a.go"], [" M .claude/settings.json", "?? report.xml"]))
+
+    def test_uncommitted_changes_of_the_user_still_skip_the_fix(self):
+        code, repo, res = self.verify({"a.go": "fixed\n"}, dirty={"a.go": "mine\n"})
+        self.assertEqual((code, len(res["rounds"])), (1, 1))
+        self.assertEqual((repo / "a.go").read_text(), "mine\n")
+        self.assertIn("fix    skip  repo has uncommitted changes (a.go); commit first so a bad fix can be reverted", self.said)
+
+    def test_a_recorded_base_that_names_no_branch_scopes_the_fix_to_the_default_branch(self):
+        # A project made before init recorded its start branch holds review_base "main", also in a repository whose trunk is master.
+        code, repo, res = self.verify({"a.go": "fixed\n", "b.go": "new\n"}, trunk="master")
+        self.assertEqual((code, res["rejected_fixes"]), (1, [{"round": 1, "files": ["b.go"]}]))
+        self.assertEqual(((repo / "a.go").read_text(), (repo / "b.go").exists()), ("b\n", False))  # the round is reverted
+
+    def test_a_recorded_base_that_names_no_branch_reviews_the_diff_against_the_default_branch(self):
+        _, repo, _ = self.verify({"a.go": "fixed\n"}, trunk="master")
+        proj = Path(tempfile.mkdtemp())
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[{"id": "001", "title": "t", "body": "", "files": ["a.go"], "protected": []}]):
+            self.assertEqual(fc.fc_verify.verify_root(repo, proj, {"review_base": "main"})[1], "master")
+            diff, _, _, _ = fc.fc_verify.review_inputs(repo, proj, {"review_base": "main"})
+        self.assertIn("+fixed", diff)  # the stack's diff, not every named file whole
+        self.assertNotIn("==== a.go ====", diff)
 
     def test_fix_inside_the_stack_commits_and_passes(self):
         code, repo, res = self.verify({"a.go": "fixed\n"})
@@ -271,6 +355,25 @@ class FixScope(unittest.TestCase):
         self.assertEqual((repo / "a.go").read_text(), "fixed\n")
         log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout
         self.assertEqual(log.strip(), "Fix a.go")  # describes the change, never the process
+
+    def test_a_fix_round_runs_only_the_tests_of_the_tasks_its_fix_changed(self):
+        tasks = [{"id": "001", "files": ["a.go"], "protected": ["a_test.go"], "test": "go test ./a"},
+                 {"id": "002", "files": ["b.go"], "protected": ["b_test.go"], "test": "go test ./b"},
+                 {"id": "003", "kind": "design", "files": ["a.go"], "protected": [], "test": "compose figma judge"}]
+        code, _, _ = self.verify({"a.go": "fixed\n"}, tasks=tasks)
+        self.assertEqual((code, self.scopes), (0, [None, ["go test ./a"]]))  # the first round runs every check
+        self.verify({"a.go": "fixed\n", "yarn.lock": "new\n"}, tasks=tasks + [{"id": "004", "files": ["yarn.lock"], "protected": [], "test": "go test ./a"}])
+        self.assertEqual(self.scopes, [None, ["go test ./a"]])  # one command once, however many tasks it proves
+        self.verify({"a.go": "fixed\n"}, tasks=[])
+        self.assertEqual(self.scopes, [None, None])  # a file no task names: only the full checks cover it
+
+    def test_fix_tests_cover_every_changed_file_or_fall_back_to_the_full_checks(self):
+        tasks = [{"id": "001", "files": ["a.go"], "protected": ["a_test.go"], "test": "ta"},
+                 {"id": "002", "files": ["b.go", "c.go"], "protected": ["b_test.go"], "test": "tb"}]
+        self.assertEqual(fc.fc_verify.fix_tests(tasks, ["c.go", "a.go"]), ["ta", "tb"])  # task order
+        self.assertEqual(fc.fc_verify.fix_tests(tasks, ["b_test.go"]), ["tb"])
+        self.assertIsNone(fc.fc_verify.fix_tests(tasks, ["a.go", "setup.js"]))
+        self.assertIsNone(fc.fc_verify.fix_tests(tasks, []))
 
     def test_fix_commit_uses_the_fixers_one_line_description(self):
         _, repo, _ = self.verify({"a.go": "fixed\n"}, reply='"Match the autofill panel file name"\nI also changed...')
@@ -502,6 +605,13 @@ class Workspaces(unittest.TestCase):
         with mock.patch.object(fc.fc_proc, "run", run), self.assertRaises(fc.fc_models.RateLimited):
             fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
 
+    def test_a_503_overloaded_before_any_token_waits_like_a_rate_limit(self):
+        end = json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": HerdrPiTurn.BUSY}})
+        run = mock.Mock(return_value=mock.Mock(stdout=end + "\n", stderr="", returncode=0))
+        with mock.patch.object(fc.fc_proc, "run", run), self.assertRaises(fc.fc_models.RateLimited) as cm:
+            fc.fc_models.pi_turn(tempfile.mkdtemp(), "x/y", "hi")
+        self.assertIn("overloaded_error", cm.exception.why)
+
 
 class KeepOldKeys(unittest.TestCase):
     setUp, same = Workspaces.setUp, Workspaces.same
@@ -713,6 +823,102 @@ class HerdrPiKey(unittest.TestCase):
                 self.assertFalse("OPENROUTER_API_KEY" in env)  # never print an env: it may hold keys
                 self.assertFalse("sk-" in json.dumps(env))
                 self.assertFalse(self.process_key)  # the fallback did not leak into the process either
+
+
+class HerdrPiTurn(unittest.TestCase):
+    """One turn of the herdr pi implementer once its agent is up, on a fake clock: herdr answers the prompt, pi writes the session file."""
+    USER = {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}
+    BUSY = ('503: {"error":{"message":"Provider returned error","code":503,"metadata":{"raw":"{\\"type\\":\\"overloaded_error\\",\\"code\\":'
+            '\\"start_generation_failed\\",\\"message\\":\\"Failed to start generation: tcp connect error\\"}","provider_name":"Together"}}}')
+
+    def reply(self, text="done", stop="stop", error=None):
+        m = {"role": "assistant", "content": [{"type": "text", "text": text}] if text else [], "stopReason": stop,
+             "usage": {"input": 10, "output": 2} if text else {}}
+        return {"type": "message", "message": {**m, **({"errorMessage": error} if error else {})}}
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.root, True)
+        self.addCleanup(fc.fc_proc.HOOKS.pop, "shop-028", None)
+        self.sfile, self.now, self.calls = self.root / "s.jsonl", 1000.0, []
+
+    def write(self, *events):
+        with self.sfile.open("a") as f:
+            f.writelines(json.dumps(e) + "\n" for e in events)
+
+    def turn(self, on_prompt, status=lambda: "idle", on_wait=lambda: None):
+        """herdr_pi on a live session. `on_prompt(n)` is herdr's error for the n-th `agent prompt` (None: accepted) and may write the
+        session file; `status()` is the agent's state at each `agent get`; `on_wait()` runs on `agent wait`. The herdr calls land in
+        self.calls as (args, clock)."""
+        prompts = []
+        def herdr_error(*a, timeout=None):
+            self.calls.append((a, self.now))
+            if a[:2] == ("agent", "prompt"):
+                prompts.append(a)
+                err = on_prompt(len(prompts))
+                return (None, err) if err else ({}, None)
+            if a[:2] == ("agent", "wait"):
+                on_wait()
+            return {}, None
+        def herdr(*a, **k):
+            self.calls.append((a, self.now))
+            return {"agent": {"agent_status": status()}} if a[:2] == ("agent", "get") else {}
+        clock = types.SimpleNamespace(time=lambda: self.now, sleep=lambda s: setattr(self, "now", self.now + s))
+        session = {"name": "shop-028", "pane": "p1", "sfile": str(self.sfile), "seen": 0}
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_error", herdr_error), \
+                mock.patch.object(fc.fc_implement, "time", clock), mock.patch.object(fc.fc_herdr, "time", clock):
+            return fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", session, task, timeout=180)
+
+    def sent(self, *what):
+        return [(a, t) for a, t in self.calls if a[:len(what)] == what]
+
+    def test_a_turn_slow_to_start_is_waited_for_in_its_pane_not_timed_out(self):
+        states = iter(["idle"] * 8)  # herdr gave up on seeing work after 5 s; pi starts the turn 8 s later
+        _, text, _, _ = self.turn(lambda n: "agent_prompt_stalled", status=lambda: next(states, "working"),
+                                  on_wait=lambda: self.write(self.USER, self.reply("done")))
+        self.assertEqual(text, "done")
+        self.assertEqual((len(self.sent("agent", "prompt")), self.sent("pane", "close")), (1, []))
+        (wait, _), = self.sent("agent", "wait")
+        self.assertTrue(170000 <= int(wait[wait.index("--timeout") + 1]) <= 180000, wait)  # what is left of the turn's time
+
+    def test_a_turn_herdr_never_saw_working_is_read_from_the_session_file_and_not_sent_again(self):
+        polls = []
+        def status():
+            polls.append(1)
+            if len(polls) == 40:  # past the start wait: a recorded prompt is never sent again
+                self.write(self.reply("done"))
+            return "idle"
+        _, text, tools, _ = self.turn(lambda n: self.write(self.USER, self.reply("", stop="toolUse")) or "agent_prompt_stalled", status=status)
+        self.assertEqual(text, "done")
+        self.assertEqual((len(self.sent("agent", "prompt")), self.sent("agent", "wait"), self.sent("pane", "close")), (1, [], []))
+
+    def test_a_prompt_with_no_trace_is_sent_once_more_in_the_same_session(self):
+        _, text, _, _ = self.turn(lambda n: "agent_prompt_stalled" if n == 1 else self.write(self.USER, self.reply("done")))
+        (first, t1), (again, t2) = self.sent("agent", "prompt")
+        self.assertEqual((text, first[2:4], again[2:4], self.sent("pane", "close")), ("done", ("shop-028", "hi"), ("shop-028", "hi"), []))
+        self.assertGreaterEqual(t2 - t1, fc.fc_herdr.PROMPT_START_WAIT)
+
+    def test_a_turn_that_never_starts_ends_as_a_timeout_after_one_resend(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.turn(lambda n: "agent_prompt_stalled")
+        self.assertEqual(len(self.sent("agent", "prompt")), 2)
+        self.assertEqual([a for a, _ in self.calls[-2:]], [("agent", "send-keys", "shop-028", "esc"), ("pane", "close", "p1")])
+        self.assertLess(self.now - 1000, 180)
+
+    def test_a_busy_provider_or_a_429_before_any_token_waits_like_a_rate_limit(self):
+        for err, why in ((self.BUSY, "provider busy: 503"), ("429 Provider returned error: rate limit exceeded", "rate-limited by provider")):
+            with self.subTest(why=why):
+                self.sfile.write_text("")
+                with self.assertRaises(fc.fc_models.RateLimited) as cm:
+                    self.turn(lambda n: self.write(self.USER, self.reply(None, stop="error", error=err)))
+                self.assertTrue(cm.exception.why.startswith(why), cm.exception.why)
+
+    def test_a_definite_refusal_still_ends_the_turn_with_the_providers_message(self):
+        err = '404: {"message":"Preset \\"glm\\" not found for this user.","code":404}'
+        with self.assertRaises(RuntimeError) as cm:
+            self.turn(lambda n: self.write(self.USER, self.reply(None, stop="error", error=err)))
+        self.assertNotIsInstance(cm.exception, fc.fc_models.RateLimited)
+        self.assertIn("provider refused the request: 404", str(cm.exception))
 
 
 class TypeSafeKey(unittest.TestCase):

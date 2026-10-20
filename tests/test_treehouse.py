@@ -111,7 +111,7 @@ class Treehouse(unittest.TestCase):
         (proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))
         (proj / "results" / "contract.md").write_text("c")
         started = []
-        run = lambda: fc.fc_briefs.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None))
+        run = lambda: fc.fc_briefs.cmd_testcrews(mock.Mock(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None, redo=False))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
              mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)):
             with self.assertRaises(SystemExit) as e:

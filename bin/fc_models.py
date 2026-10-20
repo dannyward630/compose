@@ -134,15 +134,15 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]
         payment_check("openrouter (pi)", " ".join(real))
         raise RuntimeError(f"pi failed: {' '.join(real)[-400:] or p.stdout.strip()[-400:]}")
-    limited = "429" in (p.stderr or "") or any("rate" in e.lower() and "limit" in e.lower() for e in errors)
-    if not text and not tools and not usage["tokens_in"] and not limited:  # a 429 refuses before any token, and is still a rate limit
+    busy = provider_busy(errors, not text and not tools and not usage["tokens_in"], p.stderr or "")
+    if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]  # pi's session warnings are not the provider's answer
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or ' '.join(real)[-400:] or 'empty reply with no usage'}")
     if model in fc_config.PRICES:
         usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
     fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
-    if limited:
-        raise RateLimited(usage)
+    if busy:
+        raise RateLimited(usage, busy)
     return sid, "\n".join(text), tools, usage
 
 def fallback_for(model):
@@ -182,16 +182,27 @@ def http_json(req, provider, timeout=90):
     return out
 
 class RateLimited(Exception):
-    def __init__(self, usage):
-        super().__init__("provider rate limit hit; session compacted")
-        self.usage = usage
+    """The provider turned the turn away for a reason that passes: `run` waits and starts a fresh session without spending an attempt."""
+    def __init__(self, usage, why="rate-limited by provider"):
+        super().__init__(f"{why}; session compacted")
+        self.usage, self.why = usage, why
+
+
+def provider_busy(errors, empty, stderr=""):
+    """Why the provider turned a pi turn away for a reason that passes, else None: a rate limit at any point, or, on a turn that got no
+    token at all, an overloaded, unavailable or unreachable upstream (a 429 or a 5xx, a connect error). A refusal that stays, such as
+    a bad model id, a missing preset or a bad key, matches neither, and a billing refusal raised PaymentRequired before this."""
+    if "429" in stderr or any("rate" in e.lower() and "limit" in e.lower() for e in errors):
+        return "rate-limited by provider"
+    hit = next((e for e in errors if TRANSIENT.search(e)), None) if empty else None
+    return f"provider busy: {' '.join(hit.split())[:200]}" if hit else None
 
 
 def parse_pi_session(path, seen):
     """Read the pi session JSONL from line `seen` on: assistant text, tool calls, usage, and provider errors of the new turns.
     Same accounting as pi_turn, so the ledger and cost line do not depend on which path ran the task."""
     text, tools, usage, errors = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, []
-    lines = Path(path).read_text().splitlines() if Path(path).exists() else []
+    lines = Path(path).read_text().splitlines() if path and Path(path).is_file() else []
     for ln in lines[seen:]:
         try:
             ev = json.loads(ln)
@@ -213,6 +224,21 @@ def parse_pi_session(path, seen):
             payment_check("openrouter (pi)", err)
             errors.append(err[:400])
     return len(lines), "\n".join(text), tools, usage, errors
+
+def pi_turn_state(path, seen):
+    """(delivered, ended) for the turn a pi session file records from line `seen` on: pi wrote the prompt down, and its last message
+    is the assistant's and did not stop for a tool call. The record of a turn herdr never saw working."""
+    roles = []
+    for ln in (Path(path).read_text().splitlines()[seen:] if path and Path(path).is_file() else []):
+        try:
+            ev = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "message":
+            m = ev.get("message") or {}
+            roles.append((m.get("role"), m.get("stopReason")))
+    delivered = any(r == "user" for r, _ in roles)
+    return delivered, delivered and roles[-1][0] == "assistant" and roles[-1][1] != "toolUse"
 
 
 _PROBED = {}

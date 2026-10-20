@@ -32,17 +32,21 @@ def cmd_tasks(a):
     tasks = fc_tasks.load_tasks(proj, required=True)
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block")
-    print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(m['id'] for m in tasks)}")
+    # Only tasks still to land are layers or can clash; a later wave may legitimately touch a file an already-merged task owned,
+    # or a page a passed design task built (a design task never merges, so passed is its finish).
+    trunk_head = fc_status.project_head(repo, proj)
+    facts = fc_status.branch_facts(repo, proj, trunk_head)
+    finished = lambda m, st: st in ("merged", "hand_done", "already_green") or (m.get("kind") == "design" and st == "passed")
+    open_tasks = [m for m in tasks if not finished(m, fc_status.task_state(repo, proj, m, trunk_head, facts)["state"].split(" ")[0])]
+    # The layers in the order the chain stacks them once each has a branch: the rule stack_order applies to the branches.
+    layers = fc_worktree.layer_order(fc_tasks.code_tasks(open_tasks))
+    print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(layers) or '-'}")
     print(f"  {'id':4} {'title':40} {'after':10} {'linear':9} files | protected | test")
     for m in tasks:
         after = str(m.get("after") or "").strip() or "-"
         linear = str(m.get("linear") or "").strip() or "-"
         owned = ', '.join(m['nodes']) if m.get('kind') == 'design' else ', '.join(m['files'])
         print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {linear:9} {owned or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
-    # Only tasks still to run can clash; a later wave may legitimately touch a file an already-merged task owned.
-    trunk_head = fc_status.project_head(repo, proj)
-    facts = fc_status.branch_facts(repo, proj, trunk_head)
-    open_tasks = [m for m in tasks if fc_status.task_state(repo, proj, m, trunk_head, facts)["state"].split(" ")[0] not in ("merged", "hand_done", "already_green")]
     clashes = file_clashes(open_tasks)
     if clashes:
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
@@ -77,7 +81,7 @@ def cmd_tasks(a):
         print(f"\n  run waves (each wave in parallel): {'  then  '.join(', '.join(w) for w in waves)}")
     if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
         print(f"\n  WARNING SERIAL CHAIN: {len(to_run)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
-              "(blocked-by) only where a task needs another task's code or file; stack order for review comes from ids, not from `after:`.")
+              "(blocked-by) only where a task needs another task's code or file; the stack puts a task above its `after:` tasks and orders the rest by id, so review order needs no `after:`.")
 
 
 def run_waves(tasks):
@@ -93,8 +97,10 @@ def run_waves(tasks):
         done |= set(wave)
     return waves
 
-def spec_check(data):
-    """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task."""
+def spec_check(data, checks=()):
+    """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task. `checks` are
+    verify.json's: a task whose `test:` is one of them runs the whole suite after every implementer turn."""
+    suite = {" ".join(c.split()) for c in checks}
     issues = [i for i in data["issues"] if (i.get("status") or "").lower() not in fc_tasks.CANCELED]
     tasks = [t for t in (fc_tasks.task_from_issue(i) for i in issues) if t]
     out = []
@@ -133,6 +139,8 @@ def spec_check(data):
                 gaps.append("empty `files:`")
             if not meta["protected"]:
                 gaps.append("empty `protected:`")
+            if " ".join(meta["test"].split()) in suite:
+                gaps.append(f"`test:` is the verify check `{meta['test']}`, the whole suite: run only this task's test (its file, or a name filter)")
             if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):
                 gaps.append("the brief points at the contract, which implementers never see: state its signatures and exact lines in the brief")
             out.append((not gaps, i["id"], "task", gaps))
@@ -154,14 +162,16 @@ def cmd_spec_check(a):
             d = json.loads(sys.stdin.read())
         except ValueError as e:
             sys.exit(f"spec-check: stdin is not JSON ({e}); expected {fc_tasks.SYNC_SHAPE}")
+        checks = []
     else:
         proj = fc_core.project_dir(a)
         fc_tasks.load_tasks(proj, required=True)
         cache = fc_tasks.linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
              "issues": [dict(v, id=k) for k, v in (cache.get("issues") or {}).items()]}
+        checks = fc_core.project_config(proj).get("checks", [])
     bad = False
-    for ok, ident, level, gaps in spec_check(d):
+    for ok, ident, level, gaps in spec_check(d, checks):
         print(f"{'PASS' if ok else 'FAIL'} {ident} {level}" + (f": {'; '.join(gaps)}" if gaps else ""))
         bad = bad or not ok
     if bad:

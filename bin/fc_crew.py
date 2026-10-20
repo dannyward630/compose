@@ -149,27 +149,13 @@ def crew_workdir(cwd, wt, name, leased=False):
     run where pointed; no --cwd runs in the project worktree."""
     if not cwd:
         return wt, None
-    cwd = Path(cwd)
-    theirs = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, check=False).stdout.strip() if cwd.is_dir() else ""
+    theirs = fc_worktree.common_dir(cwd)
     if not theirs or leased:
-        return cwd, None
-    top = Path(theirs).parent  # the main checkout: a new worktree never nests inside a linked one (a project worktree)
-    base = fc_core.sh(["git", "rev-parse", "HEAD"], cwd).stdout.strip()
-    if fc_claude.claude_trusted(top) is False:
-        sys.exit(fc_claude.untrusted(top))
-    exclude = Path(theirs) / "info" / "exclude"
-    if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        with exclude.open("a") as f:
-            f.write("/.claude/worktrees/\n")
-    branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
-    if fc_worktree.use_treehouse():
-        fc_core.sh(["git", "branch", branch, base], top)
-        return fc_worktree.slot_on(top, branch, f"compose:{name}"), branch
-    path = top / ".claude" / "worktrees" / branch
-    fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), base], top)
-    return path, branch
-
+        return Path(cwd), None
+    if fc_claude.claude_trusted(theirs.parent) is False:
+        sys.exit(fc_claude.untrusted(theirs.parent) + f" Or pass --work-repo {theirs.parent} instead of --cwd: the session then "
+                 f"starts in the project worktree and works on its own worktree of {theirs.parent} from there.")
+    return fc_worktree.repo_worktree(cwd, name)
 
 def cmd_crew(a):
     """`crew start` a teammate, a Claude session in the project's space (own tab, named `<slug>-<role>`), and brief it; `crew list` shows
@@ -227,32 +213,44 @@ def cmd_crew(a):
     if not (brief or "").strip():
         sys.exit("crew start needs --brief \"<task>\" (or --brief - with the brief on stdin)")
     title = a.title or a.role
-    cwd, branch = crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
+    repo = getattr(a, "work_repo", None)
+    if repo and getattr(a, "cwd", None):
+        sys.exit("crew start takes --cwd or --work-repo, not both")
+    cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
     if not model.startswith("pi:") and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
+    work = None  # with --work-repo the session starts in the project worktree, which Claude Code trusts; only its work is in the repo
+    if repo:
+        work, branch = fc_worktree.repo_worktree(repo, name)
     try:
         if getattr(a, "frame0", False):
             fc_frame0.frame0_register(cwd, fc_frame0.frame0_port(proj))  # before the session starts: it reads its MCP servers once
     except (RuntimeError, OSError) as e:
         print(f"teammate {name} starts without the project's frame0 tools: {e}")
-    if branch:
+    if work:
+        brief = (f"Your session runs in the project worktree {cwd}; you work in your own worktree {work} of {repo}, on branch {branch}, "
+                 f"by absolute path: read and edit its files there, and run its commands with `cd {work} && ...` and git with "
+                 f"`git -C {work}`. Commit there; never switch branches in, or edit, the repo's own checkout or the project worktree. "
+                 f"Report done with the branch name.\n\n") + brief
+    elif branch:
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
-    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", fc_herdr.tab_label(proj, title), "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
+    tab = fc_herdr.herdr("tab", "create", "--workspace", space, "--label", fc_herdr.tab_label(proj, title), "--cwd", str(cwd), "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                 "--no-focus", check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
+    started_by = fc_core.session_id()  # and which session of that role: two engineering managers on one project are told apart by it
     brief_file.write_text(fc_core.scrub(crew_preamble(proj, name, title, reports_to) + brief))
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
         skill = {"skill": skill_hashes()} if model.startswith("pi:") else {}
     except OSError:
         skill = {}
-    fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
-                               "reports_to": reports_to, "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
+    fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, **({"worktree": str(work)} if work else {}), "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
+                               "reports_to": reports_to, **({"started_by": started_by} if started_by else {}), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
@@ -265,7 +263,7 @@ def cmd_crew(a):
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--no-chrome", "--append-system-prompt", TRUST_PROMPT, *( ["--autocompact", "150k"] if a.role in GUARDED_ROLES else []), "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=getattr(a, "frame0", False))) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
-                  "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
+                  *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
     except RuntimeError as e:
         if len(crew_reports(proj, name)) > seen or fc_herdr.pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")

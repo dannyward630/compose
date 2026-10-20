@@ -433,6 +433,20 @@ class Reenter(unittest.TestCase):
         out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "orchestrator"})
         self.assertIn("hw-orchestrator.brief.md", out)
 
+    def test_a_crew_teammate_is_pointed_at_its_own_brief_not_its_roles(self):
+        """Every unguarded teammate's tab carries COMPOSE_ROLE=crew: the brief is named for the teammate, `<slug>-<role>.brief.md`."""
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        (crew / "hw-designer.brief.md").write_text("brief")
+        out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "crew", "COMPOSE_TEAMMATE": "hw-designer"})
+        self.assertIn(str(crew / "hw-designer.brief.md"), out)
+        self.assertNotIn("hw-crew", out)
+        # a session started before its tab carried the name: its record says which pane it runs in
+        (crew / "hw-designer.json").write_text(json.dumps({"name": "hw-designer", "pane": "w9:p4"}))
+        (crew / "hw-research.json").write_text(json.dumps({"name": "hw-research", "pane": "w9:p5"}))
+        out, _ = self.reenter({**self.env, "COMPOSE_ROLE": "crew", "HERDR_PANE_ID": "w9:p4"})
+        self.assertIn(str(crew / "hw-designer.brief.md"), out)
+        self.assertNotIn("hw-crew", out)
+
     def test_no_role_or_a_headless_session_prints_nothing(self):
         for env in ({k: v for k, v in self.env.items() if k != "COMPOSE_ROLE"}, {**self.env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
             out, pd = self.reenter(env)
@@ -650,6 +664,14 @@ class Timed(unittest.TestCase):
             os.close(term)
         self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
 
+    def test_a_compose_command_under_timed_that_needs_a_key_says_to_run_it_directly(self):
+        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+        r = subprocess.run([compose, "timed", "10", "--", compose, "linear", "project", "--repo", tempfile.mkdtemp()], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("compose linear needs a Linear key, but runs on a scratch config with no workspace and no keys, as every command under "
+                      "`compose timed` does: run compose's own commands directly", r.stderr)
+        self.assertNotIn("compose workspace key", r.stderr)  # a key stored there would land in the scratch config
+
 
 class JevLeash(unittest.TestCase):
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):
@@ -657,22 +679,22 @@ class JevLeash(unittest.TestCase):
         self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))
         self.assertFalse(fc.fc_jev.tool_error("AssertionError: score was 2 of 3"))
 
-    def test_a_jev_case_is_killed_at_its_limit(self):
+    def test_a_jev_case_is_killed_at_its_limit_and_its_assert_still_runs(self):
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
              mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
-        self.assertEqual(r["exit"], 124); self.assertNotIn("assert_exit", r); self.assertNotIn("run", r)
+        self.assertEqual((r["exit"], r["assert_exit"]), (124, 0)); self.assertNotIn("run", r)
 
     USAGE = {"typesafe_calls": 0, "typesafe_in": 0, "typesafe_out": 0, "text_calls": 0, "text_in": 0, "text_out": 0}
 
-    def jev(self, code, status):
-        """The fake's returncode stands for the assert's exit code: the real script ends with sys.exit(subprocess.call(assert))."""
+    def jev(self, assert_code, status):
+        """jev exits 0 only on a reached goal; verify runs the assert after it, whatever jev's status."""
         stdout = "JEV_RESULT " + json.dumps({"status": status, "elapsed_ms": 413, "steps": 7, "url": "about:blank", "usage": self.USAGE}) + "\n"
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", code, stdout, "")):
-            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": "true"}, Path(tempfile.mkdtemp()))
+             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", int(status != "done"), stdout, "")):
+            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": f"exit {assert_code}"}, Path(tempfile.mkdtemp()))
 
     def test_a_blocked_jev_fails_the_case_even_when_its_assert_passes(self):
         r = self.jev(0, "blocked")
@@ -687,7 +709,7 @@ class JevLeash(unittest.TestCase):
             self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
 
     def test_any_status_but_done_fails_the_case(self):
-        r = self.jev(0, "max_steps")
+        r = self.jev(0, "error")
         self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
         self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
 
@@ -859,6 +881,70 @@ class ReadyEvent(unittest.TestCase):
         self.assertTrue(any(line.endswith("] " + self.LINE) for line in out), out)
         notify.assert_not_called()
         self.assertEqual(fc.fc_watch.watch_filter([self.LINE], "p", ["p-orchestrator"]), [self.LINE])
+
+
+class ManagerSessions(unittest.TestCase):
+    """Two engineering manager sessions on one project, each in its own herdr pane: A (w1:p1) started a designer, B (w1:p2) a
+    planner and the team lead, whose test writer reports to it. Each watch wakes only on its own session's teammates."""
+    A, B = "w1:p1", "w1:p2"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        crew = self.proj / "results" / "crew"; crew.mkdir(parents=True)
+        for name, role, up, by in (("hw-designer", "designer", "manager", self.A), ("hw-planner", "planner", "manager", self.B),
+                                   (ORCH, "orchestrator", "manager", self.B), ("hw-tests-001", "tests-001", "orchestrator", "w1:p9")):
+            (crew / f"{name}.json").write_text(json.dumps({"name": name, "role": role, "title": role, "space": "w1", "tab": "t", "pane": "p",
+                                                           "reports_to": up, "started_by": by}))
+            fc.fc_crew.write_report(self.proj, name, "working", "started")
+        self.live = [self.A, self.B]
+
+    def agents(self, *_a, **_k):
+        names = [f.stem for f in (self.proj / "results" / "crew").glob("*.json")]
+        return {"agents": [{"name": n, "workspace_id": "w1", "agent_status": "working", "pane_id": f"w1:x{i}"} for i, n in enumerate(names)]
+                + [{"name": f"claude{i}", "workspace_id": "w0", "agent_status": "idle", "pane_id": p} for i, p in enumerate(self.live)]}
+
+    def watch(self, pane, from_=None, now=False):
+        a = SimpleNamespace(repo=".", now=now, from_=from_, timeout=0.05, interval=0.01, stall=10_000, rewake=False)
+        out = []
+        env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_ROLE", "HERDR_PANE_ID")} | {"HERDR_PANE_ID": pane}
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", self.agents), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_crew, "desktop_notify"), \
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.suppress(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        return out
+
+    def woke_on(self, out):
+        return sorted({m.group(1) for line in out if (m := re.search(r"event (?:crew|stall=ended agent)=(\S+)", line))})
+
+    def test_each_session_wakes_on_its_own_teammates_only(self):
+        self.watch(self.A, "designer", now=True); self.watch(self.B, "orchestrator", now=True)
+        for name, state in (("hw-planner", "needs-user"), ("hw-designer", "needs-user"), ("hw-tests-001", "tool-bug")):
+            fc.fc_crew.write_report(self.proj, name, state, "x")
+        self.assertEqual(self.woke_on(self.watch(self.A, "designer")), ["hw-designer"])  # not B's planner, not a tool-bug in B's team lead's tree
+        self.assertEqual(self.woke_on(self.watch(self.B, "orchestrator")), ["hw-planner", "hw-tests-001"])  # A's watch did not swallow them
+        self.assertEqual(sorted(f.name for f in (self.proj / "results").glob("watch-*.json")), ["watch-manager-w1-p1.json", "watch-manager-w1-p2.json"])
+        fc.fc_crew.write_report(self.proj, "hw-planner", "needs-user", "y")
+        self.assertEqual(self.woke_on(self.watch(self.A)), [])  # no --from: still never another session's teammate
+        fc.fc_crew.write_report(self.proj, "hw-planner", "needs-user", "z")
+        self.assertEqual(self.woke_on(self.watch(self.A, "planner")), ["hw-planner"])  # named in --from: it asked for it
+
+    def test_a_teammate_whose_session_ended_is_adopted(self):
+        """B's session closed: its planner and team lead are anyone's, so a new engineering manager session picks the project up."""
+        self.watch(self.A, "designer", now=True)
+        self.live = [self.A]
+        fc.fc_crew.write_report(self.proj, "hw-planner", "needs-user", "x")
+        fc.fc_crew.write_report(self.proj, "hw-tests-001", "tool-bug", "x")
+        self.assertEqual(self.woke_on(self.watch(self.A, "designer")), ["hw-planner", "hw-tests-001"])
+
+    def test_owners_follow_the_live_session_and_the_team_lead(self):
+        records = [json.loads(f.read_text()) for f in sorted((self.proj / "results" / "crew").glob("*.json"))]
+        owner = lambda live: fc.fc_watch.crew_owners(records, None if live is None else [{"pane_id": p} for p in live])
+        self.assertEqual(owner([self.A, self.B]), {"hw-designer": self.A, "hw-planner": self.B, ORCH: self.B, "hw-tests-001": self.B})
+        self.assertEqual(owner([self.B]), {"hw-planner": self.B, ORCH: self.B, "hw-tests-001": self.B})
+        self.assertEqual(owner(None), owner([self.A, self.B]))  # herdr cannot say: every session counts as live
+        records.append({"name": "hw-old", "reports_to": "manager"})  # from before started_by: nobody's, as before
+        self.assertNotIn("hw-old", owner([self.A, self.B]))
 
 
 if __name__ == "__main__":

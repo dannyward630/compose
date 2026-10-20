@@ -312,6 +312,46 @@ class Holds(unittest.TestCase):
         self.assertEqual(self.notes, [("001", "Held: D2 broken"), ("002", "Held: D2 broken" + late), ("003", "Held: D2 broken")])
         self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"001", "002", "003"})
 
+    def test_hold_is_on_disk_before_it_reads_whether_the_task_runs(self):
+        # run_task writes `running` and then reads the holds; hold writes the hold and then reads `running`. Either the task
+        # sees the hold and never starts, or hold sees it running and says so: never a plain "held" for a task that starts.
+        (self.proj / "results" / "002.json").write_text(json.dumps({"id": "002", "status": "running"}))
+        seen = []
+        with mock.patch.object(fc.fc_tasks, "run_alive", lambda p: seen.append(set(fc.fc_tasks.held(p))) or True):
+            self.hold(only="002", reason="D2 broken")
+        self.assertEqual(seen, [{"002"}])
+
+    def test_a_task_held_while_the_run_prepares_it_never_starts_and_goes_back_to_pending(self):
+        root = Path(tempfile.mkdtemp())
+        repo = root / "repo"
+        repo.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "001.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        before = json.dumps({"id": "001", "status": "failed", "attempts": 3})  # its last run's result
+        (self.proj / "results" / "001.json").write_text(before)
+        ready, turns, moves = fc.fc_worktree.ready_checkout, [], []
+        def install(*a, **kw):  # the hold lands while the run clones and installs, after it submitted the task
+            ready(*a, **kw)
+            self.hold(only="001", reason="D2 broken")
+        with mock.patch.object(fc.fc_worktree, "ready_checkout", install), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_implement, "implementer", lambda *a, **kw: turns.append(a)), \
+                mock.patch.object(fc.fc_linear, "linear_event", lambda proj, meta, event, result=None: moves.append(event)):
+            r = fc.fc_implement.run_task(repo, self.proj, {**task("001"), "test": "grep -q yes 001.txt"}, 3)
+        self.assertEqual((r["status"], turns, moves), ("held", [], []))
+        self.assertEqual((self.proj / "results" / "001.json").read_text(), before)
+        self.assertFalse((self.proj / "worktrees" / "001").exists())
+        self.assertIn("001 held    before its first turn: D2 broken", self.said)
+        self.assertNotIn("001 start", " ".join(self.said))
+
+    def test_a_task_handed_back_held_waits_like_any_held_task(self):
+        calls, table, _ = run_all(self.proj, status={"004": "held"}, during=lambda tid: tid == "004" and self.hold(only="004", reason="x"))
+        self.assertEqual(calls, ["001", "002", "003", "004"])
+        self.assertIn("004 held    x", self.said)
+        self.assertNotIn("004", table)  # not failed, not blocked: left pending for the next run
+        self.assertIn("run done   3/3 passed", " ".join(self.said))
+
     def test_hold_needs_ids_and_a_reason(self):
         with self.assertRaises(SystemExit):
             self.hold(only="002")

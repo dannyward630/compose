@@ -109,7 +109,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 
 | Variable | Effect |
 |---|---|
-| `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING` |
+| `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING`, unless a compose outside it made that change (another session's `compose workspace`, say; compose journals each write it makes there in `~/.compose/home-writes.jsonl`) or it is in the CLI checkout |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
 | `COMPOSE_NO_TRAIL=1` | skip trail |
 | `COMPOSE_TEST_SLOTS=<n>` | how many `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so |

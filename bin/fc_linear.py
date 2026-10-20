@@ -26,7 +26,7 @@ def linear_sync_payload(proj):
     if not link.get("feature"):
         sys.exit(f'{proj / "linear.json"}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
     if not fc_config.LINEAR_KEY:
-        sys.exit(f"sync needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear; "
+        sys.exit(f"{fc_config.needs_linear_key('sync')}; "
                  f"or pipe the JSON to compose sync --stdin --project {proj.name} ({fc_tasks.SYNC_SHAPE})")
     stories = set(link.get("stories") or [])
     try:
@@ -342,7 +342,7 @@ def cmd_ready(a):
     """Mark the stories and features that can start now with the Ready label in Linear, and print them."""
     proj = fc_core.project_dir(a)
     if not fc_config.LINEAR_KEY:
-        sys.exit(f"ready needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear")
+        sys.exit(fc_config.needs_linear_key("ready"))
     feature = json.loads((proj / "linear.json").read_text()).get("feature")
     try:
         items = linear_mark_ready(feature)

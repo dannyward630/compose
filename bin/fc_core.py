@@ -1,4 +1,4 @@
-import atexit, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time
+import atexit, fcntl, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 
@@ -50,6 +50,17 @@ def worktrees(repo):
         if line.startswith("worktree "):
             out.append(Path(line[len("worktree "):]))
     return out or [Path(repo).resolve()]
+
+def repo_link(path):
+    """The repo's Linear link, `.compose/linear.json` (SKILL.md step 0): one file in the main checkout that every worktree of
+    the repo reads, else the checkout's own (one written in a linked worktree); when neither exists, the main checkout's path,
+    where it belongs. Outside a git repo, the folder's own."""
+    here = Path(path).resolve()
+    top = sh(["git", "rev-parse", "--show-toplevel"], here, check=False).stdout.strip() if here.is_dir() else ""
+    if not top:
+        return here / ".compose" / "linear.json"
+    found = [d.resolve() / ".compose" / "linear.json" for d in dict.fromkeys((worktrees(here)[0], Path(top)))]  # git lists the main checkout first
+    return next((f for f in found if f.exists()), found[0])
 
 def project_config(proj):
     f = Path(proj) / "verify.json"
@@ -122,6 +133,7 @@ def atomic_write(path, text, keep_secrets=False):
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(text if keep_secrets else scrub(text))
+    note_home_write(path, tmp)
     os.replace(tmp, path)
 
 
@@ -140,34 +152,112 @@ def clean_env(env=None):
 # ---------- the user's ~/.compose: project code gets its own, and a write to the user's is flagged ----------
 # When the project is compose itself, the code under test is a compose that reads and writes its config, keys, and caches.
 # HOME stays as it is: git's identity and the toolchains' caches (rustup, uv, npm, gh) live there and tests need them.
+# Other compose sessions write the user's config and keys too (`compose workspace`, setup, a key moved), so each such write
+# is journaled with who made it, and only a change no compose outside the watched command wrote is flagged.
 SCRATCH_CONFIGS = []  # removed when the CLI exits
-CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl", "test-slots"}  # what other compose processes write there at any time
+HOME_WRITES = "home-writes.jsonl"  # the journal: one line per write the CLI makes to the user's ~/.compose
+HOME_WRITES_MAX = 64 * 1024  # bytes; past it the journal keeps its newer half
+HOME_WRITES_SLACK = 10  # seconds a journal line may predate home_state: a write is journaled just before its file is replaced
+HOME_HASH_MAX = 1 << 20  # bytes; a larger file is compared by size and mtime, not content
+CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl", "test-slots", HOME_WRITES}  # what other compose processes write there at any time
+CLI_CHECKOUT = Path(__file__).resolve().parents[1]  # left out of home_state where it is under ~/.compose: code, not config
+
+SCRATCH_PREFIX = "compose-config-"
 
 def scratch_config():
     """A COMPOSE_CONFIG in a fresh, empty directory of its own."""
     if not SCRATCH_CONFIGS:
         atexit.register(remove_scratch)
-    SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix="compose-config-"))
+    SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix=SCRATCH_PREFIX))
     return str(Path(SCRATCH_CONFIGS[-1]) / "config.json")
+
+def is_scratch(config):
+    """Whether `config` (a COMPOSE_CONFIG path) is one scratch_config made: no workspace, no keys."""
+    return bool(config) and Path(config).parent.name.startswith(SCRATCH_PREFIX)
 
 def remove_scratch():
     """Remove every scratch config this process made: at exit, and on a SIGTERM or SIGHUP, which would skip exit otherwise."""
     while SCRATCH_CONFIGS:
         shutil.rmtree(SCRATCH_CONFIGS.pop(), ignore_errors=True)
 
-def home_state():
-    """name -> (size, mtime) of each entry of the user's ~/.compose, the CLI's own logs and caches left out."""
-    home = Path.home() / ".compose"
-    entries = [p for p in home.iterdir() if p.name not in CLI_OWN and not p.name.endswith(".tmp")] if home.is_dir() else []
-    return {p.name: (st.st_size, st.st_mtime_ns) for p in entries for st in [p.lstat()]}
+def checkout_entries(home):
+    """The entries of `home` (~/.compose) that hold a CLI checkout: `src`, where install.sh puts it, and this CLI's own."""
+    home = home.resolve()
+    own = CLI_CHECKOUT.relative_to(home).parts[:1] if home in CLI_CHECKOUT.parents else ()
+    return {"src", *own}
 
-def flag_home(before, what):
-    """Say which entries of the user's ~/.compose changed since `before` (a home_state()) while `what` ran, if any."""
-    after = home_state()
-    changed = sorted(n for n in before.keys() | after.keys() if before.get(n) != after.get(n))
+def entry_state(p):
+    """What home_state compares for one entry: a file's content hash, so rewriting the same bytes is no change, else size and mtime."""
+    st = p.lstat()
+    if p.is_file() and not p.is_symlink() and st.st_size <= HOME_HASH_MAX:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    return (st.st_size, st.st_mtime_ns)
+
+def home_state():
+    """When it was taken, and name -> entry_state of each entry of the user's ~/.compose: the CLI's own logs and caches and
+    its checkout left out."""
+    home, at, state = Path.home() / ".compose", time.time(), {}
+    skip = CLI_OWN | checkout_entries(home) if home.is_dir() else set()
+    for p in home.iterdir() if home.is_dir() else []:
+        if p.name not in skip and not p.name.endswith(".tmp"):
+            try:
+                state[p.name] = entry_state(p)
+            except FileNotFoundError:  # removed while it was read
+                pass
+    return {"at": at, "entries": state}
+
+def note_home_write(path, tmp):
+    """Journal the write about to replace `path` with the file `tmp`, when `path` is in the user's ~/.compose: its content's hash,
+    the writer's pid and session, and whether the writer runs on a scratch config. Before the replace, so whoever sees the new
+    content finds its line. A journal that cannot be written never fails the write: the change is then flagged, never hidden."""
+    home = Path.home() / ".compose"
+    path = Path(path)
+    if path.name in CLI_OWN or not home.is_dir() or path.parent.resolve() != home.resolve():
+        return
+    line = json.dumps({"at": time.time(), "name": path.name, "sha": hashlib.sha256(Path(tmp).read_bytes()).hexdigest(), "pid": os.getpid(),
+                       "sid": os.getsid(0), "scratch": is_scratch(os.environ.get("COMPOSE_CONFIG"))}) + "\n"
+    try:
+        with os.fdopen(os.open(home / HOME_WRITES, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600), "a+b") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)  # two sessions appending and trimming at once lose no line
+            f.write(line.encode())
+            f.flush()
+            if f.tell() > HOME_WRITES_MAX:
+                f.seek(0)
+                data = f.read()
+                f.truncate(0)
+                f.write(data[data.index(b"\n", len(data) // 2) + 1:])
+    except OSError:
+        pass
+
+def home_writes_outside(since, sid):
+    """{(name, sha)} the journal holds from `since` on, written by a compose outside the command running in session `sid`:
+    this process itself, or one on the user's own config in another session. A writer on a scratch config is code under
+    test whatever its session (it wrote the user's by its own path), and one in `sid` is the command's."""
+    try:
+        lines = (Path.home() / ".compose" / HOME_WRITES).read_text().splitlines()
+    except OSError:
+        return set()
+    out = set()
+    for line in lines:
+        try:
+            w = json.loads(line)
+            if w["at"] >= since - HOME_WRITES_SLACK and (w["pid"] == os.getpid() or not w["scratch"] and w["sid"] != sid):
+                out.add((w["name"], w["sha"]))
+        except (ValueError, KeyError, TypeError):  # a line cut by a trim that a reader raced
+            continue
+    return out
+
+def flag_home(before, what, sid=None):
+    """Say which entries of the user's ~/.compose changed since `before` (a home_state()) while `what` ran, if any, leaving out
+    a file whose new content a compose outside `what` wrote (home_writes_outside). `sid` is the session `what` runs in, when it
+    has one of its own."""
+    after = home_state()["entries"]
+    changed = [n for n in sorted(before["entries"].keys() | after.keys()) if before["entries"].get(n) != after.get(n)]
+    outside = home_writes_outside(before["at"], sid) if changed else set()
+    changed = [n for n in changed if (n, after.get(n)) not in outside]
     if changed:
-        say(f"WARNING: ~/.compose changed while {what} ran: {', '.join(changed)}. Project code gets its own COMPOSE_CONFIG, "
-            "so this one wrote the user's by its own path; check those files")
+        say(f"WARNING: ~/.compose changed while {what} ran: {', '.join(changed)}, and no compose outside it wrote that. Project code "
+            "gets its own COMPOSE_CONFIG, so this one wrote the user's by its own path, unless another program did; check those files")
 
 def scrub(text):
     """text with the value of every secret var in the process env, and every key apply_config collected, as <redacted>."""
@@ -231,6 +321,11 @@ def port_listening(port):
 
 def report_time(at):
     return time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
+
+def session_id():
+    """This session's identity: the herdr pane it runs in (herdr never reuses a pane id), else None outside herdr. The engineering
+    manager stays in the pane it was started in, so a Claude session resumed there is the same one."""
+    return os.environ.get("HERDR_PANE_ID") or None
 
 
 # ---------- init / clean ----------

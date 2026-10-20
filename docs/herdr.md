@@ -21,6 +21,10 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 | teammates | explore, wayfinder, groundwork, test writers, helpers, implementers | one tab each in the project's space |
 | planner | continues specing a ticket at step 1, 2, or 8 and cuts the task issues | tab `planner`, agent `<slug>-planner` |
 
+herdr agent names stop at 32 characters, so a longer `<slug>-<role>` keeps its role and cuts the slug.
+Project `clean-recut-branches` has team lead `clean-recut-branche-orchestrator`, and `init` says so when it creates such a project.
+Use the name `compose crew list` shows in every `herdr agent` command; `watch --from` takes the role.
+
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
 The team lead's and the planner's tabs are both marked (`COMPOSE_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`compose guard`), except the CLI's JSON under `.compose/`.
@@ -84,6 +88,8 @@ That space is recorded in the project's `results/herdr.json`, so every later com
 Each task pane shows its state, such as `attempt 2/3` or `passed`, along with its model and cost.
 The team lead steers a working or blocked implementer with `herdr agent prompt <slug>-NNN "..."`.
 That prompt lands in the same pi session the CLI drives.
+When herdr sees no work within 5 s of a CLI prompt (`agent_prompt_stalled`), the CLI keeps the pane and waits for the turn, or reads it from the pi session file when herdr never sees it working.
+A prompt pi never records within 30 s is sent once more to the same session, and only a turn that still never starts ends as a timeout and costs an attempt.
 `clean` closes the project's space along with its worktree, or in a shared space only the project's tabs.
 While the team lead has not reported done, `clean` keeps both, and the team lead's `done` closes them once its turn ends.
 
@@ -93,11 +99,15 @@ While the team lead has not reported done, `clean` keeps both, and the team lead
 It prints one `event ...` line and exits, so a waiting team lead spends no tokens.
 `--from orchestrator` makes the engineering manager wake on the team lead's reports, on a tool-bug (to start a toolsmith) or a stall, and on any teammate it started itself.
 `crew start` records who each teammate reports to (`reports_to` in `results/crew/<agent>.json`), so a planner or designer the engineering manager started needs no second watch.
+It also records the session that started it (`started_by`, its herdr pane).
+With two engineering manager sessions on one project, each session's watch wakes on no line of a teammate another live session started, unless `--from` names it.
+A teammate whose starting session has ended is adopted by any engineering manager's watch.
 A run left silent with work pending raises a stall event after 240 s.
 You can change that limit with `stall_seconds` in `verify.json` or with `watch --stall`.
 
 Each watcher remembers what it last reported in `results/watch-<who>.json`.
-The `<who>` is `all` for the team lead and `<slug>-orchestrator` for the engineering manager.
+The `<who>` is the watcher's `COMPOSE_ROLE` (`orchestrator` for the team lead), and `manager-<pane>` for an engineering manager session in herdr pane `<pane>` (`manager` outside herdr).
+`watch --now` and `status` also say whether yolo is on and which session set it, since one session's `compose yolo` changes how every session on the project answers.
 A watch started later still reports what happened while none ran, and `watch --now` marks the current state as seen.
 A billing halt is an event too, shown as `event halt=payment`.
 
@@ -107,6 +117,8 @@ The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the 
 A lock keeps one watch per watcher.
 A second hook exits at once, and a second `watch` waits its turn.
 The hook does nothing in any other session, and its watch ends with the session that parked it.
+After a context compaction, the plugin's SessionStart hook (`compose reenter`) points any teammate back at its own brief, `results/crew/<agent>.brief.md`.
+Every teammate's tab carries its name in `COMPOSE_TEAMMATE` for that, since `COMPOSE_ROLE` is `crew` for all but the team lead and the planner.
 
 Restarting the team lead in its tab loses nothing, because its first turn end reports whatever happened while it was down.
 A `run` or `verify` it started keeps going meanwhile.

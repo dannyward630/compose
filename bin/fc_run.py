@@ -54,11 +54,18 @@ def cmd_triage(a):
 
 RUN_PARALLEL = 3  # tasks at once when neither --parallel nor the config's `parallel` says
 
+def require_committed(repo):
+    """Every task clone starts from the project branch's last commit, so its tests must be committed: stop on anything dirty,
+    naming it. The agent wiring a session hook rewrites is left out (fc_worktree.dirty_paths)."""
+    dirty = fc_worktree.dirty_paths(repo)
+    if dirty:
+        shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
+        sys.exit(f"repo has uncommitted changes ({shown}); commit the tests first so worktrees include them")
+
 def cmd_run(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
-    if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip():
-        sys.exit("repo has uncommitted changes; commit the tests first so worktrees include them")
+    require_committed(repo)
     tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
@@ -178,6 +185,9 @@ def run_tasks(repo, proj, tasks, a):
                     r = {"id": metas[p]["id"], "title": metas[p].get("title"), "status": "unchained", "attempts": 0, "seconds": 0.0, "cost": 0.0,
                          "branch": "-", "log": [{"stop": str(e)}]}
                     fc_core.atomic_write((proj / "results" / f"{p}.json"), json.dumps(r, indent=2))
+                if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
+                    pending[p] = []
+                    continue
                 results.append(r)
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
                     reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
@@ -251,8 +261,7 @@ def cmd_resume(a):
     fc_core.say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
     ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
     if state["command"] == "run":
-        if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip():
-            sys.exit("repo has uncommitted changes; commit first")
+        require_committed(repo)
         tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not fc_tasks.task_finished(proj, m)]
         if not tasks:
             path.unlink(missing_ok=True)

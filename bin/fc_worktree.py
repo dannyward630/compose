@@ -1,4 +1,4 @@
-import json, os, re, shutil, sys, threading
+import json, os, re, shutil, sys, threading, time
 from pathlib import Path
 import fc_core, fc_config, fc_tasks
 
@@ -95,23 +95,18 @@ def task_branches(repo, proj):
         out[b] = base if base in branches else None
     return out
 
-def stack_order(repo, proj, tasks=None):
-    """All unmerged task branches of the project as one chain, bottom to top: a task after its `after:` tasks, then by id.
-    One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are synced, a
-    branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone.
-    `tasks`: the synced tasks when the caller holds them already, else they are read here."""
-    bases = task_branches(repo, proj)
-    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj) if tasks is None else tasks)}
-    synced = (proj / "results" / "tasks.json").exists()
-    prefix = task_prefix(repo, proj)
-    ids = sorted(t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced)
+def layer_order(tasks):
+    """The ids of `tasks` bottom to top as one stack: a task after its `after:` tasks among them, then by id. The one rule the
+    chain (stack_order, then chain_order) and `compose tasks` share, so the order a planner reviews is the order the stack gets."""
+    metas = {m["id"]: m for m in tasks}
+    ids = sorted(metas)
     order, placed = [], set()
     while len(order) < len(ids):
         progressed = False
         for tid in ids:
             if tid in placed:
                 continue
-            deps = [d.strip() for d in str(metas.get(tid, {}).get("after") or "").split(",") if d.strip() in ids]
+            deps = [d.strip() for d in str(metas[tid].get("after") or "").split(",") if d.strip() in metas]
             if all(d in placed for d in deps):
                 order.append(tid)
                 placed.add(tid)
@@ -119,7 +114,19 @@ def stack_order(repo, proj, tasks=None):
         if not progressed:  # a dependency cycle in `after:`; fall back to id order for the rest
             order += [t for t in ids if t not in placed]
             break
-    return [task_branch(repo, proj, t) for t in order]
+    return order
+
+def stack_order(repo, proj, tasks=None):
+    """All unmerged task branches of the project as one chain, bottom to top, in layer_order: a task after its `after:` tasks,
+    then by id. One feature, one stack: every task is a layer, so a reviewer reads one layer's diff at a time. Once tasks are
+    synced, a branch whose task is gone from the sync (canceled by a re-plan or an undo) is no layer; its branch is left alone.
+    `tasks`: the synced tasks when the caller holds them already, else they are read here."""
+    bases = task_branches(repo, proj)
+    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj) if tasks is None else tasks)}
+    synced = (proj / "results" / "tasks.json").exists()
+    prefix = task_prefix(repo, proj)
+    ids = [t for t in (b.removeprefix(prefix) for b in bases) if t in metas or not synced]
+    return [task_branch(repo, proj, t) for t in layer_order([metas.get(t, {"id": t}) for t in ids])]
 
 TREEHOUSE_INSTALL = "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh"
 
@@ -187,6 +194,15 @@ def default_branch(repo):
             return b
     return None
 
+def review_base(repo, cfg):
+    """The branch a project's work is reviewed and stacked on: `review_base` in its verify.json while it names a commit, else the
+    default branch. init records the branch the project started from; one made before it did holds "main" there, also in a
+    repository whose trunk is master. None when neither resolves."""
+    base = cfg.get("review_base")
+    if base and fc_core.sh(["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], repo, check=False).returncode == 0:
+        return base
+    return default_branch(repo)
+
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
@@ -202,6 +218,26 @@ def common_dir(path):
     """The git common dir of the checkout at `path`, None when it is not in one: every worktree of a repository shares it."""
     p = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False) if Path(path).is_dir() else None
     return Path(p.stdout.strip()).resolve() if p and p.returncode == 0 else None
+
+def repo_worktree(repo, name):
+    """(worktree, branch): a new worktree of `repo` on a new branch off its HEAD, under its main checkout's .claude/worktrees
+    (a treehouse slot with treehouse), so a new worktree never nests inside a linked one (a project worktree)."""
+    theirs = common_dir(repo)
+    if not theirs:
+        sys.exit(f"{repo} is not a git repo, so there is no worktree of it to work on")
+    top, base = theirs.parent, fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    exclude = theirs / "info" / "exclude"
+    if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as f:
+            f.write("/.claude/worktrees/\n")
+    branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    if use_treehouse():
+        fc_core.sh(["git", "branch", branch, base], top)
+        return slot_on(top, branch, f"compose:{name}"), branch
+    path = top / ".claude" / "worktrees" / branch
+    fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), base], top)
+    return path, branch
 
 def slots(proj, update=None):
     """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them.
@@ -261,6 +297,20 @@ def exclude_paths(wt, rules):
         exclude.write_text("".join(l + "\n" for l in have + add))
 
 TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # trail moves a repo's graph from graft/ to .trail/cache/
+WIRING = (".claude/settings.json", ".claude/settings.local.json")  # the agent wiring trail's and graft's session hooks rewrite
+
+def dirty_paths(repo):
+    """The paths `git status` shows changed or untracked in a checkout, without the agent wiring (WIRING): a graph tool's
+    session hook rewrites a tracked .claude/settings.json whenever a session starts there, and info/exclude cannot hide a
+    tracked file. That rewrite is no change of the user's, and no clone needs it."""
+    fields, paths = fc_core.sh(["git", "status", "--porcelain", "-z"], repo).stdout.split("\0"), []
+    while fields:
+        entry = fields.pop(0)
+        if entry:
+            paths.append(entry[3:])
+            if entry[0] in "RC":  # a rename or copy: its source path is the next field
+                fields.pop(0)
+    return [p for p in paths if p not in WIRING]
 
 def graph_dir(root):
     """The folder holding the repo's trail graph: .trail/cache/, else an old `graft/` graph.
@@ -308,7 +358,7 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
     commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
     deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json", "/.ignore", *("/" + d for d in deps)])
+    exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in WIRING), "/.ignore", *("/" + d for d in deps)])
     stamp_trail_wiring(wt)
     if install and borrow:
         stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())

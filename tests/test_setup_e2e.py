@@ -51,7 +51,9 @@ class SetupE2E:
                 (fakebin / name).chmod(0o755)
         base = {k: v for k, v in os.environ.items() if k != "CI" and not k.startswith(("HERDR_", "ANTHROPIC_", "COMPOSE_"))}
         base |= {"HOME": str(home), "COMPOSE_CONFIG": os.environ["COMPOSE_CONFIG"], "PATH": ":".join([str(fakebin), *map(str, path), "/usr/bin:/bin"]),
-                 "NO_COLOR": "1", "TERM": "xterm-256color", "SETUP_E2E_CALLS": str(calls)}
+                 "NO_COLOR": "1", "TERM": "xterm-256color", "SETUP_E2E_CALLS": str(calls),
+                 # the Command Line Tools python3 caches bytecode under $HOME/Library/Caches: the interpreter's, not a change setup made
+                 "PYTHONDONTWRITEBYTECODE": "1"}
         argv = [sys.executable, str(ROOT / "bin" / "compose"), "setup", *args]
         if tty:
             master, slave = pty.openpty()

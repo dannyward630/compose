@@ -69,7 +69,7 @@ The builder saves the node tree as text under `results/`, and the judge reads it
 A task is ready when it meets all four of these:
 
 - It touches one or two files.
-- It has one test command.
+- It has one test command, and it runs only the task's own test (its file, or a name filter), never the whole suite.
 - It has at most five criteria.
 - Its test fails on HEAD.
 

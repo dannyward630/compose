@@ -31,7 +31,7 @@ def setup_trail(wt):
             fc_core.sh(TRAIL_INIT + [str(wt)], wt, timeout=300, check=False)
             fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
             fc_core.say(f"trail    wired for Claude Code ({len(paths)} files, kept out of git)")
-    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json"])  # the graph and wiring, also when trail runs without init
+    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in fc_worktree.WIRING)])  # the graph and wiring, also when trail runs without init
     fc_worktree.stamp_trail_wiring(wt)
     (wt / ".trail" / "cache").mkdir(parents=True, exist_ok=True)  # trail build puts the map in graft/ unless .trail/cache/ exists first
     fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
@@ -132,27 +132,39 @@ def cmd_doctor(a):
         sys.exit(1)
     print("every step compose needs is ready")
 
+def created_from(repo, branch):
+    """The commit `branch` was created on: its reflog's oldest entry when that entry is the creation, else None (an expired
+    reflog starts later, at a commit that may be the branch's own)."""
+    log = fc_core.sh(["git", "reflog", "show", "--format=%H %gs", f"refs/heads/{branch}"], repo, check=False).stdout.splitlines()
+    sha, _, why = (log[-1] if log else "").partition(" ")
+    return sha if why.startswith("branch: Created from") else None
+
 def move_onto(wt, proj, after, after_name):
     """Build an existing project on another project's branch (`init --after`): allowed while the project has no commits of its own
-    (init's own "Ignore local tool directories" one aside) and its worktree is clean, then its branch is reset to `after` and
-    verify.json stores the review base and `after`. Exits with the reason otherwise, so the flag is never silently ignored."""
+    (init's own "Ignore local tool directories" one aside) and its worktree is clean but for agent wiring (fc_worktree.dirty_paths),
+    then its branch is reset to `after` and verify.json stores the review base and `after`. A commit of its own is one in neither
+    its review base (fc_worktree.review_base) nor the commit the branch was created on, so a project made before init recorded the
+    branch it started from is read right too. Exits with the reason otherwise, so the flag is never silently ignored."""
     cfg = fc_core.project_config(proj)
     if cfg.get("review_base") == after:
         return
     branch = fc_core.project_branch(proj)
-    base = cfg.get("review_base", "main")
     if fc_core.sh(["git", "branch", "--show-current"], wt, check=False).stdout.strip() != branch:
         sys.exit(f"{wt} is not on {branch}: check it out, then run init --after again")
-    log = fc_core.sh(["git", "log", "--format=%s", f"{base}..{branch}"], wt, check=False)
-    if log.returncode != 0:
-        sys.exit(f"cannot tell what {branch} holds beyond {base}, so --after {after_name} cannot move it: {log.stderr.strip()}")
+    since = [r for r in (fc_worktree.review_base(wt, cfg), created_from(wt, branch)) if r]
+    log = fc_core.sh(["git", "log", "--format=%s", branch, "--not", *since], wt, check=False) if since else None
+    if not log or log.returncode != 0:
+        sys.exit(f"cannot tell which commits on {branch} are its own, so --after {after_name} cannot move it"
+                 + (f": {log.stderr.strip()}" if log else ": neither its review base nor the commit it was created on resolves"))
     own = [s for s in log.stdout.splitlines() if not s.endswith("Ignore local tool directories")]
     if own:
         sys.exit(f"project {proj.name} has {len(own)} commit{'s' if len(own) > 1 else ''} of its own on {branch}, so --after {after_name} cannot move it: "
                  f"rebase it onto {after} yourself, or start the project again")
-    if fc_core.sh(["git", "status", "--porcelain"], wt, check=False).stdout.strip():
-        sys.exit(f"{wt} has uncommitted changes, so --after {after_name} cannot move {branch}: commit or discard them first")
-    fc_core.sh(["git", "reset", "-q", "--hard", after], wt)
+    if dirty := fc_worktree.dirty_paths(wt):
+        shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
+        sys.exit(f"{wt} has uncommitted changes ({shown}), so --after {after_name} cannot move {branch}: commit or discard them first")
+    if fc_core.sh(["git", "reset", "-q", "--keep", after], wt, check=False).returncode:  # --keep holds a session hook's wiring rewrite
+        fc_core.sh(["git", "reset", "-q", "--hard", after], wt)  # `after` changed that file too: the hook writes it again next session
     fc_core.atomic_write(proj / "verify.json", json.dumps({**cfg, "review_base": after, "after": after_name}, indent=2))
     print(f"branch {branch} moved onto {after}")
 
@@ -178,7 +190,7 @@ def cmd_init(a):
         sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
         sys.exit(f"no branch {after}: `compose init --project {a.after}` that project first")
-    existing = fc_core.all_projects(here).get(name)
+    existing, base = fc_core.all_projects(here).get(name), None  # base: the review base a new verify.json records
     if existing:
         wt, proj = existing
         print(f"project {name} already exists at {wt}")
@@ -196,8 +208,10 @@ def cmd_init(a):
             move_onto(wt, proj, after, a.after)
     elif a.here:
         wt, proj = here, here / ".compose" / name
+        base = fc_worktree.default_branch(here)  # the work lands on the branch the user is on, so it is reviewed against the trunk
     else:
-        base = after or fc_core.current_branch(here)
+        start = after or fc_core.sh(["git", "branch", "--show-current"], here).stdout.strip()  # empty on a detached HEAD
+        base = start or fc_worktree.default_branch(here)
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
             fc_core.sh(["git", "branch", branch, after or "HEAD"], here)
         if fc_worktree.use_treehouse():
@@ -210,25 +224,28 @@ def cmd_init(a):
                 sys.exit(f"{wt} exists already; remove it or pass --here")
             fc_core.sh(["git", "worktree", "add", "-q", str(wt), branch], here)
         proj = wt / ".compose" / name
-        print(f"worktree {wt}  branch {branch} (from {base})")
+        print(f"worktree {wt}  branch {branch} (from {start or 'HEAD'})")
     if fc_worktree.ignore_tool_files(wt):
         fc_core.sh(["git", "add", ".gitignore"], wt)
         fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
     setup_trail(wt)
-    repo_link = here / ".compose" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
-    if repo_link.exists() and not (wt / ".compose" / "linear.json").exists():
-        (wt / ".compose" / "linear.json").write_text(repo_link.read_text())
+    link = fc_core.repo_link(here)  # the repo's Linear project (step 0): the main checkout's file, which every worktree reads
+    if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own
+        (wt / ".compose" / "linear.json").write_text(link.read_text())
     if not (proj / "verify.json").exists():
         fc_core.atomic_write((proj / "verify.json"), json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],
             "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
-            "jev_acceptance": True, "acceptance_threshold": 0.6, "review_base": after or "main",
+            "jev_acceptance": True, "acceptance_threshold": 0.6, **({"review_base": base} if base else {}),
             **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
     if fc_herdr.herdr_space(proj):
         print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
+    if (lead := fc_herdr.agent_name(name, "orchestrator")) != f"{name}-orchestrator":
+        print(f"herdr agent names stop at 32 characters, so this project's are cut: its team lead is {lead}, not {name}-orchestrator; "
+              f"use the names `compose crew list --project {name}` shows in every `herdr agent` command")
 
 def merge_evidence(repo, branch, targets, has_remote):
     """Why a branch counts as merged, or None. Four independent signals, any suffices:
@@ -389,7 +406,7 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
             shutil.rmtree(w, ignore_errors=True)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     targets = [trunk, f"origin/{trunk}", "main", "origin/main", "master", "origin/master"]
-    review = fc_core.project_config(proj).get("review_base")
+    review = fc_worktree.review_base(repo, fc_core.project_config(proj))
     targets = list(dict.fromkeys([*([review, f"origin/{review}"] if review else []), *targets]))
     kept, merged = [], []  # merged: the tasks whose branches this clean proved merged
     link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}

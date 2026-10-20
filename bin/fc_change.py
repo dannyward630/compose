@@ -102,10 +102,15 @@ def reflect(proj, trigger, evidence, against=()):
             n += 1
 
 def cmd_hold(a):
-    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task finishes."""
+    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task finishes;
+    one the run is still preparing goes back to pending before its first turn (fc_implement.run_task)."""
     proj = fc_core.project_dir(a)
     tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
     hold = fc_tasks.held(proj)
+    def save():
+        tmp = proj / "results" / "hold.json.tmp"
+        fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
+        os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
     if a.release:
         for tid in (list(hold) if a.release == "all" else [x.strip() for x in a.release.split(",") if x.strip()]):
             if hold.pop(tid, None) is None:
@@ -113,22 +118,24 @@ def cmd_hold(a):
                 continue
             print(f"{tid} released")
             fc_linear.linear_note(tasks.get(tid), "Released")
+        save()
     else:
         if not a.only or not a.reason:
             sys.exit('hold needs --only <ids> and --reason "<one line>", or --release <ids|all>')
+        placed = []
         for tid in [x.strip() for x in a.only.split(",") if x.strip()]:
             if tid not in tasks:
                 print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
                 continue
             hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            placed.append(tid)
+        save()  # before reading `running`: run_task writes `running` before it reads the holds, so one of the two sees the other
+        for tid in placed:
             res = proj / "results" / f"{tid}.json"
             running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
             late = "; it is running now: the hold applies to its next start" if running else ""
             print(f"{tid} held  {a.reason}{late}")
             fc_linear.linear_note(tasks[tid], f"Held: {a.reason}{late}")
-    tmp = proj / "results" / "hold.json.tmp"
-    fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
-    os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
 
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh

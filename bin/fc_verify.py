@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_jev
+import fc_core, fc_proc, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_jev
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -32,7 +32,7 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
               "Be concrete and terse. An empty list means clean. Never invent files not in the input. "
               "Severity: high only for a bug that breaks a stated requirement, loses data, or is a security hole. Performance or style "
               "concerns at the scale this project runs at are low, never high. " + SIMPLICITY_BAR + " Report it as low if you must mention it. "
-              + ("The test suite currently PASSES; do not report anything the tests already prove works." if tests_pass else ""))
+              + ("The tests currently PASS; do not report anything the tests already prove works." if tests_pass else ""))
     user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
     def one(name):
@@ -186,7 +186,7 @@ def verify_failed(proj, rounds, findings):
             fc_core.say(f"verify reflect failed ({str(e)[:200]})")
 
 def review_inputs(repo, proj, cfg):
-    base = cfg.get("review_base", "main")
+    base = fc_worktree.review_base(repo, cfg) or "main"
     diff = fc_core.sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
     tasks = fc_tasks.load_tasks(proj)
     named = sorted({f for t in tasks for f in t["files"] + t["protected"]})
@@ -217,32 +217,58 @@ def review_inputs(repo, proj, cfg):
     protected = sorted({f for t in tasks for f in t["protected"]})
     return diff, plan, docs, protected
 
-def e2e_stage(repo, cfg, panes, report, findings):
-    """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models."""
+def e2e_stage(repo, cfg, panes, report, findings, results=None):
+    """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models.
+    With `results` (the project's results/), a jev case that does not pass keeps its step screenshots in results/e2e/."""
     ok = True
-    stage_setup = None
+    stage_setup = awake = None
     # The stage owns its lifecycle: fresh ports each run (the config uses $E2E_PORT / $E2E_CLIENT_PORT), and whatever
     # it started (setup's process group, plus anything left listening on its ports that was not before) ends with it,
-    # pass, fail, exception or Ctrl-C, so no server or browser outlives a round to answer the next one.
+    # pass, fail, exception, Ctrl-C, SIGTERM or SIGHUP, so no server or browser outlives a round to answer the next one.
+    # A verify killed outright ends nothing; the next stage ends that one's browser (reap_orphans).
+    for gone in fc_jev.reap_orphans():
+        fc_core.say(f"e2e    ended the browser of a verify that is gone: {gone}")
     env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
     env.update(E2E_PORT=str(fc_core.free_port()), E2E_CLIENT_PORT=str(fc_core.free_port()))
+    env = fc_jev.expand_ports(env, env)
     # Never the product owner's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
     # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env),
     # unless the project says its cases need no browser (e2e_browser: false, for example drivers of a terminal app).
-    profile = None if "BU_CDP_URL" in env or cfg.get("e2e_browser") is False else tempfile.mkdtemp(prefix="fc-e2e-browser-")
+    profile = None if "BU_CDP_URL" in env or cfg.get("e2e_browser") is False else tempfile.mkdtemp(prefix=f"fc-e2e-browser-{os.getpid()}-")
     if profile:
         cdp = fc_core.free_port()
         env.update(BU_CDP_URL=f"http://127.0.0.1:{cdp}", BU_NAME=f"fc-e2e-{cdp}")
     env.setdefault("BU_NAME", f"fc-e2e-{fc_core.free_port()}")  # every stage names its daemons, so it ends its own and no one else's
-    cfg = {**cfg, "e2e": [{k: fc_jev.expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
+    cfg = {**cfg, "e2e": [fc_jev.expand_ports(c, env) for c in cfg.get("e2e", [])]}
     ports = fc_jev.e2e_ports(cfg, env)
     busy = {p for p in ports if fc_core.port_listening(p)}
     daemons = fc_jev.harness_daemons(env["BU_NAME"])
+    shots = Path(results) / "e2e" if results else None
+    if shots:
+        shutil.rmtree(shots, ignore_errors=True)  # only the last run's cases
+
+    def end_stage():
+        """End what the stage started: from its `finally`, and from a SIGTERM or SIGHUP (fc_proc.HOOKS), which skips that."""
+        if stage_setup:
+            fc_jev.stop_group(stage_setup)
+        if awake:
+            awake.terminate()
+            awake.wait(5)
+        fc_jev.kill_listeners(ports - busy)
+        fc_jev.end_new_daemons(env["BU_NAME"], daemons)
+        if profile:
+            shutil.rmtree(profile, ignore_errors=True)
+    hook = f"e2e stage {env['BU_NAME']}"
+    fc_proc.HOOKS[hook] = end_stage
     try:
         if profile:
-            # A project's verify shows its browser. Only compose's own test suite runs it headless (COMPOSE_E2E_HEADLESS=1),
-            # so testing the tool never pops a window on the product owner's screen.
-            headless = os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
+            # Headless unless the project asks to watch (e2e_headed): an unattended verify runs while the display sleeps, and a
+            # headed Chromium then stops painting, so screenshots and clicks time out. compose's own test suite forces
+            # headless (COMPOSE_E2E_HEADLESS=1), so testing the tool never pops a window on the product owner's screen.
+            headless = not cfg.get("e2e_headed") or os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
+            if not headless and shutil.which("caffeinate"):  # macOS: keep the display awake while the window is watched
+                awake = subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())], stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             p = fc_core.sh(["bp", "launch", "about:blank", "--profile", profile, *(["--headless"] if headless else [])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
             if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
@@ -256,7 +282,9 @@ def e2e_stage(repo, cfg, panes, report, findings):
             t1 = time.time()
             stage = f"e2e {case.get('name', i)}"[:40]
             fc_herdr.herdr_stage(panes, stage, "working")
-            run_case = lambda: fc_jev.jev_e2e({**case, "env": {**env, **(case.get("env") or {})}}, repo)
+            record = {"record_dir": str(shots / f"{i + 1:02d}-{re.sub(r'[^A-Za-z0-9._-]+', '-', str(case.get('name', 'case')))[:60]}")} \
+                if shots and not case.get("driver") else {}
+            run_case = lambda: fc_jev.jev_e2e({**case, **record, "env": {**env, **(case.get("env") or {})}}, repo)
             r = run_case()
             if r["exit"] and fc_jev.tool_error(r["stdout"] + r["stderr"]):
                 fc_core.say(f"e2e    tool error in {case.get('name')}; retrying once")
@@ -267,56 +295,62 @@ def e2e_stage(repo, cfg, panes, report, findings):
             ok &= r["exit"] == 0
             verdict = "ok  " if r["exit"] == 0 else "TOOL ERROR" if r["tool_error"] else "FAIL"
             fc_herdr.herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
-            run = r.get("run")  # a driver case reports one only when it prints an E2E_RESULT line
-            fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {case.get('name')}" + (
-                f"  steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}"
-                + (f" assert={r['assert_exit']}" if r.get('assert_exit') is not None else "") if run else ""))
-            for line in (r.get("stdout") or "").splitlines()[-8:]:
-                if line and not line.startswith("E2E_RESULT"):
-                    print(f"           {line[:160]}")
+            fc_jev.say_case(case.get("name"), r, verdict)
             if r["exit"] and not r["tool_error"]:  # a tool crash is not the app's failure: no fixer gets it
                 findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     finally:
-        if stage_setup:
-            fc_jev.stop_group(stage_setup)
         if profile:  # browser-harness keeps one daemon per BU_NAME alive; end ours with the browser it drove
             fc_core.sh(["uv", "run", "--quiet", "python", "-c", f"from browser_harness.admin import restart_daemon; restart_daemon({env['BU_NAME']!r})"],
                fc_config.JEV_DIR, timeout=30, check=False)
-        fc_jev.kill_listeners(ports - busy)
-        fc_jev.end_new_daemons(env["BU_NAME"], daemons)
-        if profile:
-            shutil.rmtree(profile, ignore_errors=True)
+        end_stage()
+        fc_proc.HOOKS.pop(hook, None)  # only now: a SIGTERM during the slow daemon stop above still ends the rest
     return ok
 
-def run_stages(repo, proj, cfg, a):
-    """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance."""
-    report, ok, findings = {"checks": [], "e2e": [], "review": None, "acceptance": None}, True, []
+def fix_tests(tasks, files):
+    """The test commands that cover a fix: each code task's `test:` whose `files:` or `protected:` holds a file the fix
+    changed, once each, in task order. None when a changed file is in no task: only the full checks cover it."""
+    cover = [t for t in fc_tasks.code_tasks(tasks) if set(files) & set(t["files"] + t["protected"])]
+    if not files or any(all(f not in t["files"] + t["protected"] for t in cover) for f in files):
+        return None
+    return list(dict.fromkeys(t["test"] for t in cover))
+
+def run_stages(repo, proj, cfg, a, tests=None):
+    """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance. With `tests` (a fix round's
+    `fix_tests`) the first stage runs only those, and the full checks run once at the end, only when every stage passed."""
+    report, ok, findings = {"checks": [], "scoped": [], "e2e": [], "review": None, "acceptance": None}, True, []
     home = fc_core.home_state()
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
-    stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
+    stages = (["checks"] if cfg.get("checks") or tests else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
     panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages, fc_herdr.tab_label(proj, "verify"))
-    fc_herdr.herdr_stage(panes, "checks", "working")
-    for c in cfg.get("checks", []):
-        t1 = time.time()
-        p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-        out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
-        if p.returncode and fc_jev.tool_error(out):
-            fc_core.say(f"check  tool error; retrying once  {c}")
+
+    def run_checks(cmds, into):
+        for c in cmds:
+            t1 = time.time()
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
-        tool = bool(p.returncode) and fc_jev.tool_error(out)
-        report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
-        ok &= p.returncode == 0
-        fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
-        if p.returncode and not tool:
-            findings.append(f"Command failed: {c}\n{out}")
-    checks_pass = all(c["exit"] == 0 for c in report["checks"])
-    fc_herdr.herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
+            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+            if p.returncode and fc_jev.tool_error(out):
+                fc_core.say(f"check  tool error; retrying once  {c}")
+                p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
+                out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
+            tool = bool(p.returncode) and fc_jev.tool_error(out)
+            into.append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
+            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
+            if p.returncode and not tool:
+                findings.append(f"Command failed: {c}\n{out}")
+        passed = all(c["exit"] == 0 for c in into)
+        fc_herdr.herdr_stage(panes, "checks", "idle" if passed else "blocked", "ok" if passed else "FAIL")
+        return passed
+
+    fc_herdr.herdr_stage(panes, "checks", "working", "" if tests is None else "the fix's tests")
+    if tests is not None:
+        fc_core.say(f"check  scope  {len(tests)} task test(s) for the fix; the full checks run once every stage passes")
+    checks_pass = run_checks(cfg.get("checks", []) if tests is None else tests, report["checks"] if tests is None else report["scoped"])
+    ok &= checks_pass
     # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
     # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
     pool = ThreadPoolExecutor(max_workers=1)
-    e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings) if not a.skip_e2e and cfg.get("e2e") else None
+    e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings, proj / "results") if not a.skip_e2e and cfg.get("e2e") else None
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
         fc_herdr.herdr_stage(panes, "review", "working")
@@ -324,16 +358,14 @@ def run_stages(repo, proj, cfg, a):
         rv = llm_review(cfg, diff, plan, docs, checks_pass)
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
-        gate_review = True
-        if gate_review:
-            ok &= rv["pass"]
-        fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] or not gate_review else "blocked", f"{len(rv['confirmed'])} confirmed")
-        fc_core.say(f"review {'ok  ' if rv['pass'] else ('FAIL' if gate_review else 'warn')} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
+        ok &= rv["pass"]  # review always gates; the jev acceptance stage below is advisory unless asked to gate
+        fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
+        fc_core.say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
                     + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
-        for i in rv["confirmed"] if gate_review else []:
+        for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
                             + (f"\nMust read: {i['fix'] or '(remove the line)'}" if "fix" in i else ""))
     if not a.skip_review and cfg.get("jev_acceptance", True):
@@ -368,28 +400,46 @@ def run_stages(repo, proj, cfg, a):
     if e2e:
         ok &= e2e.result()
     pool.shutdown()
+    if ok and tests is not None and cfg.get("checks"):  # the fix passed its own tests and every stage: no regression anywhere else
+        fc_core.say("check  full   every check, once, after the fix passed every stage")
+        fc_herdr.herdr_stage(panes, "checks", "working", "full checks")
+        ok &= run_checks(cfg["checks"], report["checks"])
     fc_core.flag_home(home, "verify's checks and e2e")
     return ok, report, "\n\n".join(findings)
 
 def verify_root(repo, proj, cfg):
     """Where verify runs. Task branches are never merged locally, so with unmerged layers verify runs in the CLI worktree
     checked out at the stack's top branch (fix commits then land on that layer, reviewed like everything else); the review
-    base is the trunk. With no open layers it runs on the user's checkout against `review_base`. A chain whose rebase stopped
-    fails verify here, before any stage and with no result recorded."""
+    base is the trunk. With no open layers it runs on the user's checkout against fc_worktree.review_base. A chain whose
+    rebase stopped fails verify here, before any stage and with no result recorded."""
     trunk = fc_core.current_branch(repo)
     if not fc_worktree.stack_order(repo, proj):
-        return repo, cfg.get("review_base", trunk), None
+        return repo, fc_worktree.review_base(repo, cfg) or trunk, None
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     chain = fc_layers.linearize(repo, proj, trunk, wt)
     if fc_layers.STACK_STOP:  # the top of a partial chain lacks every layer above the stop: a pass there would claim the feature
         fc_core.say(f"verify FAIL  nothing verified or recorded: {fc_layers.STACK_STOP}")
         sys.exit(1)
     if not chain:
-        return repo, cfg.get("review_base", trunk), None
+        return repo, fc_worktree.review_base(repo, cfg) or trunk, None
     fc_core.sh(["git", "checkout", "-q", chain[-1]], wt)
     fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
     fc_core.say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
     return wt, trunk, wt
+
+def at_root(value, olds, root):
+    """`value` with every absolute path under one of `olds` (the project worktree, the main checkout) moved under `root`, in
+    every string, inside dicts and lists too. One pass, longest prefix first, each matched as a whole path: a path already
+    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x."""
+    olds = sorted({str(o) for o in olds} - {str(root)}, key=len, reverse=True)
+    if not olds:
+        return value
+    path = re.compile(r"(?<![\w.~-])(?:" + "|".join(map(re.escape, olds)) + r")(?=/|$|[\s\"'`;:&|()<>,=])")
+    if isinstance(value, dict):
+        return {k: at_root(v, olds, root) for k, v in value.items()}
+    if isinstance(value, list):
+        return [at_root(v, olds, root) for v in value]
+    return path.sub(lambda _: str(root), value) if isinstance(value, str) else value
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
@@ -406,12 +456,10 @@ def cmd_verify(a):
     root, base, wt = verify_root(repo, proj, cfg)
     cfg = {**cfg, "review_base": base}
     if root != repo:
-        # e2e commands and setup may name the main checkout or the project worktree by absolute path; run them against the stack top.
-        main_path = str(fc_core.worktrees(repo)[0])
-        swap = lambda c: c.replace(str(repo), str(root)).replace(main_path, str(root)) if isinstance(c, str) else c
-        cfg["e2e"] = [{**case, "driver": swap(case.get("driver")), "assert": swap(case.get("assert"))} for case in cfg.get("e2e", [])]
-        cfg["e2e_setup"] = swap(cfg.get("e2e_setup"))
-        cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
+        # Checks and e2e cases (setup, driver, assert, env, every string) may name the main checkout or the project worktree
+        # by absolute path; run them against the stack top.
+        olds = (repo, fc_core.worktrees(repo)[0])
+        cfg.update({k: at_root(cfg[k], olds, root) for k in ("checks", "e2e", "e2e_setup", "e2e_env") if k in cfg})
         cfg["main_repo"] = repo
     try:
         verify_rounds(root, proj, cfg, a, rounds, t0, left_out)
@@ -435,14 +483,21 @@ def fix_message(reply, files, conv=None):
         return fc_core.typed(line, "fix", conv)
     return fc_core.typed("Fix " + ", ".join(Path(f).name for f in files[:3]), "fix", conv)
 
+def changed_files(repo):
+    """Each file differing from HEAD, tracked or untracked (not ignored), with its digest; never the agent wiring (fc_worktree.WIRING)."""
+    out = lambda *c: fc_core.sh(["git", *c, "-z"], repo, check=False).stdout.split("\0")
+    files = set(out("diff", "--name-only", "--no-renames", "HEAD") + out("ls-files", "--others", "--exclude-standard"))
+    return fc_core.digests(repo, sorted(files - {"", *fc_worktree.WIRING}))
+
 def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
-    base = cfg.get("review_base")
+    base = fc_worktree.review_base(repo, cfg)
     allowed = set(fc_core.sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
-    rejected = []
+    dirty = fc_worktree.dirty_paths(repo)  # the user's own changes, read before any stage: what a check leaves behind is verify's
+    rejected, tests = [], None  # the first round runs the full checks; a fix round only the tests of what its fix changed
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
             fc_worktree.ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
-        ok, report, findings = run_stages(repo, proj, cfg, a)
+        ok, report, findings = run_stages(repo, proj, cfg, a, tests)
         rounds.append(report)
         if ok or rnd == a.fix:
             break
@@ -450,11 +505,11 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             fc_core.say("fix    skip  only tool errors failed (see TOOL ERROR above); nothing for a fixer to change in the app")
             break
         # Fix loop: hand confirmed findings to the fast implementer in the repo itself, then re-run every stage.
-        if fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip() and rnd == 0:
-            fc_core.say("fix    skip  repo has uncommitted changes; commit first so a bad fix can be reverted")
+        if dirty and rnd == 0:
+            fc_core.say(f"fix    skip  repo has uncommitted changes ({', '.join(dirty[:5])}); commit first so a bad fix can be reverted")
             break
         _, _, _, protected = review_inputs(repo, proj, cfg)
-        before = fc_core.digests(repo, protected)
+        before, pending = fc_core.digests(repo, protected), changed_files(repo)
         t1 = time.time()
         model = cfg.get("fix_model") or os.environ.get("COMPOSE_FIX_MODEL") or fc_config.DEFAULT_MODEL
         if rnd and fc_models.fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
@@ -469,12 +524,12 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                   + (f"DESIGN CONTEXT (authoritative; never contradict it): {cfg['review_context']} " if cfg.get("review_context") else "") +
                   "Fix the app for a real user, never for the test harness: do not add labels, text, attributes, or "
                   "shortcuts aimed at the test bot or the e2e script; if a finding is the harness's fault, change nothing. "
-                  "Do not run tests or checks: verify runs every stage again after your turn. Do not explain, just edit; your whole reply is one line, "
+                  "Do not run tests or checks: after your turn verify runs the tests of what you changed, and every check once the rest passes. Do not explain, just edit; your whole reply is one line, "
                   "a plain description of the change you made (like 'Save submissions in one transaction'), never about this process.\n\nFINDINGS:\n" + findings[:30000])
         try:
             _, reply, tools, usage = fc_implement.implementer(repo, model, prompt)
         except fc_models.RateLimited as e:
-            fc_core.say("fix    rate-limited by provider; " + (f"retrying on {fc_models.fallback_for(model)}" if fc_models.fallback_for(model) else "waiting 30s and retrying once"))
+            fc_core.say(f"fix    {e.why}; " + (f"retrying on {fc_models.fallback_for(model)}" if fc_models.fallback_for(model) else "waiting 30s and retrying once"))
             if not fc_models.fallback_for(model):
                 time.sleep(30)
             try:
@@ -499,28 +554,33 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         if tampered:
             fc_core.sh(["git", "checkout", "--"] + tampered, repo, check=False)
             fc_core.say(f"fix    reverted protected files the fixer touched: {', '.join(tampered)}")
-        new_docs = [f for f in fc_core.sh(["git", "ls-files", "--others", "--exclude-standard"], repo, check=False).stdout.split() if fc_config.DOC_RE.search(f)]
+        fixed = [f for f, d in changed_files(repo).items() if f not in pending or pending[f] != d]  # its turn's change alone: no check's leftovers
+        added = set(fc_core.sh(["git", "ls-files", "--others", "--exclude-standard", "-z"], repo).stdout.split("\0")) & set(fixed)
+        new_docs = [f for f in fixed if f in added and fc_config.DOC_RE.search(f)]
         for f in new_docs:  # fixers, like implementers, never add documents
             (repo / f).unlink()
         if new_docs:
             fc_core.say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
-        fc_core.sh(["git", "add", "-A"], repo)
-        stray = fix_strays(fc_core.sh(["git", "diff", "--cached", "--name-only", "HEAD"], repo).stdout.splitlines(), allowed,
-                           {f for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) for f in t["files"]})
+        fixed = [f for f in fixed if f not in new_docs]
+        stray = fix_strays(fixed, allowed, {f for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) for f in t["files"]})
         if stray:
             # The whole round goes: an out-of-scope edit means the fixer worked around something (an install, the toolchain)
             # instead of fixing a finding, and its other edits rest on that. The last stage run failed, so verify ends FAIL.
-            fc_core.sh(["git", "reset", "-q", "--hard", "HEAD"], repo)
-            fc_core.sh(["git", "clean", "-fdq"], repo)
+            if set(fixed) - added:
+                fc_core.sh(["git", "--literal-pathspecs", "checkout", "-q", "HEAD", "--", *sorted(set(fixed) - added)], repo)
+            for f in added & set(fixed):
+                (repo / f).unlink()
             rejected.append({"round": rnd + 1, "files": stray})
             fc_core.say(f"fix    REJECTED round {rnd + 1}: touched files outside the stack ({', '.join(stray[:8])}); reverted the round")
             break
-        changed = fc_core.sh(["git", "status", "--porcelain"], repo).stdout.strip()
-        fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
-        if changed:
-            fc_core.sh(["git", "add", "-A"], repo)
-            fc_core.sh(["git", "commit", "-qm", fix_message(reply, fc_core.sh(["git", "diff", "--cached", "--name-only"], repo).stdout.split(), fc_core.commit_convention(proj))], repo, check=False)
+        fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if fixed else 'no'}  ${usage['cost']:.4f}")
+        if fixed:
+            fc_core.sh(["git", "--literal-pathspecs", "add", "-A", "--", *fixed], repo)
+            fc_core.sh(["git", "--literal-pathspecs", "commit", "-qm", fix_message(reply, fixed, fc_core.commit_convention(proj)), "--", *fixed], repo, check=False)
             fc_core.say("fix    committed on " + (fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
+            tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
+            if tests is None:
+                fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
         else:
             break
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}

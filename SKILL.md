@@ -20,13 +20,16 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ### 0. Know the repo's Linear project
 Everything that would be a ticket lives on Linear, never as files in the repo: the feature (with its decisions), its stories, its tasks.
-Read `.compose/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
-If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another) in the user's checkout, and never commit it.
-`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else, and copies this file into the project worktree.
+The repo's Linear project lives in one file, `.compose/linear.json` in the repo's main checkout: `{"project": "<Linear project URL>", "team": "Engineering"}`.
+Every worktree of the repo reads that file, so run `compose linear project` from wherever you are rather than looking for the file in your own checkout.
+If it prints `no .compose/linear.json in <folder>`, ask the user for the link to the Linear project this repo's work belongs to, write the file in that folder with that URL and the team `Engineering` (unless the user names another), and never commit it.
+`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else.
 You create and edit issues and write judgment comments with `compose linear` (`get <id> [--body] [--comments]`, `list --parent <id> | --search "<terms>"`, `create`, `update <id>`, `comment <id>`, `labels`, `project`, `doc`), never a Linear MCP tool; the CLI moves task, story, and feature states and writes the routine run comments, all with the workspace's Linear key.
 The Linear key is required: without it `compose doctor` fails and `compose linear` stops with the line that stores one.
 `get` and `list` print one compact line per issue (`<id> <state> <label> <title>`); add `--body` or `--comments` to `get` only when you need them.
 Write bodies come from `--file <path>` or stdin, never from the command line.
+`update` writes the body only with `--section "<heading>"`, `--append`, or `--description`; `--file` without one of them exits and writes nothing.
+`get --body` ends with each section's hash: a `--section` write whose text came from that read passes it as `--expect <hash>`, and writes nothing when another writer changed the section since.
 `list` and `create` default to the project and team in the file; `get`, `update`, and `comment` refuse an issue in another project unless `--any-project`.
 Confirm the file points at a real project before any other Linear call: `compose linear project` must print a project on its team.
 Scope every Linear read, search, and write to that project and team; when a project is in play, its feature comes from `.compose/<slug>/linear.json`.
@@ -123,7 +126,7 @@ Everything is on disk, so a restart is a non-event. At the start of a session on
 
 `model:` is `pi:<provider/model>` for the pi harness (the default: lean, ~1K tokens of fixed context per turn), an OpenCode model id, `claude:<model-id>` for Claude Code on that model, or bare `claude` for Claude Code's default. A Claude model is always written with its `claude` prefix, never as a bare id, so it is never mistaken for a pi or OpenCode model. Omit it for the CLI default, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (GLM 5.3 Flash; the preset pins Together, then CoreWeave). gpt-oss-120b on Cerebras was the default until 2026-10-10 and was dropped for missing too often.
 Leave `model:` unset. A task that seems to need a stronger model is a task to split, or a decision card. Setting `model: claude` (or any non-default model) on a planned task is the product owner's decision: it is a wayfinder card with the reason (0b), never only into a later report.
-There is no fallback by default. When `models.fallback` is set, a task stays on its model for `models.fallback_after` failed attempts (default 2: misses, errors, and timeouts count) and then moves to the fallback in a fresh session that carries the failure; a rate limit moves it at once; verify's fix rounds after the first use it too. `bench` never falls back.
+There is no fallback by default. When `models.fallback` is set, a task stays on its model for `models.fallback_after` failed attempts (default 2: misses, errors, and timeouts count) and then moves to the fallback in a fresh session that carries the failure; a rate limit, or a provider too busy to start the turn (a 429 or a 5xx before any token), moves it at once, and with no fallback it gets a fresh session after a wait without spending an attempt; verify's fix rounds after the first use it too. `bench` never falls back.
 `run` and `resume` probe every model they may call (each task's, and the fallback) with one tiny prompt before cloning anything; a wrong model id or preset slug stops the run there with the provider's message.
 Models, the fallback, and the OpenRouter key come from the active workspace in `~/.compose/config.json` (`compose workspace [name | add | key | remove <name>]`, or `/compose:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
 
@@ -153,7 +156,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 ```
 ````
 
-- `id` is the stack order a reviewer reads in; ids are unique within the feature.
+- `id` is the stack order a reviewer reads in, except that a task always sits above its `after` tasks; ids are unique within the feature.
 - `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs. Any other blocker (a design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
 - A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `compose figma judge --project <slug> --only NNN`. An optional `figma:` line (file key or url) names the task's own Figma file when it is not the stored one.

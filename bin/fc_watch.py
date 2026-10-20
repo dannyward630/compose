@@ -53,6 +53,7 @@ def watch_snapshot(repo, proj, agents=None):
         if fc_herdr.agent_id(proj.name, n):
             snap["agents"][n] = ag.get("agent_status")
     snap["closed"] = [c["name"] for c in records if fc_crew.tab_closed(c, agents)]  # whatever their last report says, not working
+    snap["owner"] = crew_owners(records, agents)  # which engineering manager session each teammate is: watch_scope
     pis = [c for c in records if "skill" in c and c.get("agent", c["name"]) in snap["agents"]]
     try:
         cur = fc_crew.skill_hashes() if pis else {}
@@ -82,10 +83,22 @@ def watch_snapshot(repo, proj, agents=None):
             snap["reflects"][str(f)] = {"trigger": r.get("trigger"), "error": r.get("error"), "counts": fc_change.reflect_counts(r)}
     return snap
 
+def crew_owners(records, agents):
+    """Each teammate an engineering manager session started, mapped to that session (`started_by`) while a live agent still sits in
+    its pane; the team lead's own teammates follow their team lead. A teammate whose session ended has no owner, so any engineering
+    manager session adopts it, and so does one from before `started_by` existed. `agents` None (herdr cannot say) keeps every session live."""
+    live = None if agents is None else {ag.get("pane_id") for ag in agents}
+    own = {c["name"]: c["started_by"] for c in records
+           if c.get("reports_to") == "manager" and c.get("started_by") and (live is None or c["started_by"] in live)}
+    lead = next((own[c["name"]] for c in records if c.get("role") == "orchestrator" and c["name"] in own), None)
+    if lead:
+        own |= {c["name"]: lead for c in records if c.get("reports_to") == "orchestrator"}
+    return own
+
 STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
 
 def watch_mem(proj, key):
-    """What one role's watcher (key: COMPOSE_ROLE, else `manager`) last reported and which stalls it fired, in results/watch-<role>.json."""
+    """What one watcher (key: watch_key) last reported and which stalls it fired, in results/watch-<key>.json."""
     try:
         return json.loads((proj / "results" / f"watch-{key}.json").read_text())
     except (OSError, json.JSONDecodeError):
@@ -204,16 +217,21 @@ def watch_events(before, after):
     return ev
 
 def yolo_mark(proj, events):
-    """Under yolo, a question line tells the engineering manager it answers it itself."""
-    if not fc_tasks.yolo_state(proj):
+    """Under yolo, a question line tells the engineering manager it answers it itself, and who set yolo when another session did."""
+    if not (y := fc_tasks.yolo_state(proj)):
         return events
-    return [e + YOLO_HINT if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
+    by = fc_tasks.yolo_by(y)
+    hint = YOLO_HINT if by in ("this session", "unknown") else YOLO_HINT.replace("yolo=on (", f"yolo=on set by {by} (", 1)
+    return [e + hint if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
 
-def watch_filter(events, slug, sources, direct=()):
+def watch_filter(events, slug, sources, direct=(), others=()):
     """`--from` names the teammates whose reports wake you (the engineering manager watches only its team lead); without it you get
     everything except the team lead's own reports, which go up to the engineering manager. `direct` names the teammates that report to
     this watcher (crew_reporting_to): a planner or designer the engineering manager started itself passes whatever `--from` says, so
-    its needs-user and blocked reach the product owner (manager_attention) while the `--from orchestrator` watch runs."""
+    its needs-user and blocked reach the product owner (manager_attention) while the `--from orchestrator` watch runs. `others` names
+    another engineering manager session's teammates (watch_scope): none of their lines wakes this one unless `--from` names them."""
+    if others := [n for n in others if n not in sources]:
+        events = [e for e in events if not any(f"crew={n} " in e or f"agent={n} " in e for n in others)]
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
         return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
                 or e.startswith("event ready=")
@@ -223,22 +241,38 @@ def watch_filter(events, slug, sources, direct=()):
 
 WATCH_INTERVAL = 2.0
 
+def watch_key():
+    """Whose watch this is: COMPOSE_ROLE, else the engineering manager, one per session (`manager-<herdr pane>`; bare `manager`
+    outside herdr). Two engineering manager sessions on one project never share a lock or a memory, so neither waits on the
+    other's watch or has its events marked seen by it."""
+    if role := os.environ.get("COMPOSE_ROLE"):
+        return role
+    return "manager-" + re.sub(r"[^\w-]", "-", fc_core.session_id()) if fc_core.session_id() else "manager"
+
+def watch_scope(proj, snap):
+    """(direct, others) for an engineering manager's watch: the teammates this session started (crew_owners), plus every one that
+    reports to an engineering manager whose session ended or never recorded one; and those another live session started."""
+    if os.environ.get("COMPOSE_ROLE"):
+        return (), ()
+    mine, owner = fc_core.session_id(), snap.get("owner") or {}
+    return ([n for n in fc_crew.crew_reporting_to(proj, "manager") if owner.get(n, mine) == mine],
+            [n for n, by in owner.items() if by != mine])
+
 def cmd_watch(a, rewake=False):
     """Sleep on the project until something a team lead must act on happens, print it, exit. Zero tokens while waiting:
     run it in the background and let its exit wake you. `--now` prints the current state as events and exits.
-    Each role's watcher (COMPOSE_ROLE, else manager; --from only filters what is printed) remembers what it last
+    Each watcher (watch_key: COMPOSE_ROLE, else this engineering manager session; --from only filters what is printed) remembers what it last
     reported, so a watch started later still reports what happened while none ran. `rewake` is the Stop hook's mode: the event goes to stderr with exit 2, which wakes the session."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     sources = [fc_herdr.agent_ref(proj.name, x.strip()) for x in (a.from_ or "").split(",") if x.strip()]
-    key = os.environ.get("COMPOSE_ROLE") or "manager"
-    direct = lambda: fc_crew.crew_reporting_to(proj, key) if key == "manager" else ()  # the engineering manager's own teammates pass whatever --from says
+    key = watch_key()
     if a.now:
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
-        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, direct()))
+        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, *watch_scope(proj, cur)))
         if y := fc_tasks.yolo_state(proj):
-            lines.insert(0, f"event yolo=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} words={y.get('words', '')!r}")
+            lines.insert(0, f"event yolo=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} by={fc_tasks.yolo_by(y)!r} words={y.get('words', '')!r}")
         if cur["run"]:
             lines.append(f"event run=live pid={(fc_tasks.run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
                          f"read results/run.log; do not start a second)")
@@ -265,7 +299,7 @@ def cmd_watch(a, rewake=False):
             if rewake and os.getppid() != parent:
                 return  # the session that parked this hook is gone
             after = watch_snapshot(repo, proj, agents)
-            ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources, direct()))
+            ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources, *watch_scope(proj, after)))
             if ev:
                 fc_crew.manager_attention(proj, ev)
                 if rewake:
@@ -305,16 +339,29 @@ def cmd_rewake(a):
     cmd_watch(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
 
+def crew_in_pane(proj, pane):
+    """The teammate whose record says it runs in herdr pane `pane`, else None."""
+    for f in sorted(fc_crew.crew_dir(proj).glob("*.json")) if pane else ():
+        try:
+            c = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if isinstance(c, dict) and c.get("pane") == pane:
+            return c.get("name")
+    return None
+
 def cmd_reenter(a):
     """Claude Code SessionStart hook (matcher compact): after a compaction the session continues by re-entering through 0r, not from scratch.
-    Its herdr tab carries the role, project, and worktree. Every other session returns at once, a headless one (`claude -p`,
-    which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
+    Its herdr tab carries the role, the teammate's name, project, and worktree. COMPOSE_ROLE is `crew` for every teammate but the
+    guarded ones, so the brief is found by the name (a session started before its tab carried one: by the pane its record names).
+    Every other session returns at once, a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too."""
     project, role = os.environ.get("COMPOSE_PROJECT"), os.environ.get("COMPOSE_ROLE")
     if not role or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
     proj = fc_core.project_dir(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project))
+    name = os.environ.get("COMPOSE_TEAMMATE") or crew_in_pane(proj, os.environ.get("HERDR_PANE_ID")) or fc_herdr.agent_name(project, role)
     print("Your context was just compacted; the session continues by re-entering through 0r, not from scratch.")
-    print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{fc_herdr.agent_name(project, role)}.brief.md'} now.")
+    print(f"Re-read your brief file {fc_crew.crew_dir(proj) / f'{name}.brief.md'} now.")
     print(f"Run `compose status --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project}` and "
           f"`compose watch --repo {os.environ.get('COMPOSE_REPO') or '.'} --project {project} --now` to see the board.")
     print("Re-read the feature's Decisions so far and Plan on Linear before acting.")

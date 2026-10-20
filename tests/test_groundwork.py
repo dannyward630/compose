@@ -205,6 +205,33 @@ class Groundwork(unittest.TestCase):
         self.assertIn("009 skipped: no such task", out.getvalue())
         self.assertNotIn("===== tests-001", out.getvalue())
 
+    def test_redo_writes_a_new_test_for_a_passed_task_a_re_plan_changed(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "passed"}))
+        f = self.proj / "results" / "tasks.json"
+        data = json.loads(f.read_text())
+        data["tasks"].append({**data["tasks"][1], "id": "003", "linear_state": "Done"})
+        f.write_text(json.dumps(data))
+        def printed(only="001,003", **kw):
+            out = io.StringIO()
+            with self.patched()[0], mock.patch("sys.stdout", out):
+                fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=only, print_=True, **kw))
+            return out.getvalue()
+        kept = printed()
+        self.assertIn("001 skipped: its result is passed; pass --redo to rewrite its test\n", kept)
+        self.assertNotIn("===== tests-001", kept)
+        redo = printed(redo=True)
+        self.assertIn("===== tests-001", redo)
+        self.assertIn("Its brief changed after it was built: rewrite the test server/store_test.go holds to the TASK BRIEF.", redo)
+        self.assertIn("003 skipped: its state is Done\n", redo)  # Done on Linear stays skipped, as in `run --redo`
+        self.assertNotIn("rewrite the test", printed(only="002"))  # a task never built gets the plain brief
+
+    def test_testcrews_takes_redo_on_the_command_line(self):
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
+        sub = subprocess.run([sys.executable, cli, "testcrews", "--help"], capture_output=True, text=True)
+        self.assertEqual(sub.returncode, 0, sub.stderr)
+        self.assertIn("--redo", sub.stdout)
+
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
             fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=True))

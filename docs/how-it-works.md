@@ -123,7 +123,7 @@ Work lives at five levels in Linear:
 | task | one stack layer; see [tasks.md](tasks.md) |
 
 You can hand `compose` a link to any of these levels, and it creates the missing ones.
-It asks for the repo's Linear project link once and keeps it in `.compose/linear.json`.
+It asks for the repo's Linear project link once and keeps it in `.compose/linear.json` in the repo's main checkout, which every worktree of the repo reads.
 Each task moves to In Progress when it is dispatched, In Review when its layer passes, and Done when its PR merges.
 
 ## Changing course
@@ -150,7 +150,7 @@ A project is one feature in its own worktree.
   Without treehouse, it is `../compose-<name>`.
 - `.compose/<name>/` sits beside it and holds the Linear link, the verify config, and results.
   `init` git-ignores it, `graft/`, and `.trail/` first.
-- The layers stack on the review base, main unless `review_base` says otherwise, and `gh stack merge` lands them as one all-or-nothing merge, with no final PR.
+- The layers stack on the review base, the branch the project started from (main, say), which `init` records as `review_base`, and `gh stack merge` lands them as one all-or-nothing merge, with no final PR.
 - `init --after <other>` branches from another project's branch when the feature needs its code.
 
 Your checkout is never touched, so several features can run at once.
@@ -170,6 +170,9 @@ A project whose build output depends on where `node_modules` lives sets `install
 
 Since 2026-10-10, the default implementer is `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast`, with no fallback.
 With `models.fallback` set, a task gets `models.fallback_after` failed attempts (default 2) on its own model before the fallback takes the rest; a rate limit switches at once.
+A provider too busy to start a turn counts as a rate limit: a 429, or a 5xx such as `overloaded_error`, before any token.
+Without a fallback, such a turn gets a fresh session after 20 s, then 40 s, 60 s and 80 s, and spends no attempt.
+A refusal that stays, such as a wrong model id, a missing preset, or a bad key, ends the task, or moves it to the fallback.
 Implementers never run tests: an implementer waiting on a test run pays for the wait, and every later turn re-reads the output as input tokens.
 The CLI runs the test after each turn, and on a failure the test reader (`models.test_reader`, default `claude:claude-haiku-5-5`) writes the implementer's fix brief.
 

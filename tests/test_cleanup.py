@@ -108,6 +108,24 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
         self.assertEqual(self.writer_branches(), [])
 
+    def test_a_redone_writer_that_waits_for_another_writer_is_started_by_the_collect(self):
+        """A re-plan changed passed tasks 001 and 003, which share a_test.go: --redo starts 001's writer, and the collect starts 003's."""
+        self.add_task("003", "a_test.go")
+        for tid in ("001", "003"):
+            (self.proj / "results" / f"{tid}.json").write_text('{"status": "passed"}')
+        (self.proj / "results" / "contract.md").write_text("c")
+        started, out = [], io.StringIO()
+        crews = (mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)))
+        with crews[0], crews[1], mock.patch("sys.stdout", out):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="001,003", print_=False, collect=False,
+                                                       budget=None, redo=True))
+        self.assertEqual(started, ["tests-001"])
+        self.assertIn("tests-003 waits for tests-001", out.getvalue())
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        with crews[0], crews[1], mock.patch("sys.stdout", io.StringIO()):
+            fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual(started, ["tests-001", "tests-003"])
+
     def test_writers_of_a_protected_file_that_already_exists_start_together(self):
         (self.repo / "a_test.go").write_text("pinned\n"); self.run("add", "a_test.go"); self.run("commit", "-qm", "stubs")  # groundwork wrote it, no writer edits it
         self.add_task("003", "c_test.go a_test.go", after="001", test="go test ./c_test.go")  # its test runs c_test.go: a_test.go only pins names
@@ -440,6 +458,12 @@ class ProjectBranch(unittest.TestCase):
         self.cli("clean", "--project", "q", "--delete-unmerged")
         self.cli("clean", "--project", "p", "--delete-unmerged")
         self.assertEqual(self.branches(), ["main"])
+
+    def test_init_names_the_cut_team_lead_a_long_project_name_gets(self):
+        """herdr names stop at 32 characters: a project name over 19 cuts `<slug>-orchestrator`, so init says the name herdr will hold."""
+        out = self.cli("init", "--project", "clean-recut-branches").stdout
+        self.assertIn("clean-recut-branche-orchestrator", out)
+        self.assertNotIn("orchestrator", self.cli("init", "--project", "clean-recut-branche").stdout)  # 19 characters: uncut, nothing to say
 
     def test_a_project_without_a_stored_branch_keeps_compose_slash_slug(self):
         self.cli("init", "--project", "old")

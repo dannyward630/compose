@@ -268,18 +268,21 @@ class FigmaJudge(unittest.TestCase):
             self.assertFalse(self.ev.called)
 
 
-    def judge_big(self, answer, confirm=None, text=None):
-        """Judge task 001 on a big tree; answer(part_text) -> (choice, p_not_met) per chunk, one criterion."""
+    def judge_big(self, answer, confirm=None, text=None, criterion="Every variant has a Tint"):
+        """Judge task 001 on a big tree; answer(part_text) -> (choice, p_not_met) per chunk, one criterion. `confirm` is the
+        confirm call's reply, or a function of (system, user) giving it."""
         (self.proj / "results" / "001.tree.txt").write_text(text or big_tree())
-        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Every variant has a Tint"])]})
-        self.states = []
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", [criterion])]})
+        self.states, self.questions = [], []
 
         def jev(env, cfg, state, q, label):
             self.states.append(state)
+            self.questions.append(q)
             choice, p = answer(state["tree"])
             return {"model": "jev-test", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9, "NOT_MET": p}}}}
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), mock.patch.object(fc.fc_models, "fast_json", return_value=confirm), \
-                mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
+        reply = {"side_effect": lambda env, system, user, **kw: confirm(system, user)} if callable(confirm) else {"return_value": confirm}
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), \
+                mock.patch.object(fc.fc_models, "fast_json", **reply) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", io.StringIO()):
             try:
                 fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001"))
             except SystemExit as e:
@@ -311,9 +314,43 @@ class FigmaJudge(unittest.TestCase):
         self.assertTrue(all(len(s["tree"]) <= fc.fc_figma.TREE_CHUNK_CHARS for s in self.states))
         self.assertEqual([s["tree_part"] for s in self.states][:2], [f"1 of {res['chunks']}", f"2 of {res['chunks']}"])
 
-    def test_one_chunk_showing_not_met_fails_the_criterion_whatever_the_others_say(self):
+    def test_a_confirmed_violation_in_one_chunk_fails_the_criterion_whatever_the_others_say(self):
         res = self.judge_big(lambda t: ("NOT_MET", 0.9) if '"id": "1:12"' in t else ("MET", 0.0), confirm={"confirmed": True, "evidence": "variant=12"})
         self.assertEqual((res["status"], res["criteria"][0]["choice"], res["criteria"][0]["evidence"]), ("failed", "NOT_MET", "variant=12"))
+
+    def test_a_node_held_by_another_chunk_is_met_though_the_chunks_without_it_said_not_met(self):
+        """Issue 87: the node a criterion names sits in one chunk; a chunk without it answered NOT_MET (it omits the node), and a
+        confirmer shown only that chunk agreed. What a chunk without the node answers varies from run to run, so the verdict must
+        not depend on it: the confirm call sees the whole tree, finds the node, and the chunk that holds it decides."""
+        text = big_tree(5)
+        has = lambda t: '"id": "2:4"' in t
+        confirm = lambda system, user: {"confirmed": not has(user), "evidence": "2:4 is in the tree" if has(user) else "the tree has no 2:4"}
+        for absent in (("NOT_MET", 0.9), ("UNCLEAR", 0.0), ("NOT_MET", 0.3)):
+            with self.subTest(absent=absent):
+                res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else absent, confirm=confirm, text=text, criterion="The last variant has its Tint (2:4)")
+                row = res["criteria"][0]
+                self.assertEqual((res["status"], row["choice"], res["failed"], res["chunks"]), ("passed", "MET", [], len(fc.fc_figma.tree_chunks(text))))
+                self.assertEqual((res["chunks"] > 2, row["parts"].count("MET"), row["parts"].count(absent[0])), (True, 1, res["chunks"] - 1))
+                self.assertEqual({c.args[2].split("TREE:\n", 1)[1] for c in self.confirm.call_args_list}, {text} if absent[0] == "NOT_MET" else set())
+
+    def test_each_chunk_is_judged_as_a_part_so_a_node_it_lacks_is_unclear_not_a_violation(self):
+        self.judge_big(lambda t: ("MET", 0.0), text=big_tree(5))
+        for q in self.questions:
+            crit, rules = q["c0"]["criteria"], q["c0"]["instructions"]["rules"]
+            self.assertNotIn("omits", crit["NOT_MET"])
+            self.assertIn("another part", crit["UNCLEAR"])
+            self.assertIn("another part", rules)
+
+    def test_a_tree_too_big_for_one_confirm_call_is_confirmed_chunk_by_chunk_where_absence_is_no_violation(self):
+        has = lambda t: '"id": "2:12"' in t
+        res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else ("NOT_MET", 0.9), confirm={"confirmed": False, "evidence": "nothing here violates it"})
+        self.assertGreater(len(big_tree()), fc.fc_figma.CONFIRM_TREE_CHARS)
+        self.assertEqual((res["status"], self.confirm.call_count), ("passed", res["chunks"] - 1))
+        for call in self.confirm.call_args_list:
+            system, user = call.args[1:3]
+            self.assertIn("never a violation", system)
+            self.assertRegex(user, rf"TREE \(part \d+ of {res['chunks']}\)")
+            self.assertLessEqual(len(user), fc.fc_figma.TREE_CHUNK_CHARS + 500)
 
     def test_no_chunk_showing_met_leaves_the_criterion_unmet(self):
         res = self.judge_big(lambda t: ("UNCLEAR", 0.0))

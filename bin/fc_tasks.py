@@ -190,6 +190,18 @@ def yolo_state(proj):
     except (OSError, json.JSONDecodeError):
         return None
 
+def yolo_by(y):
+    """Who turned yolo on or last changed it, as this session sees it (yolo is per project, so another engineering manager session
+    on it changes how this one answers): `this session`, `an engineering manager session in herdr pane w1:p2`, or `unknown` for
+    a file from before it was recorded."""
+    by = y.get("by") or {}
+    if not by:
+        return "unknown"
+    if by.get("session") and by["session"] == fc_core.session_id():
+        return "this session"
+    who = {"manager": "an engineering manager session", "orchestrator": "the team lead"}.get(by.get("role"), f"a {by.get('role')} session")
+    return who + (f" in herdr pane {by['session']}" if by.get("session") else " outside herdr")
+
 
 CANCELED = ("canceled", "cancelled")
 

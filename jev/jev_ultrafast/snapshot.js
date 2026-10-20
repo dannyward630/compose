@@ -6,7 +6,9 @@
     const id=cache.ids.get(e); cache.nodes.set(id,e); return id;
   };
   for (const [id,e] of cache.nodes) if (!e.isConnected) cache.nodes.delete(id);
-  const safe = e => !['password','file','hidden'].includes(e.type);
+  const safe = e => !['file','hidden'].includes(e.type);
+  // A password's value never leaves the page, only whether it is filled: the run types it from its own secrets.
+  const val = e => e.type==='password' ? (e.value ? '[filled]' : '') : e.value;
   const visible = e => !e.closest('[aria-hidden="true"],[inert]') &&
     e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
   const name = (e,seen=new Set()) => {
@@ -37,17 +39,45 @@
       if (['button','submit','reset','image'].includes(e.type)) return 'button';
       if (e.type==='search') return 'searchbox';
       if (e.type==='number') return 'spinbutton';
-      if (['text','email','url','tel'].includes(e.type)) return 'textbox';
+      if (['text','email','url','tel','password'].includes(e.type)) return 'textbox';
     }
     return null;
   };
+  // The wheel goes where a person's would, at the lower middle of the viewport, and moves the nearest element under it
+  // that can still scroll that way, else the document: an app whose content scrolls inside a container (a fixed-height
+  // body around an overflow:auto main) moves only that container. With nothing scrollable under that point, the largest
+  // visible scroll container takes the wheel at its center.
+  const docStyle=getComputedStyle(document.documentElement), bodyStyle=getComputedStyle(document.body);
+  const scrollable = e => e!==document.scrollingElement && !(e===document.body && docStyle.overflowY==='visible') &&
+    /auto|scroll|overlay/.test(getComputedStyle(e).overflowY) && e.scrollHeight>e.clientHeight+2;
+  const scrollers = point => {
+    const chain=[];
+    for (let e=document.elementFromPoint(point.x,point.y); e && e!==document.documentElement; e=e.parentElement)
+      if (scrollable(e)) chain.push(e);
+    return chain;
+  };
+  const docHeight=document.documentElement.scrollHeight;
+  const docLocked=docStyle.overflowY==='hidden' || (docStyle.overflowY==='visible' && bodyStyle.overflowY==='hidden');
+  const docDown=!docLocked && scrollY+innerHeight<docHeight-2, docUp=!docLocked && scrollY>0;
+  cache.point={x:550,y:650};  // of the 1120x780 viewport browser.py sets
+  if (!scrollers(cache.point).length && !docDown && !docUp) {
+    let best=null, area=0;
+    for (const e of document.body.querySelectorAll('*')) {
+      if (e.scrollHeight<=e.clientHeight+2 || !scrollable(e)) continue;
+      const r=e.getBoundingClientRect(), w=Math.min(r.right,innerWidth)-Math.max(r.left,0),
+        h=Math.min(r.bottom,innerHeight)-Math.max(r.top,0);
+      if (w>0 && h>0 && w*h>area) [best,area]=[{x:Math.round(Math.max(r.left,0)+w/2),y:Math.round(Math.max(r.top,0)+h/2)},w*h];
+    }
+    if (best) cache.point=best;
+  }
   cache.pageKey=()=>[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
     [...document.querySelectorAll('input,textarea,select')].filter(safe)
-      .map(e=>[identity(e),e.value,e.checked,e.selectedIndex,e.disabled,e.readOnly])];
+      .map(e=>[identity(e),val(e),e.checked,e.selectedIndex,e.disabled,e.readOnly]),
+    scrollers(cache.point).map(e=>[identity(e),Math.round(e.scrollTop)])];
   cache.guard=e=>{
     if (!e?.isConnected || !visible(e)) return null;
     const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
-    return [identity(e),role(e),name(e),e.value??null,e.checked??null,e.selectedIndex??null,
+    return [identity(e),role(e),name(e),val(e)??null,e.checked??null,e.selectedIndex??null,
       e.readOnly??null,e.matches(':disabled'),e.getAttribute('aria-disabled'),
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
       e.getAttribute('href'),scope?.innerText?.slice(0,6000)||''];
@@ -65,6 +95,7 @@
       if (value!==null) base[key]=value;
     }
     if (['checkbox','radio'].includes(e.type)) base.checked=String(e.checked);
+    if (e.type==='password') base.secret=true;
     if (e.tagName==='SELECT') {
       for (const o of e.options) if (!o.selected && !o.disabled && !o.closest('optgroup[disabled]'))
         actions.push({...base,kind:'select',value:o.value,
@@ -73,7 +104,7 @@
       const editable=!e.readOnly && e.getAttribute('aria-readonly')!=='true' &&
         (['textbox','searchbox','spinbutton'].includes(rname) ||
           (rname==='combobox' && ['INPUT','TEXTAREA'].includes(e.tagName)));
-      const value='value' in e ? String(e.value) :
+      const value='value' in e ? String(val(e)) :
         e.isContentEditable || rname==='combobox' ? e.innerText.trim() : '';
       actions.push({...base,kind:editable?'fill':'click',value});
       if (editable) actions.push({...base,kind:'click',value,label:'Open '+base.label});
@@ -130,19 +161,22 @@
       words.push(value); length+=value.length;
     }
   }
-  const text=words.join('\n').slice(0,6000), height=document.documentElement.scrollHeight;
+  const text=words.join('\n').slice(0,6000);
   const page_key=cache.pageKey(), guards={};
   for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
   // Compare meaning and identity. Geometry is always resolved and hit-tested just before input.
   const semantics=actions.map(({rect,...action})=>action);
   const marker=[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
-    document.title,text,semantics,page_key[6],disabled,unanswered];
+    document.title,text,semantics,page_key[6],page_key[7],disabled,unanswered];
   const omitted_actions=Math.max(0,actions.length-250);
   actions.splice(250);
   actions.forEach((a,i)=>a.id='e'+(i+1));
-  if (scrollY+innerHeight<height-2) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
-  if (scrollY>0) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});
+  // A step is about 70% of what it moves, so the next view keeps a little of the last one in sight.
+  const chain=scrollers(cache.point), step=e=>Math.round(Math.min(560,0.72*(e ? e.clientHeight : innerHeight)));
+  const down=chain.find(e=>e.scrollTop+e.clientHeight<e.scrollHeight-2), up=chain.find(e=>e.scrollTop>0);
+  if (down || docDown) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:step(down),...cache.point});
+  if (up || docUp) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-step(up),...cache.point});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
   return {url:location.href,title:document.title,w:innerWidth,h:innerHeight,text,
-    scroll:{y:scrollY,height},actions,disabled,unanswered,marker,page_key,guards,omitted_actions};
+    scroll:{y:scrollY,height:docHeight,inner:page_key[7].map(([,top])=>top)},actions,disabled,unanswered,marker,page_key,guards,omitted_actions};
 })()
