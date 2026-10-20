@@ -118,13 +118,16 @@ class Secrets(unittest.TestCase):
         self.assertIn("auth.json, config.json", p.stdout)
 
     def test_verify_checks_and_e2e_drivers_run_without_them(self):
-        r = fc.fc_jev.driver_e2e({"name": "d", "setup": f"env > {self.root / 'setup-env'}", "setup_wait": 1, "driver": "env; exit 1"}, self.root)
+        # verify and jev keep only an output's tail, so the check prints just the lines asserted on, not a caller's long env:
+        # PLAIN, COMPOSE_CONFIG, and any secret's name or value, matched without spelling one out (the command lands in findings)
+        env = "env | grep -E '^(PLAIN|COMPOSE_CONFIG)=|_API_KEY|^OPENCODE_|-test-?[0-9]'; exit 1"
+        r = fc.fc_jev.driver_e2e({"name": "d", "setup": f"env > {self.root / 'setup-env'}", "setup_wait": 1, "driver": env}, self.root)
         self.assertIn("PLAIN", r["stdout"])
         self.assertClean(r["stdout"])
         self.assertClean((self.root / "setup-env").read_text())
         a = SimpleNamespace(skip_e2e=True, skip_review=True)
         with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}):
-            ok, report, findings = fc.fc_verify.run_stages(self.root, self.root, {"checks": ["env; exit 1"]}, a)
+            ok, report, findings = fc.fc_verify.run_stages(self.root, self.root, {"checks": [env]}, a)
         self.assertFalse(ok)
         self.assertIn("PLAIN", report["checks"][0]["output"])
         self.assertClean(report["checks"][0]["output"])
