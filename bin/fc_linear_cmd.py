@@ -247,7 +247,7 @@ def verb_doc(a):
 
 def cmd_linear(a):
     if not fc_config.LINEAR_KEY:
-        sys.exit(f"compose linear needs a Linear key for workspace {fc_config.WORKSPACE!r}: pbpaste | compose workspace key {fc_config.WORKSPACE} --linear")
+        sys.exit(fc_config.needs_linear_key("compose linear"))
     try:
         globals()[f"verb_{a.action}"](a)
     except (RuntimeError, OSError) as e:

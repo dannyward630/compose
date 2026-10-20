@@ -115,6 +115,14 @@ def apply_config(move=True):
                                              *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
     return name
 
+def needs_linear_key(what):
+    """The line `what` exits with when the active workspace has no Linear key. On a scratch config (a compose under `compose
+    timed`) storing a key would only fill the scratch one: the fix is to run the command directly."""
+    if fc_core.is_scratch(CONFIG_PATH):
+        return (f"{what} needs a Linear key, but runs on a scratch config with no workspace and no keys, as every command under "
+                f"`compose timed` does: run compose's own commands directly")
+    return f"{what} needs a Linear key for workspace {WORKSPACE!r}: pbpaste | compose workspace key {WORKSPACE} --linear"
+
 def openrouter_key():
     """The OpenRouter key a harness bills to: the workspace's from auth.json, else the shell's. None leaves the harness on its own auth store."""
     return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or None
@@ -127,6 +135,7 @@ def key_file(key):
         tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
         with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
             out.write(key)
+        fc_core.note_home_write(f, tmp)
         os.replace(tmp, f)  # parallel OpenCode turns never read a half-written key
     return f
 

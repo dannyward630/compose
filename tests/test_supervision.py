@@ -650,6 +650,14 @@ class Timed(unittest.TestCase):
             os.close(term)
         self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
 
+    def test_a_compose_command_under_timed_that_needs_a_key_says_to_run_it_directly(self):
+        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+        r = subprocess.run([compose, "timed", "10", "--", compose, "linear", "project", "--repo", tempfile.mkdtemp()], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("compose linear needs a Linear key, but runs on a scratch config with no workspace and no keys, as every command under "
+                      "`compose timed` does: run compose's own commands directly", r.stderr)
+        self.assertNotIn("compose workspace key", r.stderr)  # a key stored there would land in the scratch config
+
 
 class JevLeash(unittest.TestCase):
     def test_a_jev_that_gives_up_is_a_tool_error_not_an_app_failure(self):
