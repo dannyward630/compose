@@ -71,6 +71,22 @@ class Sync(unittest.TestCase):
         self.assertEqual((state(done), state(todo)), ("merged", "pending"))
         self.assertTrue(fc.fc_tasks.linear_done(done) and not fc.fc_tasks.linear_done(todo))
 
+    def test_a_design_task_in_review_or_done_on_linear_is_passed_whatever_this_checkout_holds(self):
+        """A design task has no branch, so Linear is its record: In Review (what a passing judge or a hand accept sets) or Done is
+        passed, even with no result here or a judge `failed` the designer overruled, and the task that waits on it is not blocked."""
+        def design(ident, tid, state, after=()):
+            return {**issue(ident, f"Design {tid}", block(id=tid, kind="design", nodes=f"P{tid}/Frame", test="t"), blocked_by=after), "status": state}
+        self.sync([design("ENG-2", "001", "In Review"), design("ENG-3", "002", "In Review"), design("ENG-4", "003", "Done"),
+                   design("ENG-5", "004", "Todo", ["ENG-2", "ENG-3"]), design("ENG-6", "005", "In Progress"), design("ENG-7", "006", "In Review")])
+        (self.proj / "results").mkdir(exist_ok=True)
+        for tid, status in (("002", "failed"), ("005", "passed"), ("006", "hand_done")):
+            (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"id": tid, "status": status, "model": "jev-latest"}))
+        rows = {m["id"]: fc.fc_status.task_state(self.proj, self.proj, m, "HEAD") for m in fc.fc_tasks.load_tasks(self.proj)}
+        self.assertEqual({t: (r["state"], r["note"]) for t, r in rows.items()},
+                         {"001": ("passed", "In Review on Linear"), "002": ("passed", "In Review on Linear"), "003": ("passed", "Done on Linear"),
+                          "004": ("pending", "after 001, 002"), "005": ("passed", ""), "006": ("passed (hand)", "")})
+        self.assertEqual((rows["001"]["model"], rows["002"]["model"]), ("", "jev-latest"))  # never the code default model a design task does not run on
+
     def test_big_tasks_are_flagged(self):
         small, wide, long = self.sync([
             issue("ENG-3", "Small", block(id="001", files="a.go, a2.go", test="t")),
@@ -252,7 +268,7 @@ class DesignTasks(unittest.TestCase):
 
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):
         out = io.StringIO()
-        state = lambda repo, proj, m, head, facts=None: {"state": "merged" if m["id"] == "003" else "pending"}
+        state = lambda repo, proj, m, head, facts=None: {"state": "passed" if m["id"] == "003" else "pending"}  # a design task's finish
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_status, "task_state", side_effect=state), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc\n")), mock.patch("sys.stdout", out):
             fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(self.proj), project="p"))
@@ -260,7 +276,7 @@ class DesignTasks(unittest.TestCase):
         self.assertIn("Checkout/Cart, Checkout/Pay", text)
         self.assertIn("WARNING two design tasks own the same page (one page per task):", text)
         self.assertIn("Checkout: 001, 004\n", text)  # one id per task, though 001 owns two nodes there
-        self.assertNotIn("Home:", text)  # 003 is merged, so only 005 is open on Home
+        self.assertNotIn("Home:", text)  # 003 passed, so only 005 is open on Home
 
     def test_a_passed_design_task_stays_passed(self):
         for tid in ("001", "002"):
