@@ -55,17 +55,34 @@ def state_and_labels(team, a):
         out["labelIds"] = ids
     return out
 
+def print_body(body):
+    """The body, then each heading's section hash, which a section write passes back to --expect."""
+    print((body or "").rstrip("\n"))
+    marks = fc_plan.section_hashes(body or "")
+    if marks:
+        print('--- section hashes (--section "<heading>" --expect <hash>)')
+        for heading, h in marks:
+            print(f"{h} {heading}")
+
 def writes_body(a, verb):
     """Whether the verb writes the body; refuses a flag mix that would write something other than what the caller meant."""
     if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
         sys.exit(f"{verb} takes one of --section, --append, --description")
+    if a.section and not fc_plan.heading_level(a.section):
+        sys.exit(f'{verb} --section takes a heading line such as "## Notes", not {a.section!r}')
+    if a.expect and not a.section:
+        sys.exit(f"{verb} --expect needs --section: it checks that section's hash")
     writes = bool(a.section or a.append or a.description)
     if a.file and not writes:  # the body file would be read by nothing
         sys.exit(f"{verb} --file needs --section, --append, or --description")
     return writes
 
 def new_body(a, old):
-    body, old = read_body(a), old or ""
+    old = old or ""
+    if a.expect and (now := fc_plan.section_hash(old, a.section)) != a.expect:
+        sys.exit(f"{a.section} {'is gone' if now is None else 'changed'} since you read it (hash {a.expect}): nothing written; "
+                 + ("read the body again and write from it" if now is None else "read it again, keep what changed, and write it back with the hash it shows now"))
+    body = read_body(a)
     if a.section:
         return fc_plan.replace_section(old, a.section, body)
     if a.append:
@@ -83,7 +100,7 @@ def verb_project(a):
         return
     print(f"{p['name']} on team {p['team']['name']}: {p['url']}")
     if a.body:
-        print(content or "")
+        print_body(content)
 
 def verb_get(a):
     if not a.target:
@@ -96,7 +113,7 @@ def verb_get(a):
         return
     print(issue_line(issue))
     if a.body:
-        print(issue["description"])
+        print_body(issue["description"])
     if a.comments:
         for c in sorted(issue["comments"]["nodes"], key=lambda c: c["createdAt"]):
             print(f"--- {c['user']['name']} {c['createdAt'][:10]}")
@@ -224,7 +241,7 @@ def verb_doc(a):
         doc = fc_linear.linear_gql("query($id: String!) { document(id: $id) { title content url } }",
                                    {"id": a.target[1]})["document"]
         print(doc["title"])
-        print(doc["content"])
+        print_body(doc["content"])
     else:
         sys.exit("doc takes create, list, get <id>, or update <id>")
 

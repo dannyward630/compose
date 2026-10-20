@@ -35,7 +35,7 @@ class LinearProject(unittest.TestCase):
     def args(self, action, *target, **kw):
         return SimpleNamespace(**{**dict(repo=str(self.repo), project=None, action=action, target=list(target), body=False, comments=False, json=False,
                                          append=False, description=False, any_project=False, label=None, parent=None, search=None, state=None,
-                                         title=None, blocked_by=None, file=None, section=None, create=None), **kw})
+                                         title=None, blocked_by=None, file=None, section=None, expect=None, create=None), **kw})
 
     def fails(self, fn, *args):
         err = io.StringIO()
@@ -71,7 +71,8 @@ class LinearProject(unittest.TestCase):
         self.content = "# Shop\n\n## Goals\n\nold\n\n## Notes\n\nkeep\n"
         written = lambda: [v for q, v in self.calls if "projectUpdate(id: $id, input: $in) { success }" in q]
         (self.repo / "body.md").write_text("new goals\n")
-        for kw, want in (({"body": True}, [f"Shop on team Engineering: {URL}", *self.content.strip().split("\n")]), ({"section": "## Goals"}, ["updated Shop"]),
+        hashes = ['--- section hashes (--section "<heading>" --expect <hash>)', *(f"{h} {s}" for s, h in fc_plan.section_hashes(self.content))]
+        for kw, want in (({"body": True}, [f"Shop on team Engineering: {URL}", *self.content.strip().split("\n"), *hashes]), ({"section": "## Goals"}, ["updated Shop"]),
                          ({"append": True}, ["updated Shop"]), ({"description": True}, ["updated Shop"])):
             with redirect_stdout(io.StringIO()) as out:
                 fc.fc_linear_cmd.verb_project(self.args("project", **({} if "body" in kw else {"file": str(self.repo / "body.md")}), **kw))
@@ -142,6 +143,16 @@ class LinearGet(unittest.TestCase):
         self.assertEqual(self.get("ENG-7", body=True, comments=True), [line, "Steps here."] + ann + bob)
         self.assertEqual(self.get("ENG-7", comments=True), [line] + ann + bob)
         self.assertEqual(self.get("ENG-7", body=True), [line, "Steps here."])
+
+    def test_body_lists_each_heading_with_its_section_hash_before_the_comments(self):
+        self.issue["description"] = "## Goal\n\ngoal\n\n## Notes\n\nspec line\n\n### Codebase brief\n\nwhere things live\n\n```sh\n# not a heading\n```\n"
+        hash_of = lambda h: fc_plan.section_hash(self.issue["description"], h)
+        got = self.get("ENG-7", body=True, comments=True)
+        self.assertEqual(got[got.index("```") + 1:], ['--- section hashes (--section "<heading>" --expect <hash>)', f"{hash_of('## Goal')} ## Goal",
+                                                      f"{hash_of('## Notes')} ## Notes", f"{hash_of('### Codebase brief')} ### Codebase brief",
+                                                      "--- Ann 2026-01-02", "first", "--- Bob 2026-03-04", "second"])
+        self.assertEqual(len({hash_of(h) for h in ("## Goal", "## Notes", "### Codebase brief")}), 3)
+        self.assertRegex(hash_of("## Goal"), r"^[0-9a-f]{8}$")
 
     def test_json_prints_only_the_issue(self):
         with redirect_stdout(io.StringIO()) as out:
@@ -355,6 +366,47 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7")), want)
         self.assertEqual(self.calls, [])
 
+    def test_replace_section_ends_a_section_at_the_next_heading_of_its_level_or_higher(self):
+        rs, body = fc_plan.replace_section, "# Cart\n\n## Notes\n\n### A\n\na\n\n### B\n\nb\n\n## Plan\n\nplan\n\n# Appendix\n\nz\n"
+        self.assertEqual(rs(body, "### A", "### A\n\nnew a"), "# Cart\n\n## Notes\n\n### A\n\nnew a\n\n### B\n\nb\n\n## Plan\n\nplan\n\n# Appendix\n\nz\n")
+        self.assertEqual(rs(body, "### B", "new b"), "# Cart\n\n## Notes\n\n### A\n\na\n\n### B\n\nnew b\n\n## Plan\n\nplan\n\n# Appendix\n\nz\n")
+        self.assertEqual(rs(body, "### A", "### C\n\nc"), "# Cart\n\n## Notes\n\n### C\n\nc\n\n### B\n\nb\n\n## Plan\n\nplan\n\n# Appendix\n\nz\n")  # renames
+        self.assertEqual(rs(body, "## Plan", "p"), "# Cart\n\n## Notes\n\n### A\n\na\n\n### B\n\nb\n\n## Plan\n\np\n\n# Appendix\n\nz\n")
+        self.assertEqual(rs(body, "## Notes", "n"), "# Cart\n\n## Notes\n\nn\n\n## Plan\n\nplan\n\n# Appendix\n\nz\n")  # an H2 still takes its H3s
+
+    def test_replace_section_reads_no_heading_inside_fenced_code(self):
+        rs, body = fc_plan.replace_section, "## Plan\n\n```sh\n# install\n## Notes\nmake\n```\n\n~~~\n### Steps\n~~~\n\n## Notes\n\nkeep\n"
+        self.assertEqual(rs(body, "## Plan", "new"), "## Plan\n\nnew\n\n## Notes\n\nkeep\n")
+        self.assertEqual(rs(body, "## Notes", "kept"), "## Plan\n\n```sh\n# install\n## Notes\nmake\n```\n\n~~~\n### Steps\n~~~\n\n## Notes\n\nkept\n")
+        self.assertEqual([h for h, _ in fc_plan.section_hashes(body)], ["## Plan", "## Notes"])
+
+    def test_a_section_write_with_a_stale_hash_refuses_and_writes_nothing(self):
+        read = "# Cart\n\n## Notes\n\nspec line\n"  # what the team lead read
+        seen = fc_plan.section_hash(read, "## Notes")
+        self.issue["description"] = "# Cart\n\n## Notes\n\nspec line\n\n### Codebase brief\n\nwhere things live\n"  # explore wrote in between
+        (self.repo / "notes.md").write_text("## Notes\n\nspec line\nmockup line\n")
+        code, msg = self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", section="## Notes", expect=seen, file=str(self.repo / "notes.md")))
+        self.assertEqual((code, msg), (1, f"## Notes changed since you read it (hash {seen}): nothing written; read it again, keep what changed, "
+                                          "and write it back with the hash it shows now"))
+        self.assertFalse([q for q, _ in self.calls if "issueUpdate" in q])
+        self.issue["description"] = "# Cart\n"
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", section="## Notes", expect=seen, file=str(self.repo / "notes.md"))),
+                         (1, f"## Notes is gone since you read it (hash {seen}): nothing written; read the body again and write from it"))
+        self.assertFalse([q for q, _ in self.calls if "issueUpdate" in q])
+
+    def test_a_section_write_with_the_current_hash_goes_through(self):
+        now = fc_plan.section_hash(self.issue["description"], "## Plan")
+        self.assertEqual(self.update("new plan", section="## Plan", expect=now)[0], {"description": "# Cart\n\n## Plan\n\nnew plan\n\n## Notes\n\nkeep\n"})
+
+    def test_expect_needs_a_section_and_a_section_needs_a_heading_line(self):
+        for kw in ({"description": True}, {"append": True}, {"title": "T"}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", expect="abcd1234", **kw)),
+                             (1, "update --expect needs --section: it checks that section's hash"))
+        for heading in ("Notes", "##Notes", "####### Deep"):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", section=heading)),
+                             (1, f'update --section takes a heading line such as "## Notes", not {heading!r}'))
+        self.assertEqual(self.calls, [])
+
     def test_refuses_two_body_flags_or_another_project_and_updates_nothing(self):
         for kw in ({"section": "## Plan", "append": True}, {"append": True, "description": True}, {"section": "## Plan", "description": True}):
             self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", **kw)), (1, "update takes one of --section, --append, --description"))
@@ -447,6 +499,10 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1")), (1, "doc update needs --title, --section, --append, or --description"))
         for kw in ({}, {"title": "PRD v3"}):
             self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", **kw)), (1, "doc update --file needs --section, --append, or --description"))
+        stale = fc_plan.section_hash("# PRD\n\n## Plan\n\nolder\n", "## Plan")
+        self.assertIn("## Plan changed since you read it", self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", section="## Plan", expect=stale))[1])
+        self.assertEqual(self.run_verb("doc", "get", "d1"), ["PRD", *(l for l in content.split("\n") if l), '--- section hashes (--section "<heading>" --expect <hash>)',
+                                                          *(f"{h} {s}" for s, h in fc_plan.section_hashes(content))])
         self.doc["project"] = None
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", description=True)), (1, "document PRD is not in project Shop; pass --any-project to use it"))
         self.assertEqual(len(sent()), 4)

@@ -145,7 +145,7 @@ def main():
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project"):
                 s.add_argument(flag, action="store_true")
             s.add_argument("--label", action="append")
-            for flag in ("--parent", "--search", "--state", "--title", "--blocked-by", "--file", "--section", "--create"):
+            for flag in ("--parent", "--search", "--state", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
                 s.add_argument(flag)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
