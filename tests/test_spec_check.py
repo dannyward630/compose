@@ -322,3 +322,24 @@ class StoryTooBig(unittest.TestCase):
         self.assertNotIn("ENG-26:", out)
         self.assertNotIn("ENG-27:", out)
         self.assertNotIn("STORY TOO BIG", self.tasks_out(self.issues(story("ENG-22", 5), story("ENG-26", 9, "Canceled"))))
+
+
+class DesignAndHandTasks(unittest.TestCase):
+    """A design task names `nodes:`, never `files:` or `protected:`; a Task-labelled issue without a block is a hand task, never a story."""
+
+    def test_design_task_is_checked_for_nodes_not_files(self):
+        design = lambda ident, tid, nodes: task(ident, tid, files="", protected="", kind="design", nodes=nodes,
+                                                test=f"compose figma judge --project p --only {tid}")
+        got = check([design("ENG-3", "001", "Primitives/Color"), design("ENG-4", "002", "")])
+        self.assertEqual(got["ENG-3"], (True, "task", []))
+        self.assertEqual(got["ENG-4"], (False, "task", ["empty `nodes:`"]))
+
+    def test_task_labelled_issue_without_a_block_is_a_hand_task_of_its_story(self):
+        lowfi = {**story("ENG-5", 6, "Done"), "labels": ["Task"], "parentId": "ENG-4"}
+        got = check([task("ENG-3", "001"), {**story("ENG-4", 1), "parentId": "ENG-1"}, lowfi])
+        self.assertEqual((got["ENG-4"], got["ENG-5"]), ((True, "story", []), (True, "hand task", [])))
+        out = StoryTooBig.tasks_out(self, [task("ENG-3", "001"), lowfi])
+        self.assertNotIn("STORY TOO BIG", out)
+        lines, e = SpecCheck.run_cli(self, json.dumps(data([task("ENG-3", "001"), lowfi])))
+        self.assertIn("PASS ENG-5 hand task", lines)
+

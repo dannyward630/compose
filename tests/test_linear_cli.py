@@ -174,6 +174,7 @@ class SyncFromLinear(unittest.TestCase):
     def node(self, i, parent, blocked=()):
         desc = f"brief {i}\n\n```compose\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
         return {"identifier": i, "title": f"T{i}", "description": desc, "state": {"name": "Todo"}, "parent": {"identifier": parent} if parent else None,
+                "labels": {"nodes": [{"name": "Task" if parent == "ENG-2" else "Story"}] if parent else []},
                 "inverseRelations": {"nodes": [{"type": "blocks", "issue": {"identifier": b, "state": {"name": state}, "labels": {"nodes": [{"name": l} for l in labels]}}}
                                                for b, state, labels in blocked] + [{"type": "related", "issue": {"identifier": "ENG-99"}}]}}
 
@@ -212,6 +213,7 @@ class SyncFromLinear(unittest.TestCase):
         self.assertEqual([i["id"] for i in data["issues"]], ["ENG-2", "ENG-4", "ENG-5", "ENG-6", "ENG-3"])
         task = data["issues"][2]
         self.assertEqual((task["parentId"], task["status"], task["blockedBy"]), ("ENG-2", "Todo", [{"id": "ENG-4", "status": "Todo", "labels": []}]))
+        self.assertEqual((task["labels"], data["issues"][0]["labels"]), (["Task"], ["Story"]))
         self.assertIn("```compose", task["description"])
         self.assertFalse(any(w in q for q in self.queries for w in ("mutation", KEY)))  # read-only
 
@@ -220,6 +222,7 @@ class SyncFromLinear(unittest.TestCase):
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())["tasks"]
         self.assertEqual([(t["id"], t["after"], t["waits_on"]) for t in tasks],
                          [("004", "", []), ("005", "004", []), ("006", "", ["ENG-91 (In Progress)"])])  # a design at In Review is finished
+        self.assertEqual(json.loads((self.proj / "results" / "tasks.json").read_text())["issues"]["ENG-5"]["labels"], ["Task"])
 
     def test_stories_scope_skips_other_stories_children(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-3"]}))

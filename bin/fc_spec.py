@@ -68,7 +68,8 @@ def cmd_tasks(a):
             print(f"    {tid}: {why}")
     big_stories = [(k, len(fc_tasks.parse_criteria(v.get("description") or "")))
                    for k, v in (fc_tasks.linear_cache(proj).get("issues") or {}).items()
-                   if (v.get("status") or "").lower() not in fc_tasks.CANCELED and not fc_tasks.task_from_issue(dict(v, id=k))]
+                   if (v.get("status") or "").lower() not in fc_tasks.CANCELED and not fc_tasks.task_from_issue(dict(v, id=k))
+                   and not fc_tasks.hand_task(v)]
     if any(n > 5 for _, n in big_stories):
         print("\n  WARNING STORY TOO BIG: split it into thinner stories before cutting its tasks:")
         for k, n in big_stories:
@@ -135,22 +136,28 @@ def spec_check(data, checks=()):
                 gaps.append(f"too big: {too_big(meta)}")
             if len(bullets) > 5:
                 gaps.append(f"{len(bullets)} bullets under `## Acceptance criteria` (max 5)")
-            if not meta["files"] and not meta["delete"]:
-                gaps.append("empty `files:`")
-            if not meta["protected"]:
-                gaps.append("empty `protected:`")
+            if meta["kind"] == "design":  # it names its Figma page and frames, and its test is the judge
+                if not meta["nodes"]:
+                    gaps.append("empty `nodes:`")
+            else:
+                if not meta["files"] and not meta["delete"]:
+                    gaps.append("empty `files:`")
+                if not meta["protected"]:
+                    gaps.append("empty `protected:`")
             if " ".join(meta["test"].split()) in suite:
                 gaps.append(f"`test:` is the verify check `{meta['test']}`, the whole suite: run only this task's test (its file, or a name filter)")
             if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):
                 gaps.append("the brief points at the contract, which implementers never see: state its signatures and exact lines in the brief")
             out.append((not gaps, i["id"], "task", gaps))
+        elif fc_tasks.hand_task(i):
+            out.append((True, i["id"], "hand task", []))
         else:
             gaps = []
             if not bullets:
                 gaps.append("no bullet under `## Acceptance criteria`")
             if len(bullets) > 5:
                 gaps.append(f"too big: {len(bullets)} criteria under `## Acceptance criteria` (max 5)")
-            if story_task and not any(j.get("parentId") == i["id"] for j in issues if fc_tasks.task_from_issue(j)):
+            if story_task and not any(j.get("parentId") == i["id"] for j in issues if fc_tasks.task_from_issue(j) or fc_tasks.hand_task(j)):
                 gaps.append("no task carries this story as its parentId (cut its code, dependency and toolchain changes into tasks)")
             out.append((not gaps, i["id"], "story", gaps))
     return out

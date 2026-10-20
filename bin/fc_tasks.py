@@ -16,7 +16,7 @@ import fc_core, fc_config
 # Everything above the block is the implementer's brief. `after` is Linear's own "blocked by" between the feature's tasks;
 # any other blocker is `waits_on` while it is not finished, and holds the task back without stacking it.
 TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
-SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", '
+SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "labels", '
               '"blockedBy": ["<issue id>" or {"id", "status", "labels"}]}]}'
               ": every issue under the feature, its stories' children included")
 
@@ -39,6 +39,10 @@ def task_from_issue(issue):
                  "blocked_by": [b if isinstance(b, dict) else {"id": b} for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
                  "body": TASK_BLOCK.sub("\n", desc).strip()})
     return meta
+
+def hand_task(issue):
+    """An issue labelled Task that carries no compose block: work done by hand (a lowfi flow in Frame0), never dispatched."""
+    return not TASK_BLOCK.search(issue.get("description") or "") and any(l.lower() == "task" for l in issue.get("labels") or ())
 
 def sync_tasks(proj, data):
     """Store the feature and its tasks, as the team lead read them from Linear, in results/tasks.json. Returns the tasks."""
@@ -75,7 +79,7 @@ def sync_tasks(proj, data):
     f = data["feature"]
     issues = {i["id"]: {"title": i.get("title", ""), "description": i.get("description") or "", "status": i.get("status") or "",
                         "blockedBy": sorted(b["id"] if isinstance(b, dict) else b for b in i.get("blockedBy") or []),
-                        **({"parentId": i["parentId"]} if i.get("parentId") else {})}
+                        **({"parentId": i["parentId"]} if i.get("parentId") else {}), **({"labels": i["labels"]} if i.get("labels") else {})}
               for i in data["issues"]}  # whole, stories too: a change of course snapshots them and undo puts them back
     fc_core.atomic_write((proj / "results" / "tasks.json"), json.dumps({"synced_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "feature": {"id": f["id"], "title": f.get("title", ""), "description": f.get("description") or ""}, "tasks": tasks,

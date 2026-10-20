@@ -3,7 +3,7 @@ from pathlib import Path
 import fc_core, fc_config, fc_plan, fc_tasks
 
 
-LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier }
+LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier } labels { nodes { name } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } }"""
 LINEAR_FEATURE = "query($id: String!) { issue(id: $id) { %s } }" % LINEAR_TREE_FIELDS
 LINEAR_CHILDREN = """query($id: String!, $after: String) { issue(id: $id) { children(first: 50, after: $after) {
@@ -43,6 +43,7 @@ def linear_sync_payload(proj):
     return {"feature": {"id": feature["identifier"], "title": feature["title"], "description": feature["description"] or ""},
             "issues": [{"id": i["identifier"], "title": i["title"], "description": i["description"] or "", "status": i["state"]["name"],
                         "parentId": i["parent"]["identifier"] if i["parent"] else None,
+                        "labels": [l["name"] for l in i["labels"]["nodes"]],
                         "blockedBy": [{"id": r["issue"]["identifier"], "status": r["issue"]["state"]["name"],
                                        "labels": [l["name"] for l in r["issue"]["labels"]["nodes"]]}
                                       for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks"]}
