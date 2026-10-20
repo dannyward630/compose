@@ -373,13 +373,14 @@ class FigmaJudge(unittest.TestCase):
 
 
 class FigmaConnectorBriefs(unittest.TestCase):
-    def test_designer_and_builder_briefs_name_the_connector_and_ban_the_plugin(self):
+    def test_designer_and_builder_briefs_name_both_connectors_and_ban_other_plugins(self):
         builder = fc.fc_figma.design_brief({"id": "001", "nodes": ["Page/A"]}, "AbCd", Path("r"))
         designer = fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd")
         for brief in (builder, designer):
             self.assertIn("mcp__claude_ai_Figma__*", brief)
+            self.assertIn("mcp__plugin_figma_figma__*", brief)
             self.assertIn("one ToolSearch select call", brief)
-            self.assertIn("Never use `plugin:*figma*` tools", brief)
+            self.assertIn("Never use another `plugin:*figma*` server", brief)
 
     def test_designer_brief_reads_tokens_through_trail(self):
         designer = " ".join(fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd").split())

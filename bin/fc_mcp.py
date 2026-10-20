@@ -13,7 +13,7 @@ ROLE_MCP = {
 
 COVERS = {
     "linear": ("claude_ai_Linear",),
-    "figma": ("claude_ai_Figma",),
+    "figma": ("claude_ai_Figma", "plugin_figma_figma"),
     "framelink-figma": ("framelink-figma",),
 }
 
