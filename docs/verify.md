@@ -61,6 +61,7 @@ Every run ends with time and cost per provider.
   The browser is visible, and only the `compose` test suite runs it headless.
 - When the stage ends, it stops everything it started.
   That covers setup processes, its browser and that browser's harness daemons, and anything listening on its ports.
+- When verify runs at the stack top in a slot under the main checkout, every absolute path in `checks` and the e2e config that points into the project worktree or the main checkout is moved to that slot, once.
 
 When the harness itself fails, for example a jev or browser crash, a missing tool, or a port in use, verify reports `TOOL ERROR` and retries once.
 It never sends that failure to a fix round.

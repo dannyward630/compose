@@ -336,6 +336,38 @@ class BeforePlanning(unittest.TestCase):
             self.assertEqual((code, self.vf.call_count), (0, 0), kw)
 
 
+class PathsAtStackTop(unittest.TestCase):
+    """verify at the stack top runs in a treehouse slot under the main checkout: absolute paths in verify.json move there once."""
+    def test_every_path_under_the_worktree_or_the_main_checkout_moves_to_the_slot_once(self):
+        base = Path(tempfile.mkdtemp()).resolve()
+        main, repo = base / "app", base / "app-worktrees" / "feature-x"  # the worktree's path starts with the main checkout's
+        main.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"],
+                     ["worktree", "add", "-q", "-b", "compose/p", str(repo)]):
+            subprocess.run(["git", *args], cwd=main, check=True)
+        root = main / ".treehouse" / "app-123" / "1" / "app"
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        e2e = f"{repo}/.compose/p/e2e"
+        cfg = {"checks": [f"{e2e}/refresh-verify-env.sh", f"bash {main}/scripts/lint.sh", "npm test", f"{base}/app2/tool --x"],
+               "e2e_setup": f"cd {main} && {e2e}/serve.sh $E2E_PORT &", "e2e_env": {"PROFILE": f"{repo}/.compose/p/profile"},
+               "e2e": [{"name": "login", "url": f"file://{repo}/index.html", "goal": "Log in", "setup": f"{e2e}/login.sh",
+                        "env": {"DATA": f"{main}/fixtures"}, "assert": f"python3 {e2e}/check.py --root={repo}"}]}
+        (proj / "verify.json").write_text(json.dumps(cfg))
+        seen = {}
+        a = SimpleNamespace(repo=str(repo), project="p", skip_e2e=False, skip_review=True, fix=0)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
+                mock.patch.object(fc.fc_verify, "verify_root", return_value=(root, "main", None)), \
+                mock.patch.object(fc.fc_verify, "verify_rounds", lambda r, p, c, *_: seen.update(c)):
+            fc.fc_verify.cmd_verify(a)
+        top = f"{root}/.compose/p/e2e"
+        self.assertEqual(seen["checks"], [f"{top}/refresh-verify-env.sh", f"bash {root}/scripts/lint.sh", "npm test", f"{base}/app2/tool --x"])
+        self.assertEqual(seen["e2e_setup"], f"cd {root} && {top}/serve.sh $E2E_PORT &")
+        self.assertEqual(seen["e2e_env"], {"PROFILE": f"{root}/.compose/p/profile"})
+        self.assertEqual(seen["e2e"], [{"name": "login", "url": f"file://{root}/index.html", "goal": "Log in", "setup": f"{top}/login.sh",
+                                        "env": {"DATA": f"{root}/fixtures"}, "assert": f"python3 {top}/check.py --root={root}"}])
+
+
 T = 1_760_000_000  # fixed mtimes: the other record is 3 hours off, so its HH:MM never matches
 
 def hm(t):

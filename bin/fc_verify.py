@@ -411,6 +411,20 @@ def verify_root(repo, proj, cfg):
     fc_core.say(f"verify at    stack top {chain[-1]} ({len(chain)} layer(s) on {trunk}); fixes commit on that layer")
     return wt, trunk, wt
 
+def at_root(value, olds, root):
+    """`value` with every absolute path under one of `olds` (the project worktree, the main checkout) moved under `root`, in
+    every string, inside dicts and lists too. One pass, longest prefix first, each matched as a whole path: a path already
+    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x."""
+    olds = sorted({str(o) for o in olds} - {str(root)}, key=len, reverse=True)
+    if not olds:
+        return value
+    path = re.compile(r"(?<![\w.~-])(?:" + "|".join(map(re.escape, olds)) + r")(?=/|$|[\s\"'`;:&|()<>,=])")
+    if isinstance(value, dict):
+        return {k: at_root(v, olds, root) for k, v in value.items()}
+    if isinstance(value, list):
+        return [at_root(v, olds, root) for v in value]
+    return path.sub(lambda _: str(root), value) if isinstance(value, str) else value
+
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     cfg_path = proj / "verify.json"
@@ -426,12 +440,10 @@ def cmd_verify(a):
     root, base, wt = verify_root(repo, proj, cfg)
     cfg = {**cfg, "review_base": base}
     if root != repo:
-        # e2e commands and setup may name the main checkout or the project worktree by absolute path; run them against the stack top.
-        main_path = str(fc_core.worktrees(repo)[0])
-        swap = lambda c: c.replace(str(repo), str(root)).replace(main_path, str(root)) if isinstance(c, str) else c
-        cfg["e2e"] = [{**case, "driver": swap(case.get("driver")), "assert": swap(case.get("assert"))} for case in cfg.get("e2e", [])]
-        cfg["e2e_setup"] = swap(cfg.get("e2e_setup"))
-        cfg["checks"] = [swap(c) for c in cfg.get("checks", [])]
+        # Checks and e2e cases (setup, driver, assert, env, every string) may name the main checkout or the project worktree
+        # by absolute path; run them against the stack top.
+        olds = (repo, fc_core.worktrees(repo)[0])
+        cfg.update({k: at_root(cfg[k], olds, root) for k in ("checks", "e2e", "e2e_setup", "e2e_env") if k in cfg})
         cfg["main_repo"] = repo
     try:
         verify_rounds(root, proj, cfg, a, rounds, t0, left_out)
