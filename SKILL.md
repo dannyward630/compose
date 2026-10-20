@@ -28,6 +28,8 @@ You create and edit issues and write judgment comments with `compose linear` (`g
 The Linear key is required: without it `compose doctor` fails and `compose linear` stops with the line that stores one.
 `get` and `list` print one compact line per issue (`<id> <state> <label> <title>`); add `--body` or `--comments` to `get` only when you need them.
 Write bodies come from `--file <path>` or stdin, never from the command line.
+`update` writes the body only with `--section "<heading>"`, `--append`, or `--description`; `--file` without one of them exits and writes nothing.
+`get --body` ends with each section's hash: a `--section` write whose text came from that read passes it as `--expect <hash>`, and writes nothing when another writer changed the section since.
 `list` and `create` default to the project and team in the file; `get`, `update`, and `comment` refuse an issue in another project unless `--any-project`.
 Confirm the file points at a real project before any other Linear call: `compose linear project` must print a project on its team.
 Scope every Linear read, search, and write to that project and team; when a project is in play, its feature comes from `.compose/<slug>/linear.json`.

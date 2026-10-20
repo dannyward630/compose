@@ -1,16 +1,55 @@
 """The delivery plan's section text: pure, section text in and section text out; fc_linear reads and writes Linear."""
 
+import hashlib
+
 import fc_tasks
+
+def heading_level(line):
+    """2 for `## Notes`: the count of leading #s when a space follows them, else 0 (not a heading)."""
+    n = len(line) - len(line.lstrip("#"))
+    return n if 0 < n <= 6 and line[n:n + 1] == " " else 0
+
+def headings(lines):
+    """(index, level) of each heading line outside fenced code, where a `# comment` line is code, not a heading."""
+    fence = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+        elif not fence and heading_level(line):
+            yield i, heading_level(line)
+
+def section_span(lines, heading):
+    """The section's lines as (start, end): from its heading to the next heading of the same or a higher level, so an H2
+    takes its H3s and an H3 leaves its siblings alone. None when the heading is not there."""
+    marks = list(headings(lines))
+    start = next((i for i, _ in marks if lines[i] == heading), None)
+    if start is None:
+        return None
+    return start, next((i for i, n in marks if i > start and n <= heading_level(heading)), len(lines))
+
+def section_hash(body, heading):
+    """A short hash of the section as it stands, subsections included; None when it is not there. A writer passes the hash it
+    read to `--expect`, and the write refuses when the section changed since."""
+    lines = body.split("\n")
+    span = section_span(lines, heading)
+    return hashlib.sha256("\n".join(lines[span[0]:span[1]]).strip().encode()).hexdigest()[:8] if span else None
+
+def section_hashes(body):
+    """(heading, hash) for each heading, first occurrence only: the one a section write finds."""
+    lines = body.split("\n")
+    names = list(dict.fromkeys(lines[i] for i, _ in headings(lines)))
+    return [(h, section_hash(body, h)) for h in names]
 
 def replace_section(body, heading, text):
     text = text.strip()
-    new = text.split("\n")[0] if text.startswith("## ") else heading
+    first = text.split("\n")[0]
+    new = first if heading_level(first) == heading_level(heading) else heading
     section = new + "\n\n" + text.removeprefix(new).strip() if text else ""
     lines = body.split("\n")
-    if heading not in lines:
+    span = section_span(lines, heading)
+    if not span:
         return body.rstrip("\n") + "\n\n" + section + "\n" if section else body
-    i = lines.index(heading)
-    end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+    i, end = span
     parts = [p for p in ("\n".join(lines[:i]).rstrip("\n"), section.rstrip("\n"), "\n".join(lines[end:]).rstrip("\n")) if p]
     return "\n\n".join(parts) + "\n" if parts else ""
 
@@ -26,10 +65,9 @@ def with_plan_link(description, title, url):
         return description
     line = f"* Delivery plan: [{title}]({url})"
     lines = description.split("\n")
-    if "## Notes" in lines:
-        i = lines.index("## Notes")
-        end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
-        sub = next((j for j in range(i + 1, end) if lines[j].startswith("### ")), end)
+    if span := section_span(lines, "## Notes"):
+        i, end = span
+        sub = next((j for j, _ in headings(lines) if i < j < end), end)
         own = [j for j in range(i + 1, sub) if lines[j].strip()]
         if own:
             ins = own[-1] + 1
