@@ -77,6 +77,8 @@ def main():
     fc_proc.on_termination(fc_core.remove_scratch)  # a SIGTERM or SIGHUP still removes the scratch configs and ends what timed started
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])
+    if sys.argv[1:3] == ["frame0", "mcp"]:  # a session's MCP server: stdout is its protocol, so no config and no scrubbing
+        return fc_frame0.frame0_mcp(sys.argv[3:])
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),

@@ -547,8 +547,11 @@ VERIFY_TAB = re.compile(r"verify( \d\d:\d\d)?")
 def teardown(proj):
     """Close what a project's runs left open in its herdr space: the implementers tab, legacy per-task tabs, the verify tab,
     and every teammate tab whose last report is `done`. `shell`, `status`, and the team lead stay. Idempotent. Returns the closed labels."""
-    if fc_frame0.frame0_down(proj):
-        print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
+    try:
+        if fc_frame0.frame0_down(proj):
+            print(f"teardown saved the project's Frame0 drawing to {proj / 'design.f0'} and quit it")
+    except RuntimeError as e:
+        print(f"teardown left the project's Frame0 running, its drawing not saved: {e}")
     stopped = stop_listeners_under(fc_herdr.project_worktree(proj))
     if stopped:
         print(f"teardown stopped {len(stopped)} server(s) left listening in the project: pids {', '.join(stopped)}")

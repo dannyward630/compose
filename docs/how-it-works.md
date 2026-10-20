@@ -72,6 +72,9 @@ Three commands manage it:
    `teardown` does this too.
 
 On the first drawing after each app start, Frame0 asks you to allow "Frame0 MCP Server".
+Frame0 forgets its permissions when the app stops, so a session whose app was restarted asks again on its next drawing.
+Sessions reach Frame0 through `compose frame0 mcp`, which renews the permission behind the scenes and keeps their `frame0` tools working across a restart.
+If Frame0 does not answer `frame0 save` or `down`, a dialog is open in its window: answer it and run the command again.
 
 ## Planning
 
