@@ -320,14 +320,17 @@ def cmd_toolsmith(a):
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 
-def test_brief(meta, contract, budget=None, conv=None):
+def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
+    """`rebuilt`: the task passed before a re-plan changed its brief (testcrews --redo), so its file holds the old brief's test."""
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
     args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
+    files = ", ".join(meta.get("files") or [])
+    fails = (f"Its brief changed after it was built: rewrite the test {paths} holds to the TASK BRIEF. It must fail on the project "
+             f"branch for what the brief changed, and pass once {files} implement the new brief.\n" if rebuilt else
+             f"It must fail on the current stubs for the reason this task fixes, and pass once {files} implement the brief.\n")
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
-            f"Test file: {paths}. Test command: {meta.get('test')}\n"
-            f"It must fail on the current stubs for the reason this task fixes, and pass once {', '.join(meta.get('files') or [])} "
-            "implement the brief.\n"
+            f"Test file: {paths}. Test command: {meta.get('test')}\n" + fails +
             "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
             "(report `blocked` naming what is missing instead).\n"
             "Assert only what the TASK BRIEF states or the code already shows: its implementer gets the brief, the stubs, and your test, "
@@ -345,25 +348,30 @@ def test_brief(meta, contract, budget=None, conv=None):
 
 def cmd_testcrews(a):
     """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
-    `--print` shows the briefs instead."""
+    `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
+    their briefs needs their tests rewritten first."""
     proj = fc_core.project_dir(a)
     if getattr(a, "collect", False):
         return collect_tests(proj, a.only)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
         sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (compose groundwork, phase C)")
-    contract, budget = contract_file.read_text(), getattr(a, "budget", None)
+    contract, budget, redo = contract_file.read_text(), getattr(a, "budget", None), bool(getattr(a, "redo", False))
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
-    finished = lambda m: fc_tasks.task_finished(proj, m)  # a finished task needs no test writer
+    finished = lambda m: fc_tasks.task_finished(proj, m, redo)  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
+    rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
-            print(f"{tid} skipped: " + (finished(m) if m else "no such task"))
+            why = finished(m) if m else "no such task"
+            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith("its result") else ""))
+    brief = lambda m: test_brief(m, contract, budget, fc_core.commit_convention(proj), m["id"] in rebuilt)
+    again = " --redo" if redo else ""
     if a.print_:
         for m in metas:
-            print(f"===== tests-{m['id']}\n{test_brief(m, contract, budget, fc_core.commit_convention(proj))}\n")
+            print(f"===== tests-{m['id']}\n{brief(m)}\n")
         return
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
@@ -375,7 +383,7 @@ def cmd_testcrews(a):
         if short:
             sys.exit(f"testcrews: {short}")
     asked = only or {m["id"] for m in tasks}
-    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget} for t in blocked}})
+    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget, "redo": redo} for t in blocked}})
     for tid, by in blocked.items():
         print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
     if not metas:
@@ -386,7 +394,7 @@ def cmd_testcrews(a):
     def start(m):
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=test_brief(m, contract, budget, fc_core.commit_convention(proj)), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
+                                        brief=brief(m), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")
@@ -394,11 +402,11 @@ def cmd_testcrews(a):
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
     if failed:
-        print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}")
+        print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}{again}")
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} test writer(s) queued past the cap of {cap} (parallel in {fc_config.CONFIG_PATH}): {ids}\n"
-              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}")
+              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}{again}")
 
 def test_branch(proj, tid):
     return fc_worktree.task_prefix(fc_herdr.project_worktree(proj), proj) + f"tests-{tid}"
@@ -408,7 +416,8 @@ def test_open(proj, tid):
     return fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, tid)], fc_herdr.project_worktree(proj), check=False).returncode == 0
 
 def waiting_writers(proj, update=None):
-    """The test writers waiting for another writer of the same test file, by task id, with the contract and budget to start them with."""
+    """The test writers waiting for another writer of the same test file, by task id, with the contract, budget, and --redo to start
+    them with."""
     f = proj / "results" / "tests-waiting.json"
     have = json.loads(f.read_text()) if f.exists() else {}
     if update is not None:
@@ -507,8 +516,9 @@ def collect_tests(proj, only=None):
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
     groups = {}
     for tid, how in waiting_writers(proj).items():
-        groups.setdefault((how["contract"], how["budget"]), []).append(tid)
-    for (contract, budget), tids in groups.items():
-        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False))
+        groups.setdefault((how["contract"], how["budget"], bool(how.get("redo"))), []).append(tid)
+    for (contract, budget, redo), tids in groups.items():
+        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
+                                         redo=redo))
     if conflicts:
         sys.exit("\n".join(conflicts))
