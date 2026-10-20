@@ -76,6 +76,7 @@ Run `/compose <what you want>` and each feature moves through the same life cycl
     Passed tickets become one gh stack, and when you say so, each layer becomes a draft pull request for your reviewers to read and merge.
 
 Every agent works in its own herdr pane, and you can type into any of them.
+Each pane is named for what it does, and the pane you started compose in is named `manager: <project>` for every project it runs.
 `compose` with no command opens the herdr session for you.
 Nothing is pushed until you say so, and `compose` never merges anything.
 

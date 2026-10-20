@@ -198,6 +198,68 @@ class SharedSpace(unittest.TestCase):
             self.assertFalse([c for c in self.calls if c[:2] in (("worktree", "open"), ("tab", "create"))])
 
 
+class PaneNames(unittest.TestCase):
+    """Every pane says what it is for: the pane compose was started in is `manager: <slug>, ...` while it runs those projects, and a
+    tab compose opens names its one pane like the tab."""
+    def herdr(self, *args, check=False, timeout=120):
+        self.calls.append(args)
+        if args[:2] == ("pane", "get"):
+            return {"pane": {"pane_id": args[2], **({"label": self.labels[args[2]]} if self.labels.get(args[2]) else {})}}
+        if args[:2] == ("pane", "list"):
+            return {"panes": [{"pane_id": p, **({"label": l} if l else {})} for p, l in self.labels.items()]}
+        if args[:2] == ("pane", "rename"):
+            self.labels[args[2]] = None if args[3] == "--clear" else args[3]
+        if args[:2] == ("tab", "create"):
+            self.labels["w7:p9"] = None
+            return {"tab": {"tab_id": "w7:t9"}, "root_pane": {"pane_id": "w7:p9"}}
+        return {}
+
+    def run_as(self, env, fn, *args):
+        with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.dict(os.environ, env):
+            if "COMPOSE_ROLE" not in env:
+                os.environ.pop("COMPOSE_ROLE", None)
+            return fn(*args)
+
+    def setUp(self):
+        self.calls, self.labels = [], {"w7:p1": None, "w7:p2": "my notes", "w7:p3": None}
+
+    def test_the_engineering_manager_pane_names_every_project_it_runs(self):
+        manager = {"HERDR_PANE_ID": "w7:p1"}
+        for slug in ("shop", "cart", "shop"):  # a project named again is not listed twice
+            self.run_as(manager, fc.fc_herdr.herdr_name_manager, Path("/r/.compose") / slug)
+        self.assertEqual(self.labels["w7:p1"], "manager: shop, cart")
+        self.run_as(manager, fc.fc_herdr.herdr_unname_manager, "shop")
+        self.assertEqual(self.labels["w7:p1"], "manager: cart")
+        self.run_as(manager, fc.fc_herdr.herdr_unname_manager, "cart")
+        self.assertIsNone(self.labels["w7:p1"])  # no project left: the pane's name is cleared, not left saying `manager`
+
+    def test_a_label_the_product_owner_gave_and_a_teammate_pane_are_never_named(self):
+        self.run_as({"HERDR_PANE_ID": "w7:p2"}, fc.fc_herdr.herdr_name_manager, Path("/r/.compose/shop"))
+        self.run_as({"HERDR_PANE_ID": "w7:p3", "COMPOSE_ROLE": "orchestrator"}, fc.fc_herdr.herdr_name_manager, Path("/r/.compose/shop"))
+        self.run_as({"HERDR_PANE_ID": "w7:p2"}, fc.fc_herdr.herdr_unname_manager, "shop")
+        self.assertEqual(self.labels, {"w7:p1": None, "w7:p2": "my notes", "w7:p3": None})
+        self.assertFalse([c for c in self.calls if c[:2] == ("pane", "rename")])
+
+    def test_manager_projects_reads_only_composes_own_labels(self):
+        self.assertEqual(fc.fc_herdr.manager_projects(None), [])
+        self.assertEqual(fc.fc_herdr.manager_projects("manager: shop, cart"), ["shop", "cart"])
+        self.assertIsNone(fc.fc_herdr.manager_projects("managers meeting"))
+
+    def test_a_tab_compose_opens_names_its_pane_like_the_tab(self):
+        r = self.run_as({}, fc.fc_herdr.herdr_tab, "w7", "shop status", "/r")
+        self.assertEqual(r["root_pane"]["pane_id"], "w7:p9")
+        self.assertEqual(self.labels["w7:p9"], "shop status")
+
+    def test_clean_takes_the_project_off_the_manager_pane(self):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
+        (proj / "results").mkdir(parents=True)
+        self.labels["w7:p1"] = "manager: shop"
+        with mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value=None):
+            self.run_as({}, fc.fc_init.close_space, proj, "shop")
+        self.assertIsNone(self.labels["w7:p1"])
+
+
 class NoHerdr(unittest.TestCase):
     """COMPOSE_NO_HERDR=1 keeps every command headless inside herdr too: init and verify open no space, tab, or pane."""
     def test_init_and_verify_never_call_herdr(self):
@@ -209,7 +271,7 @@ class NoHerdr(unittest.TestCase):
         git = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
         subprocess.run("git init -q -b main && git commit -q --allow-empty -m init", shell=True, cwd=repo, check=True, env={**os.environ, **git})
         inside = {**git, "PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}", "HERDR_ENV": "1", "HERDR_SOCKET_PATH": str(d / "sock"),
-                  "HERDR_WORKSPACE_ID": "w1", "COMPOSE_NO_TRAIL": "1"}
+                  "HERDR_WORKSPACE_ID": "w1", "HERDR_PANE_ID": "w1:p1", "COMPOSE_NO_TRAIL": "1"}
         for off in (True, False):
             env, name = inside | ({"COMPOSE_NO_HERDR": "1"} if off else {}), "off" if off else "on"
             log.unlink(missing_ok=True)
@@ -223,6 +285,8 @@ class NoHerdr(unittest.TestCase):
                 self.assertEqual([c for c in calls.splitlines() if c.split()[0] in ("workspace", "worktree", "tab", "pane", "agent")], [])
             else:  # the same commands without the variable do reach herdr: the fake is on the path
                 self.assertIn("tab create --workspace w1 --label on shell", calls)
+                self.assertIn("pane rename w1:p9 on shell", calls)  # the tab's pane carries its name
+                self.assertIn("pane rename w1:p1 manager: on", calls)  # the pane init was run in says what it is for
                 self.assertIn("--label on verify", calls)
 
 

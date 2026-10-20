@@ -196,6 +196,42 @@ def tab_label(proj, name):
     project's name goes first, so two projects there never mistake each other's tabs; in a space of its own the bare name."""
     return f"{Path(proj).name} {name}" if space_record(proj).exists() else name
 
+MANAGER = "manager"
+
+def manager_projects(label):
+    """The projects a pane's label names it the engineering manager of: [] for an unlabelled pane, None for a label that is not
+    compose's (the product owner's own, never touched)."""
+    if not label:
+        return []
+    if label == MANAGER or label.startswith(MANAGER + ": "):
+        return [p for p in label[len(MANAGER) + 2:].split(", ") if p]
+    return None
+
+def herdr_name_manager(proj):
+    """Label the engineering manager's pane `manager: <slug>, ...`, every project it runs, so the product owner tells the pane
+    they started compose in from their others. Only a session with no crew role names its pane, and a label the product owner
+    gave the pane is kept."""
+    pane = os.environ.get("HERDR_PANE_ID")
+    if not herdr_env() or not pane or os.environ.get("COMPOSE_ROLE"):
+        return
+    projects, slug = manager_projects(((herdr("pane", "get", pane) or {}).get("pane") or {}).get("label")), Path(proj).name
+    if projects is not None and slug not in projects:
+        herdr("pane", "rename", pane, f"{MANAGER}: {', '.join(projects + [slug])}")
+
+def herdr_unname_manager(slug):
+    """Take a cleaned project off every engineering manager pane's label; a label left naming no project is cleared."""
+    for p in (herdr("pane", "list") or {}).get("panes", []):
+        if slug in (projects := manager_projects(p.get("label")) or []):
+            rest = [x for x in projects if x != slug]
+            herdr("pane", "rename", p["pane_id"], f"{MANAGER}: {', '.join(rest)}" if rest else "--clear")
+
+def herdr_tab(space, label, cwd, *args, check=False):
+    """A new tab labelled `label` whose one pane carries the same name. The `tab create` result, {} when herdr refused."""
+    r = herdr("tab", "create", "--workspace", space, "--label", label, "--cwd", str(cwd), *args, "--no-focus", check=check) or {}
+    if pane := (r.get("root_pane") or {}).get("pane_id"):
+        herdr("pane", "rename", pane, label)
+    return r
+
 def herdr_project_space(proj):
     """The project's space: the shared one `herdr_space` recorded, while it is open, else the space whose checkout is the project
     worktree. None when neither exists."""
@@ -238,7 +274,7 @@ def herdr_space(proj):
     if space and space_record(proj).exists():
         HERDR_SPACES[slug] = space
         if tab_label(proj, "shell") not in herdr_tabs(space):
-            herdr("tab", "create", "--workspace", space, "--label", tab_label(proj, "shell"), "--cwd", str(wt), "--no-focus")
+            herdr_tab(space, tab_label(proj, "shell"), wt)
         herdr_status_tab(space, wt, slug, tab_label(proj, "status"))
         return space
     if not space:
@@ -253,6 +289,9 @@ def herdr_space(proj):
         for label, t in herdr_tabs(space).items():
             if label and label.isdigit():  # the tab herdr opened with the space: a shell in the project worktree
                 herdr("tab", "rename", t["tab_id"], "shell")
+                for p in (herdr("pane", "list", "--workspace", space) or {}).get("panes", []):
+                    if p.get("tab_id") == t["tab_id"]:
+                        herdr("pane", "rename", p["pane_id"], "shell")
         herdr_status_tab(space, wt, slug)
     return space
 
@@ -264,8 +303,7 @@ def herdr_status_tab(space, wt, slug, label="status"):
     """A `status` tab running `compose status --watch`, so the product owner sees every task's state without asking."""
     if label in herdr_tabs(space):
         return
-    r = herdr("tab", "create", "--workspace", space, "--label", label, "--cwd", str(wt), "--no-focus") or {}
-    pane = (r.get("root_pane") or {}).get("pane_id")
+    pane = (herdr_tab(space, label, wt).get("root_pane") or {}).get("pane_id")
     if pane:
         me = str(Path(sys.argv[0]).resolve())
         herdr("pane", "run", pane, f"clear; {me} status --repo {wt} --project {slug} --watch")

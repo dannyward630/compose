@@ -241,6 +241,7 @@ def cmd_init(a):
             **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
     if fc_herdr.herdr_space(proj):
         print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
+        fc_herdr.herdr_name_manager(proj)
     print(f"initialised {proj}\nwork in {wt} from now on: tests and every command with --repo {wt} (or any checkout with --project {name}); "
           + f"the plan and tasks live on Linear: write {proj / 'linear.json'} as {{\"feature\": \"<issue id>\"}}")
     if (lead := fc_herdr.agent_name(name, "orchestrator")) != f"{name}-orchestrator":
@@ -358,7 +359,9 @@ def remove_project(main_repo, name, wt, proj, pbranch):
 
 def close_space(proj, name):
     """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own.
-    A tab whose crew record's last report is not done stays open, one line saying so; the team lead gets no exception."""
+    A tab whose crew record's last report is not done stays open, one line saying so; the team lead gets no exception.
+    The engineering manager's pane stops naming the project."""
+    fc_herdr.herdr_unname_manager(name)
     space = fc_herdr.herdr_project_space(proj)
     if not space:
         return

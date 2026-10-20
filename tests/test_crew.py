@@ -135,19 +135,20 @@ class Crew(unittest.TestCase):
             fc.fc_crew.cmd_crew(a)
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
+        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("pane", "rename"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
                                  ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
+        self.assertEqual(calls[2], ("pane", "rename", "w9:p7", "Payment provider"))  # the pane carries its tab's label
         self.assertIn("COMPOSE_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("COMPOSE_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab
         self.assertIn("COMPOSE_TEAMMATE=shop-q-neb-12", calls[1])  # the compaction hook finds its brief from the tab: COMPOSE_ROLE is only `crew`
         self.assertIn(f"COMPOSE_REPO={fc.fc_herdr.project_worktree(self.proj)}", calls[1])
-        start = calls[2]
+        start = calls[3]
         self.assertEqual(start[2], "shop-q-neb-12")
         self.assertIn("claude", start)
         self.assertEqual(json.loads(start[start.index("--settings") + 1])["attribution"], {"commit": "", "pr": ""})  # no co-author trailer on a crew commit
         self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
-        self.assertEqual(calls[4][2], "shop-q-neb-12")
-        self.assertIn("brief.md", calls[4][3])  # the brief goes in once the session is idle and its box is on screen
+        self.assertEqual(calls[5][2], "shop-q-neb-12")
+        self.assertIn("brief.md", calls[5][3])  # the brief goes in once the session is idle and its box is on screen
         prompt = (self.proj / "results" / "crew" / "shop-q-neb-12.brief.md").read_text()
         self.assertIn("compose report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)
@@ -353,7 +354,7 @@ class Crew(unittest.TestCase):
                 fc.fc_crew.cmd_crew(a)
             self.assertEqual(calls[1][:2], ("tab", "create"))
             self.assertIn(f"COMPOSE_ROLE={env}", calls[1], role)
-            self.assertEqual(calls[2][2], f"shop-{role}")
+            self.assertEqual(calls[3][2], f"shop-{role}")
 
     def test_same_named_agent_in_another_space_neither_blocks_start_nor_shows_in_list(self):
         stranger = {"name": "shop-explore", "workspace_id": "wC", "agent_status": "idle"}
