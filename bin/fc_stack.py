@@ -95,7 +95,7 @@ def issue_refs(text):
 
 def linear_url(proj, ident):
     """A Linear issue's link, in the workspace of the repo's `.compose/linear.json` project; the bare id when that is unknown."""
-    f = Path(proj).parent / "linear.json"
+    f = fc_core.repo_link(Path(proj).parent.parent)
     m = re.match(r"https://linear\.app/([^/]+)/", json.loads(f.read_text()).get("project") or "" if f.exists() else "")
     return f"[{ident}](https://linear.app/{m.group(1)}/issue/{ident})" if m else ident
 

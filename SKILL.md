@@ -20,9 +20,10 @@ This skill is the whole flow: the moment the user invokes it with a task, start 
 
 ### 0. Know the repo's Linear project
 Everything that would be a ticket lives on Linear, never as files in the repo: the feature (with its decisions), its stories, its tasks.
-Read `.compose/linear.json` at the repo root: `{"project": "<Linear project URL>", "team": "Engineering"}`.
-If it does not exist, ask the user for the link to the Linear project this repo's work belongs to, write the file with that URL and the team `Engineering` (unless the user names another) in the user's checkout, and never commit it.
-`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else, and copies this file into the project worktree.
+The repo's Linear project lives in one file, `.compose/linear.json` in the repo's main checkout: `{"project": "<Linear project URL>", "team": "Engineering"}`.
+Every worktree of the repo reads that file, so run `compose linear project` from wherever you are rather than looking for the file in your own checkout.
+If it prints `no .compose/linear.json in <folder>`, ask the user for the link to the Linear project this repo's work belongs to, write the file in that folder with that URL and the team `Engineering` (unless the user names another), and never commit it.
+`compose init` ignores `.compose/`, `graft/`, and `.trail/` in every checkout before anything else.
 You create and edit issues and write judgment comments with `compose linear` (`get <id> [--body] [--comments]`, `list --parent <id> | --search "<terms>"`, `create`, `update <id>`, `comment <id>`, `labels`, `project`, `doc`), never a Linear MCP tool; the CLI moves task, story, and feature states and writes the routine run comments, all with the workspace's Linear key.
 The Linear key is required: without it `compose doctor` fails and `compose linear` stops with the line that stores one.
 `get` and `list` print one compact line per issue (`<id> <state> <label> <title>`); add `--body` or `--comments` to `get` only when you need them.

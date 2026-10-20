@@ -98,6 +98,76 @@ class LinearProject(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.linear_project, str(self.repo)), (1, f"no .compose/linear.json in {self.repo}"))
 
 
+class LinkedWorktrees(unittest.TestCase):
+    """The repo's `.compose/linear.json` is one file in its main checkout, and every worktree of the repo reads it: `init --here` in
+    a linked worktree, a project worktree, or a subfolder all find the project the user wrote down once."""
+    CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+    ENV = {**os.environ, "COMPOSE_NO_TRAIL": "1", "COMPOSE_NO_TREEHOUSE": "1", "HERDR_ENV": "",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    args, gql = LinearProject.args, LinearProject.gql
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()  # holds the main checkout, a linked worktree, and init's project worktree
+        self.calls, self.nodes, self.teams = [], None, [{"id": "t1", "name": "Engineering", "key": "ENG"}]
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        self.main, self.wt = self.repo / "main", self.repo / "wt"
+        self.main.mkdir()
+        (self.main / "a.txt").write_text("base\n")
+        for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-qm", "init"), ("worktree", "add", "-q", str(self.wt), "-b", "feat")):
+            self.git(self.main, *args)
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, env=self.ENV).stdout
+
+    def link(self, checkout):
+        (checkout / ".compose").mkdir(exist_ok=True)
+        (checkout / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+
+    def init(self, *args):
+        p = subprocess.run([self.CLI, "init", *args], capture_output=True, text=True, env=self.ENV)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def project_line(self, repo):
+        with redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_project(self.args("project", repo=str(repo)))
+        return out.getvalue().strip()
+
+    def test_init_here_in_a_linked_worktree_reads_the_main_checkouts_file(self):
+        self.link(self.main)
+        self.init("--here", "--project", "demo", "--repo", str(self.wt))
+        self.assertEqual(self.project_line(self.wt), f"Shop on team Engineering: {URL}")
+        (self.wt / "sub").mkdir()
+        self.assertEqual(self.project_line(self.wt / "sub"), f"Shop on team Engineering: {URL}")  # from a subfolder too
+
+    def test_a_project_worktree_started_from_a_linked_worktree_reads_the_main_checkouts_file(self):
+        self.link(self.main)
+        self.init("--project", "demo", "--repo", str(self.wt))
+        proj_wt = self.repo / "compose-demo"
+        self.assertFalse((proj_wt / ".compose" / "linear.json").exists())  # no copy to drift from the one file
+        self.assertEqual(self.project_line(proj_wt), f"Shop on team Engineering: {URL}")
+        self.assertEqual(fc.fc_stack.linear_url(proj_wt / ".compose" / "demo", "ENG-1"), "[ENG-1](https://linear.app/acme/issue/ENG-1)")
+
+    def test_the_main_checkouts_file_wins_over_an_old_copy(self):
+        self.link(self.main)
+        (self.wt / ".compose").mkdir()
+        (self.wt / ".compose" / "linear.json").write_text(json.dumps({"project": "https://linear.app/acme/project/old-zzz999", "team": "Engineering"}))
+        self.project_line(self.wt)
+        self.assertEqual([v for _, v in self.calls], [{"slug": "abc123"}])
+
+    def test_a_file_written_only_in_a_linked_worktree_still_reaches_its_project_worktree(self):
+        self.link(self.wt)  # the main checkout has none
+        self.assertEqual(self.project_line(self.wt), f"Shop on team Engineering: {URL}")
+        self.init("--project", "demo", "--repo", str(self.wt))
+        self.assertEqual(self.project_line(self.repo / "compose-demo"), f"Shop on team Engineering: {URL}")
+
+    def test_none_anywhere_names_the_main_checkout(self):
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as e:
+            fc.fc_linear_cmd.linear_project(str(self.wt))
+        self.assertEqual(e.exception.code, f"no .compose/linear.json in {self.main.resolve()}")
+
+
 class LinearGet(unittest.TestCase):
     QUERY = "issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } }"
     args, fails = LinearProject.args, LinearProject.fails

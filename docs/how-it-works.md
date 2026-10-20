@@ -123,7 +123,7 @@ Work lives at five levels in Linear:
 | task | one stack layer; see [tasks.md](tasks.md) |
 
 You can hand `compose` a link to any of these levels, and it creates the missing ones.
-It asks for the repo's Linear project link once and keeps it in `.compose/linear.json`.
+It asks for the repo's Linear project link once and keeps it in `.compose/linear.json` in the repo's main checkout, which every worktree of the repo reads.
 Each task moves to In Progress when it is dispatched, In Review when its layer passes, and Done when its PR merges.
 
 ## Changing course

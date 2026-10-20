@@ -42,7 +42,8 @@ class NoTrace(unittest.TestCase):
         self.assertEqual(self.git(self.wt, "log", "--format=%s", "main..HEAD").splitlines(), ["Ignore local tool directories"])
         self.assertEqual(self.git(self.wt, "ls-files", ".compose"), "")
         self.assertTrue((self.wt / ".compose" / "p" / "verify.json").exists())
-        self.assertEqual(json.loads((self.wt / ".compose" / "linear.json").read_text()), {"project": "x"})  # copied, not via git
+        self.assertFalse((self.wt / ".compose" / "linear.json").exists())  # read from the user's checkout, never copied or committed
+        self.assertEqual(fc.fc_core.repo_link(self.wt), (self.repo / ".compose" / "linear.json").resolve())
         (self.wt / ".ignore").write_text("!graft\n")  # what graft writes for ripgrep
         (self.wt / "graft").mkdir(); (self.wt / "graft" / "n.md").write_text("x")
         self.assertEqual(self.git(self.wt, "status", "--porcelain"), "")

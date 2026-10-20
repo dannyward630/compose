@@ -15,9 +15,9 @@ def read_body(a):
     return "" if sys.stdin.isatty() else sys.stdin.read()
 
 def linear_project(repo):
-    path = Path(repo) / ".compose" / "linear.json"
+    path = fc_core.repo_link(repo)
     if not path.exists():
-        sys.exit(f"no .compose/linear.json in {repo}")
+        sys.exit(f"no .compose/linear.json in {path.parent.parent}")
     link = json.loads(path.read_text())
     name = urllib.parse.urlsplit(link["project"]).path.split("/project/", 1)[-1].strip("/").split("/")[0]
     slug = name.rsplit("-", 1)[-1]

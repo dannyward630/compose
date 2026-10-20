@@ -65,7 +65,7 @@ A config that is a symlink or not writable is left alone, and setup prints the t
 ## Each repo
 
 A repo needs no setup ahead of time.
-The first run in a repo asks for its Linear project and writes `.compose/linear.json`, which stays out of git.
+The first run in a repo asks for its Linear project and writes `.compose/linear.json` in the repo's main checkout, which stays out of git and serves every worktree of the repo.
 
 ## Update
 
