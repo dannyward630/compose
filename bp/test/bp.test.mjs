@@ -107,6 +107,43 @@ test('goal adds none of the keys without auth.json or without config.json', () =
   assert.deepEqual(goalEnv({ '.compose/auth.json': auth }), {});
 });
 
+// goal's verdict: a fake uv on PATH records its env and argv and exits with $FAKE_UV_EXIT, as jev does (0 only when the goal is done).
+const goalRun = (env = {}, extra = []) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bp-goal-'));
+  mkdirSync(path.join(dir, 'bin'));
+  writeFileSync(path.join(dir, 'bin', 'uv'), `#!/bin/sh\nenv > "${dir}/env.txt"\necho "$@" > "${dir}/argv.txt"\nexit \${FAKE_UV_EXIT:-0}\n`); chmodSync(path.join(dir, 'bin', 'uv'), 0o755);
+  const r = bp(['goal', 'about:blank', 'stop', ...extra], { HOME: dir, PATH: `${dir}/bin:${process.env.PATH}`, BP_PORT: '59874', JEV_DIR: dir, BU_NAME: undefined, ...env }, dir);
+  const seen = Object.fromEntries(readFileSync(path.join(dir, 'env.txt'), 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  const argv = readFileSync(path.join(dir, 'argv.txt'), 'utf8').trim();
+  rmSync(dir, { recursive: true, force: true });
+  return { status: r.status, seen, argv };
+};
+
+test('goal exits with jev\'s code: non-zero when jev fails or the goal ends blocked', () => {
+  assert.equal(goalRun().status, 0);
+  for (const code of ['1', '3']) assert.equal(goalRun({ FAKE_UV_EXIT: code }).status, Number(code));
+  assert.match(goalRun().argv, /python -m jev_ultrafast --progress -- about:blank stop$/);  // the runner that exits 1 unless done
+});
+
+test('goal hands --secrets to jev as env var names, never values', () => {
+  const { status, argv } = goalRun({ E2E_PASSWORD: 'pw-Sekr3t!' }, ['--secrets', '{"Password":"$E2E_PASSWORD"}']);
+  assert.equal(status, 0);
+  assert.match(argv, /--progress --secrets \{"Password":"\$E2E_PASSWORD"\} -- about:blank stop$/);
+  assert.doesNotMatch(argv, /pw-Sekr3t!/);
+});
+
+test('goal keeps a BU_NAME the caller set, so the caller can end the daemon it starts', () => {
+  assert.equal(goalRun({ BU_NAME: 'fc-e2e-5000' }).seen.BU_NAME, 'fc-e2e-5000');
+  assert.equal(goalRun().seen.BU_NAME, 'bp59874');
+});
+
+test('goal fails when jev cannot even start', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bp-nojev-'));
+  const r = bp(['goal', 'about:blank', 'say hi'], { JEV_DIR: dir, BP_PORT: '59875' }, dir);
+  rmSync(dir, { recursive: true, force: true });
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+});
+
 test("goal reads config.json and auth.json from $COMPOSE_CONFIG's directory, not ~/.compose", () => {
   const decoy = { typesafe: 'ts-decoy', workspaces: { default: { openrouter: 'sk-or-decoy' } } };
   const files = { '.compose/config.json': {}, '.compose/auth.json': decoy, 'alt/config.json': { workspace: 'acme' }, 'alt/auth.json': auth };

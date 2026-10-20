@@ -105,8 +105,9 @@ const cmds = {
     const jev = process.env.JEV_DIR || path.resolve(import.meta.dirname, '../../jev');
     if (!goals.length) throw new Error('usage: bp goal <url> "<goal>" ["<goal 2>" ...]');
     const envFile = `${process.env.HOME}/.compose/.env`;
-    const script = 'import sys\nfrom jev_ultrafast import Agent\nwith Agent(sys.argv[1], sys.argv[2:]) as a:\n    for s in a.run(): print(f"{s[\'elapsed_ms\']:>5} ms  {len(s[\'history\'])} actions  {s[\'status\']}", flush=True)\n    print(s["page"]["url"])';
-    const args = ['run', '--quiet', ...(existsSync(envFile) ? ['--env-file', envFile] : []), 'python', '-c', script, url, ...goals];
+    // jev's runner prints a line per step, then why it stopped and a JEV_RESULT line, and exits 0 only when the goal is done.
+    const args = ['run', '--quiet', ...(existsSync(envFile) ? ['--env-file', envFile] : []), 'python', '-m', 'jev_ultrafast', '--progress',
+      ...(flags.secrets ? ['--secrets', flags.secrets] : []), '--', url, ...goals];
     // Keys for the jev child come from the compose config dir ($COMPOSE_CONFIG's dir, else ~/.compose): the active workspace's
     // OpenRouter key, else default's, plus the top-level TypeSafe key. Missing or unreadable config/auth: run as today, no keys.
     const cfgDir = process.env.COMPOSE_CONFIG ? path.dirname(process.env.COMPOSE_CONFIG) : `${process.env.HOME}/.compose`;
@@ -118,9 +119,15 @@ const cmds = {
       if (a.typesafe) keys.TYPESAFE_API_KEY = a.typesafe;
       if (or) keys.OPENROUTER_API_KEY = keys.TEXT_MODEL_API_KEY = or;
     } catch {}
-    const env = { ...process.env, ...keys, BU_CDP_URL: `http://127.0.0.1:${PORT}`, BU_NAME: `bp${PORT}` };
+    // A caller's BU_NAME stays (a verify stage ends the daemons by its name); bp<port> otherwise.
+    const env = { ...process.env, ...keys, BU_CDP_URL: `http://127.0.0.1:${PORT}`, BU_NAME: process.env.BU_NAME || `bp${PORT}` };
     console.log(`jev → ${url} on :${PORT} | goals: ${goals.join(' | ')}`);
-    await new Promise((resolve) => { const c = spawn('uv', args, { cwd: jev, env, stdio: 'inherit' }); c.on('exit', (code) => { if (code) console.error('jev exited', code); resolve(); }); });
+    // goal's exit code is jev's, so a script or an e2e driver can tell a reached goal from a failed or blocked one.
+    await new Promise((resolve) => {
+      const c = spawn('uv', args, { cwd: jev, env, stdio: 'inherit' });
+      c.on('error', (e) => { console.error('jev did not start:', e.message); process.exitCode = 1; resolve(); });
+      c.on('exit', (code, signal) => { if (code || signal) { console.error('jev exited', code ?? signal); process.exitCode = code || 1; } resolve(); });
+    });
   },
   async kill() { spawn('pkill', ['-f', `remote-debugging-port=${PORT}`]); console.log('killed Chromium on', PORT); },
   async help() { console.log(`bp — drive Chromium + an unpacked extension over CDP. Env: BP_PORT (9333), BP_EXT, BP_PROFILE, BP_CHROME.
@@ -137,7 +144,9 @@ const cmds = {
   shot <sel> <out.png> | reload <sel> [--wait ms] | close <sel>
   cookies <sel> [clear] [--urls a,b]           list or clear cookies (logs the user out of that site)
   record <url-substr> <dir> [--interval ms] [--exclude regex]   screenshot on every change + index.md
-  goal <url> "<goal>" ["<goal 2>"...]            run compose's jev against this Chromium toward a goal; say where to stop in the goal
+  goal <url> "<goal>" ["<goal 2>"...] [--secrets '{"Password":"$E2E_PASSWORD"}']   run compose's jev against this Chromium toward a goal;
+                                               say where to stop in the goal. jev types each secret field from that env var itself.
+                                               Ends with a JEV_RESULT line; exits non-zero unless the goal is done (keeps a set BU_NAME)
   kill                                         stop the Chromium on this port
 <sel> is a target id prefix or a URL substring.`); },
 };

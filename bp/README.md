@@ -28,6 +28,10 @@ bp record example-ats.com shots/flow --interval 2000 &   # a screenshot on every
 
 `bp help` lists every command.
 `bp goal <url> "<goal>"` runs compose's `jev/` against the same Chromium, the same agent verify's e2e cases use.
+It prints a line per step and ends with a `JEV_RESULT {...}` line that holds the status, the stop reason, and the steps taken.
+It exits 0 only when jev reached the goal, so a failed or blocked goal fails a script that runs it.
+`--secrets '{"Password": "$E2E_PASSWORD"}'` lets it log in through a form: jev types that variable's value into the field with that label itself, so the value never reaches its model.
+It keeps a `BU_NAME` you set, so the caller can end the browser-harness daemon it starts.
 Everything else is plain CDP with no model: it does only what you type.
 
 ## Rules for agents
