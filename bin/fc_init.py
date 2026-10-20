@@ -31,7 +31,7 @@ def setup_trail(wt):
             fc_core.sh(TRAIL_INIT + [str(wt)], wt, timeout=300, check=False)
             fc_worktree.exclude_paths(wt, ["/" + f for f in paths])
             fc_core.say(f"trail    wired for Claude Code ({len(paths)} files, kept out of git)")
-    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json"])  # the graph and wiring, also when trail runs without init
+    fc_worktree.exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in fc_worktree.WIRING)])  # the graph and wiring, also when trail runs without init
     fc_worktree.stamp_trail_wiring(wt)
     (wt / ".trail" / "cache").mkdir(parents=True, exist_ok=True)  # trail build puts the map in graft/ unless .trail/cache/ exists first
     fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
