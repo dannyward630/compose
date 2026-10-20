@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -116,6 +116,57 @@ class Secrets(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("WARNING: ~/.compose changed while", p.stdout)
         self.assertIn("auth.json, config.json", p.stdout)
+        (self.root / "user" / ".compose" / "auth.json").write_text(USER_AUTH)
+        p = timed(f"env -u COMPOSE_CONFIG {sys.executable} {ROOT / 'bin' / 'compose.py'} workspace add mine < /dev/null")  # a compose it runs on the user's config
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("WARNING: ~/.compose changed while", p.stdout)
+        self.assertIn("config.json", p.stdout)
+        writer = self.root / "writer.py"  # a compose that ignores its scratch COMPOSE_CONFIG, in a session of its own
+        writer.write_text("import pathlib, subprocess, sys\n"
+                          "if sys.argv[1] == 'detach':\n"
+                          "    sys.exit(subprocess.run([sys.executable, __file__, 'write', sys.argv[2]], start_new_session=True).returncode)\n"
+                          "sys.path.insert(0, sys.argv[2]); import fc_core\n"
+                          "fc_core.atomic_write(pathlib.Path.home() / '.compose' / 'config.json', '{\"workspace\": \"x\"}')\n")
+        p = timed(f"{sys.executable} {writer} detach {ROOT / 'bin'}")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("WARNING: ~/.compose changed while", p.stdout)
+        self.assertIn("config.json", p.stdout)
+
+    def test_a_write_another_compose_makes_to_the_users_compose_home_or_a_change_to_the_cli_checkout_is_not_blamed_on_a_timed_command(self):
+        home = self.root / "user" / ".compose"
+        (home / "src").mkdir()
+        env = {**os.environ}
+        env.pop("COMPOSE_CONFIG", None)
+        started, go = self.root / "started", self.root / "go"
+        p = subprocess.Popen([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--",
+                              f"touch {started}; while [ ! -e {go} ]; do sleep 0.05; done"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        for _ in range(200):
+            if started.exists():
+                break
+            time.sleep(0.05)
+        w = subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "workspace", "add", "other"], capture_output=True, text=True,
+                           env=env, stdin=subprocess.DEVNULL)  # another session's compose writes config.json and auth.json
+        self.assertEqual(w.returncode, 0, w.stderr)
+        (home / "src" / "new-worktree").mkdir()  # git or treehouse in another session
+        (home / "auth.json").touch()  # rewritten with the same bytes
+        go.touch()
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertIn("other", (home / "config.json").read_text())
+        self.assertNotIn("WARNING", out + err)
+
+    def test_the_journal_of_writes_to_the_users_compose_home_stays_small_and_keeps_the_newest(self):
+        home = self.root / "user" / ".compose"
+        with mock.patch.object(fc.fc_core, "HOME_WRITES_MAX", 2000):
+            for i in range(100):
+                fc.fc_core.atomic_write(home / "config.json", json.dumps({"n": i}))
+        journal = home / fc.fc_core.HOME_WRITES
+        lines = [json.loads(l) for l in journal.read_text().splitlines()]
+        self.assertLess(journal.stat().st_size, 2300)
+        self.assertEqual(lines[-1]["sha"], fc.fc_core.entry_state(home / "config.json"))
+        self.assertEqual(journal.stat().st_mode & 0o777, 0o600)
+        fc.fc_core.atomic_write(self.root / "elsewhere.json", "{}")  # only writes to the user's ~/.compose are journaled
+        self.assertEqual(len(journal.read_text().splitlines()), len(lines))
 
     def test_verify_checks_and_e2e_drivers_run_without_them(self):
         r = fc.fc_jev.driver_e2e({"name": "d", "setup": f"env > {self.root / 'setup-env'}", "setup_wait": 1, "driver": "env; exit 1"}, self.root)

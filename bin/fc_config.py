@@ -135,6 +135,7 @@ def key_file(key):
         tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
         with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
             out.write(key)
+        fc_core.note_home_write(f, tmp)
         os.replace(tmp, f)  # parallel OpenCode turns never read a half-written key
     return f
 

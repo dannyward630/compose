@@ -257,7 +257,7 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
             return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
         finally:
             fc_proc.RUNNING.discard(p.pid)
-            fc_core.flag_home(before, f"`{cmd}`")
+            fc_core.flag_home(before, f"`{cmd}`", sid=p.pid)  # the command runs in a session of its own
 
 def run_test(meta, wt):
     """A task's test command under the time limit (a task's block can set `test_timeout:`)."""
