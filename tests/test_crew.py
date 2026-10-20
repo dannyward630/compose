@@ -32,7 +32,7 @@ def setUpModule():
 
 
 def tearDownModule():
-    for p in _patches:
+    for p in reversed(_patches):  # last started first: the env snapshot taken after COMPOSE_ROLE was set must not restore it
         p.stop()
 
 
@@ -102,13 +102,14 @@ class Crew(unittest.TestCase):
         for role, env, up, says in (("planner", {}, "manager", "You report to the engineering manager, who relays to the product owner."),
                                     ("designer", {"COMPOSE_ROLE": "orchestrator"}, "orchestrator", "You report to shop-orchestrator, your team lead.")):
             a = type("A", (), {"action": "start", "role": role, "title": role, "brief": "Go."})
-            clean = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | env
+            clean = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | env | {"HERDR_PANE_ID": "w1:p2"}
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                     mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
                 fc.fc_crew.cmd_crew(a)
             self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
+            self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["started_by"], "w1:p2")  # the starting session's herdr pane: two engineering managers are told apart
             self.assertIn(says, (self.proj / "results" / "crew" / f"shop-{role}.brief.md").read_text())
 
     def test_bad_state_refused(self):

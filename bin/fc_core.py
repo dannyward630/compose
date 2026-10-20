@@ -232,6 +232,11 @@ def port_listening(port):
 def report_time(at):
     return time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
 
+def session_id():
+    """This session's identity: the herdr pane it runs in (herdr never reuses a pane id), else None outside herdr. The engineering
+    manager stays in the pane it was started in, so a Claude session resumed there is the same one."""
+    return os.environ.get("HERDR_PANE_ID") or None
+
 
 # ---------- init / clean ----------
 

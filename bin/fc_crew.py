@@ -242,6 +242,7 @@ def cmd_crew(a):
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
+    started_by = fc_core.session_id()  # and which session of that role: two engineering managers on one project are told apart by it
     brief_file.write_text(fc_core.scrub(crew_preamble(proj, name, title, reports_to) + brief))
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
@@ -249,7 +250,7 @@ def cmd_crew(a):
     except OSError:
         skill = {}
     fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, **({"worktree": str(work)} if work else {}), "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
-                               "reports_to": reports_to, "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
+                               "reports_to": reports_to, **({"started_by": started_by} if started_by else {}), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:

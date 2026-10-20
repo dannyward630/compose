@@ -11,7 +11,8 @@ from unittest import mock
 REAL = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".compose"  # the account's home, whatever HOME says
 GUARDED = ("config.json", "auth.json", ".env", "openrouter.key")
 KEYS = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "OPENCODE_CONFIG_CONTENT", "TYPESAFE_API_KEY")
-CALLERS = ("COMPOSE_TEST_SLOT",)  # the slot of a `compose timed` running the suite: a lock under the real home, not a test's
+CALLERS = ("COMPOSE_TEST_SLOT",  # the slot of a `compose timed` running the suite: a lock under the real home, not a test's
+           "HERDR_PANE_ID")  # the herdr pane the suite runs in is the session identity of a watch, crew start, or yolo: a test sets its own
 
 
 INSTALLED = {  # what compose's required tools keep in a home, faked so `compose init` goes ahead without the user's machine
