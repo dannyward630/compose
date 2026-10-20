@@ -233,11 +233,12 @@ class BriefsNameFiles(unittest.TestCase):
             self.assertNotIn("sections/", line)
             self.assertNotIn("herdr/SKILL.md", line)
             self.assertNotRegex(line, r"invoke the `?compose`? skill")
-        for command in ("compose toolsmith --project <slug> | compose crew start --project <slug> --role toolsmith --cwd <cli_repo> --brief -",
+        for command in ("compose toolsmith --project <slug> | compose crew start --project <slug> --role toolsmith --work-repo <cli_repo> --brief -",
                         "compose tool-bug file --project <slug> --body", "--approved", "gh issue close <n> --comment"):
             self.assertIn(command, block)
         self.assertIn("never edits or commits", block)
         self.assertIn("no `Fixes #n`", block)
+        self.assertNotIn("--role toolsmith --cwd", block)  # a session started in the CLI's checkout waits at the trust prompt
 
     def test_herdr_is_read_as_a_file(self):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md; it carries the safety rules for panes and agents.", self.text.replace("\\~", "~"))

@@ -1,4 +1,4 @@
-import json, os, re, shutil, sys, threading
+import json, os, re, shutil, sys, threading, time
 from pathlib import Path
 import fc_core, fc_config, fc_tasks
 
@@ -202,6 +202,26 @@ def common_dir(path):
     """The git common dir of the checkout at `path`, None when it is not in one: every worktree of a repository shares it."""
     p = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False) if Path(path).is_dir() else None
     return Path(p.stdout.strip()).resolve() if p and p.returncode == 0 else None
+
+def repo_worktree(repo, name):
+    """(worktree, branch): a new worktree of `repo` on a new branch off its HEAD, under its main checkout's .claude/worktrees
+    (a treehouse slot with treehouse), so a new worktree never nests inside a linked one (a project worktree)."""
+    theirs = common_dir(repo)
+    if not theirs:
+        sys.exit(f"{repo} is not a git repo, so there is no worktree of it to work on")
+    top, base = theirs.parent, fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    exclude = theirs / "info" / "exclude"
+    if "/.claude/worktrees/" not in (exclude.read_text() if exclude.exists() else ""):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as f:
+            f.write("/.claude/worktrees/\n")
+    branch = f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    if use_treehouse():
+        fc_core.sh(["git", "branch", branch, base], top)
+        return slot_on(top, branch, f"compose:{name}"), branch
+    path = top / ".claude" / "worktrees" / branch
+    fc_core.sh(["git", "worktree", "add", "-q", "-b", branch, str(path), base], top)
+    return path, branch
 
 def slots(proj, update=None):
     """The project's leased slots by role (`stackroot`, `tests-NNN`), kept in results so later commands find them.

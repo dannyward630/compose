@@ -655,6 +655,75 @@ class ToolBug(unittest.TestCase):
         tab = next(c for c in calls if c[:2] == ("tab", "create"))
         self.assertEqual(tab[tab.index("--cwd") + 1], "/tmp/compose")
 
+    def start_on_repo(self, repo, cwd=None):
+        """crew start --repo with herdr faked; (herdr calls, the exit message or None). Claude Code trusts only the project worktree."""
+        calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            if args[:2] == ("agent", "get"):
+                return {"agent": {"agent_status": "working"}}
+            if args[:2] == ("tab", "create"):
+                return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
+            return {}
+        wt = fc.fc_herdr.project_worktree(self.proj)
+        a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "work_repo": str(repo), "cwd": cwd})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.object(fc.fc_frame0, "frame0_register"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", lambda p: Path(p).resolve() == wt), mock.patch("builtins.print"):
+            try:
+                fc.fc_crew.cmd_crew(a)
+            except SystemExit as e:
+                return calls, str(e.code)
+        return calls, None
+
+    def test_repo_starts_the_session_in_the_trusted_project_worktree_and_reaches_an_untrusted_repo_by_add_dir(self):
+        """A session started in a folder Claude Code never trusted waits at the trust prompt (the CLI's own checkout,
+        ~/.compose/src, usually is one), so --work-repo puts only the work there: the toolsmith's worktree of that repo."""
+        repo = Path(tempfile.mkdtemp()).resolve()
+        fc.fc_core.sh(["git", "init", "-q", "-b", "main"], repo)
+        fc.fc_core.sh(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], repo)
+        calls, failed = self.start_on_repo(repo)
+        self.assertIsNone(failed)
+        wt, rec = fc.fc_herdr.project_worktree(self.proj), fc.fc_crew.crew_record(self.proj, "shop-toolsmith")
+        tab = next(c for c in calls if c[:2] == ("tab", "create"))
+        self.assertEqual(tab[tab.index("--cwd") + 1], str(wt))
+        work = Path(rec["worktree"])
+        self.assertEqual((work.parent, rec["cwd"]), (repo / ".claude" / "worktrees", str(wt)))
+        self.assertEqual(fc.fc_core.sh(["git", "branch", "--show-current"], work).stdout.strip(), rec["branch"])
+        self.assertEqual(fc.fc_core.sh(["git", "branch", "--show-current"], repo).stdout.strip(), "main")  # the repo's own checkout stays put
+        start = next(c for c in calls if c[:2] == ("agent", "start"))
+        self.assertEqual(start[start.index("--add-dir") + 1], str(work))
+        self.assertTrue(start[start.index("--add-dir") + 2].startswith("--"))  # --add-dir takes many paths: a flag must follow it
+        brief = (self.proj / "results" / "crew" / "shop-toolsmith.brief.md").read_text()
+        self.assertIn(f"Your session runs in the project worktree {wt}", brief)
+        self.assertIn(f"own worktree {work} of {repo}, on branch {rec['branch']}", brief)
+        self.assertIn(f"git -C {work}", brief)
+
+    def test_the_cli_passes_work_repo_apart_from_the_project_repo(self):
+        argv = ["compose", "crew", "start", "--project", "shop", "--role", "toolsmith", "--work-repo", "/x/src", "--brief", "-"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(fc.fc_config, "apply_config", return_value="default"), \
+                mock.patch.object(fc.fc_crew, "cmd_crew") as crew:
+            fc.main()
+        a = crew.call_args.args[0]
+        self.assertEqual((a.work_repo, a.repo, a.cwd), ("/x/src", ".", None))
+
+    def test_repo_refuses_a_plain_folder_or_a_cwd_too_before_opening_a_tab(self):
+        plain = Path(tempfile.mkdtemp())
+        for repo, cwd, says in ((plain, None, "not a git repo"), (plain, "/tmp", "--cwd or --work-repo, not both")):
+            with self.subTest(says):
+                calls, failed = self.start_on_repo(repo, cwd)
+                self.assertIn(says, failed or "")
+                self.assertNotIn(("tab", "create"), [c[:2] for c in calls])
+
+    def test_an_untrusted_cwd_repo_points_to_work_repo(self):
+        repo = Path(tempfile.mkdtemp()).resolve()
+        fc.fc_core.sh(["git", "init", "-q", "-b", "main"], repo)
+        fc.fc_core.sh(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], repo)
+        with mock.patch.object(fc.fc_claude, "claude_trusted", return_value=False), self.assertRaises(SystemExit) as e:
+            fc.fc_crew.crew_workdir(str(repo), fc.fc_herdr.project_worktree(self.proj), "shop-research")
+        self.assertIn(f"--work-repo {repo}", str(e.exception.code))
+
 
 class ToolsmithWorktree(unittest.TestCase):
     def test_any_role_in_the_project_repo_gets_its_own_worktree_and_leaves_checkouts_alone(self):
