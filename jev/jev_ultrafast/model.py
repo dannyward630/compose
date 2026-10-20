@@ -3,7 +3,9 @@
 import json
 import math
 import os
+import random
 import time
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -11,20 +13,51 @@ from .questions import NEXT_ACTION, TARGET, TEXT_RETRY, TEXT_VALUE
 
 CLIENT = httpx.Client(http2=True, timeout=25)
 
+BUSY = {429, 502, 503, 504, 529}  # a provider that is rate limiting, overloaded, or behind a gateway that is: it passes
+RETRY_BUDGET = 30.0  # seconds one call may wait on a busy provider in all; a jev e2e case has 150s for every call it makes
+RETRY_MAX_WAIT = 8.0  # the longest backoff between two tries (a Retry-After may ask for more, within the budget)
+RETRY_TRIES = 10  # tries in all, so a provider answering Retry-After: 0 forever still ends
+
+
+def retry_after(response):
+    """The seconds the provider's Retry-After header asks for, as a number or an HTTP date, else None."""
+    value = response.headers.get("retry-after", "").strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError, IndexError):
+        return None
+
 
 def post_json(url, key, body):
-    for attempt in range(3):
+    """POST `body` and return the JSON reply. A busy provider (BUSY) is tried again after the wait its Retry-After asks for,
+    else an exponential backoff, both with jitter so the calls it turned away do not all return at once, until RETRY_BUDGET
+    seconds of waiting or RETRY_TRIES tries are spent. Any other error fails at once."""
+    waited = 0.0
+    for attempt in range(RETRY_TRIES):
         try:
             response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError:
             raise RuntimeError("Model connection failed; no action executed.") from None
-        if response.status_code in {429, 529, 503} and attempt < 2:
-            time.sleep(0.5 * 2**attempt)
-            continue
-        if response.is_error:
-            raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
-        return response.json()
-    raise RuntimeError("Model unavailable")
+        status = response.status_code
+        if status not in BUSY:
+            if response.is_error:
+                raise RuntimeError(f"Model provider returned HTTP {status}; no action executed.")
+            return response.json()
+        asked, backoff = retry_after(response), min(RETRY_MAX_WAIT, 0.5 * 2**attempt)
+        if asked is not None and waited + asked > RETRY_BUDGET:
+            raise RuntimeError(f"Model provider returned HTTP {status} and asked to wait {asked:.0f}s, past the "
+                               f"{RETRY_BUDGET:.0f}s retry budget; no action executed.")
+        if waited >= RETRY_BUDGET or attempt == RETRY_TRIES - 1:
+            break
+        wait = asked + random.uniform(0, 0.5) if asked is not None else backoff / 2 + random.uniform(0, backoff / 2)
+        wait = min(wait, RETRY_BUDGET - waited)
+        time.sleep(wait)
+        waited += wait
+    raise RuntimeError(f"Model provider returned HTTP {status} {attempt + 1} times over {waited:.0f}s; no action executed.")
 
 
 def validate_choice(answer, ids):
