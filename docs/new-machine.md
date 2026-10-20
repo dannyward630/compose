@@ -71,7 +71,7 @@ The first run in a repo asks for its Linear project and writes `.compose/linear.
 
 Run the install command again: it pulls the checkout with `--ff-only`, relinks the CLI and the skill, and runs `compose setup`, which skips what is already done.
 Or run `compose update`: it pulls with `--ff-only`, relinks what `compose` owns (the CLI, the skill, and `bp`), and runs `compose doctor`.
-`compose update` stops when the checkout has local changes.
+`compose update` stops when the checkout has local changes, and when its `main` has commits that `origin/main` lacks it lists them, marks the ones already upstream, and prints the `git` command to run first.
 After an update, restart any long-running `compose watch` or `status --watch`, because it keeps running the code it started with.
 
 ## Move a machine from fast-coding
