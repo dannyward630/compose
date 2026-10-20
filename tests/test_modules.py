@@ -47,7 +47,7 @@ MODULES = {
     "fc_finish": ("CLAUDE_MISSING", "finish", "_finish"),
     "fc_setup": ("MODES", "walk_steps", "run_setup", "cmd_setup"),
     "fc_update": ("diverged", "cmd_update"),
-    "fc_figma": ("FIGMA_CONNECTOR", "FRAMELINK_SETUP", "framelink_fetch", "DESIGNER_BRIEF", "cmd_designer", "DESIGN_CONCURRENCY", "design_brief", "cmd_designcrews", "TREE_CHUNK_CHARS", "hard_split", "split_node", "tree_chunks", "combine_choices", "figma_judge_chunks", "figma_reask", "store_figma", "figma_tree", "cmd_figma"),
+    "fc_figma": ("FIGMA_CONNECTOR", "FRAMELINK_SETUP", "framelink_fetch", "DESIGNER_BRIEF", "cmd_designer", "DESIGN_CONCURRENCY", "design_brief", "cmd_designcrews", "TREE_CHUNK_CHARS", "hard_split", "split_node", "tree_chunks", "CONFIRM_TREE_CHARS", "TREE_CHOICES", "PART_CHOICES", "TREE_RULES", "PART_RULES", "CONFIRM", "CONFIRM_PART", "combine_choices", "confirm_asks", "figma_judge_chunks", "figma_reask", "store_figma", "figma_tree", "cmd_figma"),
     "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "cmd_toolsmith", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_open", "waiting_writers", "test_written", "test_blockers", "test_ready", "test_worktree", "collect_tests"),
     "fc_libapi": ("INSPECT", "python_api", "js_api", "section"),
     "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "trail_pack", "branch_budget", "task_base", "PRETTIER_EXT", "prettier_opted_in", "format_files", "READER_TIMEOUT", "read_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
