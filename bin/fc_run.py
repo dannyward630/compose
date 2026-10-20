@@ -185,6 +185,9 @@ def run_tasks(repo, proj, tasks, a):
                     r = {"id": metas[p]["id"], "title": metas[p].get("title"), "status": "unchained", "attempts": 0, "seconds": 0.0, "cost": 0.0,
                          "branch": "-", "log": [{"stop": str(e)}]}
                     fc_core.atomic_write((proj / "results" / f"{p}.json"), json.dumps(r, indent=2))
+                if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
+                    pending[p] = []
+                    continue
                 results.append(r)
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
                     reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))

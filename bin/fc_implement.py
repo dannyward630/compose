@@ -362,7 +362,20 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": len(log), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
+    res = proj / "results" / f"{tid}.json"
+    last = res.read_text() if res.exists() else None
     progress("running")
+    # A hold placed while the run cloned, based, and installed lands here, before any turn. `running` is on disk before the
+    # holds are read, and `hold` writes the hold before it reads `running`: either this sees the hold, or `hold` says it runs.
+    hold = None if tag else fc_tasks.held(proj).get(tid)
+    if hold:
+        if last is None:
+            res.unlink(missing_ok=True)
+        else:
+            fc_core.atomic_write(res, last)  # the task never started: its last run's result stands
+        shutil.rmtree(wt, ignore_errors=True)
+        fc_core.say(f"{tid} held    before its first turn: {hold.get('reason', '')}")
+        return {"id": tid, "title": meta.get("title"), "status": "held", "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": []}
     fc_core.say(f"{tid} start   {meta.get('title', '')}  model={meta['model']}")
     if not reset_files and not tag:  # bench runs leave Linear alone
         fc_linear.linear_event(proj, meta, "dispatched")
