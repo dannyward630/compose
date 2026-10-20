@@ -143,12 +143,18 @@ def clean_env(env=None):
 SCRATCH_CONFIGS = []  # removed when the CLI exits
 CLI_OWN = {"model-probe.json", "skill-seen", "tool-bugs", "tool-bugs.jsonl", "test-slots"}  # what other compose processes write there at any time
 
+SCRATCH_PREFIX = "compose-config-"
+
 def scratch_config():
     """A COMPOSE_CONFIG in a fresh, empty directory of its own."""
     if not SCRATCH_CONFIGS:
         atexit.register(remove_scratch)
-    SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix="compose-config-"))
+    SCRATCH_CONFIGS.append(tempfile.mkdtemp(prefix=SCRATCH_PREFIX))
     return str(Path(SCRATCH_CONFIGS[-1]) / "config.json")
+
+def is_scratch(config):
+    """Whether `config` (a COMPOSE_CONFIG path) is one scratch_config made: no workspace, no keys."""
+    return bool(config) and Path(config).parent.name.startswith(SCRATCH_PREFIX)
 
 def remove_scratch():
     """Remove every scratch config this process made: at exit, and on a SIGTERM or SIGHUP, which would skip exit otherwise."""
