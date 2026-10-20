@@ -194,6 +194,15 @@ def default_branch(repo):
             return b
     return None
 
+def review_base(repo, cfg):
+    """The branch a project's work is reviewed and stacked on: `review_base` in its verify.json while it names a commit, else the
+    default branch. init records the branch the project started from; one made before it did holds "main" there, also in a
+    repository whose trunk is master. None when neither resolves."""
+    base = cfg.get("review_base")
+    if base and fc_core.sh(["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], repo, check=False).returncode == 0:
+        return base
+    return default_branch(repo)
+
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""

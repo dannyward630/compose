@@ -163,6 +163,13 @@ class Layers(unittest.TestCase):
         self.assertIn("groundwork x2: 40 lines; generated, not counted: bun.lock (4000 lines)", notes[0])
         self.assertIn("task 001, 002: 230 lines", notes[1])
 
+    def test_a_review_base_that_names_no_branch_stacks_on_the_default_branch(self):
+        """A project made before init recorded the branch it started from holds "main" even where the trunk is master: the
+        stack sits on the default branch, never on the project branch."""
+        self.stack(review_base="master")  # this repo's trunk is main: the mirror of "main" in a master repo
+        self.assertEqual(json.loads((self.repo / ".git" / "fake-gh-stack.json").read_text())["trunk"], "main")
+        self.assertEqual(self.changed("compose/p-layer-01", "main"), {"lock.txt", "bun.lock", "setup.txt", "stub.txt"})
+
     def test_test_commits_on_one_file_keep_the_trunks_order_whoever_owns_them(self):
         """Two tasks protect one test file. A commit on it alone would go to the first of them, but it was written on top of a
         commit the second task owns: it follows that commit into the second task's unit, so the layers replay the trunk's order

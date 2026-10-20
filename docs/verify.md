@@ -24,6 +24,7 @@ Verify reads `.compose/<project>/verify.json`.
 ```
 
 `commit_convention` (`{"types": [...], "example": "feat: ..."}`) makes every commit the CLI makes, and every teammate brief, start with a type prefix: tests are `test`, docs `docs`, dependencies and config `chore` or `build`, fixes `fix`, the rest `feat`.
+`review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.
 `fix_model` overrides the fix model, which defaults to the implementer.
 `env_file` replaces `~/.compose/.env` for this project.
 

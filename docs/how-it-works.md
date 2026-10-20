@@ -150,7 +150,7 @@ A project is one feature in its own worktree.
   Without treehouse, it is `../compose-<name>`.
 - `.compose/<name>/` sits beside it and holds the Linear link, the verify config, and results.
   `init` git-ignores it, `graft/`, and `.trail/` first.
-- The layers stack on the review base, main unless `review_base` says otherwise, and `gh stack merge` lands them as one all-or-nothing merge, with no final PR.
+- The layers stack on the review base, the branch the project started from (main, say), which `init` records as `review_base`, and `gh stack merge` lands them as one all-or-nothing merge, with no final PR.
 - `init --after <other>` branches from another project's branch when the feature needs its code.
 
 Your checkout is never touched, so several features can run at once.
