@@ -74,12 +74,15 @@ class LinearProject(unittest.TestCase):
         for kw, want in (({"body": True}, [f"Shop on team Engineering: {URL}", *self.content.strip().split("\n")]), ({"section": "## Goals"}, ["updated Shop"]),
                          ({"append": True}, ["updated Shop"]), ({"description": True}, ["updated Shop"])):
             with redirect_stdout(io.StringIO()) as out:
-                fc.fc_linear_cmd.verb_project(self.args("project", file=str(self.repo / "body.md"), **kw))
+                fc.fc_linear_cmd.verb_project(self.args("project", **({} if "body" in kw else {"file": str(self.repo / "body.md")}), **kw))
             self.assertEqual(out.getvalue().strip().split("\n"), want)
         self.assertEqual(written(), [{"id": "p1", "in": {"content": "# Shop\n\n## Goals\n\nnew goals\n\n## Notes\n\nkeep\n"}},
                                      {"id": "p1", "in": {"content": self.content + "\nnew goals\n"}}, {"id": "p1", "in": {"content": "new goals\n"}}])
         self.assertEqual([v for q, v in self.calls if "project(id: $id) { content }" in q], [{"id": "p1"}] * 4)
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_project, self.args("project", section="## Goals", description=True)), (1, "project takes one of --section, --append, --description"))
+        for kw in ({}, {"body": True}):  # a body file with no body flag is never dropped silently
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_project, self.args("project", file=str(self.repo / "body.md"), **kw)),
+                             (1, "project --file needs --section, --append, or --description"))
         self.assertEqual(len(written()), 3)
 
     def test_project_link_as_pasted_resolves_to_its_slug(self):
@@ -294,8 +297,9 @@ class LinearUpdate(unittest.TestCase):
             fc.fc_linear_cmd.verb_update(self.args("update", "ENG-7", **kw))
         self.assertEqual(out.getvalue().strip(), "updated ENG-7")
         self.assertEqual([v for q, v in self.calls if self.READ in q], [{"id": "ENG-7"}])
-        (sent,) = [v for q, v in self.calls if self.UPDATE in q]
-        self.assertIn(sent["id"], ("iid", "ENG-7")); return sent["in"], issue, blocked
+        sent = [v for q, v in self.calls if self.UPDATE in q]  # at most one; none when only the blockers change
+        self.assertLessEqual(len(sent), 1); self.assertTrue(all(s["id"] in ("iid", "ENG-7") for s in sent))
+        return (sent[0]["in"] if sent else None), issue, blocked
 
     def test_replace_section_swaps_only_that_section_or_appends_it(self):
         rs, body, want = fc_plan.replace_section, "# Cart\n\n## Plan\n\nold\n\n### Steps\n\n1. a\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nnew\n\n## Notes\n\nkeep\n"
@@ -333,8 +337,23 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.update("whole\n\n", description=True, title="T")[0], {"description": "whole\n\n", "title": "T"})
 
     def test_blockers_are_set_on_the_read_issue(self):
-        self.assertEqual(self.update(blocked_by="ENG-2,ENG-3")[2].call_args.args, (self.issue, ["ENG-2", "ENG-3"]))
+        sent, _, blocked = self.update(blocked_by="ENG-2,ENG-3")
+        self.assertEqual((sent, blocked.call_args.args), (None, (self.issue, ["ENG-2", "ENG-3"])))  # no empty issueUpdate before them
         (blocked := self.update(blocked_by="")[2]).assert_called_once(); self.assertEqual(blocked.call_args.args[0], self.issue); self.assertFalse([x for x in blocked.call_args.args[1] if x])
+        self.assertEqual(self.update(blocked_by="ENG-2", title="T")[0], {"title": "T"})
+
+    def test_a_body_file_without_a_body_flag_refuses_and_writes_nothing(self):
+        (self.repo / "brief.md").write_text("## Goal\nnew brief\n")
+        for kw in ({}, {"title": "T"}, {"blocked_by": "ENG-2"}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", file=str(self.repo / "brief.md"), **kw)),
+                             (1, "update --file needs --section, --append, or --description"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.update("## Goal\nnew brief\n", description=True)[0], {"description": "## Goal\nnew brief\n"})
+
+    def test_nothing_to_change_refuses_before_reading_the_issue(self):
+        want = (1, "update needs --title, --state, --parent, --label, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7")), want)
+        self.assertEqual(self.calls, [])
 
     def test_refuses_two_body_flags_or_another_project_and_updates_nothing(self):
         for kw in ({"section": "## Plan", "append": True}, {"append": True, "description": True}, {"section": "## Plan", "description": True}):
@@ -426,6 +445,8 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.assertEqual(([v["id"] for v in self.sent("documentUpdate(")], self.sent("document(id: $id) { id title content url project { id name } }")), (["did"] * 4, [{"id": "d1"}] * 4))
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", section="## Plan", append=True)), (1, "doc update takes one of --section, --append, --description"))
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1")), (1, "doc update needs --title, --section, --append, or --description"))
+        for kw in ({}, {"title": "PRD v3"}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", **kw)), (1, "doc update --file needs --section, --append, or --description"))
         self.doc["project"] = None
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_doc, self.a("doc", "update", "d1", body="x", description=True)), (1, "document PRD is not in project Shop; pass --any-project to use it"))
         self.assertEqual(len(sent()), 4)

@@ -56,9 +56,13 @@ def state_and_labels(team, a):
     return out
 
 def writes_body(a, verb):
+    """Whether the verb writes the body; refuses a flag mix that would write something other than what the caller meant."""
     if sum(bool(x) for x in (a.section, a.append, a.description)) > 1:
         sys.exit(f"{verb} takes one of --section, --append, --description")
-    return bool(a.section or a.append or a.description)
+    writes = bool(a.section or a.append or a.description)
+    if a.file and not writes:  # the body file would be read by nothing
+        sys.exit(f"{verb} --file needs --section, --append, or --description")
+    return writes
 
 def new_body(a, old):
     body, old = read_body(a), old or ""
@@ -143,6 +147,8 @@ def verb_update(a):
     if not a.target:
         sys.exit("update needs an issue id")
     writes = writes_body(a, "update")
+    if not (writes or a.title or a.parent or a.state or a.label or a.blocked_by is not None):
+        sys.exit("update needs --title, --state, --parent, --label, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
@@ -154,7 +160,8 @@ def verb_update(a):
     inp.update(state_and_labels(issue["team"], a))
     if writes:
         inp["description"] = new_body(a, issue["description"])
-    fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
+    if inp:  # empty only when --blocked-by is the one change
+        fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
     if a.blocked_by is not None:
         fc_linear.linear_blocked_by(issue, [x for x in a.blocked_by.split(",") if x])
     print(f"updated {issue['identifier']}")
