@@ -216,9 +216,9 @@ def cmd_init(a):
         fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
     (proj / "results").mkdir(parents=True, exist_ok=True)
     setup_trail(wt)
-    repo_link = here / ".compose" / "linear.json"  # the repo's Linear project, written in the user's checkout (step 0)
-    if repo_link.exists() and not (wt / ".compose" / "linear.json").exists():
-        (wt / ".compose" / "linear.json").write_text(repo_link.read_text())
+    link = fc_core.repo_link(here)  # the repo's Linear project (step 0): the main checkout's file, which every worktree reads
+    if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own
+        (wt / ".compose" / "linear.json").write_text(link.read_text())
     if not (proj / "verify.json").exists():
         fc_core.atomic_write((proj / "verify.json"), json.dumps({
             "checks": [], "docs": ["README.md"], "e2e": [],

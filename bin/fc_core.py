@@ -51,6 +51,17 @@ def worktrees(repo):
             out.append(Path(line[len("worktree "):]))
     return out or [Path(repo).resolve()]
 
+def repo_link(path):
+    """The repo's Linear link, `.compose/linear.json` (SKILL.md step 0): one file in the main checkout that every worktree of
+    the repo reads, else the checkout's own (one written in a linked worktree); when neither exists, the main checkout's path,
+    where it belongs. Outside a git repo, the folder's own."""
+    here = Path(path).resolve()
+    top = sh(["git", "rev-parse", "--show-toplevel"], here, check=False).stdout.strip() if here.is_dir() else ""
+    if not top:
+        return here / ".compose" / "linear.json"
+    found = [d.resolve() / ".compose" / "linear.json" for d in dict.fromkeys((worktrees(here)[0], Path(top)))]  # git lists the main checkout first
+    return next((f for f in found if f.exists()), found[0])
+
 def project_config(proj):
     f = Path(proj) / "verify.json"
     return json.loads(f.read_text()) if f.exists() else {}
