@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_jev
+import fc_core, fc_proc, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_jev
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -217,32 +217,58 @@ def review_inputs(repo, proj, cfg):
     protected = sorted({f for t in tasks for f in t["protected"]})
     return diff, plan, docs, protected
 
-def e2e_stage(repo, cfg, panes, report, findings):
-    """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models."""
+def e2e_stage(repo, cfg, panes, report, findings, results=None):
+    """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models.
+    With `results` (the project's results/), a jev case that does not pass keeps its step screenshots in results/e2e/."""
     ok = True
-    stage_setup = None
+    stage_setup = awake = None
     # The stage owns its lifecycle: fresh ports each run (the config uses $E2E_PORT / $E2E_CLIENT_PORT), and whatever
     # it started (setup's process group, plus anything left listening on its ports that was not before) ends with it,
-    # pass, fail, exception or Ctrl-C, so no server or browser outlives a round to answer the next one.
+    # pass, fail, exception, Ctrl-C, SIGTERM or SIGHUP, so no server or browser outlives a round to answer the next one.
+    # A verify killed outright ends nothing; the next stage ends that one's browser (reap_orphans).
+    for gone in fc_jev.reap_orphans():
+        fc_core.say(f"e2e    ended the browser of a verify that is gone: {gone}")
     env = {k: str(v) for k, v in (cfg.get("e2e_env") or {}).items()}
     env.update(E2E_PORT=str(fc_core.free_port()), E2E_CLIENT_PORT=str(fc_core.free_port()))
+    env = fc_jev.expand_ports(env, env)
     # Never the product owner's Chrome: without BU_CDP_URL, browser-harness attaches to the running Chrome and waits for approval.
     # So the stage launches its own Chromium on a fresh CDP port and profile (an extension case sets BU_CDP_URL in e2e_env),
     # unless the project says its cases need no browser (e2e_browser: false, for example drivers of a terminal app).
-    profile = None if "BU_CDP_URL" in env or cfg.get("e2e_browser") is False else tempfile.mkdtemp(prefix="fc-e2e-browser-")
+    profile = None if "BU_CDP_URL" in env or cfg.get("e2e_browser") is False else tempfile.mkdtemp(prefix=f"fc-e2e-browser-{os.getpid()}-")
     if profile:
         cdp = fc_core.free_port()
         env.update(BU_CDP_URL=f"http://127.0.0.1:{cdp}", BU_NAME=f"fc-e2e-{cdp}")
     env.setdefault("BU_NAME", f"fc-e2e-{fc_core.free_port()}")  # every stage names its daemons, so it ends its own and no one else's
-    cfg = {**cfg, "e2e": [{k: fc_jev.expand_ports(v, env) for k, v in c.items()} for c in cfg.get("e2e", [])]}
+    cfg = {**cfg, "e2e": [fc_jev.expand_ports(c, env) for c in cfg.get("e2e", [])]}
     ports = fc_jev.e2e_ports(cfg, env)
     busy = {p for p in ports if fc_core.port_listening(p)}
     daemons = fc_jev.harness_daemons(env["BU_NAME"])
+    shots = Path(results) / "e2e" if results else None
+    if shots:
+        shutil.rmtree(shots, ignore_errors=True)  # only the last run's cases
+
+    def end_stage():
+        """End what the stage started: from its `finally`, and from a SIGTERM or SIGHUP (fc_proc.HOOKS), which skips that."""
+        if stage_setup:
+            fc_jev.stop_group(stage_setup)
+        if awake:
+            awake.terminate()
+            awake.wait(5)
+        fc_jev.kill_listeners(ports - busy)
+        fc_jev.end_new_daemons(env["BU_NAME"], daemons)
+        if profile:
+            shutil.rmtree(profile, ignore_errors=True)
+    hook = f"e2e stage {env['BU_NAME']}"
+    fc_proc.HOOKS[hook] = end_stage
     try:
         if profile:
-            # A project's verify shows its browser. Only compose's own test suite runs it headless (COMPOSE_E2E_HEADLESS=1),
-            # so testing the tool never pops a window on the product owner's screen.
-            headless = os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
+            # Headless unless the project asks to watch (e2e_headed): an unattended verify runs while the display sleeps, and a
+            # headed Chromium then stops painting, so screenshots and clicks time out. compose's own test suite forces
+            # headless (COMPOSE_E2E_HEADLESS=1), so testing the tool never pops a window on the product owner's screen.
+            headless = not cfg.get("e2e_headed") or os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
+            if not headless and shutil.which("caffeinate"):  # macOS: keep the display awake while the window is watched
+                awake = subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())], stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             p = fc_core.sh(["bp", "launch", "about:blank", "--profile", profile, *(["--headless"] if headless else [])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
             if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
@@ -256,7 +282,9 @@ def e2e_stage(repo, cfg, panes, report, findings):
             t1 = time.time()
             stage = f"e2e {case.get('name', i)}"[:40]
             fc_herdr.herdr_stage(panes, stage, "working")
-            run_case = lambda: fc_jev.jev_e2e({**case, "env": {**env, **(case.get("env") or {})}}, repo)
+            record = {"record_dir": str(shots / f"{i + 1:02d}-{re.sub(r'[^A-Za-z0-9._-]+', '-', str(case.get('name', 'case')))[:60]}")} \
+                if shots and not case.get("driver") else {}
+            run_case = lambda: fc_jev.jev_e2e({**case, **record, "env": {**env, **(case.get("env") or {})}}, repo)
             r = run_case()
             if r["exit"] and fc_jev.tool_error(r["stdout"] + r["stderr"]):
                 fc_core.say(f"e2e    tool error in {case.get('name')}; retrying once")
@@ -267,25 +295,15 @@ def e2e_stage(repo, cfg, panes, report, findings):
             ok &= r["exit"] == 0
             verdict = "ok  " if r["exit"] == 0 else "TOOL ERROR" if r["tool_error"] else "FAIL"
             fc_herdr.herdr_stage(panes, stage, "idle" if r["exit"] == 0 else "blocked", verdict.strip())
-            run = r.get("run")  # a driver case reports one only when it prints an E2E_RESULT line
-            fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {case.get('name')}" + (
-                f"  steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}"
-                + (f" assert={r['assert_exit']}" if r.get('assert_exit') is not None else "") if run else ""))
-            for line in (r.get("stdout") or "").splitlines()[-8:]:
-                if line and not line.startswith("E2E_RESULT"):
-                    print(f"           {line[:160]}")
+            fc_jev.say_case(case.get("name"), r, verdict)
             if r["exit"] and not r["tool_error"]:  # a tool crash is not the app's failure: no fixer gets it
                 findings.append(f"E2E failed: {case.get('name')}\n{r['stdout']}\n{r['stderr']}")
     finally:
-        if stage_setup:
-            fc_jev.stop_group(stage_setup)
         if profile:  # browser-harness keeps one daemon per BU_NAME alive; end ours with the browser it drove
             fc_core.sh(["uv", "run", "--quiet", "python", "-c", f"from browser_harness.admin import restart_daemon; restart_daemon({env['BU_NAME']!r})"],
                fc_config.JEV_DIR, timeout=30, check=False)
-        fc_jev.kill_listeners(ports - busy)
-        fc_jev.end_new_daemons(env["BU_NAME"], daemons)
-        if profile:
-            shutil.rmtree(profile, ignore_errors=True)
+        end_stage()
+        fc_proc.HOOKS.pop(hook, None)  # only now: a SIGTERM during the slow daemon stop above still ends the rest
     return ok
 
 def fix_tests(tasks, files):
@@ -332,7 +350,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
     # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
     # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
     pool = ThreadPoolExecutor(max_workers=1)
-    e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings) if not a.skip_e2e and cfg.get("e2e") else None
+    e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings, proj / "results") if not a.skip_e2e and cfg.get("e2e") else None
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
         fc_herdr.herdr_stage(panes, "review", "working")

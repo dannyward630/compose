@@ -657,22 +657,22 @@ class JevLeash(unittest.TestCase):
         self.assertTrue(fc.fc_jev.tool_error("JEV_GAVE_UP: jev did not reach its goal within 150s"))
         self.assertFalse(fc.fc_jev.tool_error("AssertionError: score was 2 of 3"))
 
-    def test_a_jev_case_is_killed_at_its_limit(self):
+    def test_a_jev_case_is_killed_at_its_limit_and_its_assert_still_runs(self):
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
              mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
         self.assertEqual(t.call_args[0][2], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
-        self.assertEqual(r["exit"], 124); self.assertNotIn("assert_exit", r); self.assertNotIn("run", r)
+        self.assertEqual((r["exit"], r["assert_exit"]), (124, 0)); self.assertNotIn("run", r)
 
     USAGE = {"typesafe_calls": 0, "typesafe_in": 0, "typesafe_out": 0, "text_calls": 0, "text_in": 0, "text_out": 0}
 
-    def jev(self, code, status):
-        """The fake's returncode stands for the assert's exit code: the real script ends with sys.exit(subprocess.call(assert))."""
+    def jev(self, assert_code, status):
+        """jev exits 0 only on a reached goal; verify runs the assert after it, whatever jev's status."""
         stdout = "JEV_RESULT " + json.dumps({"status": status, "elapsed_ms": 413, "steps": 7, "url": "about:blank", "usage": self.USAGE}) + "\n"
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", code, stdout, "")):
-            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": "true"}, Path(tempfile.mkdtemp()))
+             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", int(status != "done"), stdout, "")):
+            return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": f"exit {assert_code}"}, Path(tempfile.mkdtemp()))
 
     def test_a_blocked_jev_fails_the_case_even_when_its_assert_passes(self):
         r = self.jev(0, "blocked")
@@ -687,7 +687,7 @@ class JevLeash(unittest.TestCase):
             self.assertEqual((r["exit"], r["assert_exit"]), (code, code))
 
     def test_any_status_but_done_fails_the_case(self):
-        r = self.jev(0, "max_steps")
+        r = self.jev(0, "error")
         self.assertNotEqual(r["exit"], 0); self.assertEqual(r["assert_exit"], 0)
         self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
 

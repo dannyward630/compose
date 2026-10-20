@@ -1,6 +1,6 @@
-import shlex, json, os, re, signal, subprocess, time
+import contextlib, shlex, json, os, re, shutil, signal, subprocess, time
 from pathlib import Path
-import fc_core, fc_config, fc_models, fc_implement
+import fc_core, fc_proc, fc_config, fc_models, fc_implement
 
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
@@ -28,6 +28,9 @@ def stop_group(proc):
             try:
                 os.killpg(proc.pid, 0)
             except (ProcessLookupError, PermissionError):
+                # macOS answers EPERM while the leader is still exiting: reap it, so no zombie (or ResourceWarning) is left
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(1)
                 return
             time.sleep(0.1)
     proc.poll()
@@ -67,8 +70,42 @@ def e2e_ports(cfg, env):
     urls = [c.get("url", "") for c in cfg.get("e2e", [])] + [env.get("BU_CDP_URL", "")]
     return {int(env["E2E_PORT"]), int(env["E2E_CLIENT_PORT"])} | {int(m) for u in urls for m in re.findall(r"://[^/:]+:(\d+)", u)}
 
-def expand_ports(text, env):
-    return re.sub(r"\$\{?(E2E_PORT|E2E_CLIENT_PORT)\}?", lambda m: env[m.group(1)], text) if isinstance(text, str) else text
+def expand_ports(value, env):
+    """`value` with $E2E_PORT and $E2E_CLIENT_PORT expanded in every string, inside dicts and lists too (a case's `env`)."""
+    if isinstance(value, dict):
+        return {k: expand_ports(v, env) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_ports(v, env) for v in value]
+    return re.sub(r"\$\{?(E2E_PORT|E2E_CLIENT_PORT)\}?", lambda m: env[m.group(1)], value) if isinstance(value, str) else value
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # another user's process
+        pass
+    return True
+
+def reap_orphans():
+    """End the browsers, and their harness daemons, of e2e stages whose verify is gone. A SIGKILL skips every cleanup, and the
+    browser `bp launch` detached outlives it. A stage names its browser profile after its verify's pid (fc-e2e-browser-<pid>-),
+    so a browser whose verify still runs, another project's included, is left alone. Returns the profiles it ended."""
+    browsers = {}
+    for line in fc_core.sh(["ps", "-axww", "-o", "pid=,command="], ".", check=False).stdout.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        m = re.search(r"--user-data-dir=(\S*/fc-e2e-browser-(\d+)-\S*)", cmd)
+        if m and not alive(int(m.group(2))):
+            port = re.search(r"--remote-debugging-port=(\d+)", cmd)
+            pids, ports = browsers.setdefault(m.group(1), (set(), set()))
+            pids.add(pid)
+            ports |= {port.group(1)} if port else set()
+    for profile, (pids, ports) in browsers.items():
+        fc_core.sh(["kill", "-9", *pids], ".", check=False)
+        for port in ports:  # the stage named its daemons after its browser's CDP port
+            end_new_daemons(f"fc-e2e-{port}", set())
+        shutil.rmtree(profile, ignore_errors=True)
+    return sorted(browsers)
 
 SETUP_DEADLINE = 60  # seconds a setup gets to bind the ports it names; a server slow to start under load is waited for, not raced
 
@@ -87,25 +124,34 @@ def await_setup(setup, env, wait):
         time.sleep(0.1)
     fc_core.say(f"e2e    setup still not listening on {', '.join(map(str, closed))} after {fc_core.fmt(max(wait, SETUP_DEADLINE))}")
 
+@contextlib.contextmanager
+def case_setup(case, repo, env):
+    """A case's own `setup` (for example a server, or a login, for this case alone), started and awaited before the case
+    and ended after it, whatever happens; a SIGTERM or SIGHUP, which skips this cleanup, ends it through fc_proc.HOOKS."""
+    if not case.get("setup"):
+        yield
+        return
+    setup = subprocess.Popen(case["setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    hook = f"e2e setup {setup.pid}"
+    fc_proc.HOOKS[hook] = lambda: stop_group(setup)
+    try:
+        await_setup(case["setup"], env, case.get("setup_wait", 3))
+        yield
+    finally:
+        fc_proc.HOOKS.pop(hook, None)
+        stop_group(setup)
+
 def driver_e2e(case, repo):
     """Run the project's own browser driver command, with optional setup/teardown commands (e.g. start a local server)."""
     env = {**fc_core.clean_env(), **{k: str(v) for k, v in (case.get("env") or {}).items()}}
-    setup = None
-    if case.get("setup"):
-        setup = subprocess.Popen(case["setup"], shell=True, cwd=repo, env=env, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        await_setup(case["setup"], env, case.get("setup_wait", 3))
-    try:
-        p = subprocess.run(case["driver"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
-                           timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
+    with case_setup(case, repo, env):
+        # In a group of its own that a SIGTERM or SIGHUP ends (fc_proc.RUNNING), like everything else the stage started.
+        p = fc_proc.run(["/bin/sh", "-c", case["driver"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
         out, err, code = p.stdout, p.stderr, p.returncode
         if not code and case.get("assert"):  # the independent check runs after every case, same env and cwd as the driver
-            a = subprocess.run(case["assert"], shell=True, cwd=repo, env=env, capture_output=True, text=True,
-                               timeout=case.get("timeout", 600), stdin=subprocess.DEVNULL)
+            a = fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
             out, err, code = out + a.stdout, err + a.stderr, a.returncode
-    finally:
-        if setup:
-            stop_group(setup)
     if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
         raise fc_models.PaymentRequired("jev e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
     r = {"name": case.get("name"), "exit": code, "stdout": fc_core.scrub(out)[-4000:], "stderr": fc_core.scrub(err)[-2000:]}
@@ -115,40 +161,77 @@ def driver_e2e(case, repo):
     return r
 
 def jev_e2e(case, repo):
-    """Drive a real browser with jev (jev/, run in its own uv project) to a goal, then run the case's independent assert command.
-    A case with a `driver` key runs that command instead (the project's own browser driver)."""
+    """Drive a real browser with jev (`python -m jev_ultrafast`, in its own uv project, jev/) to the case's goal, then run
+    its independent assert after any run, one that gave up, crashed, or hit its limit too: an assert may also reset the app
+    for the next case. The case's own `setup` runs around both. A case with a `driver` key runs that command instead (the
+    project's own browser driver). jev types `secrets` ({"Password": "$E2E_PASSWORD"}) itself, from the env, and
+    `record_dir` keeps a screenshot per step of a case that did not pass."""
     if case.get("driver"):
         return driver_e2e(case, repo)
-    script = ("import json,os,sys,subprocess\nfrom jev_ultrafast import Agent\n"
-              f"with Agent({case['url']!r}, {case['goal']!r}) as a:\n"
-              "    last=None\n    for s in a.run(): last=s\n"
-              "    dec=last['decisions']; txt=last['text_calls']\n"
-              "    tok=lambda u,*k: next((u[x] for x in k if u.get(x)), 0)\n"
-              "    side=lambda calls,*k: sum(tok(c.get('usage') or {},*k) for c in calls)\n"
-              "    usage={'typesafe_calls':len(dec),'typesafe_in':side(dec,'input_tokens','prompt_tokens'),'typesafe_out':side(dec,'output_tokens','completion_tokens'),"
-              "'text_calls':len(txt),'text_in':side(txt,'input_tokens','prompt_tokens'),'text_out':side(txt,'output_tokens','completion_tokens')}\n"
-              "    print('JEV_RESULT '+json.dumps({'status':last['status'],'elapsed_ms':last['elapsed_ms'],'steps':len(last['history']),'url':last['page']['url'],'usage':usage}))\n"
-              "    sys.stdout.flush()\n"
-              f"    sys.exit(subprocess.call({case['assert']!r}, shell=True, cwd={str(repo)!r}, env={{k: v for k, v in os.environ.items() if k not in {sorted(fc_core.SECRET_VARS)!r}}}))\n")
     # case["env"] (verify.json e2e_env merged with the case's env) reaches jev: set BU_CDP_URL/BU_NAME there to point
     # browser-harness at a `bp`-launched Chromium that has the extension under test loaded.
     env = {**os.environ, **{k: str(v) for k, v in (case.get("env") or {}).items()}}
+    # setup and assert are project code: no CLI keys, but the rest of ~/.compose/.env (a test user's password, say), which
+    # jev reads through --env-file too. The process env wins over the file, as it does for uv.
+    dotenv = {**fc_core.load_env(fc_config.ENV_FILE), **env}
+    project_env = fc_core.clean_env(dotenv)
+    for ref in (case.get("secrets") or {}).values():  # nothing verify prints or keeps shows one, not even an assert's output
+        name = re.fullmatch(r"\$\{?(\w+)\}?", str(ref))
+        if name and dotenv.get(name.group(1)):
+            fc_core.SECRET_VALUES.add(dotenv[name.group(1)])
     limit = int(case.get("timeout") or JEV_TIMEOUT)
+    record = case.get("record_dir")
+    if record:
+        shutil.rmtree(record, ignore_errors=True)  # a retry's or an earlier round's steps are not this run's
     env_file = ["--env-file", str(fc_config.ENV_FILE)] if fc_config.ENV_FILE.exists() else []
-    p = fc_implement.timed(shlex.join(["uv", "run", "--quiet", *env_file, "python", "-c", script]), fc_config.JEV_DIR, limit, env=env)
-    r = {"name": case.get("name"), "exit": p.returncode, "stdout": p.stdout[-3000:], "stderr": p.stderr[-2000:]}
+    flags = (["--secrets", json.dumps(case["secrets"])] if case.get("secrets") else []) + (["--record", str(record)] if record else [])
+    cmd = shlex.join(["uv", "run", "--quiet", *env_file, "python", "-m", "jev_ultrafast", *flags, "--", case["url"], case["goal"]])
+    a = None
+    with case_setup(case, repo, project_env):
+        p = fc_implement.timed(cmd, fc_config.JEV_DIR, limit, env=env)
+        if case.get("assert"):
+            a = fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=project_env, timeout=case.get("timeout", 600))
+    # JEV_RESULT, its history included, is kept parsed in "run"; stdout keeps what jev and the assert printed besides.
+    out = re.sub(r"^JEV_RESULT .*\n?", "", p.stdout, flags=re.M) + (fc_core.scrub(a.stdout) if a else "")
+    r = {"name": case.get("name"), "exit": p.returncode, "stdout": out[-3000:], "stderr": (p.stderr + (fc_core.scrub(a.stderr) if a else ""))[-2000:]}
     m = re.search(r"^JEV_RESULT (\{.*\})$", p.stdout, re.M)
     if p.returncode == 124:  # killed at the limit: jev wandered or stuck, a harness failure, retried once, never fixed
         r["stderr"] = f"JEV_GAVE_UP: jev did not reach its goal within {limit}s\n" + r["stderr"]
-    if m:
+    elif m:
         r["run"] = json.loads(m.group(1))
-        r["assert_exit"] = p.returncode
         if r["run"].get("status") != "done":
-            r["stderr"] = f"JEV_GAVE_UP: jev ended {r['run'].get('status')} after {r['run'].get('steps')} steps\n" + r["stderr"]
-            r["exit"] = r["assert_exit"] or 1
+            why = r["run"].get("stop_reason")
+            r["stderr"] = f"JEV_GAVE_UP: jev ended {r['run'].get('status')} after {r['run'].get('steps')} steps{': ' + why if why else ''}\n" + r["stderr"]
         u = r["run"]["usage"]
         prices = case.get("prices") or {}
         ts_cost = u["typesafe_calls"] * prices["typesafe_per_call"] if "typesafe_per_call" in prices else None
         fc_core.LEDGER.add("typesafe", u["typesafe_in"], u["typesafe_out"], ts_cost, calls=u["typesafe_calls"])
         fc_core.LEDGER.add("openrouter", u["text_in"], u["text_out"], None, calls=u["text_calls"])  # jev's text helper does not return $
+    if a is not None:
+        r["assert_exit"] = a.returncode
+    # jev exits 0 only on a reached goal: then the assert decides; a run that did not reach it fails the case either way.
+    code = a.returncode if a else 0
+    r["exit"] = code if p.returncode == 0 else (code or p.returncode)
+    if record and r["exit"] == 0:
+        shutil.rmtree(record, ignore_errors=True)
+    elif record and Path(record).is_dir():
+        r["screenshots"] = str(record)
     return r
+
+def say_case(name, r, verdict):
+    """A case's verdict line, then the end of its output; for a jev run that did not reach its goal, why it stopped, where,
+    and its last steps, whole (results/verify.json keeps every step), and where its step screenshots are."""
+    run = r.get("run")  # a driver case reports one only when it prints an E2E_RESULT line
+    stopped = run and run.get("status") != "done" and run.get("stop_reason")
+    fc_core.say(f"e2e    {verdict} {fc_core.fmt(r['seconds']):>8}  {name}" + (
+        f"  steps={run.get('steps', run.get('decisions', '?'))} run={run.get('elapsed_ms', '?')}ms status={run.get('status', '?')}"
+        + (f" assert={r['assert_exit']}" if r.get("assert_exit") is not None else "") + (f"  stop: {stopped}" if stopped else "") if run else ""))
+    for line in (r.get("stdout") or "").splitlines()[-8:]:
+        if line and not line.startswith(("E2E_RESULT", "JEV_RESULT")):
+            print(f"           {line[:160]}")
+    if run and run.get("status") != "done" and "history" in run:
+        print(f"           at {run.get('url')}")
+        for h in run["history"][-5:]:
+            print(f"           step {h['step']:>2}  {h['kind']:<6} {h['label']}" + ("" if h.get("page_changed") else "  (page unchanged)"))
+    if r.get("screenshots"):
+        print(f"           screenshots {fc_core.tilde(r['screenshots'])}")
