@@ -1,6 +1,6 @@
 import shlex, json, os, re, shutil, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core
+import fc_core, fc_models
 
 
 # ---------- herdr ----------
@@ -302,6 +302,31 @@ def herdr_agent_start(*args, tries=8):
     if err:
         raise RuntimeError(f"herdr agent start: {err}")
     return started
+
+
+PROMPT_START_WAIT = 30  # seconds a stalled prompt gets to show up as a turn before it is sent again; pi starts one in 1 to 2 s
+
+def herdr_stalled(session, prompt, deadline):
+    """Follow a prompt herdr answered with agent_prompt_stalled. The turn is the one herdr sees working or blocked, waited for like
+    any other, or the one the session file records whole while herdr missed it. A prompt pi never wrote down goes once more into
+    the same session after PROMPT_START_WAIT. Returns None when the turn ended, else "timeout", or "agent_prompt_stalled" when it
+    never started."""
+    name, sent, again = session["name"], time.time(), False
+    while (left := deadline - time.time()) > 0:
+        got = (herdr("agent", "get", name) or {}).get("agent") or {}
+        session["sfile"] = session.get("sfile") or (got.get("agent_session") or {}).get("value")
+        if got.get("agent_status") in ("working", "blocked"):
+            return herdr_error("agent", "wait", name, "--timeout", str(int(left * 1000)), timeout=left + 30)[1]
+        delivered, ended = fc_models.pi_turn_state(session["sfile"], session["seen"])
+        if ended:
+            return None
+        if not delivered and time.time() - sent >= PROMPT_START_WAIT:
+            if again:
+                return "agent_prompt_stalled"
+            herdr_error("agent", "prompt", name, prompt, timeout=60)
+            sent, again = time.time(), True
+        time.sleep(1)
+    return "timeout"
 
 
 def herdr_verify_panes(space, wt, names, label="verify"):

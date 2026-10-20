@@ -191,7 +191,7 @@ def parse_pi_session(path, seen):
     """Read the pi session JSONL from line `seen` on: assistant text, tool calls, usage, and provider errors of the new turns.
     Same accounting as pi_turn, so the ledger and cost line do not depend on which path ran the task."""
     text, tools, usage, errors = [], 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}, []
-    lines = Path(path).read_text().splitlines() if Path(path).exists() else []
+    lines = Path(path).read_text().splitlines() if path and Path(path).is_file() else []
     for ln in lines[seen:]:
         try:
             ev = json.loads(ln)
@@ -213,6 +213,21 @@ def parse_pi_session(path, seen):
             payment_check("openrouter (pi)", err)
             errors.append(err[:400])
     return len(lines), "\n".join(text), tools, usage, errors
+
+def pi_turn_state(path, seen):
+    """(delivered, ended) for the turn a pi session file records from line `seen` on: pi wrote the prompt down, and its last message
+    is the assistant's and did not stop for a tool call. The record of a turn herdr never saw working."""
+    roles = []
+    for ln in (Path(path).read_text().splitlines()[seen:] if path and Path(path).is_file() else []):
+        try:
+            ev = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "message":
+            m = ev.get("message") or {}
+            roles.append((m.get("role"), m.get("stopReason")))
+    delivered = any(r == "user" for r, _ in roles)
+    return delivered, delivered and roles[-1][0] == "assistant" and roles[-1][1] != "toolUse"
 
 
 _PROBED = {}

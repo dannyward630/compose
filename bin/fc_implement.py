@@ -50,6 +50,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
     fc_proc.HOOKS[name] = lambda: (fc_herdr.herdr("agent", "send-keys", session["name"], "esc"), fc_herdr.herdr("pane", "close", session["pane"]))
+    t0 = time.time()
     for attempt in range(2):
         result, err = fc_herdr.herdr_error("agent", "prompt", session["name"], prompt, "--wait", "--timeout", str(timeout * 1000), timeout=timeout + 30)
         if err == "agent_blocked" and attempt == 0:  # pi is showing a dialog from the last turn; dismiss it and resend
@@ -57,6 +58,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt
+        err = fc_herdr.herdr_stalled(session, prompt, t0 + timeout)
     if err == "timeout" or err == "agent_prompt_stalled":
         fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
         fc_herdr.herdr("pane", "close", session["pane"])
