@@ -196,6 +196,22 @@ class SpecCheck(unittest.TestCase):
         self.assertTrue(any(l.startswith("FAIL ENG-11") for l in want), want)
         self.assertEqual((lines, e.code), (want, we.code))
 
+    def test_a_task_whose_test_is_a_verify_check_runs_the_whole_suite_and_fails(self):
+        d = data([task("ENG-3", "001", test="go  test ./..."), task("ENG-4", "002", test="go test ./b -run '^TestB'")])
+        repo = Path(tempfile.mkdtemp())
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        (proj / "verify.json").write_text(json.dumps({"checks": ["go vet ./...", "go test ./..."]}))
+        fc.fc_tasks.sync_tasks(proj, d)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj):
+            lines, e = self.run_cli(repo=str(repo), project="p")
+        self.assertEqual(e.code, 1)
+        self.assertIn("PASS ENG-4 task", lines)
+        bad, = [l for l in lines if l.startswith("FAIL ENG-3 task")]
+        self.assertIn("`test:` is the verify check `go  test ./...`, the whole suite: run only this task's test", bad)
+        self.assertIn("PASS ENG-3 task", self.run_cli(json.dumps(d))[0])  # stdin has no verify.json to compare with
+
 
 class DeleteLine(unittest.TestCase):
     """Task 013 (NEB-934): delete: parsed from the compose block; spec-check and the 2-file cap with delete: paths."""

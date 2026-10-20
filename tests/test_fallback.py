@@ -240,8 +240,9 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack=""):
-        """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass."""
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=()):
+        """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
+        `self.scopes` holds the tests each stage run was given (None: the full checks)."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -257,9 +258,13 @@ class FixScope(unittest.TestCase):
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
-        stages = iter([(False, {}, "finding"), (True, {}, "")])
+        stages, self.scopes = iter([(False, {}, "finding"), (True, {}, "")]), []
+        def run_stages(repo, proj, cfg, a, tests=None):
+            self.scopes.append(tests)
+            return next(stages)
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
-                mock.patch.object(fc.fc_verify, "run_stages", lambda *a: next(stages)), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
+                mock.patch.object(fc.fc_verify, "run_stages", run_stages), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", return_value=list(tasks)), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
                 fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
@@ -271,6 +276,25 @@ class FixScope(unittest.TestCase):
         self.assertEqual((repo / "a.go").read_text(), "fixed\n")
         log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout
         self.assertEqual(log.strip(), "Fix a.go")  # describes the change, never the process
+
+    def test_a_fix_round_runs_only_the_tests_of_the_tasks_its_fix_changed(self):
+        tasks = [{"id": "001", "files": ["a.go"], "protected": ["a_test.go"], "test": "go test ./a"},
+                 {"id": "002", "files": ["b.go"], "protected": ["b_test.go"], "test": "go test ./b"},
+                 {"id": "003", "kind": "design", "files": ["a.go"], "protected": [], "test": "compose figma judge"}]
+        code, _, _ = self.verify({"a.go": "fixed\n"}, tasks=tasks)
+        self.assertEqual((code, self.scopes), (0, [None, ["go test ./a"]]))  # the first round runs every check
+        self.verify({"a.go": "fixed\n", "yarn.lock": "new\n"}, tasks=tasks + [{"id": "004", "files": ["yarn.lock"], "protected": [], "test": "go test ./a"}])
+        self.assertEqual(self.scopes, [None, ["go test ./a"]])  # one command once, however many tasks it proves
+        self.verify({"a.go": "fixed\n"}, tasks=[])
+        self.assertEqual(self.scopes, [None, None])  # a file no task names: only the full checks cover it
+
+    def test_fix_tests_cover_every_changed_file_or_fall_back_to_the_full_checks(self):
+        tasks = [{"id": "001", "files": ["a.go"], "protected": ["a_test.go"], "test": "ta"},
+                 {"id": "002", "files": ["b.go", "c.go"], "protected": ["b_test.go"], "test": "tb"}]
+        self.assertEqual(fc.fc_verify.fix_tests(tasks, ["c.go", "a.go"]), ["ta", "tb"])  # task order
+        self.assertEqual(fc.fc_verify.fix_tests(tasks, ["b_test.go"]), ["tb"])
+        self.assertIsNone(fc.fc_verify.fix_tests(tasks, ["a.go", "setup.js"]))
+        self.assertIsNone(fc.fc_verify.fix_tests(tasks, []))
 
     def test_fix_commit_uses_the_fixers_one_line_description(self):
         _, repo, _ = self.verify({"a.go": "fixed\n"}, reply='"Match the autofill panel file name"\nI also changed...')

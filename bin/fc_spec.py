@@ -93,8 +93,10 @@ def run_waves(tasks):
         done |= set(wave)
     return waves
 
-def spec_check(data):
-    """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task."""
+def spec_check(data, checks=()):
+    """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task. `checks` are
+    verify.json's: a task whose `test:` is one of them runs the whole suite after every implementer turn."""
+    suite = {" ".join(c.split()) for c in checks}
     issues = [i for i in data["issues"] if (i.get("status") or "").lower() not in fc_tasks.CANCELED]
     tasks = [t for t in (fc_tasks.task_from_issue(i) for i in issues) if t]
     out = []
@@ -133,6 +135,8 @@ def spec_check(data):
                 gaps.append("empty `files:`")
             if not meta["protected"]:
                 gaps.append("empty `protected:`")
+            if " ".join(meta["test"].split()) in suite:
+                gaps.append(f"`test:` is the verify check `{meta['test']}`, the whole suite: run only this task's test (its file, or a name filter)")
             if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):
                 gaps.append("the brief points at the contract, which implementers never see: state its signatures and exact lines in the brief")
             out.append((not gaps, i["id"], "task", gaps))
@@ -154,14 +158,16 @@ def cmd_spec_check(a):
             d = json.loads(sys.stdin.read())
         except ValueError as e:
             sys.exit(f"spec-check: stdin is not JSON ({e}); expected {fc_tasks.SYNC_SHAPE}")
+        checks = []
     else:
         proj = fc_core.project_dir(a)
         fc_tasks.load_tasks(proj, required=True)
         cache = fc_tasks.linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
              "issues": [dict(v, id=k) for k, v in (cache.get("issues") or {}).items()]}
+        checks = fc_core.project_config(proj).get("checks", [])
     bad = False
-    for ok, ident, level, gaps in spec_check(d):
+    for ok, ident, level, gaps in spec_check(d, checks):
         print(f"{'PASS' if ok else 'FAIL'} {ident} {level}" + (f": {'; '.join(gaps)}" if gaps else ""))
         bad = bad or not ok
     if bad:

@@ -31,6 +31,8 @@ Verify reads `.compose/<project>/verify.json`.
 
 1. **checks** runs lint, unit tests, and smoke checks.
    These are exact and cheap, so they run first.
+   A fix round runs only the `test:` commands of the tasks whose files its fix changed, and the full checks once, after every other stage passed.
+   A fix that changes a file no task names runs the full checks.
 2. **review** makes one fast-model review per perspective.
    Each high or medium finding then gets a confirmation call that must quote the wrong line and say how it must read.
    A quote that is not in the code, or a line that must read as it already does, drops the finding, and only confirmed highs fail.
@@ -40,6 +42,7 @@ Verify reads `.compose/<project>/verify.json`.
    Then the case's `assert` checks the real DOM or log.
 5. **fix** sends confirmed findings to the fix model.
    Protected files are reverted, and the stages rerun for up to `--fix` rounds before they escalate.
+   A verify passes only once the full checks pass on the final code, so the fixes' scoped tests never hide a regression.
 
 Review, jev, and e2e run in parallel after checks.
 Every run ends with time and cost per provider.

@@ -180,6 +180,36 @@ class ToolErrors(unittest.TestCase):
         self.assertEqual(findings, "")
 
 
+class FixRoundChecks(unittest.TestCase):
+    def stages(self, scoped, full, tests):
+        """run_stages with its checks and a fix round's tests each appending their name to one log, in run order."""
+        d = Path(tempfile.mkdtemp())
+        cmd = lambda name, code: f"echo {name} >> {d}/log; exit {code}"
+        with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}):
+            ok, report, findings = fc.fc_verify.run_stages(d, d, {"checks": [cmd("full", full)]}, SimpleNamespace(skip_e2e=True, skip_review=True),
+                                                           None if tests is None else [cmd("scoped", scoped)])
+        return ok, report, findings, (d / "log").read_text().split()
+
+    def test_a_fix_round_runs_its_tests_then_every_check_once(self):
+        ok, report, findings, log = self.stages(0, 0, tests=True)
+        self.assertEqual((ok, log, findings), (True, ["scoped", "full"], ""))
+        self.assertEqual([len(report["scoped"]), len(report["checks"])], [1, 1])  # the PR body reads only the full checks
+
+    def test_a_failing_fix_test_skips_the_full_checks(self):
+        ok, report, findings, log = self.stages(1, 0, tests=True)
+        self.assertEqual((ok, log, report["checks"]), (False, ["scoped"], []))
+        self.assertIn("echo scoped", findings)
+
+    def test_a_regression_the_fix_tests_miss_fails_the_round(self):
+        ok, _, findings, log = self.stages(0, 1, tests=True)
+        self.assertEqual((ok, log), (False, ["scoped", "full"]))
+        self.assertIn("echo full", findings)
+
+    def test_the_first_round_runs_only_the_full_checks(self):
+        ok, report, _, log = self.stages(0, 0, tests=None)
+        self.assertEqual((ok, log, report["scoped"]), (True, ["full"], []))
+
+
 class CheckoutBp(unittest.TestCase):
     """The suite runs the checkout's bp, whatever bp sits on PATH."""
     target = os.path.realpath(Path(__file__).resolve().parents[1] / "bp" / "bin" / "bp.mjs")

@@ -123,7 +123,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    2. `### Codebase brief` in the feature's Notes; without it no file may be named.
    3. Acceptance criteria present, each a behavior a test can check, each traceable to a decision line or the spec's words.
    4. Every criterion maps to a file or symbol via `trail ask` or `trail callers` in the worktree; new files are listed as new.
-   5. The test command is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
+   5. The test runner is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
    6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
    7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers, and implementers never see it.
       Name the test paths, and state in the brief every signature, export name, and exact line its test asserts; never point
@@ -143,6 +143,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 
 3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all of these hold:
    - one or two files in `files:` (a lockfile it names does not count), one test command, at most five acceptance criteria
+   - its test command runs only its own test (its file, or a name filter), never the whole suite: verify runs the full checks
    - its brief (the issue description) is under 2500 characters
    - its branch stays within the CLI's 350-line limit (added plus deleted)
    - no documents: no .md, .txt, .rst, or docs/ files
@@ -170,7 +171,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    id: 001
    files: <the one or two paths>
    protected: <the test path>
-   test: <the test command>
+   test: <the command that runs only this task's test>
    ```
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.

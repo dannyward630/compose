@@ -32,7 +32,7 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
               "Be concrete and terse. An empty list means clean. Never invent files not in the input. "
               "Severity: high only for a bug that breaks a stated requirement, loses data, or is a security hole. Performance or style "
               "concerns at the scale this project runs at are low, never high. " + SIMPLICITY_BAR + " Report it as low if you must mention it. "
-              + ("The test suite currently PASSES; do not report anything the tests already prove works." if tests_pass else ""))
+              + ("The tests currently PASS; do not report anything the tests already prove works." if tests_pass else ""))
     user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
     def one(name):
@@ -288,31 +288,47 @@ def e2e_stage(repo, cfg, panes, report, findings):
             shutil.rmtree(profile, ignore_errors=True)
     return ok
 
-def run_stages(repo, proj, cfg, a):
-    """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance."""
-    report, ok, findings = {"checks": [], "e2e": [], "review": None, "acceptance": None}, True, []
+def fix_tests(tasks, files):
+    """The test commands that cover a fix: each code task's `test:` whose `files:` or `protected:` holds a file the fix
+    changed, once each, in task order. None when a changed file is in no task: only the full checks cover it."""
+    cover = [t for t in fc_tasks.code_tasks(tasks) if set(files) & set(t["files"] + t["protected"])]
+    if not files or any(all(f not in t["files"] + t["protected"] for t in cover) for f in files):
+        return None
+    return list(dict.fromkeys(t["test"] for t in cover))
+
+def run_stages(repo, proj, cfg, a, tests=None):
+    """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance. With `tests` (a fix round's
+    `fix_tests`) the first stage runs only those, and the full checks run once at the end, only when every stage passed."""
+    report, ok, findings = {"checks": [], "scoped": [], "e2e": [], "review": None, "acceptance": None}, True, []
     home = fc_core.home_state()
     e2e_cases = [] if a.skip_e2e else cfg.get("e2e", [])
-    stages = (["checks"] if cfg.get("checks") else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
+    stages = (["checks"] if cfg.get("checks") or tests else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
         + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
     panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages, fc_herdr.tab_label(proj, "verify"))
-    fc_herdr.herdr_stage(panes, "checks", "working")
-    for c in cfg.get("checks", []):
-        t1 = time.time()
-        p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-        out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
-        if p.returncode and fc_jev.tool_error(out):
-            fc_core.say(f"check  tool error; retrying once  {c}")
+
+    def run_checks(cmds, into):
+        for c in cmds:
+            t1 = time.time()
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
-        tool = bool(p.returncode) and fc_jev.tool_error(out)
-        report["checks"].append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
-        ok &= p.returncode == 0
-        fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
-        if p.returncode and not tool:
-            findings.append(f"Command failed: {c}\n{out}")
-    checks_pass = all(c["exit"] == 0 for c in report["checks"])
-    fc_herdr.herdr_stage(panes, "checks", "idle" if checks_pass else "blocked", "ok" if checks_pass else "FAIL")
+            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+            if p.returncode and fc_jev.tool_error(out):
+                fc_core.say(f"check  tool error; retrying once  {c}")
+                p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
+                out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
+            tool = bool(p.returncode) and fc_jev.tool_error(out)
+            into.append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
+            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
+            if p.returncode and not tool:
+                findings.append(f"Command failed: {c}\n{out}")
+        passed = all(c["exit"] == 0 for c in into)
+        fc_herdr.herdr_stage(panes, "checks", "idle" if passed else "blocked", "ok" if passed else "FAIL")
+        return passed
+
+    fc_herdr.herdr_stage(panes, "checks", "working", "" if tests is None else "the fix's tests")
+    if tests is not None:
+        fc_core.say(f"check  scope  {len(tests)} task test(s) for the fix; the full checks run once every stage passes")
+    checks_pass = run_checks(cfg.get("checks", []) if tests is None else tests, report["checks"] if tests is None else report["scoped"])
+    ok &= checks_pass
     # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
     # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
     pool = ThreadPoolExecutor(max_workers=1)
@@ -368,6 +384,10 @@ def run_stages(repo, proj, cfg, a):
     if e2e:
         ok &= e2e.result()
     pool.shutdown()
+    if ok and tests is not None and cfg.get("checks"):  # the fix passed its own tests and every stage: no regression anywhere else
+        fc_core.say("check  full   every check, once, after the fix passed every stage")
+        fc_herdr.herdr_stage(panes, "checks", "working", "full checks")
+        ok &= run_checks(cfg["checks"], report["checks"])
     fc_core.flag_home(home, "verify's checks and e2e")
     return ok, report, "\n\n".join(findings)
 
@@ -438,11 +458,11 @@ def fix_message(reply, files, conv=None):
 def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     base = cfg.get("review_base")
     allowed = set(fc_core.sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
-    rejected = []
+    rejected, tests = [], None  # the first round runs the full checks; a fix round only the tests of what its fix changed
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
             fc_worktree.ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
-        ok, report, findings = run_stages(repo, proj, cfg, a)
+        ok, report, findings = run_stages(repo, proj, cfg, a, tests)
         rounds.append(report)
         if ok or rnd == a.fix:
             break
@@ -469,7 +489,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                   + (f"DESIGN CONTEXT (authoritative; never contradict it): {cfg['review_context']} " if cfg.get("review_context") else "") +
                   "Fix the app for a real user, never for the test harness: do not add labels, text, attributes, or "
                   "shortcuts aimed at the test bot or the e2e script; if a finding is the harness's fault, change nothing. "
-                  "Do not run tests or checks: verify runs every stage again after your turn. Do not explain, just edit; your whole reply is one line, "
+                  "Do not run tests or checks: after your turn verify runs the tests of what you changed, and every check once the rest passes. Do not explain, just edit; your whole reply is one line, "
                   "a plain description of the change you made (like 'Save submissions in one transaction'), never about this process.\n\nFINDINGS:\n" + findings[:30000])
         try:
             _, reply, tools, usage = fc_implement.implementer(repo, model, prompt)
@@ -519,8 +539,12 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if changed else 'no'}  ${usage['cost']:.4f}")
         if changed:
             fc_core.sh(["git", "add", "-A"], repo)
-            fc_core.sh(["git", "commit", "-qm", fix_message(reply, fc_core.sh(["git", "diff", "--cached", "--name-only"], repo).stdout.split(), fc_core.commit_convention(proj))], repo, check=False)
+            fixed = fc_core.sh(["git", "diff", "--cached", "--name-only"], repo).stdout.splitlines()
+            fc_core.sh(["git", "commit", "-qm", fix_message(reply, fixed, fc_core.commit_convention(proj))], repo, check=False)
             fc_core.say("fix    committed on " + (fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
+            tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
+            if tests is None:
+                fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
         else:
             break
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}

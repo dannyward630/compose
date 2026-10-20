@@ -52,7 +52,7 @@ MODULES = {
     "fc_libapi": ("INSPECT", "python_api", "js_api", "section"),
     "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "trail_pack", "branch_budget", "task_base", "PRETTIER_EXT", "prettier_opted_in", "format_files", "READER_TIMEOUT", "read_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
     "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "SETUP_DEADLINE", "await_setup", "driver_e2e", "jev_e2e"),
-    "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "well_formed", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "run_stages", "verify_root", "cmd_verify", "fix_strays", "fix_message", "verify_rounds"),
+    "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "well_formed", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "fix_tests", "run_stages", "verify_root", "cmd_verify", "fix_strays", "fix_message", "verify_rounds"),
     "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "RUN_PARALLEL", "cmd_run", "preflight", "run_tasks", "reflect_task", "cmd_resume"),
     "fc_status": ("project_head", "branch_facts", "task_state", "_git_dirs", "git_dirs", "board_stamp", "_board", "board", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
     "fc_spec": ("file_clashes", "cmd_tasks", "run_waves", "spec_check", "cmd_spec_check", "MAX_TASK_FILES", "MAX_TASK_BRIEF", "too_big"),
