@@ -228,3 +228,54 @@ class DeleteLine(unittest.TestCase):
         self.assertTrue(has(got["ENG-4"][2], "owns 3 files"), got["ENG-4"])
         meta = fc.fc_tasks.task_from_issue(task("ENG-3", "001", files="", delete=many))
         self.assertEqual((len(meta["delete"]), fc.fc_spec.too_big(meta)), (6, None))
+
+
+def story(ident, n, status="Todo", sub=""):
+    crit = "\n".join(f"* c{i}{sub}" for i in range(n))
+    return {"id": ident, "title": "All the screens, every flow", "description": f"## Acceptance criteria\n\n{crit}", "status": status, "blockedBy": []}
+
+
+class StoryTooBig(unittest.TestCase):
+    """Task 001 (NEB-1266): a story with more than 5 criteria fails spec-check and is warned about in `compose tasks`."""
+
+    def issues(self, *stories):  # each story gets a child task, so "no task" is never one of its gaps
+        return [x for n, s in enumerate(stories) for x in (s, {**task(f"T-{n}", f"{n:03}"), "parentId": s["id"]})]
+
+    def test_spec_check_fails_a_story_over_five_criteria_naming_its_count(self):
+        gap = lambda n: f"too big: {n} criteria under `## Acceptance criteria` (max 5)"
+        issues = self.issues(story("ENG-20", 7), story("ENG-24", 6), story("ENG-22", 5), story("ENG-23", 5, sub="\n  * part\n  * more"),
+                             story("ENG-26", 9, "Canceled"))
+        issues.append(task("ENG-27", "009", crit="\n".join(f"- c{i}" for i in range(7))))
+        got = check(issues)
+        self.assertEqual(got["ENG-20"], (False, "story", [gap(7)]))
+        self.assertEqual(got["ENG-24"], (False, "story", [gap(6)]))
+        for i in ("ENG-22", "ENG-23"):
+            self.assertEqual(got[i], (True, "story", []))
+        self.assertNotIn("ENG-26", got)
+        self.assertFalse(has(got["ENG-27"][2], "criteria under", "too big"), got["ENG-27"])
+        lines, e = SpecCheck.run_cli(self, json.dumps(data(issues)))
+        self.assertEqual(e.code, 1)
+        self.assertIn(f"FAIL ENG-20 story: {gap(7)}", lines)
+
+    def tasks_out(self, issues):
+        repo = Path(tempfile.mkdtemp())
+        for a in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
+            subprocess.run(["git", *a], cwd=repo, check=True)
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.fc_tasks.sync_tasks(proj, data(issues))
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+            fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+        return out.getvalue()
+
+    def test_tasks_warns_each_story_over_five_in_cache_order_and_skips_canceled_and_tasks(self):
+        many = "\n".join(f"- c{i}" for i in range(7))
+        out = self.tasks_out(self.issues(story("ENG-30", 8), story("ENG-22", 5), story("ENG-26", 9, "Canceled"), story("ENG-20", 6))
+                            + [task("ENG-27", "009", crit=many)])
+        self.assertIn("\n\n  WARNING STORY TOO BIG: split it into thinner stories before cutting its tasks:\n"
+                      "    ENG-30: 8 criteria (max 5)\n    ENG-20: 6 criteria (max 5)\n", out)
+        self.assertNotIn("ENG-26:", out)
+        self.assertNotIn("ENG-27:", out)
+        self.assertNotIn("STORY TOO BIG", self.tasks_out(self.issues(story("ENG-22", 5), story("ENG-26", 9, "Canceled"))))

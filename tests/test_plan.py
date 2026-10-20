@@ -1,0 +1,183 @@
+import hermetic  # first: no test sees the real home
+import importlib.machinery, importlib.util, io, json, os, sys, tempfile, unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+os.environ["HERDR_ENV"] = ""
+
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
+fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
+_spec.loader.exec_module(fc)
+import fc_plan  # noqa: E402  # compose.py puts bin on sys.path; nothing imports fc_plan before 007
+
+
+def story(ident, state="Todo", *blockers, labels=()):
+    return {"id": ident, "title": "T " + ident, "url": "u/" + ident, "state": state, "labels": list(labels),
+            "blockers": [{"id": b[0], "state": b[1], "labels": list(b[2]) if len(b) > 2 else []} for b in blockers]}
+
+def lane(ident, *stories):
+    return {"id": ident, "title": "L " + ident, "url": "u/" + ident, "stories": list(stories)}
+
+
+class StartToday(unittest.TestCase):
+    LINK = "* Delivery plan: [NEB-1: delivery plan](https://linear.app/x/document/d1)"
+
+    def test_skeleton_holds_the_seven_sections_in_order_each_with_the_next_line(self):
+        self.assertEqual(fc_plan.plan_skeleton(), "\n\n".join(f"{h}\n\n{fc_plan.PLAN_NEXT}" for h in fc_plan.PLAN_SECTIONS) + "\n")
+
+    def link(self, description):
+        return fc_plan.with_plan_link(description, "NEB-1: delivery plan", "https://linear.app/x/document/d1")
+
+    def test_link_goes_last_in_notes_before_the_next_section(self):
+        lines = self.link("## Goal\n\nShip it.\n\n## Notes\n\n* old note\n\n## Constraints\n\n* none\n").splitlines()
+        self.assertEqual(lines.count(self.LINK), 1)
+        i = lines.index(self.LINK)
+        self.assertLess(lines.index("* old note"), i)
+        self.assertEqual([l for l in lines[i + 1:] if l.strip()], ["## Constraints", "* none"])
+        self.assertEqual([l for l in lines[:i] if l.strip()], ["## Goal", "Ship it.", "## Notes", "* old note"])
+
+    def test_link_ends_a_last_notes_section_or_adds_one_and_is_never_added_twice(self):
+        lines = self.link("## Goal\n\nShip it.\n\n## Notes\n\n* old note\n").splitlines()
+        self.assertEqual([l for l in lines if l.strip()], ["## Goal", "Ship it.", "## Notes", "* old note", self.LINK])
+        lines = self.link("## Goal\n\nShip it.\n").splitlines()
+        self.assertEqual([l for l in lines if l.strip()], ["## Goal", "Ship it.", "## Notes", self.LINK])
+        linked = "## Notes\n\n" + self.LINK + "\n"
+        self.assertEqual(self.link(linked), linked)
+        self.assertEqual(self.link(self.link("## Goal\n\nShip it.\n")).splitlines().count(self.LINK), 1)
+
+    def test_start_today_lists_todo_or_backlog_stories_whose_blockers_are_finished(self):
+        lanes = [lane("NEB-1", story("NEB-3"), story("NEB-4", "Todo", ("NEB-3", "Todo")), story("NEB-5", "Todo", ("NEB-9", "In Review", ["Design"])),
+                      story("NEB-6", "In Progress"), story("NEB-7", "Done"), story("NEB-8", "Todo", ("NEB-20", "In Review"))),
+                 lane("NEB-2", story("NEB-12", "backlog", ("NEB-21", "Done"), ("NEB-22", "Canceled")), story("NEB-13", "Backlog", ("NEB-21", "Done"), ("NEB-23", "In Progress")))]
+        self.assertEqual(fc_plan.start_today(lanes).splitlines(), ["1. [NEB-3](u/NEB-3) T NEB-3", "2. [NEB-5](u/NEB-5) T NEB-5", "3. [NEB-12](u/NEB-12) T NEB-12"])
+        self.assertEqual(fc_plan.plan_sections(lanes)["## Start today"], fc_plan.start_today(lanes))
+
+    def test_nothing_to_start(self):
+        for lanes in ([], [lane("NEB-1")], [lane("NEB-1", story("NEB-3", "Done"), story("NEB-4", "Todo", ("NEB-3", "In Review")))]):
+            self.assertEqual(fc_plan.start_today(lanes).strip(), "Nothing can start now.")
+            self.assertEqual(fc_plan.plan_sections(lanes)["## Start today"], fc_plan.start_today(lanes))
+
+
+class PlanLanes(unittest.TestCase):
+    def lines(self, lanes):
+        return fc_plan.lanes_text(lanes).strip("\n").split("\n")
+
+    def test_lanes_in_order_with_stories_in_build_order_and_needs_lines(self):
+        lanes = [lane("NEB-1", story("NEB-12", "Todo", ("NEB-5", "Todo")), story("NEB-10"), story("NEB-7", "canceled"),
+                      story("NEB-5", "In Progress", ("NEB-31", "Todo"), ("NEB-99", "Todo"), ("NEB-30", "Done")), story("NEB-9", "Todo", ("NEB-10", "Todo"))),
+                 lane("NEB-2", story("NEB-31", "Todo", ("NEB-30", "Done")), story("NEB-30", "Done")),
+                 lane("NEB-3")]
+        self.assertEqual(self.lines(lanes), [
+            "### [NEB-1](u/NEB-1) L NEB-1", "",
+            "1. [NEB-5](u/NEB-5) T NEB-5 (In Progress)", "   Needs: NEB-31, NEB-30",
+            "2. [NEB-10](u/NEB-10) T NEB-10 (Todo)", "3. [NEB-9](u/NEB-9) T NEB-9 (Todo)", "4. [NEB-12](u/NEB-12) T NEB-12 (Todo)", "",
+            "### [NEB-2](u/NEB-2) L NEB-2", "",
+            "1. [NEB-30](u/NEB-30) T NEB-30 (Done)", "2. [NEB-31](u/NEB-31) T NEB-31 (Todo)", "",
+            "### [NEB-3](u/NEB-3) L NEB-3", "", "No stories yet."])
+        self.assertEqual(list(fc_plan.plan_sections(lanes))[:2], ["## Start today", "## Lanes"])
+        self.assertEqual(fc_plan.plan_sections(lanes)["## Lanes"], fc_plan.lanes_text(lanes))
+
+    def test_stories_caught_in_a_cycle_follow_by_issue_number(self):
+        lanes = [lane("NEB-4", story("NEB-41", "Todo", ("NEB-40", "Todo")), story("NEB-40", "Todo", ("NEB-41", "Todo")),
+                      story("NEB-43", "Todo", ("NEB-45", "Todo")), story("NEB-45", "Backlog"), story("NEB-44", "CANCELED"))]
+        self.assertEqual(self.lines(lanes), [
+            "### [NEB-4](u/NEB-4) L NEB-4", "",
+            "1. [NEB-45](u/NEB-45) T NEB-45 (Backlog)", "2. [NEB-43](u/NEB-43) T NEB-43 (Todo)",
+            "3. [NEB-40](u/NEB-40) T NEB-40 (Todo)", "4. [NEB-41](u/NEB-41) T NEB-41 (Todo)"])
+
+
+class PlanWaves(unittest.TestCase):
+    LANES = [lane("NEB-1", story("NEB-10"), story("NEB-12", "Done"), story("NEB-11", "In Progress", ("NEB-12", "Done"), ("NEB-99", "Todo")),
+                  story("NEB-14", "Todo", ("NEB-21", "Todo")), story("NEB-13", "Todo", ("NEB-10", "Todo"), ("NEB-14", "Todo"))),
+             lane("NEB-2", story("NEB-21", "Todo", ("NEB-10", "Todo")), story("NEB-22", "In Review", labels=["Design"]),
+                  story("NEB-9", "Todo", ("NEB-22", "In Review", ["Design"])), story("NEB-25", "Canceled", ("NEB-10", "Todo")),
+                  story("NEB-30", "Todo", ("NEB-31", "Todo")), story("NEB-31", "Todo", ("NEB-30", "Todo")))]
+
+    def test_waves_group_unfinished_stories_across_lanes_by_issue_number_leaving_out_a_cycle(self):
+        self.assertEqual(fc_plan.waves_text(self.LANES).strip().splitlines(), [
+            "| Wave | Stories | Count |", "| -- | -- | -- |", "| 1 | NEB-9, NEB-10, NEB-11 | 3 |", "| 2 | NEB-21 | 1 |", "| 3 | NEB-14 | 1 |", "| 4 | NEB-13 | 1 |"])
+
+    def test_nothing_left_to_schedule(self):
+        for lanes in ([], [lane("NEB-1")], [lane("NEB-1", story("NEB-3", "Done"), story("NEB-4", "canceled", ("NEB-3", "Done"))),
+                                            lane("NEB-2", story("NEB-5", "In Review", ("NEB-6", "Todo"), labels=["Design"]))]):
+            self.assertEqual(fc_plan.waves_text(lanes).strip(), "Nothing left to schedule.")
+
+    def test_plan_sections_hold_waves_after_lanes(self):
+        sections = fc_plan.plan_sections(self.LANES)
+        self.assertEqual(list(sections)[:3], ["## Start today", "## Lanes", "## Waves"])
+        self.assertEqual(sections["## Waves"], fc_plan.waves_text(self.LANES))
+
+
+class CriticalPath(unittest.TestCase):
+    def lines(self, lanes):
+        return fc_plan.critical_path_text(lanes).strip("\n").split("\n")
+
+    def test_longest_chain_runs_across_lanes_first_blocker_first(self):
+        lanes = [lane("NEB-90", story("NEB-2"), story("NEB-3", "Todo", ("NEB-2", "Todo")), story("NEB-5", "In Progress", ("NEB-4", "Todo")),
+                      story("NEB-7", "Todo", ("NEB-6", "Todo"), ("NEB-2", "Todo"))),
+                 lane("NEB-91", story("NEB-6", "Todo", ("NEB-5", "In Progress")), story("NEB-4"))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-4 -> NEB-5 -> NEB-6 -> NEB-7 (4 stories)"])
+        sections = fc_plan.plan_sections(lanes)
+        self.assertEqual(sections["## Critical path"], fc_plan.critical_path_text(lanes))
+        keys = list(sections)
+        self.assertEqual(keys.index("## Critical path"), keys.index("## Waves") + 1)
+
+    def test_every_chain_tied_for_longest_is_listed_by_issue_number(self):
+        lanes = [lane("NEB-90", story("NEB-13"), story("NEB-21", "Todo", ("NEB-20", "Todo")), story("NEB-20", "Todo", ("NEB-9", "Todo"), ("NEB-13", "Todo")),
+                      story("NEB-5"), story("NEB-6", "Todo", ("NEB-5", "Todo"))),
+                 lane("NEB-91", story("NEB-12", "Todo", ("NEB-11", "Todo")), story("NEB-11", "Todo", ("NEB-10", "Todo")), story("NEB-10"), story("NEB-9"))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-9 -> NEB-20 -> NEB-21 (3 stories)", "2. NEB-10 -> NEB-11 -> NEB-12 (3 stories)",
+                                             "3. NEB-13 -> NEB-20 -> NEB-21 (3 stories)"])
+
+    def test_finished_stories_and_blockers_outside_the_map_add_no_step(self):
+        lanes = [lane("NEB-90", story("NEB-3", "Done"), story("NEB-4", "Todo", ("NEB-3", "Done"), ("NEB-50", "Todo")),
+                      story("NEB-5", "Todo", ("NEB-4", "Todo")), story("NEB-6", "Canceled", ("NEB-5", "Todo"))),
+                 lane("NEB-91", story("NEB-7", "In Review", ("NEB-6", "Canceled"), labels=["Design"]),
+                      story("NEB-8", "Todo", ("NEB-7", "In Review", ["Design"])), story("NEB-9", "In Review", ("NEB-5", "Todo")))]
+        self.assertEqual(self.lines(lanes), ["1. NEB-4 -> NEB-5 -> NEB-9 (3 stories)"])
+
+    def test_no_links_or_nothing_unfinished(self):
+        no_links = [lane("NEB-90", story("NEB-2", "Done"), story("NEB-3", "Todo", ("NEB-2", "Done"))), lane("NEB-91", story("NEB-4", "Todo", ("NEB-50", "Todo")))]
+        self.assertEqual(fc_plan.critical_path_text(no_links).strip(), "No blocked-by chains.")
+        for lanes in ([], [lane("NEB-90")], [lane("NEB-90", story("NEB-3", "Done"), story("NEB-4", "Canceled", ("NEB-3", "Done")))]):
+            self.assertEqual(fc_plan.critical_path_text(lanes).strip(), "Nothing left to schedule.")
+            self.assertEqual(fc_plan.plan_sections(lanes)["## Critical path"], fc_plan.critical_path_text(lanes))
+
+
+class PlanLinkPlacement(unittest.TestCase):
+    URL = "https://linear.app/x/document/d1"
+    LINK = "* Delivery plan: [NEB-1: delivery plan](https://linear.app/x/document/d1)"
+
+    def link(self, description):
+        return fc_plan.with_plan_link(description, "NEB-1: delivery plan", self.URL)
+
+    def test_link_follows_notes_own_lines_before_its_first_subsection(self):
+        desc = ("## Goal\n\n### Detail\n\nShip it.\n\n## Notes\n\n* old note\n* second\n\n"
+                "### Risks\n\n* slow\n\n### Later\n\n* more\n\n## Constraints\n\n* none\n")
+        out = self.link(desc)
+        self.assertTrue(out.startswith(desc[:desc.index("\n\n### Risks")] + "\n" + self.LINK + "\n"))
+        self.assertTrue(out.endswith(desc[desc.index("### Risks"):]))
+        self.assertEqual([l for l in out.splitlines() if l.strip()], [
+            "## Goal", "### Detail", "Ship it.", "## Notes", "* old note", "* second", self.LINK, "### Risks", "* slow", "### Later", "* more", "## Constraints", "* none"])
+
+    def test_link_follows_the_last_own_line_of_notes_without_subsections(self):
+        desc = "## Notes\n\n* a\n\nSome text.\n\n\n## Constraints\n\n### Hard\n\n* none\n"
+        out = self.link(desc)
+        self.assertTrue(out.startswith("## Notes\n\n* a\n\nSome text.\n" + self.LINK + "\n"))
+        self.assertTrue(out.endswith(desc[desc.index("## Constraints"):]))
+        self.assertEqual(out.splitlines().count(self.LINK), 1)
+        out = self.link("## Goal\n\nShip it.\n\n## Notes\n\n* a\n\n\n")
+        self.assertTrue(out.startswith("## Goal\n\nShip it.\n\n## Notes\n\n* a\n" + self.LINK))
+        self.assertEqual([l for l in out.splitlines() if l.strip()][-2:], ["* a", self.LINK])
+
+    def test_notes_with_only_subsections_get_the_link_first_between_blank_lines(self):
+        desc = "## Goal\n\nShip it.\n\n## Notes\n\n### Risks\n\n* slow\n\n## Constraints\n\n* none\n"
+        self.assertEqual(self.link(desc), desc.replace("## Notes\n\n", "## Notes\n\n" + self.LINK + "\n\n"))
+        self.assertEqual(self.link("## Notes\n### Risks\n* slow\n"), "## Notes\n\n" + self.LINK + "\n\n### Risks\n* slow\n")
+
+    def test_present_url_leaves_it_unchanged_and_no_notes_adds_a_notes_section(self):
+        for desc in ("## Notes\n\n### Links\n\n* plan " + self.URL + "\n", "## Goal\n\nSee " + self.URL + "\n"):
+            self.assertEqual(self.link(desc), desc)
+        out = self.link("## Goal\n\n### Detail\n\nShip it.\n")
+        self.assertEqual([l for l in out.splitlines() if l.strip()], ["## Goal", "### Detail", "Ship it.", "## Notes", self.LINK])

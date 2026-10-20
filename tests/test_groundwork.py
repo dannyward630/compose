@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, re, subprocess, sys, tempfile, threading, time, unittest
+import importlib.machinery, importlib.util, io, json, os, re, string, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -509,6 +509,88 @@ class PlannerRules(unittest.TestCase):
             at = i
         self.assertIn("id, files, protected, test", self.brief)
         self.assertRegex(self.brief, r"(?s)`after`.{0,80}`title`.{0,80}not .{0,20}key|`title`.{0,80}`after`.{0,80}not .{0,20}key")
+
+
+class LeanPlannerBrief(unittest.TestCase):
+    """The planner's "Stories missing" step proposes the thinnest stories, with split cues and a probe when none fits."""
+    setUp = PlannerRules.setUp
+
+    def step(self):
+        flat = " ".join(self.brief.split())
+        start, end = flat.find("Stories missing"), flat.find("Then check and cut each story")
+        self.assertGreater(start, -1)
+        self.assertGreater(end, start)
+        return flat[start:end]
+
+    def test_the_stories_missing_step_states_the_lean_story_rule(self):
+        step = self.step()
+        for phrase in ("A story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria.",
+                       'Split cues: "all", "every", several When/Then pairs, several outside systems.',
+                       "When no split fits, a time-boxed probe answers the unknown first, then the split.",
+                       "in ship order"):
+            self.assertIn(phrase, step)
+        self.assertNotIn("one per user-visible slice", self.brief)
+
+    def test_the_step_keeps_its_anchors_in_order(self):
+        flat = " ".join(self.brief.split())
+        at = -1
+        for kw in ("Stories missing", "draft the proposal on the map", "in ship order", "with a card id per story",
+                   '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`', "Then check and cut each story"):
+            i = flat.find(kw, at + 1)
+            self.assertGreater(i, at, f"{kw} missing or out of order")
+            at = i
+
+    def test_the_step_keeps_the_wrapped_line_style(self):
+        lines = self.brief.splitlines()
+        first = next(n for n, l in enumerate(lines) if "Stories missing" in l)
+        last = next(n for n, l in enumerate(lines) if "Then check and cut each story" in l)
+        for line in lines[first:last + 1]:
+            self.assertRegex(line, r"^ {5}\S")
+            self.assertLessEqual(len(line), 130)
+        for line in lines[first:last]:  # no orphan wrap: only the step's last line may be short
+            self.assertGreaterEqual(len(line), 100, line)
+
+    def test_the_template_keeps_its_placeholders_and_house_text(self):
+        import string
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
+        for banned in ("—", "Product-Manager-Skills", "deanpeters"):
+            self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
+            self.assertNotIn(banned, self.brief)
+
+
+class PlanJudgmentBrief(unittest.TestCase):
+    """Step 5 of the planner brief tells the planner to write the delivery plan's judgment sections at each cut."""
+    PHRASES = (
+        'find the map\'s "<map id>: delivery plan" in `compose linear doc list`',
+        "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut"
+        ' with `compose linear doc update <id> --section "<heading>" --file <path>`',
+        "priority is the ranked list under Priority when something has to give; Linear's priority field stays unused",
+        "the CLI rewrites the data sections (Start today, Lanes, Waves, Critical path); never edit them",
+    )
+    setUp = PlannerRules.setUp
+
+    def step5(self):
+        start = self.brief.index("5. After cutting")
+        return self.brief[start:self.brief.index("6. Design stories", start)]
+
+    def test_step_5_holds_each_phrase_and_keeps_its_old_steps(self):
+        flat = " ".join(self.step5().split())
+        for p in self.PHRASES + ("compose spec-check --project p", "compose change done"):
+            self.assertIn(p, flat)
+
+    def test_every_line_wraps_at_125_with_a_three_space_indent(self):
+        lines = self.step5().rstrip("\n").split("\n")
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertLessEqual(len(line), 125, line)
+        for line in lines[1:]:
+            self.assertRegex(line, r"^ {3}\S")
+
+    def test_brief_keeps_its_placeholders_and_has_no_em_dash(self):
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
+        self.assertNotIn("\u2014", self.brief)
 
 
 class DesignerBrief(unittest.TestCase):

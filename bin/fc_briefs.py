@@ -109,10 +109,11 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      numbered steps, each with the files it touches, the test that proves it, and its dependencies; decisions already made are
-     not reopened. Stories missing: draft the proposal on the map (one per user-visible slice, acceptance criteria in each, in
-     ship order) with a card id per story, then name them in one
-     `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line and create them in Linear with
-     `compose linear create` only on the product owner's go. Then check and cut each story.
+     not reopened. Stories missing: draft the proposal on the map, in ship order, with a card id per story. A story is the
+     thinnest slice that works end to end and unblocks the next story, with at most 5 criteria. Split cues: "all", "every",
+     several When/Then pairs, several outside systems. When no split fits, a time-boxed probe answers the unknown first,
+     then the split. Name the stories in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line, and
+     create them in Linear with `compose linear create` only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only; other stories' tasks are not touched.
    - Task: lint it against the format and the cutting rules below; re-split it if it fails.
    - A loose idea is not the planner's: say so and point at the compose skill's step 0.
@@ -174,11 +175,17 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` is the issue's own title.
 
-5. After cutting: `compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says, then `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
+5. After cutting: `compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says, then
+   `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
    A first cut and a re-cut are one diff: read the story's live task issues, compare them to the story and the map, then
    cancel, edit, add; ids stay monotonic, and a canceled task loses its `compose` block.
    Once a task of the feature was dispatched, the edits go inside `compose change start --why "<one line>"` (sync first)
    and `compose change done` (sync first). Before the first dispatch, no change.
+   Each cut's judgment lands on the delivery plan: find the map's "<map id>: delivery plan" in `compose linear doc list`,
+   then write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each
+   cut with `compose linear doc update <id> --section "<heading>" --file <path>`. In it, priority is the ranked list under
+   Priority when something has to give; Linear's priority field stays unused. After `compose sync` the CLI rewrites the
+   data sections (Start today, Lanes, Waves, Critical path); never edit them.
 
 6. Design stories (label Design) go to the designer role, not cut by you: report the hand-off in one line. Code stories do not
    wait: cut them now, and note on the feature the design stories still open.
