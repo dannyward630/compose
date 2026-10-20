@@ -281,6 +281,20 @@ def exclude_paths(wt, rules):
         exclude.write_text("".join(l + "\n" for l in have + add))
 
 TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # trail moves a repo's graph from graft/ to .trail/cache/
+WIRING = (".claude/settings.json", ".claude/settings.local.json")  # the agent wiring trail's and graft's session hooks rewrite
+
+def dirty_paths(repo):
+    """The paths `git status` shows changed or untracked in a checkout, without the agent wiring (WIRING): a graph tool's
+    session hook rewrites a tracked .claude/settings.json whenever a session starts there, and info/exclude cannot hide a
+    tracked file. That rewrite is no change of the user's, and no clone needs it."""
+    fields, paths = fc_core.sh(["git", "status", "--porcelain", "-z"], repo).stdout.split("\0"), []
+    while fields:
+        entry = fields.pop(0)
+        if entry:
+            paths.append(entry[3:])
+            if entry[0] in "RC":  # a rename or copy: its source path is the next field
+                fields.pop(0)
+    return [p for p in paths if p not in WIRING]
 
 def graph_dir(root):
     """The folder holding the repo's trail graph: .trail/cache/, else an old `graft/` graph.
@@ -328,7 +342,7 @@ def ready_checkout(repo, wt, borrow=True, install=None):
     borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
     commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
     deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.trail/", "/.claude/settings.json", "/.claude/settings.local.json", "/.ignore", *("/" + d for d in deps)])
+    exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in WIRING), "/.ignore", *("/" + d for d in deps)])
     stamp_trail_wiring(wt)
     if install and borrow:
         stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())

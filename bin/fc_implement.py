@@ -521,7 +521,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     # Isolation guard: an implementer must never touch the main checkout. If it did (seen with opencode despite --dir),
     # revert those files and record it; the task's own result lives in its worktree branch.
     # Only this task's own files are reverted: the team lead may be editing other files in the main checkout meanwhile.
-    dirty = [l.split()[-1] for l in fc_core.sh(["git", "status", "--porcelain"], repo, check=False).stdout.splitlines()]
+    dirty = fc_worktree.dirty_paths(repo)
     mine = [f for f in dirty if f in meta["files"] or f in meta["protected"]]
     others = [f for f in dirty if f not in mine]
     if mine:
