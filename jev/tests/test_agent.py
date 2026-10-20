@@ -162,6 +162,7 @@ def runner():
     a = loop.Agent.__new__(loop.Agent)
     a.screenshots = False
     a.pending_text = None
+    a.secrets = {}
     p = page()
     a.state = {
         "browser": Mock(fresh=Mock(return_value=True), observe=Mock(return_value=p)),
@@ -171,6 +172,8 @@ def runner():
         "history": [],
         "decisions": [],
         "status": "predicted",
+        "stop_reason": None,
+        "skipped": [],
         "started_at": time.perf_counter(),
         "record": False,
         "text_calls": [],
@@ -483,3 +486,76 @@ def test_alternating_scrolls_stop_with_a_reason_before_the_budget(runner):
     assert runner.state["status"] == "blocked"
     assert "cycled between the same page states" in runner.state["stop_reason"]
     assert len(runner.state["history"]) == model.CYCLE_STOP
+
+
+def login_page(password="", email=""):
+    """A login form as snapshot.js reports it: the password's value is only whether it is filled."""
+    state = {
+        "url": "https://example.test/login",
+        "title": "Log in",
+        "text": "Log in",
+        "scroll": {"y": 0},
+        "actions": [
+            {"id": "e1", "kind": "fill", "label": "Email", "role": "textbox", "value": email, "node": 10},
+            {"id": "e2", "kind": "click", "label": "Open Email", "role": "textbox", "value": email, "node": 10},
+            {"id": "e3", "kind": "fill", "label": "Password", "role": "textbox", "value": password, "node": 20, "secret": True},
+            {"id": "e4", "kind": "click", "label": "Open Password", "role": "textbox", "value": password, "node": 20,
+             "secret": True},
+            {"id": "e5", "kind": "click", "label": "Log in", "role": "button", "value": "", "node": 30},
+            {"id": "wait", "kind": "wait", "label": "Wait"},
+        ],
+    }
+    state["fingerprint"] = fingerprint(state)
+    return state
+
+
+def test_a_secret_field_is_typed_by_the_run_and_its_value_never_reaches_a_model(runner, monkeypatch):
+    # A login form's password was never an action, so every case that logged in through a form ended blocked.
+    runner.secrets = {loop.field_key("Password:"): "pw-Sekr3t!", loop.field_key("email"): "me@example.test"}
+    runner.state["browser"].observe.return_value = login_page()
+    runner.state["page"] = runner.observe()
+    helper = Mock()
+    monkeypatch.setattr(loop, "field_text", helper)
+    for target in ("e1", "e3"):
+        runner.state["decision"] = decision(target)
+        runner.state["browser"].observe.return_value = login_page(password="[filled]", email="me@example.test")
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    typed = [c.kwargs["text"] for c in runner.state["browser"].act.call_args_list]
+    assert typed == ["me@example.test", "pw-Sekr3t!"]
+    helper.assert_not_called()
+    assert [h["text"] for h in runner.state["history"]] == ["[secret]", "[secret]"]
+    body = sent_state(monkeypatch, runner.state["page"], runner.state["history"])
+    for value in ("pw-Sekr3t!", "me@example.test"):
+        assert value not in json.dumps(body) and value not in json.dumps(runner.snapshot()["history"])
+    secret = {e["label"]: e["value"] for e in body["state"]["elements"] if e.get("secret")}
+    assert secret == {"Email": "[filled]", "Password": "[filled]"}
+
+
+def test_a_password_field_no_secret_names_is_left_out_and_named_when_the_run_stops(runner):
+    runner.state["browser"].observe.return_value = login_page()
+    runner.state["page"] = runner.observe()
+    assert "Password" not in json.dumps(runner.state["page"]["actions"])
+    runner.state["decision"] = {**decision("BLOCKED"), "choice": "BLOCKED"}
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["status"] == "blocked"
+    assert runner.state["stop_reason"] == ("The model chose BLOCKED: no listed action could make progress; "
+                                           "skipped the password field 'Password': no secret names it")
+
+
+def test_the_action_budget_ends_the_run_blocked_with_its_reason_instead_of_raising(runner):
+    # It raised, so verify printed no result and skipped the case's assert.
+    runner.state["history"] = [{"step": i + 1, "kind": "click", "action": "Go", "page_changed": True} for i in range(60)]
+    runner.state["decision"] = decision("e3")
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert (runner.state["status"], runner.state["stop_reason"]) == ("blocked", "Stopped at the 60-action budget")
+    runner.state["browser"].act.assert_not_called()
+
+
+def test_the_model_call_budget_ends_the_run_blocked_before_another_call(runner, monkeypatch):
+    runner.state["status"], runner.state["decisions"] = "ready", [{}] * 120
+    choose = Mock()
+    monkeypatch.setattr(loop, "choose", choose)
+    snap = runner.command("tick")
+    assert (snap["status"], snap["stop_reason"]) == ("blocked", "Stopped at the 120-call model budget")
+    choose.assert_not_called()
+    runner.state["browser"].act.assert_not_called()

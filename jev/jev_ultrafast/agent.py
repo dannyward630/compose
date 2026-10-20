@@ -1,6 +1,7 @@
 """The complete agent loop. Typed choices, observable state, bounded execution."""
 
 import base64
+import re
 import time
 from pathlib import Path
 
@@ -9,23 +10,32 @@ from .model import CYCLE_STOP, action_space, choose, cycling, field_context, fie
 from .questions import MAX_STEPS
 
 
+def field_key(label):
+    """A field label as secrets are matched to it: case, spacing, and a required marker or colon at the ends ignored."""
+    return re.sub(r"\s+", " ", re.sub(r"^\W+|\W+$", "", label)).casefold()
+
+
 class Agent:
-    def __init__(self, url, goals, *, record_dir=None, screenshots=False):
+    def __init__(self, url, goals, *, record_dir=None, screenshots=False, secrets=None):
+        """`secrets` maps field labels to values the run types itself: a value never reaches a model or the history, and
+        a password never leaves the page. A password field no secret names is left out of the actions, as every
+        password field once was, and named in the stop reason."""
         task = goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
         if not task:
             raise ValueError("Supply a task")
         plan = [task]
         self.pending_text = None
+        self.secrets = {field_key(k): v for k, v in (secrets or {}).items()}
         self.browser = Browser(url)
         self.record_dir = Path(record_dir) if record_dir else None
         self.screenshots = screenshots or bool(record_dir)
+        self.state = {"browser": self.browser, "skipped": []}
         try:
-            page = self.browser.observe(screenshot=self.screenshots)
+            page = self.observe()
         except Exception:
             self.browser.close()
             raise
-        self.state = dict(
-            browser=self.browser,
+        self.state.update(
             goal="\n".join(plan),
             page=page,
             decision=None,
@@ -50,17 +60,43 @@ class Agent:
             "elements": action_space(self.state["page"]["actions"])[0],
         }
 
+    def observe(self):
+        """The page with its secret fields settled: a field a secret names is marked secret and shows only whether it is
+        filled; a password field none names loses its actions, and its label is kept for the stop reason."""
+        page = self.state["browser"].observe(screenshot=self.screenshots)
+        secret = {a["node"] for a in page["actions"] if a["kind"] == "fill" and field_key(a["label"]) in self.secrets}
+        dropped = {a["node"]: a["label"] for a in page["actions"]
+                   if a["kind"] == "fill" and a.get("secret") and a["node"] not in secret}
+        for label in dropped.values():
+            if label not in self.state["skipped"]:
+                self.state["skipped"].append(label)
+        page["actions"] = [a for a in page["actions"] if a.get("node") not in dropped]
+        for a in page["actions"]:
+            if a.get("node") in secret:
+                a.update(secret=True, value="[filled]" if a.get("value") else "")
+        return page
+
+    def stop(self, reason):
+        """End the run blocked, saying why, and which password fields it could not fill for want of a secret."""
+        skipped = self.state["skipped"]
+        if skipped:
+            reason += (f"; skipped the password field{'s' if len(skipped) > 1 else ''} "
+                       f"{', '.join(repr(s) for s in skipped)}: no secret names {'them' if len(skipped) > 1 else 'it'}")
+        self.state["status"], self.state["stop_reason"] = "blocked", reason
+
     def command(self, name, body=None):
         body = body or {}
         state = self.state
         if name == "tick":
             try:
                 self.command("predict", {})
+                if state["status"] == "blocked":  # the model-call budget is spent
+                    return self.snapshot()
                 return self.command("act", {"fingerprint": state["page"]["fingerprint"]})
             except StalePage:
                 state["decision"] = None
                 state["status"] = "ready"
-                state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                state["page"] = self.observe()
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
         elif name == "predict":
@@ -69,12 +105,13 @@ class Agent:
             if state["started_at"] is None:
                 state["started_at"] = time.perf_counter()
             if not state["browser"].fresh(state["page"]):
-                state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                state["page"] = self.observe()
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
                 raise ValueError("This run has stopped. Start a fresh demo.")
             if len(state["decisions"]) >= MAX_STEPS * 2:
-                raise ValueError("Reached the demo's model-call budget")
+                self.stop(f"Stopped at the {MAX_STEPS * 2}-call model budget")
+                return self.snapshot()
             state["decision"] = choose(state["page"], state["goal"], state["history"])
             state["decisions"].append(
                 {
@@ -95,17 +132,23 @@ class Agent:
                 if not state["browser"].fresh(page):
                     state["status"] = "ready"
                     raise StalePage("Page changed since the decision. Choose again.")
-                state["status"] = "done" if selected == "DONE" else "blocked"
+                if selected == "DONE":
+                    state["status"] = "done"
+                else:
+                    self.stop("The model chose BLOCKED: no listed action could make progress")
                 state["plan_index"] = int(selected == "DONE")
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
             action = next(a for a in page["actions"] if a["id"] == selected)
             if len(state["history"]) >= MAX_STEPS:
-                state["status"] = "blocked"
-                state["stop_reason"] = f"Stopped at the {MAX_STEPS}-action demo budget"
-                raise ValueError(state["stop_reason"])
+                self.stop(f"Stopped at the {MAX_STEPS}-action budget")
+                state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
+                return self.snapshot()
             text, helper = None, None
-            if action["kind"] == "fill":
+            secret = action["kind"] == "fill" and action.get("secret")
+            if secret:
+                text = self.secrets[field_key(action["label"])]  # typed as is: no model call, never in the history
+            elif action["kind"] == "fill":
                 if not state["browser"].fresh(page):
                     raise StalePage("Page changed before text generation. Choose again.")
                 context = field_context(state["goal"], action, page, state["history"])
@@ -129,7 +172,7 @@ class Agent:
                     "probability": decision["probabilities"][selected],
                     "confidence": decision["confidence"],
                     "latency_ms": decision["latency_ms"],
-                    "text": text,
+                    "text": "[secret]" if secret else text,
                     "text_helper": helper["model"] if helper else None,
                     "text_latency_ms": helper["latency_ms"] if helper else 0,
                     "operation": decision["operation"],
@@ -142,7 +185,7 @@ class Agent:
                     "elapsed_ms": state["elapsed_ms"],
                 }
             )
-            state["page"] = state["browser"].observe(screenshot=self.screenshots)
+            state["page"] = self.observe()
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             state["history"][-1].update(
                 page_changed=state["page"]["fingerprint"] != page["fingerprint"],
@@ -157,14 +200,11 @@ class Agent:
             repeated = state["history"][-3:]
             state["status"], state["stop_reason"] = "ready", None
             if len(repeated) == 3 and all(h["page_changed"] is False and h["kind"] != "wait" for h in repeated):
-                state["status"], state["stop_reason"] = "blocked", "The last 3 actions did not change the page"
+                self.stop("The last 3 actions did not change the page")
             elif cycling(state["history"], CYCLE_STOP):
                 # Alternating actions (scroll down, scroll up, ...) each change the page, so the check above misses
                 # them. The model was told after CYCLE_WARN; stop instead of spending the rest of the budget.
-                state["status"], state["stop_reason"] = (
-                    "blocked",
-                    f"The last {CYCLE_STOP} actions cycled between the same page states without progress",
-                )
+                self.stop(f"The last {CYCLE_STOP} actions cycled between the same page states without progress")
         else:
             raise ValueError("Unknown command")
         return self.snapshot()

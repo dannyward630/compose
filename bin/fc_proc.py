@@ -55,11 +55,13 @@ def kill_group(pid):
 
 
 def stop():
-    """Set STOP, kill every group in RUNNING, call every hook in HOOKS."""
+    """Set STOP, kill every group in RUNNING, call every hook in HOOKS. The hooks are taken first: a group killed lets the
+    thread that waited on it go on, and that thread may take its hook out on its way out, before its own cleanup ends."""
     STOP.set()
+    hooks = list(HOOKS.values())
     for pid in list(RUNNING):
         kill_group(pid)
-    for hook in list(HOOKS.values()):
+    for hook in hooks:
         hook()
 
 

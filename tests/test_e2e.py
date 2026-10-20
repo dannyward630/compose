@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, shutil, signal, subprocess, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -138,6 +138,200 @@ class E2eLifecycle(unittest.TestCase):
         ok, _, _ = self.stage({"e2e": [{"name": "a", "driver": "exit 1", "assert": f"touch {out}"}]})
         self.assertFalse(ok)
         self.assertFalse(out.exists())
+
+
+FAKE_AGENT = '''"""A stand-in for jev's Agent, steered by $FAKE_JEV, under the real `python -m jev_ultrafast`."""
+import json, os, pathlib
+
+class Agent:
+    def __init__(self, url, goals, record_dir=None, secrets=None, **_):
+        self.spec, self.url, self.record, self.history = json.loads(os.environ.get("FAKE_JEV") or "{}"), url, record_dir, []
+        self.status, self.reason = "ready", None
+        if self.spec.get("seen"):
+            pathlib.Path(self.spec["seen"]).write_text(json.dumps({"secrets": secrets, "bu": os.environ.get("BU_CDP_URL")}))
+        if record_dir:
+            pathlib.Path(record_dir).mkdir(parents=True, exist_ok=True)
+            (pathlib.Path(record_dir) / "000000.jpg").write_bytes(b"jpg")
+
+    def snapshot(self):
+        return {"status": self.status, "stop_reason": self.reason, "elapsed_ms": 40 * len(self.history), "history": list(self.history),
+                "page": {"url": self.spec.get("url", self.url)}, "decisions": [], "text_calls": []}
+
+    def run(self):
+        for i, status in enumerate(self.spec.get("statuses", ["done"])):
+            self.history.append({"step": i + 1, "kind": "click", "action": f"Next {i + 1}", "page_changed": status != "blocked"})
+            self.status, self.reason = status, self.spec.get("reason") if status == "blocked" else None
+            yield self.snapshot()
+        if self.spec.get("raise"):
+            raise ValueError(self.spec["raise"])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+'''
+
+
+class JevCases(unittest.TestCase):
+    """A jev (non-driver) case through the real runner, `python -m jev_ultrafast`, with a stand-in Agent: no browser, no model."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        jev = Path(tempfile.mkdtemp())
+        (jev / "jev_ultrafast").mkdir()
+        (jev / "jev_ultrafast" / "__init__.py").write_text(FAKE_AGENT)
+        shutil.copy(fc.fc_config.JEV_DIR / "jev_ultrafast" / "__main__.py", jev / "jev_ultrafast" / "__main__.py")
+        p = mock.patch.object(fc.fc_config, "JEV_DIR", jev); p.start(); self.addCleanup(p.stop)
+
+    def stage(self, case, results=None, **cfg):
+        report, findings, out = {"e2e": []}, [], io.StringIO()
+        case = {"name": "flow", "url": "http://127.0.0.1:$E2E_PORT/", "goal": "Log in", "assert": "true", **case}
+        cfg = {"e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, **cfg, "e2e": [case]}
+        with contextlib.redirect_stdout(out):
+            ok = fc.fc_verify.e2e_stage(self.dir, cfg, {}, report, findings, results)
+        return ok, report["e2e"][-1], findings, out.getvalue()
+
+    def test_a_jev_case_runs_its_own_setup_around_jev_and_its_assert(self):
+        setup = "echo $E2E_CLIENT_PORT > port; exec python3 -m http.server $E2E_CLIENT_PORT >/dev/null 2>&1"
+        ok, r, _, _ = self.stage({"setup": setup, "setup_wait": 0, "assert": "curl -sf -o /dev/null http://127.0.0.1:$E2E_CLIENT_PORT/"})
+        self.assertTrue(ok, r)
+        self.assertEqual(r["assert_exit"], 0)
+        time.sleep(0.3)
+        self.assertFalse(fc.fc_core.port_listening(int((self.dir / "port").read_text())))
+
+    def test_ports_expand_in_a_case_env_and_in_e2e_env(self):
+        seen = self.dir / "seen"
+        ok, r, _, _ = self.stage({"env": {"FAKE_JEV": json.dumps({"seen": str(seen)}), "OWN": "${E2E_PORT}"},
+                                  "assert": f"echo $APP $OWN > {self.dir}/env"},
+                                 e2e_env={"BU_CDP_URL": "http://127.0.0.1:$E2E_CLIENT_PORT", "APP": "http://127.0.0.1:$E2E_PORT/"})
+        self.assertTrue(ok, r)
+        app, own = (self.dir / "env").read_text().split()
+        self.assertEqual(app, f"http://127.0.0.1:{own}/")
+        self.assertRegex(json.loads(seen.read_text())["bu"], r"^http://127\.0\.0\.1:\d+$")
+
+    def test_a_jev_run_that_raises_ends_in_error_with_its_reason_and_the_assert_still_runs(self):
+        # At jev's 60-action budget it raised: no result was printed and the assert, which reset the user, never ran.
+        spec = {"statuses": ["ready", "ready"], "raise": "Stopped at the 60-action demo budget"}
+        ok, r, findings, out = self.stage({"env": {"FAKE_JEV": json.dumps(spec)}, "assert": f"touch {self.dir}/asserted"})
+        self.assertFalse(ok)
+        self.assertTrue((self.dir / "asserted").exists())
+        self.assertEqual((r["run"]["status"], r["run"]["steps"], r["assert_exit"]), ("error", 2, 0))
+        self.assertEqual(r["run"]["stop_reason"], "ValueError: Stopped at the 60-action demo budget")
+        self.assertTrue(r["tool_error"]); self.assertEqual(findings, [])
+        self.assertIn("status=error assert=0  stop: ValueError: Stopped at the 60-action demo budget", out)
+
+    def test_a_blocked_case_says_why_and_where_and_keeps_its_steps_and_screenshots(self):
+        url = "https://app.test/billing?" + "&".join(f"p{i}=v{i}" for i in range(40))
+        spec = {"statuses": ["ready"] * 4 + ["blocked"] * 3, "reason": "The last 3 actions did not change the page", "url": url}
+        results = self.dir / "results"
+        ok, r, _, out = self.stage({"env": {"FAKE_JEV": json.dumps(spec)}}, results=results)
+        self.assertFalse(ok)
+        self.assertIn("status=blocked assert=0  stop: The last 3 actions did not change the page", out)
+        self.assertIn(f"           at {url}\n", out)  # whole, where verify.log used to cut JEV_RESULT at 160 characters
+        self.assertIn("           step  7  click  Next 7  (page unchanged)\n", out)
+        self.assertNotIn("JEV_RESULT", out + r["stdout"])
+        self.assertEqual([h["label"] for h in r["run"]["history"]], [f"Next {i}" for i in range(1, 8)])
+        self.assertEqual(r["screenshots"], str(results / "e2e" / "01-flow"))
+        self.assertTrue((results / "e2e" / "01-flow" / "000000.jpg").exists())
+        ok, r, _, _ = self.stage({}, results=results)  # a pass keeps none, and the last run's are the only ones kept
+        self.assertTrue(ok, r)
+        self.assertNotIn("screenshots", r); self.assertFalse((results / "e2e" / "01-flow").exists())
+
+    def test_secrets_reach_jev_from_the_env_and_nowhere_else(self):
+        seen, password = self.dir / "seen", "pw-Sekr3t-0042"
+        timed = mock.patch.object(fc.fc_implement, "timed", wraps=fc.fc_implement.timed)
+        with timed as t:
+            ok, r, _, out = self.stage({"secrets": {"Password": "$E2E_PASSWORD"}, "env": {"FAKE_JEV": json.dumps({"seen": str(seen)})},
+                                        "assert": "echo logged in with $E2E_PASSWORD"},
+                                       e2e_env={"BU_CDP_URL": "http://127.0.0.1:1", "E2E_PASSWORD": password})
+        self.assertTrue(ok, r)
+        self.assertEqual(json.loads(seen.read_text())["secrets"], {"Password": password})
+        self.assertNotIn(password, t.call_args[0][0])  # never on a command line
+        self.assertNotIn(password, json.dumps(r) + out)
+        self.assertIn("logged in with <redacted>", r["stdout"])
+
+
+class UnattendedBrowser(unittest.TestCase):
+    """The stage's browser outlives neither a sleeping display nor a killed verify."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        chromium = Path(os.environ["HOME"]) / "chromium"
+        chromium.write_text(FAKE_CHROMIUM); chromium.chmod(0o755)
+        bin_ = self.dir / "bin"
+        bin_.mkdir()
+        (bin_ / "caffeinate").write_text(f"#!/bin/sh\necho $$ \"$@\" > {self.dir}/caffeinate\nexec sleep 30\n")
+        (bin_ / "caffeinate").chmod(0o755)
+        env = {"BP_CHROME": str(chromium), "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"}
+        p = mock.patch.dict(os.environ, env); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_E2E_HEADLESS")  # restored with the rest of the environment after the test
+
+    def browser(self, wait="", **cfg):
+        ua = self.dir / "ua"
+        report = {"e2e": []}
+        ok = fc.fc_verify.e2e_stage(self.dir, {**cfg, "e2e": [{"name": "b", "driver": f"{wait}curl -sf $BU_CDP_URL/json/version > {ua}"}]},
+                                    {}, report, [])
+        self.assertTrue(ok, report)
+        return json.loads(ua.read_text())["Browser"]
+
+    def test_the_browser_is_headless_unless_the_project_asks_to_watch_it(self):
+        # A headed Chromium stops painting once the display sleeps, and an unattended verify failed every case.
+        self.assertTrue(self.browser().startswith("HeadlessChrome"))
+        self.assertFalse((self.dir / "caffeinate").exists())
+        awake = f"for i in $(seq 100); do [ -s {self.dir}/caffeinate ] && break; sleep 0.05; done; "  # it runs while the case does
+        self.assertTrue(self.browser(awake, e2e_headed=True).startswith("Chrome/"))
+        pid, *args = (self.dir / "caffeinate").read_text().split()
+        self.assertEqual(args, ["-d", "-i", "-w", str(os.getpid())])  # the display stays awake while it is watched
+        time.sleep(0.3)
+        self.assertFalse(fc.fc_jev.alive(int(pid)))
+
+    def test_a_sigterm_ends_the_stages_browser_setup_and_driver(self):
+        repo = self.dir / "repo"
+        for args in (["init", "-q", "-b", "main", str(repo)], ["-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", *args], check=True)
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        setup = f"sleep 30 & echo $! > {self.dir}/setup.pid; wait"
+        driver = f"echo $BU_CDP_URL > {self.dir}/cdp; sleep 30 & echo $! > {self.dir}/driver.pid; wait"
+        (proj / "verify.json").write_text(json.dumps({"review": False, "jev_acceptance": False, "e2e_setup": setup, "e2e_setup_wait": 0,
+                                                      "e2e": [{"name": "slow", "driver": driver}]}))
+        compose = Path(__file__).resolve().parents[1] / "bin" / "compose"
+        p = subprocess.Popen([str(compose), "verify", "--repo", str(repo), "--project", "p", "--skip-review", "--fix", "0"],
+                             env={**os.environ, "COMPOSE_DETACHED": "1"}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        deadline = time.time() + 60
+        while not (self.dir / "driver.pid").exists() and time.time() < deadline and p.poll() is None:
+            time.sleep(0.1)
+        port = int((self.dir / "cdp").read_text().rsplit(":", 1)[1])
+        profiles = lambda: list(Path(tempfile.gettempdir()).glob(f"fc-e2e-browser-{p.pid}-*"))  # named after its verify
+        self.assertTrue(fc.fc_core.port_listening(port)); self.assertEqual(len(profiles()), 1)
+        p.send_signal(signal.SIGTERM)
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 128 + signal.SIGTERM, out)
+        time.sleep(0.5)
+        self.assertFalse(fc.fc_core.port_listening(port), out)
+        for name in ("setup.pid", "driver.pid"):
+            self.assertFalse(fc.fc_jev.alive(int((self.dir / name).read_text())), name)
+        self.assertEqual(profiles(), [])
+
+    def test_the_next_stage_ends_the_browser_of_a_verify_that_is_gone(self):
+        gone = subprocess.Popen(["true"]); gone.wait()  # a verify killed outright
+        browsers = {}
+        for owner in (gone.pid, os.getpid()):
+            profile, port = Path(tempfile.mkdtemp(prefix=f"fc-e2e-browser-{owner}-")), fc.fc_core.free_port()
+            b = subprocess.Popen([os.environ["BP_CHROME"], f"--user-data-dir={profile}", f"--remote-debugging-port={port}"], start_new_session=True)
+            self.addCleanup(lambda b=b: (b.kill(), b.wait()))
+            browsers[owner] = (profile, port)
+        deadline = time.time() + 10
+        while not all(fc.fc_core.port_listening(port) for _, port in browsers.values()) and time.time() < deadline:
+            time.sleep(0.1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            fc.fc_verify.e2e_stage(self.dir, {"e2e_browser": False, "e2e": [{"name": "d", "driver": "true"}]}, {}, {"e2e": []}, [])
+        self.assertIn(f"ended the browser of a verify that is gone: {browsers[gone.pid][0]}", out.getvalue())
+        time.sleep(0.3)
+        self.assertFalse(fc.fc_core.port_listening(browsers[gone.pid][1]))
+        self.assertFalse(browsers[gone.pid][0].exists())
+        self.assertTrue(fc.fc_core.port_listening(browsers[os.getpid()][1]))  # its verify still runs: this one is
+        self.assertTrue(browsers[os.getpid()][0].exists())
 
 
 class ToolErrors(unittest.TestCase):
@@ -334,6 +528,38 @@ class BeforePlanning(unittest.TestCase):
         for kw in ({"tasks": [self.TASK]}, {"tasks": []}, {"skip_review": True, "fix": 0}):
             code, _ = self.verify(**kw)
             self.assertEqual((code, self.vf.call_count), (0, 0), kw)
+
+
+class PathsAtStackTop(unittest.TestCase):
+    """verify at the stack top runs in a treehouse slot under the main checkout: absolute paths in verify.json move there once."""
+    def test_every_path_under_the_worktree_or_the_main_checkout_moves_to_the_slot_once(self):
+        base = Path(tempfile.mkdtemp()).resolve()
+        main, repo = base / "app", base / "app-worktrees" / "feature-x"  # the worktree's path starts with the main checkout's
+        main.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"],
+                     ["worktree", "add", "-q", "-b", "compose/p", str(repo)]):
+            subprocess.run(["git", *args], cwd=main, check=True)
+        root = main / ".treehouse" / "app-123" / "1" / "app"
+        proj = repo / ".compose" / "p"
+        proj.mkdir(parents=True)
+        e2e = f"{repo}/.compose/p/e2e"
+        cfg = {"checks": [f"{e2e}/refresh-verify-env.sh", f"bash {main}/scripts/lint.sh", "npm test", f"{base}/app2/tool --x"],
+               "e2e_setup": f"cd {main} && {e2e}/serve.sh $E2E_PORT &", "e2e_env": {"PROFILE": f"{repo}/.compose/p/profile"},
+               "e2e": [{"name": "login", "url": f"file://{repo}/index.html", "goal": "Log in", "setup": f"{e2e}/login.sh",
+                        "env": {"DATA": f"{main}/fixtures"}, "assert": f"python3 {e2e}/check.py --root={repo}"}]}
+        (proj / "verify.json").write_text(json.dumps(cfg))
+        seen = {}
+        a = SimpleNamespace(repo=str(repo), project="p", skip_e2e=False, skip_review=True, fix=0)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
+                mock.patch.object(fc.fc_verify, "verify_root", return_value=(root, "main", None)), \
+                mock.patch.object(fc.fc_verify, "verify_rounds", lambda r, p, c, *_: seen.update(c)):
+            fc.fc_verify.cmd_verify(a)
+        top = f"{root}/.compose/p/e2e"
+        self.assertEqual(seen["checks"], [f"{top}/refresh-verify-env.sh", f"bash {root}/scripts/lint.sh", "npm test", f"{base}/app2/tool --x"])
+        self.assertEqual(seen["e2e_setup"], f"cd {root} && {top}/serve.sh $E2E_PORT &")
+        self.assertEqual(seen["e2e_env"], {"PROFILE": f"{root}/.compose/p/profile"})
+        self.assertEqual(seen["e2e"], [{"name": "login", "url": f"file://{root}/index.html", "goal": "Log in", "setup": f"{top}/login.sh",
+                                        "env": {"DATA": f"{root}/fixtures"}, "assert": f"python3 {top}/check.py --root={root}"}])
 
 
 T = 1_760_000_000  # fixed mtimes: the other record is 3 hours off, so its HH:MM never matches
