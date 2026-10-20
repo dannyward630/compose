@@ -25,6 +25,10 @@ herdr agent names stop at 32 characters, so a longer `<slug>-<role>` keeps its r
 Project `clean-recut-branches` has team lead `clean-recut-branche-orchestrator`, and `init` says so when it creates such a project.
 Use the name `compose crew list` shows in every `herdr agent` command; `watch --from` takes the role.
 
+The engineering manager is the session you started, so compose sets neither its model nor its compaction.
+It relays and supervises while planning goes to the wayfinder on the strongest model, so Sonnet serves it well.
+Cap its context with `modelSettings.<model>.autoCompactWindow` in `~/.claude/settings.json` (for example `200000`), as compose caps every teammate at 150k.
+
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
 The team lead's and the planner's tabs are both marked (`COMPOSE_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`compose guard`), except the CLI's JSON under `.compose/`.
@@ -117,6 +121,8 @@ The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the 
 A lock keeps one watch per watcher.
 A second hook exits at once, and a second `watch` waits its turn.
 The hook does nothing in any other session, and its watch ends with the session that parked it.
+Every Claude teammate compacts at 150k tokens, since every turn re-sends the whole session and a long one pays for its size on each of them.
+The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the session's `--settings` env, because that variable outranks the `--autocompact` flag and would let a value in your own settings win.
 After a context compaction, the plugin's SessionStart hook (`compose reenter`) points any teammate back at its own brief, `results/crew/<agent>.brief.md`.
 Every teammate's tab carries its name in `COMPOSE_TEAMMATE` for that, since `COMPOSE_ROLE` is `crew` for all but the team lead and the planner.
 

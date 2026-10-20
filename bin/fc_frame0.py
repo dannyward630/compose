@@ -56,21 +56,27 @@ def frame0_post(port, path, body, token=None, timeout=60):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        with e:  # an HTTPError holds the open response
+            return e.code, json.loads(e.read() or b"{}")
     except OSError as e:
         if isinstance(getattr(e, "reason", e), ConnectionRefusedError):
             raise RuntimeError(f"Frame0 is not listening on port {port}; `frame0 up` starts it") from e
         raise RuntimeError(f"Frame0 did not answer on port {port}: a dialog is probably open in its window (the Allow prompt for \"{FRAME0_CLIENT}\", "
                            "or Save Changes) and blocks the app until someone answers it") from e
 
-def frame0_command(port, command, args=None):
-    """Run one Frame0 command over its API, as the MCP server does."""
+def frame0_client(port):
+    """A function that runs Frame0 commands over its API, as the MCP server does, on one token asked for once."""
     def post(path, body, token=None):
         out = frame0_post(port, path, body, token)[1]
         if not out.get("success"):
             raise RuntimeError(f"frame0 {path}: {out.get('error', out)}")
         return out.get("data")
-    return post("/execute_command", {"command": command, "args": args or {}}, post("/request_api_token", {"appName": FRAME0_CLIENT}))
+    token = post("/request_api_token", {"appName": FRAME0_CLIENT})  # an unset argument is left out, as JSON.stringify drops undefined: the app refuses null
+    return lambda command, args=None: post("/execute_command", {"command": command, "args": {k: v for k, v in (args or {}).items() if v is not None}}, token)
+
+def frame0_command(port, command, args=None):
+    """Run one Frame0 command over its API."""
+    return frame0_client(port)(command, args)
 
 def frame0_proxy(port):
     """A local server in front of the app's API on `port`, for frame0-mcp-server. When the app refuses the server's token (the app
@@ -173,8 +179,183 @@ def frame0_down(proj):
     return True
 
 
+# ---------- frame0 draw: many shapes in one call ----------
+
+# Each frame0 MCP tool call is one model turn, and every turn re-sends the whole session, so a wireframe drawn shape by shape
+# costs hundreds of turns. `frame0 draw` takes the same tools as a JSON list and runs them in one command: the same names,
+# arguments, and defaults as frame0-mcp-server, which sends them to the app as these API commands.
+FRAME0_FRAMES = {"phone": ("Phone", 320, 690, 0), "tablet": ("Tablet", 600, 800, 0), "desktop": ("Desktop", 800, 600, 32),
+                 "browser": ("Browser", 800, 600, 76), "watch": ("Watch", 198, 242, 0), "tv": ("TV", 960, 570, 0)}
+FRAME0_ICONS = {"small": 16, "medium": 24, "large": 32, "extra-large": 48}
+FRAME0_ALIGN = {"bring-to-front": "align:bring-to-front", "send-to-back": "align:send-to-back", "align-left": "align:align-left",
+                "align-right": "align:align-right", "align-horizontal-center": "align:align-center", "align-top": "align:align-top",
+                "align-bottom": "align:align-bottom", "align-vertical-center": "align:align-middle",
+                "distribute-horizontally": "align:horizontal-distribute", "distribute-vertically": "align:vertical-distribute"}
+FRAME0_TOOLS = {  # tool: (required args, optional args)
+    "add_page": ({"name"}, set()),
+    "set_current_page_by_id": ({"pageId"}, set()),
+    "create_frame": ({"frameType", "name"}, {"fillColor"}),
+    "create_rectangle": ({"name", "left", "top", "width", "height"}, {"parentId", "fillColor", "strokeColor", "corners"}),
+    "create_ellipse": ({"name", "left", "top", "width", "height"}, {"parentId", "fillColor", "strokeColor"}),
+    "create_text": ({"name", "left", "top", "text"}, {"type", "parentId", "width", "fontColor", "fontSize"}),
+    "create_line": ({"name", "x1", "y1", "x2", "y2"}, {"parentId", "strokeColor"}),
+    "create_polygon": ({"name", "points"}, {"parentId", "closed", "fillColor", "strokeColor"}),
+    "create_connector": ({"name", "startId", "endId"}, {"parentId", "startArrowhead", "endArrowhead", "strokeColor"}),
+    "create_icon": ({"name", "left", "top", "size"}, {"parentId", "strokeColor"}),
+    "update_shape": ({"shapeId"}, {"name", "width", "height", "fillColor", "strokeColor", "fontColor", "fontSize", "corners", "text"}),
+    "move_shape": ({"shapeId", "dx", "dy"}, set()),
+    "duplicate_shape": ({"shapeId"}, {"parentId", "dx", "dy"}),
+    "delete_shape": ({"shapeId"}, set()),
+    "align_shapes": ({"alignType", "shapeIdArray"}, set()),
+    "group": ({"shapeIdArray"}, {"parentId"}),
+    "set_link": ({"shapeId", "linkType"}, {"url", "pageId"}),
+}
+
+def frame0_props(**kw):
+    return {k: v for k, v in kw.items() if v is not None}
+
+def frame0_arrowhead(name):
+    return "flat" if name in (None, "none") else name
+
+def frame0_op(call, tool, a):
+    """Run one tool the way frame0-mcp-server does. Returns the id it made or changed, or None."""
+    g = a.get
+    def shape(kind, **props):
+        return call("shape:create-shape", {"type": kind, "shapeProps": frame0_props(**props), "parentId": g("parentId"), "convertColors": True})
+    if tool == "add_page":
+        page = call("page:add", {"pageProps": {"name": a["name"]}})
+        return page.get("id") if isinstance(page, dict) else page
+    if tool == "set_current_page_by_id":
+        call("page:set-current-page", {"pageId": a["pageId"]})
+        return a["pageId"]
+    if tool == "create_frame":
+        if a["frameType"] not in FRAME0_FRAMES:
+            raise ValueError(f"frameType is one of {', '.join(FRAME0_FRAMES)}")
+        name, w, h, header = FRAME0_FRAMES[a["frameType"]]
+        sid = call("shape:create-shape-from-library-by-query", {"query": f"{name}&@Frame", "shapeProps": frame0_props(
+            name=a["name"], left=0, top=-header, width=w, height=h + header, fillColor=g("fillColor", "#ffffff")), "convertColors": True})
+        call("view:fit-to-screen")
+        return sid
+    if tool in ("create_rectangle", "create_ellipse"):
+        return shape("Rectangle" if tool == "create_rectangle" else "Ellipse", name=a["name"], left=a["left"], top=a["top"], width=a["width"], height=a["height"],
+                     fillColor=g("fillColor", "#ffffff"), strokeColor=g("strokeColor", "#000000"),
+                     corners=g("corners", [0, 0, 0, 0]) if tool == "create_rectangle" else None)
+    if tool == "create_text":
+        return shape("Text", name=a["name"], left=a["left"], width=g("width"), top=a["top"], text=a["text"], fontColor=g("fontColor", "#000000"),
+                     fontSize=g("fontSize"), wordWrap=g("type") == "paragraph")
+    if tool in ("create_line", "create_polygon"):
+        path = [[a["x1"], a["y1"]], [a["x2"], a["y2"]]] if tool == "create_line" else [[p["x"], p["y"]] for p in a["points"]]
+        if tool == "create_polygon":
+            if len(path) < 3:
+                raise ValueError("points needs at least 3 points")
+            if g("closed", True) and path[0] != path[-1]:
+                path.append(path[0])
+        return shape("Line", name=a["name"], path=path, tailEndType="flat", headEndType="flat", strokeColor=g("strokeColor", "#000000"), lineType="straight")
+    if tool == "create_connector":
+        return call("shape:create-connector", {"tailId": a["startId"], "headId": a["endId"], "shapeProps": frame0_props(
+            name=a["name"], tailEndType=frame0_arrowhead(g("startArrowhead")), headEndType=frame0_arrowhead(g("endArrowhead")),
+            strokeColor=g("strokeColor", "#000000")), "parentId": g("parentId"), "convertColors": True})
+    if tool == "create_icon":
+        size = FRAME0_ICONS.get(a["size"], 24)
+        return call("shape:create-icon", {"iconName": a["name"], "shapeProps": frame0_props(left=a["left"], top=a["top"], width=size, height=size,
+                    strokeColor=g("strokeColor", "#000000")), "parentId": g("parentId"), "convertColors": True})
+    if tool == "update_shape":
+        return call("shape:update-shape", {"shapeId": a["shapeId"], "shapeProps": frame0_props(**{k: g(k) for k in FRAME0_TOOLS[tool][1]}), "convertColors": True})
+    if tool == "move_shape":
+        call("shape:move", {"shapeId": a["shapeId"], "dx": a["dx"], "dy": a["dy"]})
+        return a["shapeId"]
+    if tool == "duplicate_shape":
+        return call("edit:duplicate", {"shapeIdArray": [a["shapeId"]], "parentId": g("parentId"), "dx": g("dx"), "dy": g("dy")})[0]
+    if tool == "delete_shape":
+        call("edit:delete", {"shapeIdArray": [a["shapeId"]]})
+        return None
+    if tool == "align_shapes":
+        if a["alignType"] not in FRAME0_ALIGN:
+            raise ValueError(f"alignType is one of {', '.join(FRAME0_ALIGN)}")
+        call(FRAME0_ALIGN[a["alignType"]], {"shapeIdArray": a["shapeIdArray"]})
+        return None
+    if tool == "group":
+        return call("shape:group", {"shapeIdArray": a["shapeIdArray"], "parentId": g("parentId")})
+    call("shape:set-link", {"shapeId": a["shapeId"], "linkProps": frame0_props(linkType=a["linkType"], url=g("url"), pageId=g("pageId"))})
+    return a["shapeId"]
+
+FRAME0_ID_ARGS = ("parentId", "startId", "endId", "shapeId", "pageId", "shapeIdArray")  # where `$name` means an id; a text's "$5" stays text
+
+def frame0_refs(op):
+    """The `$name` references in an op's id arguments."""
+    vals = [v for k in FRAME0_ID_ARGS if k in op for v in (op[k] if isinstance(op[k], list) else [op[k]])]
+    return [v for v in vals if isinstance(v, str) and v.startswith("$")]
+
+def frame0_resolve(op, ids):
+    """The op's arguments with each `$name` in an id argument swapped for the id an earlier op saved `as` name."""
+    sub = lambda v: [sub(x) for x in v] if isinstance(v, list) else ids.get(v[1:], v) if isinstance(v, str) and v.startswith("$") else v
+    return {k: sub(v) if k in FRAME0_ID_ARGS else v for k, v in op.items() if k not in ("tool", "as")}
+
+def frame0_check(ops):
+    """Every problem with a draw list that can be seen before anything is drawn, as one message each."""
+    if not isinstance(ops, list) or not ops:
+        return ["the draw list is a JSON array of ops, each {\"tool\": \"create_text\", \"as\": \"title\", ...the tool's arguments}"]
+    errors, named = [], set()
+    for n, op in enumerate(ops, 1):
+        if not isinstance(op, dict) or op.get("tool") not in FRAME0_TOOLS:
+            errors.append(f"op {n}: tool is one of {', '.join(FRAME0_TOOLS)}, not {op.get('tool') if isinstance(op, dict) else op!r}")
+            continue
+        need, may = FRAME0_TOOLS[op["tool"]]
+        args = {k for k in op if k not in ("tool", "as")}
+        if need - args:
+            errors.append(f"op {n} ({op['tool']}): missing {', '.join(sorted(need - args))}")
+        if args - need - may:
+            errors.append(f"op {n} ({op['tool']}): unknown {', '.join(sorted(args - need - may))}")
+        errors += [f"op {n} ({op['tool']}): {r} names no earlier op's `as`" for r in frame0_refs(op) if r[1:] not in named]
+        if "as" in op:
+            named.add(op["as"])
+    return errors
+
+def frame0_line(n, op, sid, call):
+    """One short line per op: what it made, its id, and a created shape's box (a text's real size, to place what follows)."""
+    label = f"{n:>3} {op.get('as', '-')} {op['tool']}"
+    if sid is None:
+        return label
+    if not op["tool"].startswith("create_") and op["tool"] not in ("duplicate_shape", "group"):
+        return f"{label} {sid}"
+    try:
+        s = call("shape:get-shape", {"shapeId": sid}) or {}
+    except RuntimeError:  # drawn all the same: the box is only a convenience
+        s = {}
+    box = " ".join(f"{k}={round(s[k])}" for k in ("left", "top", "width", "height") if isinstance(s.get(k), (int, float)))
+    return f"{label} {sid} {box}".rstrip()
+
+def frame0_draw(proj, ops):
+    """Run a draw list against the project's Frame0, then save design.f0. Returns the lines to print; raises RuntimeError naming the
+    op that failed, after saving what was drawn before it."""
+    errors = frame0_check(ops)
+    if errors:
+        raise RuntimeError("nothing drawn:\n" + "\n".join(errors))
+    if not frame0_pid(proj):
+        raise RuntimeError(f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
+    call, ids, lines = frame0_client(frame0_port(proj)), {}, []
+    for n, op in enumerate(ops, 1):
+        try:
+            sid = frame0_op(call, op["tool"], frame0_resolve(op, ids))
+        except (RuntimeError, ValueError, KeyError, IndexError, TypeError) as e:
+            try:
+                call("file:save", {"allowSaveAs": False})
+                kept = "drawn and saved"
+            except RuntimeError as save:
+                kept = f"drawn but not saved ({save})"
+            done = f"ops 1-{n - 1} are {kept}" if n > 1 else "nothing was drawn"
+            raise RuntimeError("\n".join([*lines, f"op {n} ({op['tool']}) failed: {e}",
+                                          f"{done}; send op {n} on, with the ids above in place of its $names"])) from e
+        if "as" in op and sid is not None:
+            ids[op["as"]] = sid
+        lines.append(frame0_line(n, op, sid, call))
+    call("file:save", {"allowSaveAs": False})
+    return lines
+
+
 def cmd_frame0(a):
-    """`frame0 up` starts the project's own Frame0 on design.f0, `save` writes the drawing to it, `down` saves and quits.
+    """`frame0 up` starts the project's own Frame0 on design.f0, `draw` runs a JSON list of frame0 tool calls in one go and saves,
+    `save` writes the drawing to it, `down` saves and quits.
     (`frame0 mcp` is the session's MCP server, run by Claude Code through main.)"""
     proj = fc_core.project_dir(a)
     design = proj / "design.f0"
@@ -184,6 +365,14 @@ def cmd_frame0(a):
             print(f"frame0 for {proj.name} {'started' if started else 'already running'} on port {port}, file {design}")
             if started:
                 print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first tool call reaches it: the product owner clicks Allow")
+        elif a.action == "draw":
+            src = sys.stdin.read() if a.file in (None, "-") else Path(a.file).read_text()
+            try:
+                ops = json.loads(src)
+            except ValueError as e:
+                sys.exit(f"frame0 draw: the draw list is not JSON: {e}")
+            print("\n".join(frame0_draw(proj, ops)))
+            print(f"drew {len(ops)} ops, saved {design}")
         elif a.action == "save":
             print(f"saved {design}" if frame0_save(proj) else f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
         else:

@@ -55,6 +55,17 @@ def state_and_labels(team, a):
         out["labelIds"] = ids
     return out
 
+PRIORITIES = {"none": 0, "urgent": 1, "high": 2, "medium": 3, "low": 4}  # Linear's own numbers
+
+def priority(a):
+    """{"priority": n} for --priority given as a name or as Linear's 0-4, else {}."""
+    if a.priority is None:
+        return {}
+    n = PRIORITIES.get(a.priority.lower(), int(a.priority) if a.priority.isdigit() else None)
+    if n not in PRIORITIES.values():
+        sys.exit(f"--priority is one of {', '.join(PRIORITIES)} or 0-4, not {a.priority!r}")
+    return {"priority": n}
+
 def print_body(body):
     """The body, then each heading's section hash, which a section write passes back to --expect."""
     print((body or "").rstrip("\n"))
@@ -153,6 +164,7 @@ def verb_create(a):
                                 {"id": p["team"]["id"]})["team"]
     inp = {"teamId": p["team"]["id"], "projectId": p["id"], "title": a.title, "description": read_body(a)}
     inp.update(state_and_labels(team, a))
+    inp.update(priority(a))
     if a.parent:
         inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
     issue = fc_linear.linear_gql("mutation($in: IssueCreateInput!) { issueCreate(input: $in) { issue { id identifier } } }", {"in": inp})["issueCreate"]["issue"]
@@ -164,8 +176,9 @@ def verb_update(a):
     if not a.target:
         sys.exit("update needs an issue id")
     writes = writes_body(a, "update")
-    if not (writes or a.title or a.parent or a.state or a.label or a.blocked_by is not None):
-        sys.exit("update needs --title, --state, --parent, --label, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+    if not (writes or a.title or a.parent or a.state or a.label or a.priority is not None or a.blocked_by is not None):
+        sys.exit("update needs --title, --state, --parent, --label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+    prio = priority(a)  # a bad value refuses before the issue is read
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
@@ -175,6 +188,7 @@ def verb_update(a):
     if a.parent:
         inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
     inp.update(state_and_labels(issue["team"], a))
+    inp.update(prio)
     if writes:
         inp["description"] = new_body(a, issue["description"])
     if inp:  # empty only when --blocked-by is the one change

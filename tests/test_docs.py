@@ -369,7 +369,7 @@ class LinearCommands(unittest.TestCase):
         self.assertNotIn("--from-linear", read("docs/cli.md"))
 
     def test_manager_session_line_and_the_key_requirement_in_the_docs(self):
-        self.assertIn("Compose itself uses no Linear MCP, and this session should prefer `compose linear` too.", read("sections/0h.md").splitlines())
+        self.assertIn("Compose itself uses no Linear MCP, and this session uses `compose linear` too, never a Linear MCP.", read("sections/0h.md").splitlines())
         self.assertNotIn("connector", read("docs/new-machine.md").split("| Keys |", 1)[1].splitlines()[0])
         requirements = [l for l in read("docs/requirements.md").splitlines() if l.startswith("| Linear |")]
         self.assertEqual(len(requirements), 1)

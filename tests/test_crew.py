@@ -970,7 +970,7 @@ class RestrictedStart(unittest.TestCase):
     def test_planner_gets_crew_settings_and_drops_the_other_servers(self):
         args = self.start("planner")
         settings = json.loads(args[args.index("--settings") + 1])
-        self.assertEqual({k: settings[k] for k in ("attribution", "env")}, {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true"}})
+        self.assertEqual({k: settings[k] for k in ("attribution", "env")}, {"attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "true", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150000"}})
         self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
         self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P})
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
@@ -1043,7 +1043,7 @@ class RestrictedStart(unittest.TestCase):
     def test_no_chrome_and_trust_framing_follow_model_and_effort(self):
         trust = ["--no-chrome", "--append-system-prompt", fc.fc_crew.TRUST_PROMPT]
         self.assertEqual(self.start("wayfinder", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
-        self.assertEqual(self.start("planner", effort="high")[:10], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--autocompact", "150k", "--settings"])
+        self.assertEqual(self.start("planner", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
         self.assertEqual(self.start("designer")[:6], ["--model", "claude-opus-5-5", *trust, "--settings"])
 
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
@@ -1072,25 +1072,19 @@ class RestrictedStart(unittest.TestCase):
         self.assertEqual(set(tail[1:5]), {"mcp__claude_ai_Linear__*", "mcp__claude_ai_Notion__*", "mcp__trail__*", "mcp__frame0__*"})
         self.assertEqual(tail[5:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
 
-    def test_orchestrator_and_planner_autocompact_at_150k_before_settings(self):
-        self.P = []  # same servers and skills switch for every role below, so their args differ only by --autocompact
-        base = self.start("wayfinder")
-        for role in ("orchestrator", "planner"):
+    def test_every_claude_teammate_compacts_at_150k_through_its_settings_env(self):
+        for role in ("orchestrator", "planner", "wayfinder", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):
             with self.subTest(role=role):
                 args = self.start(role)
-                i = args.index("--autocompact")
-                self.assertEqual(args[i + 1], "150k")
-                self.assertLess(i, args.index("--settings"))
-                self.assertEqual(args.count("--autocompact"), 1)
-                self.assertEqual(args[:i] + args[i + 2:], base)  # nothing else moves, the --settings value on included
+                env = json.loads(args[args.index("--settings") + 1])["env"]
+                self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "150000")  # the env var outranks --autocompact and the user's own settings
+                self.assertNotIn("--autocompact", args)
 
-    def test_other_roles_and_pi_starts_get_no_autocompact(self):
-        for role in ("wayfinder", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):
-            with self.subTest(role=role):
-                self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role)))
-        for role in ("orchestrator", "planner"):
+    def test_pi_starts_get_no_compaction_window(self):
+        for role in ("orchestrator", "planner", "designer"):
             with self.subTest(pi=role):
-                self.assertFalse(any(x.startswith("--autocompact") for x in self.start(role, model="pi:x/y")))
+                args = self.start(role, model="pi:x/y")
+                self.assertFalse(any("AUTO_COMPACT" in x or x.startswith("--autocompact") for x in args))
 
     def test_briefs_name_skill_md_and_their_sections(self):
         p, d, w = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.fc_briefs.WAYFINDER_BRIEF

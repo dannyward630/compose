@@ -35,7 +35,7 @@ class LinearProject(unittest.TestCase):
     def args(self, action, *target, **kw):
         return SimpleNamespace(**{**dict(repo=str(self.repo), project=None, action=action, target=list(target), body=False, comments=False, json=False,
                                          append=False, description=False, any_project=False, label=None, parent=None, search=None, state=None,
-                                         title=None, blocked_by=None, file=None, section=None, expect=None, create=None), **kw})
+                                         title=None, priority=None, blocked_by=None, file=None, section=None, expect=None, create=None), **kw})
 
     def fails(self, fn, *args):
         err = io.StringIO()
@@ -339,6 +339,19 @@ class LinearCreate(unittest.TestCase):
         self.assertEqual(sent, [{"teamId": "t1", "projectId": "p1", "title": "Fix it", "description": "Steps.", "parentId": "parent-id", "stateId": "s1", "labelIds": ["l1"]}])
         issue.assert_any_call("ENG-1"); blocked.assert_called_once_with({"id": "new-id"}, ["ENG-2", "ENG-3"])
 
+    def test_priority_takes_a_name_or_linears_number_on_create_and_update(self):
+        for given, want in (("urgent", 1), ("High", 2), ("medium", 3), ("low", 4), ("none", 0), ("0", 0), ("4", 4)):
+            with self.subTest(given=given):
+                self.calls = []
+                with mock.patch("sys.stdin", io.StringIO("")):
+                    self.assertEqual(self.create(priority=given)[0][0]["priority"], want)
+        for bad in ("5", "p1", "-1"):
+            with self.subTest(bad=bad):
+                self.calls = []
+                self.assertEqual(self.fails(fc.fc_linear_cmd.verb_create, self.args("create", title="Fix it", priority=bad)),
+                                 (1, f"--priority is one of none, urgent, high, medium, low or 0-4, not {bad!r}"))
+                self.assertFalse([q for q, _ in self.calls if self.CREATE in q])
+
     def test_create_without_flags_sends_only_the_base_input(self):
         with mock.patch("sys.stdin", io.StringIO("piped body")):
             sent, issue, blocked = self.create()
@@ -417,6 +430,13 @@ class LinearUpdate(unittest.TestCase):
             self.assertEqual(self.update(append=True)[0], {"description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n\nmore\n"})
         self.assertEqual(self.update("whole\n\n", description=True, title="T")[0], {"description": "whole\n\n", "title": "T"})
 
+    def test_priority_alone_is_a_change_and_a_bad_one_reads_nothing(self):
+        self.assertEqual(self.update(priority="high")[0], {"priority": 2})
+        self.calls = []
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", priority="soon")),
+                         (1, "--priority is one of none, urgent, high, medium, low or 0-4, not 'soon'"))
+        self.assertEqual(self.calls, [])
+
     def test_blockers_are_set_on_the_read_issue(self):
         sent, _, blocked = self.update(blocked_by="ENG-2,ENG-3")
         self.assertEqual((sent, blocked.call_args.args), (None, (self.issue, ["ENG-2", "ENG-3"])))  # no empty issueUpdate before them
@@ -432,7 +452,7 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.update("## Goal\nnew brief\n", description=True)[0], {"description": "## Goal\nnew brief\n"})
 
     def test_nothing_to_change_refuses_before_reading_the_issue(self):
-        want = (1, "update needs --title, --state, --parent, --label, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+        want = (1, "update needs --title, --state, --parent, --label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7")), want)
         self.assertEqual(self.calls, [])
 

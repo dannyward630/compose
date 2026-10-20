@@ -68,6 +68,7 @@ Three commands manage it:
 
 1. `compose frame0 up --project <name>` starts it.
 2. `compose frame0 save --project <name>` writes the drawing to the file.
+   `compose frame0 draw --project <name>` draws a whole page from one list of tool calls and saves it, so a page costs one agent turn rather than one per shape.
 3. `compose frame0 down --project <name>` saves and quits.
    `teardown` does this too.
 

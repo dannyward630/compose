@@ -120,7 +120,7 @@ def main():
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug: scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
-                            ("frame0", fc_frame0.cmd_frame0, "up | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0)"),
+                            ("frame0", fc_frame0.cmd_frame0, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", fc_crew.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
@@ -147,7 +147,7 @@ def main():
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project"):
                 s.add_argument(flag, action="store_true")
             s.add_argument("--label", action="append")
-            for flag in ("--parent", "--search", "--state", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
+            for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
                 s.add_argument(flag)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
@@ -235,7 +235,8 @@ def main():
         if name == "models":
             s.add_argument("--probe", action="store_true")
         if name == "frame0":
-            s.add_argument("action", choices=("up", "save", "down"))
+            s.add_argument("action", choices=("up", "draw", "save", "down"))
+            s.add_argument("--file", help="draw: the JSON list of frame0 tool calls (default: stdin)")
         if name == "figma":
             s.add_argument("action", choices=("check", "tree", "judge"))
             s.add_argument("--figma", help="check: the target Figma file's url or key, stored in linear.json")

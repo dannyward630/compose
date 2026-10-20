@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import http.server, importlib.machinery, importlib.util, json, os, subprocess, tempfile, threading, unittest, urllib.request
+import argparse, http.server, importlib.machinery, io, importlib.util, json, os, subprocess, tempfile, threading, unittest, urllib.request
 from pathlib import Path
 from unittest import mock
 import sys
@@ -154,6 +154,139 @@ class Frame0Mcp(unittest.TestCase):
         self.assertEqual(words[:2], ["-y", "frame0-mcp-server"])
         self.assertRegex(words[2], r"^--api-port=\d+$")
         self.assertNotEqual(words[2], "--api-port=58411")  # the server talks to the proxy, not the app
+
+
+class DrawApp(http.server.BaseHTTPRequestHandler):
+    """Frame0's API for a draw: hands out ids, keeps every command it ran, and fails the command named in `fail`."""
+    calls, tokens, fail = [], 0, None
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/request_api_token":
+            DrawApp.tokens += 1
+            out = {"success": True, "data": "tok"}
+        else:
+            cmd, args = body["command"], body["args"]
+            DrawApp.calls.append((cmd, args))
+            if cmd == DrawApp.fail:
+                out = {"success": False, "error": "no such icon"}
+            elif cmd == "page:add":
+                out = {"success": True, "data": {"id": "page1", "name": args["pageProps"]["name"]}}
+            elif cmd == "shape:get-shape":
+                out = {"success": True, "data": {"id": args["shapeId"], "left": 16, "top": 40.4, "width": 120.6, "height": 24}}
+            elif cmd == "edit:duplicate":
+                out = {"success": True, "data": ["dup1"]}
+            else:
+                out = {"success": True, "data": f"s{len(DrawApp.calls)}"}
+        data = json.dumps(out).encode()
+        self.send_response(200), self.send_header("Content-Length", str(len(data))), self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+class Frame0Draw(unittest.TestCase):
+    def setUp(self):
+        DrawApp.calls, DrawApp.tokens, DrawApp.fail = [], 0, None
+        self.app = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DrawApp)
+        threading.Thread(target=self.app.serve_forever, daemon=True).start()
+        self.addCleanup(self.app.shutdown), self.addCleanup(self.app.server_close)
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
+        self.proj.mkdir(parents=True)
+
+    def draw(self, ops, running=True):
+        with mock.patch.object(fc.fc_frame0, "frame0_pid", return_value=4242 if running else None), \
+                mock.patch.object(fc.fc_frame0, "frame0_port", return_value=self.app.server_address[1]):
+            return fc.fc_frame0.frame0_draw(self.proj, ops)
+
+    def sent(self):
+        return [c for c in DrawApp.calls if c[0] != "shape:get-shape"]
+
+    def test_runs_the_tools_as_the_mcp_server_does_on_one_token_and_saves(self):
+        lines = self.draw([
+            {"tool": "add_page", "as": "p", "name": "Checkout"},
+            {"tool": "create_frame", "as": "f", "frameType": "browser", "name": "Cart"},
+            {"tool": "create_rectangle", "name": "card", "parentId": "$f", "left": 0, "top": 0, "width": 80, "height": 40},
+            {"tool": "create_text", "as": "t", "name": "title", "parentId": "$f", "left": 16, "top": 40, "text": "Cart", "type": "paragraph"},
+            {"tool": "move_shape", "shapeId": "$t", "dx": 4, "dy": 0},
+            {"tool": "duplicate_shape", "shapeId": "$t", "dy": 30},
+            {"tool": "set_link", "shapeId": "$t", "linkType": "page", "pageId": "$p"},
+        ])
+        sent = self.sent()
+        self.assertEqual(DrawApp.tokens, 1)
+        self.assertEqual([c[0] for c in sent], ["page:add", "shape:create-shape-from-library-by-query", "view:fit-to-screen", "shape:create-shape",
+                                                "shape:create-shape", "shape:move", "edit:duplicate", "shape:set-link", "file:save"])
+        frame = sent[1][1]
+        self.assertEqual(frame, {"query": "Browser&@Frame", "shapeProps": {"name": "Cart", "left": 0, "top": -76, "width": 800, "height": 676,
+                                                                           "fillColor": "#ffffff"}, "convertColors": True})
+        rect = sent[3][1]
+        self.assertEqual(rect["parentId"], "s2")  # $f: the frame's id
+        self.assertEqual(rect["shapeProps"], {"name": "card", "left": 0, "top": 0, "width": 80, "height": 40, "fillColor": "#ffffff",
+                                              "strokeColor": "#000000", "corners": [0, 0, 0, 0]})
+        text = sent[4][1]
+        self.assertEqual((text["type"], text["shapeProps"]["wordWrap"], text["shapeProps"]["fontColor"]), ("Text", True, "#000000"))
+        self.assertNotIn("width", text["shapeProps"])  # unset stays unset, as the server trims it
+        tid = DrawApp.calls[[c[0] for c in DrawApp.calls].index("shape:move")][1]["shapeId"]
+        self.assertEqual(sent[7][1], {"shapeId": tid, "linkProps": {"linkType": "page", "pageId": "page1"}})
+        self.assertEqual(sent[8], ("file:save", {"allowSaveAs": False}))
+        self.assertEqual(lines[0], "  1 p add_page page1")
+        self.assertEqual(lines[3], f"  4 t create_text {tid} left=16 top=40 width=121 height=24")
+        self.assertEqual(lines[5], "  6 - duplicate_shape dup1 left=16 top=40 width=121 height=24")
+        self.assertFalse([c for c in DrawApp.calls if None in c[1].values()])  # the app refuses null where the server sends nothing
+        self.assertEqual(sent[6][1], {"shapeIdArray": [tid], "dy": 30})
+
+    def test_a_bad_list_draws_nothing_and_names_every_problem(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.draw([{"tool": "create_txt", "name": "x"},
+                       {"tool": "create_text", "name": "x", "left": 0, "txt": "hi"},
+                       {"tool": "move_shape", "shapeId": "$later", "dx": 1, "dy": 1},
+                       {"tool": "create_text", "as": "later", "name": "y", "left": 0, "top": 0, "text": "y"}])
+        msg = str(e.exception)
+        self.assertIn("nothing drawn", msg)
+        self.assertIn("op 1: tool is one of add_page", msg)
+        self.assertIn("op 2 (create_text): missing text, top", msg)
+        self.assertIn("op 2 (create_text): unknown txt", msg)
+        self.assertIn("op 3 (move_shape): $later names no earlier op's `as`", msg)
+        self.assertEqual((DrawApp.tokens, DrawApp.calls), (0, []))
+        for ops in ([], {"tool": "add_page"}):
+            with self.subTest(ops=ops), self.assertRaisesRegex(RuntimeError, "JSON array of ops"):
+                self.draw(ops)
+
+    def test_a_dollar_in_text_is_text(self):
+        self.draw([{"tool": "create_text", "as": "price", "name": "price", "left": 0, "top": 0, "text": "$price"}])
+        self.assertEqual(self.sent()[0][1]["shapeProps"]["text"], "$price")
+
+    def test_a_failing_op_names_itself_keeps_what_was_drawn_and_saves(self):
+        DrawApp.fail = "shape:create-icon"
+        with self.assertRaises(RuntimeError) as e:
+            self.draw([{"tool": "create_text", "name": "a", "left": 0, "top": 0, "text": "a"},
+                       {"tool": "create_icon", "name": "nope", "left": 0, "top": 0, "size": "small"},
+                       {"tool": "create_text", "name": "b", "left": 0, "top": 0, "text": "b"}])
+        msg = str(e.exception).splitlines()
+        self.assertTrue(msg[0].startswith("  1 - create_text s1"))
+        self.assertEqual(msg[1], "op 2 (create_icon) failed: frame0 /execute_command: no such icon")
+        self.assertEqual(msg[2], "ops 1-1 are drawn and saved; send op 2 on, with the ids above in place of its $names")
+        self.assertEqual([c[0] for c in self.sent()], ["shape:create-shape", "shape:create-icon", "file:save"])
+
+    def test_a_stopped_app_is_named(self):
+        with self.assertRaisesRegex(RuntimeError, "shop's Frame0 is not running; `frame0 up` starts it"):
+            self.draw([{"tool": "add_page", "name": "x"}], running=False)
+
+    def test_the_command_reads_the_list_from_a_file_or_stdin(self):
+        ops = [{"tool": "add_page", "name": "x"}]
+        f = self.proj / "ops.json"
+        f.write_text(json.dumps(ops))
+        for file, stdin in ((str(f), ""), (None, json.dumps(ops)), ("-", json.dumps(ops))):
+            with self.subTest(file=file), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+                    mock.patch.object(fc.fc_frame0, "frame0_draw", return_value=["  1 - add_page page1"]) as draw, \
+                    mock.patch("sys.stdin", io.StringIO(stdin)), mock.patch("builtins.print") as out:
+                fc.fc_frame0.cmd_frame0(argparse.Namespace(action="draw", file=file))
+            self.assertEqual(draw.call_args.args[1], ops)
+            self.assertEqual(out.call_args.args[0], f"drew 1 ops, saved {self.proj / 'design.f0'}")
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdin", io.StringIO("not json")):
+            with self.assertRaisesRegex(SystemExit, "the draw list is not JSON"):
+                fc.fc_frame0.cmd_frame0(argparse.Namespace(action="draw", file=None))
 
 
 if __name__ == "__main__":
