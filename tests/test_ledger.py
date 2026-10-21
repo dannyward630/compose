@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import hashlib, importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, unittest
+import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -295,3 +295,56 @@ class VerifyTasks(unittest.TestCase):
     def test_false_when_a_task_record_fails(self):
         ok, _ = self.record(saved=lambda issue, events: issue != "ENG-5")
         self.assertFalse(ok)
+
+
+class VerifyUnsaved(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        self.repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "one")
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+
+    def rounds(self, passed, rows=(), saves=False):
+        """verify_rounds with the stages mocked; the rows are (issue, event id) still unsaved, and `saves` lets add_row clear them"""
+        said, out, unsaved = [], io.StringIO(), [(i, {"event_id": e}) for i, e in rows]
+        add = mock.Mock(return_value=saves)
+        lost = lambda: [] if saves and add.called else [r for _, r in unsaved]
+        with mock.patch.object(fc.fc_verify, "run_stages", return_value=(passed, {"checks": [], "e2e": [], "review": None}, "" if passed else "finding")), \
+                mock.patch.object(fc_ledger, "verify_record"), mock.patch.object(fc_ledger, "UNSAVED", unsaved), mock.patch.object(fc_ledger, "add_row", add), \
+                mock.patch.object(fc_ledger, "unsaved", lost), mock.patch.object(fc.fc_verify, "verify_failed") as failed, mock.patch.object(fc.fc_linear, "linear_reconcile"), \
+                mock.patch.object(fc.fc_core, "say", said.append), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0), [], 0)
+        return cm.exception.code, said, out.getvalue(), json.loads((self.proj / "results" / "verify.json").read_text()), add, failed
+
+    def test_rows_still_unsaved_fail_even_a_passing_verify_and_skip_the_failure_screen(self):
+        for passed in (True, False):
+            code, said, out, final, add, failed = self.rounds(passed, [("ENG-4", "e1"), ("ENG-4", "e2"), ("ENG-5", "e3")])
+            self.assertEqual(add.call_args_list, [mock.call("ENG-4", []), mock.call("ENG-5", [])], passed)
+            self.assertIn("verify FAIL  evidence not saved on Linear: e1, e2, e3", said)
+            self.assertEqual((code, final["passed"], failed.called, "Unresolved" in out), (1, False, False, False), passed)
+
+    def test_rows_saved_on_the_retry_leave_the_verdict(self):
+        code, said, _, final, add, _ = self.rounds(True, [("ENG-4", "e1")], saves=True)
+        self.assertEqual((code, final["passed"], add.call_args_list), (0, True, [mock.call("ENG-4", [])]))
+        self.assertFalse([s for s in said if "not saved" in s])
+
+    def test_nothing_unsaved_keeps_the_verdict_and_exit(self):
+        code, said, out, final, add, failed = self.rounds(True)
+        self.assertEqual((code, final["passed"], add.called, failed.called), (0, True, False, False))
+        code, said, out, final, add, failed = self.rounds(False)
+        self.assertEqual((code, final["passed"], add.called, failed.call_count, "Unresolved" in out), (1, False, False, 1, True))
+        self.assertFalse([s for s in said if "not saved" in s])
+
+    def test_verify_record_writes_each_tasks_scoped_then_acceptance_with_record_task(self):
+        task = {"id": "021", "linear": "ENG-4", "test": "t1", "body": "## Acceptance criteria\n* a\n"}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [task]}))
+        report = {"checks": [], "e2e": [], "review": None, "scoped": [{"cmd": "t1", "exit": 0, "tool_error": False, "output": ""}],
+                  "acceptance": {"criteria": [{"task": "021", "criterion": "a", "choice": "MET", "p_met": 0.9, "p_not_met": 0.1}]}}
+        with mock.patch.object(fc_ledger, "record", return_value=True) as record, mock.patch.object(fc_ledger, "record_task", return_value=True) as record_task:
+            fc_ledger.verify_record(self.proj, self.repo, report)
+        self.assertEqual([c.args[:3] for c in record_task.call_args_list], [(self.repo, self.proj, task)] * 2)
+        self.assertEqual([[e["phase"] for e in c.args[3]] for c in record_task.call_args_list], [["scoped"], ["acceptance"]])
+        self.assertEqual({c.args[0] for c in record.call_args_list}, {"ENG-1"})
