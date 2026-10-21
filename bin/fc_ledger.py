@@ -1,6 +1,6 @@
-"""The evidence ledger: evidence events kept as JSON lines in fenced blocks of Linear comments on the task and feature
-issues, and the `## Evidence` table derived from them in the issue description. Stages hand it events and never write
-Linear themselves."""
+"""The evidence ledger's write side: evidence events, written as JSON lines in a fenced block of one Linear comment per
+batch on the task or feature issue, retried, and kept in memory while unsaved. Stages hand it events and never write
+Linear themselves; fc_evidence reads the rows back and derives the `## Evidence` section."""
 
 KEYS = ()
 
@@ -18,15 +18,10 @@ def run_id(proj, tid, fresh=False):
 
 UNSAVED = []
 SAVED = set()
-BLOCK = None
 
 def comment_text(rows):
     """One comment holding a batch of rows in an `evidence` fenced block."""
     raise NotImplementedError("fc_ledger.comment_text")
-
-def parse_comment(body):
-    """The rows of every `evidence` block in a comment body."""
-    raise NotImplementedError("fc_ledger.parse_comment")
 
 def add_row(issue, rows):
     """Write the issue's unsaved rows and these as one comment, retried; False while anything stays unsaved."""
@@ -35,20 +30,6 @@ def add_row(issue, rows):
 def unsaved():
     """The rows not saved yet, every issue, in order."""
     raise NotImplementedError("fc_ledger.unsaved")
-
-COMMENTS = ""
-
-def rows(issue, task_id=None, run_id=None, criterion_id=None):
-    """Every evidence row of the issue's comments, once each, oldest first, filtered by task, run, or criterion."""
-    raise NotImplementedError("fc_ledger.rows")
-
-def table(rows):
-    """The `## Evidence` section text: the verdict line and the 60 newest rows."""
-    raise NotImplementedError("fc_ledger.table")
-
-def refresh(issue):
-    """Rewrite the issue description's `## Evidence` section from its rows, best effort."""
-    raise NotImplementedError("fc_ledger.refresh")
 
 def record(issue, events):
     """Write the events on the issue, then refresh its `## Evidence` section; the write's result."""

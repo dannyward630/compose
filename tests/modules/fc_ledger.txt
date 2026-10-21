@@ -4,14 +4,8 @@ criterion_ids
 run_id
 UNSAVED
 SAVED
-BLOCK
 comment_text
-parse_comment
 add_row
 unsaved
-COMMENTS
-rows
-table
-refresh
 record
 run_events
