@@ -133,7 +133,13 @@ def counted(repo, proj, meta, rows):
 
 def record_task(repo, proj, meta, events):
     """`record` for a task issue: write the events, then refresh its `## Evidence` section from the rows that count."""
-    raise NotImplementedError("fc_ledger.record_task")
+    issue = meta.get("linear")
+    path = proj / "linear.json"
+    feature = json.loads(path.read_text()).get("feature") if path.exists() else None
+    ok = add_row(issue, events)
+    if ok:
+        fc_evidence.refresh(issue, lambda i: counted(repo, proj, meta, fc_evidence.task_rows(i, feature, meta["id"])))
+    return ok
 
 def verify_record(proj, repo, report):
     """Record one verify round's evidence: checks, e2e, review on the feature issue, scoped and acceptance on each task issue; True when all saved"""
