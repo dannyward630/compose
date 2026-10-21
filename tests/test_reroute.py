@@ -3,7 +3,8 @@ import contextlib, importlib.machinery, importlib.util, json, os, shutil, subpro
 from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
-os.environ.update(COMPOSE_NO_TREEHOUSE="1", HERDR_ENV="")
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
+os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
