@@ -210,3 +210,65 @@ class Fired(unittest.TestCase):
             self.fired({"issue": None})
         with self.assertRaisesRegex(RuntimeError, "Linear: boom"):
             self.fired(self.page("* rerouted: diff (run r1)", cursor="c1"), RuntimeError("Linear: boom"))
+
+
+class JevState(unittest.TestCase):
+    ROUTE = "## Route\n\n* workflow: implement-then-test\n* depth: STANDARD\n* verification requirements: make lint, make e2e\n\n"
+    CALLERS = {"callers": {"src/greet.py": ["src/app.py"]}}
+    ANS = {"depth": {"choice": "FAST", "probabilities": {"FAST": 0.9}, "confidence": 0.9}, "policy0": {"choice": "DOES_NOT_APPLY", "probabilities": {"DOES_NOT_APPLY": 0.9}, "confidence": 0.9}}
+    DOCS = {"name": "Docs", "statement": "Docs stay true.", "globs": ["docs/*"], "checks": ["make docs"]}
+    PLAIN = {"name": "Keys", "statement": "Keys are checked.", "globs": [], "checks": ["make keys"]}
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
+        for f in ("docs/note.md", "src/greet.py"): (self.repo / f).parent.mkdir(exist_ok=True); (self.repo / f).write_text("n\n")
+        git("add", "-A"); git("commit", "-qm", "task")
+
+    def reassess(self, route=ROUTE, jev=None, policies=()):
+        """Reassess the synced task whose recorded route is `route`; Jev replies `jev` (raised when an exception), `policies` is what read_policies gives."""
+        desc = f"## Goal\nGreet.\n\n## Acceptance criteria\n* greets\n\n{route}```compose\nid: 001\ntest: t\nfiles: src/greet.py\n```\n"
+        tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1"}, "issues": [{"id": "ENG-2", "title": "Greet", "description": desc, "status": "Todo"}]})
+        kv = lambda v, d: {"side_effect" if isinstance(v, Exception) else "return_value": v or d}
+        with mock.patch.object(fc.fc_models, "jev_ask", **kv(jev, {"model": "jev-test", "answers": self.ANS})) as self.ask, \
+                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", **kv(policies, ([], ""))), mock.patch.object(fc_reroute, "diff_callers", return_value=self.CALLERS):
+            return fc_reroute.reassess(self.repo, self.proj, tasks[0], tasks, ("diff", "scope"), "r1", "main", "task")
+
+    def test_jev_sees_the_diff_callers_recorded_route_and_triggers_and_is_not_asked_for_the_workflow(self):
+        route = self.reassess(policies=([self.DOCS, self.PLAIN], ""))
+        state, questions = self.ask.call_args.args[2:4]
+        signals = fc_reroute.diff_signals(self.repo, {"files": ["src/greet.py"]}, "main", "task")
+        self.assertEqual(signals["outside"], ["docs/note.md"])
+        self.assertEqual(state["diff"], {**signals, **self.CALLERS})
+        self.assertEqual(state["recorded"], {"workflow": "implement-then-test", "depth": "STANDARD", "checks": ["make lint", "make e2e"]})
+        self.assertEqual((state["triggers"], state["pin"], state["task"]), (["diff", "scope"], "implement-then-test", "Greet"))
+        self.assertEqual(("workflow" in questions, "Keys are checked." in json.dumps(questions), "Docs stay true." in json.dumps(questions)), (False, True, False))
+        self.assertEqual((self.ask.call_count, route["workflow"]), (1, "implement-then-test"))
+
+    def test_a_policy_matching_a_changed_path_outside_files_floors_deep_with_its_checks(self):
+        route = self.reassess(policies=([self.DOCS, self.PLAIN, {**self.DOCS, "name": "Bin", "globs": ["bin/*"], "checks": ["make bin"]}], ""))
+        self.assertEqual((route["depth"], route["checks"]), ("DEEP", ["make docs"]))
+        self.assertEqual(self.reassess(policies=([self.PLAIN], ""))["depth"], "FAST")
+
+    def test_without_a_recorded_workflow_the_pin_is_test_first_and_none_means_no_checks(self):
+        route = self.reassess("## Route\n\n* depth: FAST\n* verification requirements: none\n\n")
+        state, questions = self.ask.call_args.args[2:4]
+        self.assertEqual((state["recorded"], state["pin"], route["workflow"], "workflow" in questions), ({"workflow": None, "depth": "FAST", "checks": []}, "test-first", "test-first", False))
+        self.reassess("")
+        self.assertEqual(self.ask.call_args.args[2]["recorded"], {"workflow": None, "depth": None, "checks": []})
+
+    def test_jev_unavailable_is_the_standard_fallback_on_the_recorded_workflow(self):
+        route = self.reassess(jev=RuntimeError("no key"))
+        self.assertEqual((route["depth"], route["workflow"], route["confidence"]), ("STANDARD", "implement-then-test", None))
+
+    def test_unreadable_policies_stop_before_jev_and_payment_required_propagates(self):
+        with self.assertRaisesRegex(RuntimeError, "policies unreadable: boom"):
+            self.reassess(policies=RuntimeError("policies unreadable: boom"))
+        self.assertEqual(self.ask.call_count, 0)
+        with self.assertRaises(fc.fc_models.PaymentRequired):
+            self.reassess(jev=fc.fc_models.PaymentRequired("typesafe", "top up"))
