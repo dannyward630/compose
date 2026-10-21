@@ -1,5 +1,6 @@
 """The re-route after implementation: a passed task's route reassessed once per trigger from its real diff, recorded in Linear."""
 
+import json
 import re
 
 import fc_core
@@ -21,7 +22,33 @@ def diff_signals(repo, meta, base, branch):
 
 def diff_callers(repo, base, branch, meta):
     """`{"callers": {path: [caller paths]}}` of the changed symbols outside `files:`, or `{"unavailable": "<why>"}`."""
-    raise NotImplementedError("diff_callers")
+    out = fc_core.sh(["git", "diff", "-U0", "--no-renames", f"{base}...{branch}"], repo, check=False).stdout.splitlines()
+    ranges, path = {}, None
+    for line in out:
+        if line.startswith(("--- ", "+++ ")):
+            if "/dev/null" not in line:
+                path = line[6:]
+                ranges.setdefault(path, [])
+        elif line.startswith("@@"):
+            a, b = re.match(r"@@ -(\d+)(?:,(\d+))? ", line).groups()
+            a, b = int(a), 1 if b is None else int(b)
+            ranges[path].append((a, a + max(b, 1) - 1))
+    callers = {}
+    for path, spans in ranges.items():
+        if not (repo / path).exists():
+            continue
+        skeleton = json.loads(fc_core.sh(["trail", "skeleton", path, "--json"], repo, check=False).stdout)
+        names = []
+        for e in skeleton["entries"]:
+            first, last = (int(n) for n in re.fullmatch(r"L(\d+)-L(\d+)", e["span"]).groups())
+            if any(first <= hi and lo <= last for lo, hi in spans):
+                names.append(e["name"])
+        hits = set()
+        for name in names:
+            found = json.loads(fc_core.sh(["trail", "callers", name, "--json"], repo, check=False).stdout)
+            hits.update(h["path"] for m in found["matches"] if m["symbol"]["path"] == path for h in m["hits"])
+        callers[path] = sorted(hits - set(meta["files"]) - {path})[:20]
+    return {"callers": callers}
 
 
 def layer_base(repo, proj, tid, trunk):
