@@ -9,6 +9,10 @@ print_body
 writes_body
 new_body
 verb_project
+GET_CACHE_SECONDS
+get_cache_files
+read_issue
+drop_get_cache
 verb_get
 verb_list
 verb_create

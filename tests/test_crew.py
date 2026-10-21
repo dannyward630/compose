@@ -110,7 +110,9 @@ class Crew(unittest.TestCase):
                 fc.fc_crew.cmd_crew(a)
             self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
             self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["started_by"], "w1:p2")  # the starting session's herdr pane: two engineering managers are told apart
-            self.assertIn(says, (self.proj / "results" / "crew" / f"shop-{role}.brief.md").read_text())
+            brief = (self.proj / "results" / "crew" / f"shop-{role}.brief.md").read_text()
+            self.assertIn(says, brief)
+            self.assertIn("Never loop or poll `compose linear`", brief)  # every crew brief, whatever the role
 
     def test_bad_state_refused(self):
         with self.assertRaises(SystemExit):
@@ -1155,6 +1157,10 @@ class CardsById(unittest.TestCase):
         lines = re.findall(r'needs-user "([^"]*)"', " ".join(text.split()))
         self.assertTrue(lines, text)
         return lines
+
+    def test_wayfinder_and_change_wait_without_polling_linear(self):
+        for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
+            self.assertIn("Never loop or poll `compose linear` while you wait", self.flat(brief, " 4. ", " 5. "))
 
     def test_wayfinder_and_change_step_3_write_cards_then_report_one_line(self):
         for name, brief in (("wayfinder", fc.fc_briefs.WAYFINDER_BRIEF), ("change", fc.fc_briefs.CHANGE_BRIEF)):

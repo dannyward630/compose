@@ -1,5 +1,5 @@
 """`compose linear <verb>`: read and write Linear with the workspace key, printing compact text."""
-import json, sys, urllib.parse
+import hashlib, json, sys, time, urllib.parse
 from pathlib import Path
 
 import fc_core, fc_config, fc_linear, fc_plan
@@ -113,11 +113,52 @@ def verb_project(a):
     if a.body:
         print_body(content)
 
+GET_CACHE_SECONDS = 30
+
+def get_cache_files(a, issue_id=None):
+    """The on-disk reads of this Linear project's issues (`issue_id` narrows to one), under ~/.compose/linear-get: one file per
+    project and issue, so every teammate on the project shares them and another project's reads never answer this one."""
+    try:
+        project = json.loads(fc_core.repo_link(a.repo).read_text())["project"]
+    except (OSError, ValueError, KeyError):
+        return []  # no Linear link, no project to keep reads apart by: nothing is cached
+    prefix = hashlib.sha1(project.encode()).hexdigest()[:12]
+    folder = Path.home() / ".compose" / "linear-get"
+    if issue_id:
+        return [folder / f"{prefix}-{hashlib.sha1(issue_id.encode()).hexdigest()[:12]}.json"]
+    return list(folder.glob(f"{prefix}-*.json"))
+
+def read_issue(a, fetch):
+    """`fetch()` is the one Linear read of `get`. The same issue of the same project read again within GET_CACHE_SECONDS is served
+    from disk, so a teammate that loops on `get` costs one Linear call per window; --fresh bypasses it. What `get` prints from the
+    issue (--body, --comments, --json, --any-project) is cut after this, so the flags never change which read is cached."""
+    files = get_cache_files(a, a.target[0])
+    if not files:
+        return fetch()
+    f = files[0]
+    if not a.fresh and f.exists():
+        try:
+            hit = json.loads(f.read_text())
+            if 0 <= time.time() - hit["at"] < GET_CACHE_SECONDS:
+                print(f"(read {int(time.time() - hit['at'])}s ago from the cache; --fresh reads Linear again)", file=sys.stderr)
+                return hit["issue"]
+        except (OSError, ValueError, KeyError):
+            pass  # an unreadable entry is a miss
+    issue = fetch()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    fc_core.atomic_write(f, json.dumps({"at": time.time(), "issue": issue}))
+    return issue
+
+def drop_get_cache(a):
+    """A write to the project can change any issue a `get` cached, so a write forgets them all: the next read is fresh."""
+    for f in get_cache_files(a):
+        f.unlink(missing_ok=True)
+
 def verb_get(a):
     if not a.target:
         sys.exit("get needs an issue id")
-    issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } } }",
-                                 {"id": a.target[0]})["issue"]
+    issue = read_issue(a, lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } } }",
+                                                      {"id": a.target[0]})["issue"])
     in_scope(issue, a)
     if a.json:
         print(json.dumps(issue, indent=1))
@@ -266,3 +307,6 @@ def cmd_linear(a):
         globals()[f"verb_{a.action}"](a)
     except (RuntimeError, OSError) as e:
         sys.exit(f"linear {a.action}: {e}")
+    finally:
+        if a.action in ("create", "update", "comment"):  # the verbs that can change an issue
+            drop_get_cache(a)
