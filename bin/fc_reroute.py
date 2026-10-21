@@ -1,6 +1,10 @@
 """The re-route after implementation: a passed task's route reassessed once per trigger from its real diff, recorded in Linear."""
 
+import re
+
 import fc_core
+import fc_tasks
+import fc_worktree
 
 DEPTHS = ("FAST", "STANDARD", "DEEP")
 MARK = "rerouted"
@@ -22,7 +26,15 @@ def diff_callers(repo, base, branch, meta):
 
 def layer_base(repo, proj, tid, trunk):
     """The branch right below task `tid` in the stack, else `trunk`."""
-    raise NotImplementedError("layer_base")
+    b = fc_worktree.task_branch(repo, proj, tid)
+    prefix = fc_worktree.task_prefix(repo, proj)
+    refs = fc_core.sh(["git", "for-each-ref", "--format=%(refname:short)", "--no-merged=HEAD", f"refs/heads/{prefix}*"], repo, check=False).stdout.split()
+    metas = {m["id"]: m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
+    synced = (proj / "results" / "tasks.json").exists()
+    ids = [t for t in (r.removeprefix(prefix) for r in refs if re.fullmatch(rf"{re.escape(prefix)}\d+", r)) if t in metas or not synced]
+    order = [fc_worktree.task_branch(repo, proj, t) for t in fc_worktree.layer_order([metas.get(t, {"id": t}) for t in ids])]
+    i = order.index(b) if b in order else 0
+    return order[i - 1] if i > 0 else trunk
 
 
 def fired(issue):
