@@ -1657,5 +1657,26 @@ class UserDocsNamePostures(unittest.TestCase):
             self.assertNotIn("—", read(rel))
 
 
+class MentionsNamePostures(unittest.TestCase):
+    LINES = (
+        ("sections/0g.md", 13, "An autonomous mode is never a mandate to decide for the user, except away and yolo (0h), "
+         "whose decisions are the recommendations, logged for the product owner's return.", "except yolo (0h)"),
+        ("docs/herdr.md", 122, "`watch --now` and `status` also say whether away or yolo is on and which session set it, "
+         "since one session's `compose away` or `compose yolo` changes how every session on the project answers.",
+         "whether yolo is on"),
+    )
+
+    def test_each_line_is_replaced_in_place(self):
+        for rel, number, line, old in self.LINES:
+            lines = read(rel).splitlines()
+            self.assertEqual(lines[number - 1], line, rel)
+            self.assertEqual(lines.count(line), 1, rel)
+            self.assertNotIn(old, read(rel))
+
+    def test_no_em_dash(self):
+        for rel, *_ in self.LINES:
+            self.assertNotIn("—", read(rel))
+
+
 if __name__ == "__main__":
     unittest.main()
