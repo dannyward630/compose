@@ -576,6 +576,14 @@ class FinishWithoutClaude(unittest.TestCase):
         os.environ["HERDR_ENV"] = ""
         self.assertEqual(self.finish()[0][-1], "next: run compose to open herdr")
 
+    def test_the_next_line_names_the_exe_of_the_harness_row_that_is_set_up(self):
+        (self.bin / "other").write_text("#!/bin/sh\n"); (self.bin / "other").chmod(stat.S_IRWXU)
+        (self.home / ".other/skills").mkdir(parents=True); (self.home / ".other/skills/compose").symlink_to(self.co)
+        p = mock.patch.dict(fc_harness.HARNESSES, {"other": {**fc_harness.HARNESSES.get("codex", {}), "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}})
+        p.start(); self.addCleanup(p.stop)
+        lines, code, _ = self.finish(*ONLY_CLAUDE)
+        self.assertEqual((code, lines[-2:]), (0, ["compose is ready", "next: run other in a pane and type $compose"]))
+
     def test_codex_set_up_without_claude_still_lists_git_and_herdr(self):
         self.tools(codex=True)
         _, code, rows = self.finish("git", "herdr", *ONLY_CLAUDE)
