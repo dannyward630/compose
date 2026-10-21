@@ -99,14 +99,15 @@ def chain_order(repo, proj):
 
 STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
-def linearize(repo, proj, trunk, wt):
+def linearize(repo, proj, trunk, wt, through=()):
     with fc_worktree.STACK_LOCK:
-        return _linearize(repo, proj, trunk, wt)
+        return _linearize(repo, proj, trunk, wt, through)
 
-def _linearize(repo, proj, trunk, wt):
+def _linearize(repo, proj, trunk, wt, through=()):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported, and STACK_STOP
-    says where: a caller that acts on the stack top (verify, top, the stack) refuses the partial chain then."""
+    says where: a caller that acts on the stack top (verify, top, the stack) refuses the partial chain then. With `through`, the
+    chain stops once the last of those branches is placed: the layers above stay as they are, carrying what they were built on."""
     global STACK_STOP
     STACK_STOP = ""
     chain = chain_order(repo, proj)
@@ -115,6 +116,7 @@ def _linearize(repo, proj, trunk, wt):
     prefix = fc_worktree.task_prefix(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
+    waiting = set(through)
     for b in chain:
         # A replaced layer's old commits are dropped even while it is not back in the chain (still running, failed, or moved
         # above b by a re-plan): b may already sit on prev and carry them.
@@ -150,6 +152,9 @@ def _linearize(repo, proj, trunk, wt):
                 break
         linear.append(b)
         prev = b
+        waiting.discard(b)
+        if through and not waiting:
+            break
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     for rb, t in replaced:  # an old tip no layer carries any more is done with
         if not any(contains(t, b) for b in chain):
