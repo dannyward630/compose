@@ -86,6 +86,11 @@ class SpecCheck(unittest.TestCase):
             ok, level, gaps = check([task("ENG-3", "001")], desc)["ENG-1"]
             self.assertEqual((ok, level, len(gaps), has(gaps, kw)), (False, "feature", 1, True), desc)
 
+    def test_none_in_not_yet_specified_ignores_case_period_and_whitespace(self):
+        for none in ("None.", "none", "NONE.", "  None  ", "None ."):
+            ok, level, gaps = check([task("ENG-3", "001")], SETTLED.replace("None", none, 1))["ENG-1"]
+            self.assertEqual((ok, gaps), (True, []), none)
+
     def test_tasks_chained_by_blocked_by_may_share_a_file(self):
         issues = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", ["ENG-3"], files="a.go"), task("ENG-5", "003", ["ENG-4"], files="a.go")]
         self.assertFalse(has(check(issues)["ENG-1"][2], "a.go"))
