@@ -48,11 +48,22 @@ def cost(model, usage) -> float | None:
 
 def reach(name) -> tuple[bool, str]:
     """Whether provider `name` answers a 5 s GET <base_url>/models (any HTTP answer counts), and why."""
-    return False, "not implemented"
+    import urllib.error
+    import urllib.request
+    base_url = fc_config.PROVIDERS[name]["base_url"]
+    try:
+        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=5) as r:
+            return True, f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        e.close()
+        return True, f"HTTP {e.code}"
+    except OSError:  # URLError and socket timeouts are OSErrors
+        return False, f"local provider {name} at {base_url} is not answering: start the server, then run again"
 
 def doctor_rows() -> list[tuple]:
     """One doctor row per declared provider."""
-    return []
+    return [(f"local provider {n}", lambda checkout, n=n: (reach(n)[0], "not answering"), f"start the server at {p['base_url']}", "default", False, "manual")
+            for n, p in sorted(fc_config.PROVIDERS.items())]
 
 def opencode_provider(model) -> dict:
     """The OpenCode provider entry for a local model."""
