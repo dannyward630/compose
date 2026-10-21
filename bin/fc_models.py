@@ -13,6 +13,8 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     config = {}
     if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
         config["provider"] = {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}
+    if local := fc_providers.opencode_provider(model):
+        config["provider"] = {**config.get("provider", {}), **local}
     guard = fc_readguard.guard_file(cwd)  # the plugin asks the guard before each tool call; bash stays fenced to trail
     if guard.exists():
         config["plugin"] = [f"file://{fc_readguard.OC_PLUGIN}"]
@@ -56,8 +58,7 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     if errors and not text and not tools:
         # The model never ran: the provider refused (bad key, payment required, model missing). Retrying is pointless.
         raise RuntimeError(f"provider refused the request: {'; '.join(errors)[-400:]}")
-    if model in fc_config.PRICES:
-        usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
+    usage["cost"] = fc_providers.cost(model, usage)
     fc_core.LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     reply = "\n".join(text)
     # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
