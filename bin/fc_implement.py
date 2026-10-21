@@ -589,7 +589,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
 
 CONTRADICTION_RE = re.compile(r"^[ \t>*_`-]*CONTRADICTION[*_`]*:[*_]*[ \t]*(.+?)[`*_ \t]*$", re.M)  # markdown around it too
 
+NO_CONTRADICTION_RE = re.compile(r"(?:none|nil|n/?a|nothing|no contradictions?)\b", re.I)  # "none - the brief and the code agreed."
+
 def contradiction(reply):
-    """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back is not one."""
-    found = [x.strip() for x in CONTRADICTION_RE.findall(reply or "") if "<what the brief says>" not in x]
+    """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back is not one,
+    nor is a line that says there is none (a real one has the ` / ` between the brief's claim and what the code shows)."""
+    found = [x.strip() for x in CONTRADICTION_RE.findall(reply or "")
+             if "<what the brief says>" not in x and not (NO_CONTRADICTION_RE.match(x.strip()) and " / " not in x)]
     return found[-1] if found else None

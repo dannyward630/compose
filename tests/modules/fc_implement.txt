@@ -16,4 +16,5 @@ run_test
 cmd_timed
 run_task
 CONTRADICTION_RE
+NO_CONTRADICTION_RE
 contradiction
