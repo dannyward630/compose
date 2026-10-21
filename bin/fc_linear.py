@@ -106,6 +106,8 @@ def _linear_post(query, variables, attempt):
 
 def linear_gql(query, variables):
     """One GraphQL call. A rate-limited call did not run, so it waits as long as Linear says and runs again, saying so on stderr."""
+    if not linear_ready():
+        return {}
     for attempt in range(LINEAR_RETRIES + 1):
         try:
             return _linear_post(query, variables, attempt)
