@@ -1,4 +1,5 @@
 """The route's record: the reason the CLI composes, and the CLI-owned `## Route` section of the task issue."""
+import re
 
 
 def route_reason(route, state):
@@ -52,14 +53,39 @@ def route_reason(route, state):
 
 def route_section(route):
     """The `## Route` section text for one route."""
-    raise NotImplementedError("route_section")
+    confidence = f"{route['confidence']:.2f}" if route["confidence"] is not None else "-"
+    checks = ", ".join(route["checks"]) if route["checks"] else "none"
+    return "\n".join(["## Route", "",
+                      f"* workflow: {route['workflow']}",
+                      f"* depth: {route['depth']}",
+                      f"* decided by: {route['decided_by']}",
+                      f"* confidence: {confidence}",
+                      f"* reason: {route['reason']}",
+                      f"* verification requirements: {checks}",
+                      f"* context hash: {route['hash']}"])
 
 
 def parse_route(desc):
     """The Route section's bullets keyed by their labels; None without the section."""
-    raise NotImplementedError("parse_route")
+    import fc_tasks
+    text = fc_tasks.route_text(desc)
+    if not text:
+        return None
+    out = {}
+    for line in text.splitlines():
+        if line.startswith("* ") or line.startswith("- "):
+            label, _, value = line[2:].partition(": ")
+            out[label] = value
+    return out
 
 
 def with_route(desc, section):
     """`desc` with its Route section replaced in place, else inserted right above the compose block."""
-    raise NotImplementedError("with_route")
+    import fc_tasks
+    route = fc_tasks.route_text(desc)
+    if route:
+        return desc.replace(route, section, 1)
+    m = re.search(r"^```compose", desc, re.M)
+    if m:
+        return desc[:m.start()].rstrip("\n") + "\n\n" + section + "\n\n" + desc[m.start():]
+    return desc.rstrip("\n") + "\n\n" + section
