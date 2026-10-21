@@ -76,6 +76,14 @@ def check(row, checkout):
             return False, f"{'.'.join(map(str, v))} is older than {floor}"
     return True, ""
 
+CLAUDE_ONLY = ()
+
+def other_harness(checkout):
+    raise NotImplementedError
+
+def required(row, other):
+    raise NotImplementedError
+
 STEPS = (  # the rows, in setup order
     ("Homebrew", "brew", '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', "default", False, "interactive"),
     ("git", "git", "xcode-select --install", "required", False, "manual"),
