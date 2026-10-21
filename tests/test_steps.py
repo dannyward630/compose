@@ -10,7 +10,7 @@ R, D, G, c = "required", "default", "designer", True
 ROWS = [("Homebrew", D, "interactive"), ("git", R, "manual"), ("npx", R, "run"), ("gh", R, "run"), ("gh auth", R, "interactive"), ("gh stack", R, "run"),
         ("claude", R, "manual"), ("herdr", R, "run"), ("herdr skill", R, "run"), ("i-have-adhd skill", R, "run", c), ("pi", R, "run"),
         ("pi openrouter-fast provider", R, "write"), ("compose CLI link", R, "write"), ("compose skill link", R, "write"),
-        ("Codex skill link", D, "write"), ("~/.local/bin on PATH", R, "manual"),
+        ("Codex skill link", D, "write"), ("Codex commands", D, "write"), ("~/.local/bin on PATH", R, "manual"),
         ("OpenRouter key", R, "key"), ("TypeSafe key", R, "key"), ("Linear key", R, "key"), ("uv", D, "run"), ("jev", D, "run"),
         ("treehouse", D, "run"), ("bp link", D, "write"), ("Chromium", D, "run"), ("superpowers", D, "run", c), ("herdr pi integration", D, "run"),
         ("herdr claude integration", D, "run", c), ("TEXT_MODEL lines", D, "write"), ("git rerere", D, "run"), ("pi auth.json override", D, "manual"),

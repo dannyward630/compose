@@ -173,3 +173,59 @@ class CodexCommands(unittest.TestCase):
             self.assertEqual(fc_links.write_commands("other", self.co)[1], f"wrote {copy}")
             self.assertIn(f"Other commands: ok {copy}", fc_links.relink_owned(self.co))
         self.assertFalse((self.home / ".codex").exists())
+
+
+class CodexCommandsRow(unittest.TestCase):
+    NAME = "Codex commands"
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co = tmp / "bin", tmp / "home", tmp / "co"
+        for d in (self.bin, self.home, self.co / "commands"): d.mkdir(parents=True)
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        for n in ("yolo", "planner"): (self.co / f"commands/{n}.md").write_bytes(f"# {n}\nRun $ARGUMENTS\n".encode())
+        s = self.home / ".codex/skills"
+        self.planner, self.yolo = s / "compose-planner/SKILL.md", s / "compose-yolo/SKILL.md"
+        names = [r[0] for r in fc_steps.STEPS]
+        self.row = fc_steps.STEPS[names.index(self.NAME)]
+        self.assertEqual(names[names.index(self.NAME) - 1], "Codex skill link")
+
+    def codex(self):
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+
+    def run_row(self, dry=False): return fc_steprun.run_step(self.row, self.co, True, False, False, dry=dry)
+
+    def test_row_is_an_optional_default_write_row(self):
+        self.assertEqual(self.row[2:], ("compose setup", "default", False, "write"))
+        self.assertEqual(set(fc_steprun.WRITERS), set(fc_steprun.PREVIEWS))
+
+    def test_without_codex_the_check_passes_and_run_step_does_nothing(self):
+        self.assertEqual(fc_steps.check(self.row, self.co), (True, ""))
+        self.assertEqual(self.run_row(), ("ok", ""))
+
+    def test_a_missing_or_stale_copy_fails_the_check_and_run_step_writes_the_copies(self):
+        self.codex()
+        self.assertEqual(fc_steps.check(self.row, self.co), (False, "~/.codex/skills/compose-planner/SKILL.md is missing"))
+        self.assertEqual(self.run_row()[0], "done")
+        self.assertEqual(self.yolo.read_bytes(), (self.co / "commands/yolo.md").read_bytes())
+        self.assertEqual(self.run_row(), ("ok", ""))
+        self.yolo.write_bytes(b"old")
+        self.assertEqual(fc_steps.check(self.row, self.co), (False, "~/.codex/skills/compose-yolo/SKILL.md is stale"))
+        self.assertEqual(self.run_row()[0], "done")
+        self.assertEqual(self.yolo.read_bytes(), (self.co / "commands/yolo.md").read_bytes())
+
+    def test_dry_run_previews_one_line_per_copy_and_writes_nothing(self):
+        self.codex()
+        self.assertEqual(self.run_row(dry=True), ("would", "would write ~/.codex/skills/compose-planner/SKILL.md; would write ~/.codex/skills/compose-yolo/SKILL.md"))
+        self.assertFalse((self.home / ".codex").exists())
+
+    def test_a_refused_copy_fails_the_step_with_the_writer_line(self):
+        self.codex(); self.planner.mkdir(parents=True)
+        state, line = self.run_row()
+        self.assertEqual(state, "failed")
+        self.assertIn("refused ~/.codex/skills/compose-planner/SKILL.md", line)
+
+    def test_doctor_lists_the_first_missing_copy_as_optional(self):
+        self.codex(); out = io.StringIO()
+        with contextlib.redirect_stdout(out): fc_init.check_deps()
+        self.assertIn("MISSING: Codex commands: ~/.codex/skills/compose-away/SKILL.md is missing (install: compose setup) - optional\n", out.getvalue())
