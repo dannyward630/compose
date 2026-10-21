@@ -19,6 +19,7 @@ fc_keys
 fc_perms
 fc_steps
 fc_layers
+fc_blockers
 fc_stack
 fc_change
 fc_frame0
