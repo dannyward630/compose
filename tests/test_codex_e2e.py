@@ -115,10 +115,6 @@ class CodexTeammate(unittest.TestCase):
         self.fail(status.read_text())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @unittest.skipUnless(CODEX, "codex is not installed")
 class CodexHooks(SetupE2E, unittest.TestCase):
     """After `compose setup` in a scratch CODEX_HOME holding only a link to the sign-in, the real codex runs compose's guard hook."""
@@ -133,3 +129,7 @@ class CodexHooks(SetupE2E, unittest.TestCase):
             p = subprocess.run([CODEX, "exec", "--ephemeral", "-s", "workspace-write", "Create a.txt containing a. Do not do anything else."], cwd=repo, env=env,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
             self.assertEqual((repo / "a.txt").exists(), made, f"{role}: {p.stdout[-2000:]}{p.stderr[-1000:]}")
+
+
+if __name__ == "__main__":
+    unittest.main()
