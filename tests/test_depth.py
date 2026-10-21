@@ -52,6 +52,43 @@ class StackDepth(unittest.TestCase):
 
 class DepthConfig(unittest.TestCase):
     """The verify settings at the stack's depth."""
+    CFG = {"checks": ["c1"], "review": True, "jev_acceptance": True, "e2e": [{"name": "a", "cmd": "x"}, {"name": "b"}, {"name": "c"}]}
+
+    def config(self, *tasks, cfg=None):
+        """depth_config for (depth, test, requirements, body, kind) tasks numbered 061, 062, ..."""
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        metas = [{"id": "%03d" % (61 + n), "title": "t", "files": [], "protected": [], "test": t, "body": b, "model": "m", "after": "", "linear": f"ENG-{n}", "kind": k} for n, (d, t, r, b, k) in enumerate(tasks)]
+        issues = {f"ENG-{n}": {"description": f"## Route\n\n* workflow: test-first\n* depth: {d}\n* verification requirements: {r}\n"} for n, (d, t, r, b, k) in enumerate(tasks)}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": metas, "issues": issues}))
+        return fc_depth.depth_config(self.CFG if cfg is None else cfg, proj, metas)
+
+    def test_fast_checks_are_cfg_then_task_tests_then_requirements_without_duplicates_and_review_is_off(self):
+        got, depth, tid = self.config(("FAST", "t1", "r1, c1,, none , r2", "", "code"), ("FAST", "c1", "none", "", "code"), ("FAST", "t3", "dz", "", "design"), ("FAST", "t2", "r2, r3", "", "code"))
+        self.assertEqual((depth, tid, got["depth"], got["review"]), ("FAST", "061", "FAST", False))
+        self.assertEqual(got["checks"], ["c1", "t1", "t2", "r1", "r2", "r3"])
+        self.assertNotIn("acceptance_gate", got)
+
+    def test_fast_keeps_the_e2e_cases_named_by_case_lines_in_cfg_order(self):
+        body = "## Goal\nx\n  case:  c  \nsee case: a\ncase: nope"
+        got, _, _ = self.config(("FAST", "t", "none", body, "code"), ("FAST", "t", "none", "case: b", "code"))
+        self.assertEqual(got["e2e"], [{"name": "b"}, {"name": "c"}])
+        self.assertEqual(self.config(("FAST", "t", "none", "case: nope", "code"))[0]["e2e"], [])
+
+    def test_standard_with_no_requirements_is_the_input_plus_its_depth(self):
+        got, depth, tid = self.config(("STANDARD", "t1", "none", "case: a", "code"))
+        self.assertEqual((got, depth, tid), ({**self.CFG, "depth": "STANDARD"}, "STANDARD", "061"))
+        got, _, _ = self.config(("STANDARD", "t1", "r1", "", "code"))
+        self.assertEqual(got, {**self.CFG, "depth": "STANDARD", "checks": ["c1", "r1"]})
+
+    def test_deep_is_standard_with_the_acceptance_gate_and_every_e2e_case(self):
+        got, depth, tid = self.config(("FAST", "t1", "r0", "case: a", "code"), ("DEEP", "t2", "r1", "case: b", "code"))
+        self.assertEqual((got, depth, tid), ({**self.CFG, "depth": "DEEP", "checks": ["c1", "r0", "r1"], "acceptance_gate": True}, "DEEP", "062"))
+
+    def test_the_input_cfg_and_its_lists_are_not_changed(self):
+        cfg = json.loads(json.dumps(self.CFG))
+        got, _, _ = self.config(("FAST", "t1", "r1", "case: a", "code"), cfg=cfg)
+        self.assertEqual(cfg, self.CFG)
+        self.assertIsNot(got["checks"], cfg["checks"]); self.assertIsNot(got["e2e"], cfg["e2e"])
 
 
 CFG = {"review": True, "jev_acceptance": True, "e2e": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}
