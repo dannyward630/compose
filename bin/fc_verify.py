@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_init, fc_jev, fc_accept
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -547,6 +547,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             fc_core.sh(["git", "--literal-pathspecs", "add", "-A", "--", *fixed], repo)
             fc_core.sh(["git", "--literal-pathspecs", "commit", "-qm", fix_message(reply, fixed, fc_core.commit_convention(proj)), "--", *fixed], repo, check=False)
             fc_core.say("fix    committed on " + (fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip() or "HEAD"))
+            rounds[-1]["fix_tasks"] = fc_routecost.fix_tasks(fc_tasks.load_tasks(proj), fixed)
             tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
             if tests is None:
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
