@@ -157,9 +157,12 @@ def catch_up(repo, proj, tasks, ids, trunk, kinds):
             if not result.exists() or json.loads(result.read_text()).get("status") != "passed":
                 continue
             run_id = fc_ledger.run_id(proj, id)
-            triggers = [t for t in (["diff"] if "diff" in kinds else []) if (t, run_id) not in fired(meta["linear"])]
+            done = fired(meta["linear"])
+            base, branch = layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id)
+            outside = "scope" in kinds and diff_signals(repo, meta, base, branch)["outside"]
+            triggers = [t for t in (["diff"] if "diff" in kinds else []) + (["scope"] if outside else []) if (t, run_id) not in done]
             if triggers:
-                reassess(repo, proj, meta, tasks, triggers, run_id, layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id))
+                reassess(repo, proj, meta, tasks, triggers, run_id, base, branch)
         except fc_models.PaymentRequired:
             raise
         except Exception as e:
@@ -173,7 +176,7 @@ def after_run(repo, proj, results, tasks, trunk):
     if not ids:
         return None
     try:
-        whys = catch_up(repo, proj, tasks, ids, trunk, ("diff",))
+        whys = catch_up(repo, proj, tasks, ids, trunk, ("diff", "scope"))
     except fc_models.PaymentRequired as e:
         return e
     by_id = {m["id"]: m for m in tasks}
@@ -185,7 +188,7 @@ def after_run(repo, proj, results, tasks, trunk):
 def before_verify(repo, proj, tasks, trunk):
     """`verify`'s hook before its first stage: catch up the stack, else fail closed."""
     ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in fc_worktree.stack_order(repo, proj, tasks)]
-    whys = catch_up(repo, proj, tasks, ids, trunk, ("diff",))
+    whys = catch_up(repo, proj, tasks, ids, trunk, ("diff", "scope"))
     for id, why in whys.items():
         fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
     if whys:
