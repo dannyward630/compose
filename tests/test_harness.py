@@ -447,3 +447,63 @@ class ClaudeOptional(unittest.TestCase):
         for level in ("default", "designer"):
             row = next(r for r in fc_steps.STEPS if r[3] == level)
             self.assertEqual((fc_steps.required(row, None), fc_steps.required(row, "Codex")), (False, False))
+
+
+import fc_finish, fc_prompt, fc_setup
+ONLY_CLAUDE, NOT_READY = ("claude", "herdr skill", "i-have-adhd skill", "compose skill link"), "compose is installed but not ready:"
+
+
+class FinishWithoutClaude(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co = tmp / "bin", tmp / "home", Path(fc_finish.__file__).resolve().parents[1]
+        self.bin.mkdir(); self.home.mkdir(); (tmp / "CONFIG_PATH").write_text("{}")
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home), "HERDR_ENV": "1"}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        for name in ("CONFIG_PATH", "AUTH_PATH", "ENV_FILE"):
+            q = mock.patch.object(fc_config, name, tmp / name); q.start(); self.addCleanup(q.stop)
+
+    def tools(self, claude=False, codex=False, link=None):
+        for name in ("claude",) * claude + ("codex",) * codex:  # Codex is set up with codex and a skill link to this checkout; `link` alone overrides the link
+            (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(stat.S_IRWXU)
+        if codex if link is None else link:
+            (self.home / ".codex/skills").mkdir(parents=True); (self.home / ".codex/skills/compose").symlink_to(self.co)
+
+    def finish(self, *failed):  # (lines, code, the rows listed as not ready)
+        lines, code = fc_finish.finish([(n, "failed") for n in failed], True)
+        return lines, code, lines[lines.index(NOT_READY) + 1:-1] if NOT_READY in lines else []
+
+    def walk(self):  # the rows whose skip says compose stops working without them
+        seen = {}
+        with mock.patch.object(fc_prompt, "confirm", lambda *a: False), mock.patch.object(fc_prompt, "step", lambda name, word, lines=(): seen.update({name: list(lines)})):
+            fc_setup.walk_steps(self.co, True, True)
+        return {n for n, lines in seen.items() if any(l.startswith("compose stops working without it") for l in lines)}
+
+    def test_codex_set_up_without_claude_is_ready_and_points_at_codex(self):
+        self.tools(codex=True)
+        lines, code, _ = self.finish(*ONLY_CLAUDE)
+        self.assertEqual((code, lines[-2:]), (0, ["compose is ready", "next: run codex in a pane and type $compose"]))
+        os.environ["HERDR_ENV"] = ""
+        self.assertEqual(self.finish()[0][-1], "next: run compose to open herdr")
+
+    def test_codex_set_up_without_claude_still_lists_git_and_herdr(self):
+        self.tools(codex=True)
+        _, code, rows = self.finish("git", "herdr", *ONLY_CLAUDE)
+        self.assertEqual((code, [r.split(":")[0] for r in rows]), (0, ["  git", "  herdr"]))
+
+    def test_without_claude_and_codex_not_set_up_finish_stops(self):
+        for tools in ({}, {"codex": True, "link": False}, {"link": True}):  # the binary or the link alone is not set up
+            self.setUp(); self.tools(**tools); lines, code, _ = self.finish()
+            self.assertEqual((code, lines[-1]), (1, fc_finish.CLAUDE_MISSING), tools)
+
+    def test_with_claude_the_next_line_names_claude(self):
+        for codex in (False, True):
+            self.setUp(); self.tools(claude=True, codex=codex); lines, code, _ = self.finish()
+            self.assertEqual((code, lines[-1]), (0, "next: run claude in a pane and type /compose"), codex)
+
+    def test_custom_flow_warns_about_skipping_only_what_compose_needs(self):
+        required = {r[0] for r in fc_steps.STEPS if r[3] == "required" and r[5] != "key"}
+        self.tools(codex=True)
+        self.assertEqual(self.walk(), required - set(ONLY_CLAUDE))
+        self.setUp(); self.tools()
+        self.assertEqual(self.walk(), required)
