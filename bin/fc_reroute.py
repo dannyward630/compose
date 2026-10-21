@@ -1,10 +1,16 @@
 """The re-route after implementation: a passed task's route reassessed once per trigger from its real diff, recorded in Linear."""
 
 import json
+import os
 import re
 
+import fc_config
 import fc_core
 import fc_linear
+import fc_policy
+import fc_routectx
+import fc_routejev
+import fc_routerec
 import fc_tasks
 import fc_worktree
 
@@ -103,7 +109,21 @@ def fired(issue):
 
 def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
     """One Jev reassessment of the task's depth, floored at the recorded one, then recorded; returns the route."""
-    raise NotImplementedError("reassess")
+    cfg = fc_core.project_config(proj)
+    env = {**fc_core.load_env(cfg.get("env_file", fc_config.ENV_FILE)), **os.environ}
+    issues = fc_tasks.linear_cache(proj).get("issues", {})
+    rec = fc_routerec.parse_route((issues.get(meta["linear"]) or {}).get("description") or "") or {}
+    checks = rec.get("verification requirements") or "none"
+    recorded = {"workflow": rec.get("workflow"), "depth": rec.get("depth"), "checks": [] if checks == "none" else checks.split(", ")}
+    signals = diff_signals(repo, meta, base, branch)
+    state = fc_routectx.route_context(repo, proj, meta, tasks, issues)
+    state["diff"] = {**signals, **diff_callers(repo, base, branch, meta)}
+    state["recorded"] = recorded
+    state["triggers"] = list(triggers)
+    state["pin"] = recorded["workflow"] or "test-first"
+    policies, note = fc_policy.read_policies(repo)
+    paths = [c["path"] for c in signals["changed"]]
+    return fc_routejev.decide(env, cfg, state, fc_policy.glob_matches(policies, paths), [p for p in policies if not p["globs"]], lambda: fc_routectx.dependency_context(repo, meta))
 
 
 def catch_up(repo, proj, tasks, ids, trunk, kinds):
