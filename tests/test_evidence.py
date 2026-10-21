@@ -78,7 +78,7 @@ class Refresh(unittest.TestCase):
         rs = [row("a", at="2026-10-21T09:05:59.000Z", fails_on_base=True, criterion_id=["001.1:aa", "001.2:bb"], detail="x | y"),
               row("b", at="2026-10-21T10:00:00.000Z", fails_on_base=False, phase="sufficiency", source="verify", result="proven", criterion_id=["001.1:aa", "001.2:bb"]),
               row("c", at="2026-10-21T11:00:00.000Z", phase="sufficiency", source="verify", result="unproven", criterion_id=["001.1:aa"])]
-        head = "## Evidence\n\nVerdict: %s\n\n| id | at | source | phase | result | fails on base | criteria | detail |\n|---|---|---|---|---|---|---|---|\n"
+        head = "## Evidence\n\nVerdict: %s\n\n| id | at (UTC) | source | phase | result | fails on base | criteria | detail |\n|---|---|---|---|---|---|---|---|\n"
         self.assertEqual(fc_evidence.table([]), head % "not judged")
         self.assertEqual(fc_evidence.table(rs[:1]), head % "not judged" + "| a | 2026-10-21 09:05 | run | red | fail | yes | 001.1, 001.2 | x \\| y |\n")
         self.assertEqual(fc_evidence.table(rs), head % "001.1 unproven, 001.2 proven" + "| c | 2026-10-21 11:00 | verify | sufficiency | unproven | - | 001.1 | d |\n"

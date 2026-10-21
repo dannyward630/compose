@@ -68,7 +68,7 @@ def table(rows):
                 latest[c] = r
     verdict = ", ".join(f'{c.split(":")[0]} {latest[c]["result"]}' for c in latest) or "not judged"
     lines = ["## Evidence", "", "Verdict: " + verdict, "",
-             "| id | at | source | phase | result | fails on base | criteria | detail |", "|---|---|---|---|---|---|---|---|"]
+             "| id | at (UTC) | source | phase | result | fails on base | criteria | detail |", "|---|---|---|---|---|---|---|---|"]
     for r in rows[::-1][:60]:
         fob = {True: "yes", False: "no", None: "-"}[r["fails_on_base"]]
         crits = ", ".join(c.split(":")[0] for c in r["criterion_id"]) or "all"
