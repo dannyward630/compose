@@ -71,7 +71,9 @@ def cmd_yolo(a):
         return
     if words == ["off"]:
         print(yolo_digest(repo, proj, y))
-        os.replace(path, path.with_name(f"yolo-{y['since'].replace(' ', 'T').replace(':', '')}.json"))
+        archive = path.with_name(f"yolo-{y['since'].replace(' ', 'T').replace(':', '')}.json")
+        os.replace(path, archive)
+        print(f"\nresults/yolo.json archived as {archive.name}")
         return
     if words[:1] == ["decided"]:
         if len(words) < 2:
