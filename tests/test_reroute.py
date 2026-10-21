@@ -378,7 +378,7 @@ class Sweep(unittest.TestCase):
 
     def sweep(self, ids=("001", "002", "003", "004", "005", "006"), key="lin_test", kinds=("diff",), reassess=None, run_id=lambda proj, t: f"run-{t}"):
         """catch_up with `reassess` mocked; returns (its return value, the mock)."""
-        with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc_reroute, "reassess", **reassess or {}) as re, \
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc_reroute, "reassess", **reassess or {}) as re, mock.patch.object(fc_reroute, "fired", return_value=set()), \
                 mock.patch.object(fc_reroute, "layer_base", side_effect=lambda repo, proj, t, trunk: f"{trunk}/below-{t}"), mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=run_id):
             return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re
 
