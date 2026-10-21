@@ -446,6 +446,27 @@ class CodexProbe(unittest.TestCase):
             fc_models.cmd_models(SimpleNamespace(probe=True))
         self.assertEqual(out, [f"codex:{self.ID}: ok (answered)", "codex:bad: unavailable (m)", "codex: ok (Codex's default model)"])
 
+    def test_every_harness_row_is_probed_through_its_own_probe(self):
+        row = {**fc_harness.HARNESSES.get("codex", {}), "name": "Other", "probe": mock.Mock(return_value=["other-probe"]), "result": mock.Mock(return_value=(True, "fine"))}
+        p = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": row}), mock.patch.object(fc_config, "CREW_MODELS", {"a": "other:m"}), mock.patch.object(fc_config, "CREW_FALLBACK", {}):
+            self.assertEqual((fc_models.probe_command("other:m"), fc_models.probe_result("other:m", p)), (["other-probe"], (True, "fine")))
+            row["probe"].assert_called_once_with("m"); row["result"].assert_called_once_with(p)
+            for model in ("other", "other:"): self.assertEqual(fc_models.model_available(model), (True, "Other's default model"))
+            self.assertEqual((fc_models.model_available("other:m"), self.calls), ((True, "fine"), [["other-probe"]]))
+            out = []
+            with mock.patch("builtins.print", lambda *a: out.append(" ".join(map(str, a)))): fc_models.cmd_models(SimpleNamespace(probe=True))
+        self.assertEqual(out, ["other:m: ok (fine)"])
+
+    def test_claude_and_pi_are_unchanged_and_grok_is_skipped(self):
+        self.assertEqual(fc_models.probe_command("pi:a/b")[0], "pi")
+        self.assertEqual(fc_models.probe_command("claude:opus")[:4], ["claude", "-p", "--model", "opus"])
+        probed = []
+        with mock.patch.object(fc_config, "CREW_MODELS", {"a": "grok:x", "b": "pi:a/b", "c": "claude:opus", "d": "gemini:y"}), mock.patch.object(fc_config, "CREW_FALLBACK", {}), \
+                mock.patch.object(fc_models, "model_available", lambda m: probed.append(m) or (True, "ok")), mock.patch("builtins.print"):
+            fc_models.cmd_models(SimpleNamespace(probe=True))
+        self.assertEqual(probed, ["pi:a/b", "claude:opus"])
+
 
 class ClaudeOptional(unittest.TestCase):
     def setUp(self):
