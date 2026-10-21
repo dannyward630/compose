@@ -6,7 +6,9 @@ import re
 
 import fc_config
 import fc_core
+import fc_ledger
 import fc_linear
+import fc_models
 import fc_policy
 import fc_route
 import fc_routectx
@@ -141,7 +143,26 @@ def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
 
 def catch_up(repo, proj, tasks, ids, trunk, kinds):
     """One reassessment per passed task for the triggers of `kinds` not yet fired; `{id: why}` for each route not recorded."""
-    raise NotImplementedError("catch_up")
+    failed = {}
+    if not fc_config.LINEAR_KEY:
+        return failed
+    by_id = {m["id"]: m for m in tasks}
+    for id in ids:
+        meta = by_id.get(id)
+        if not meta or not meta.get("linear"):
+            continue
+        result = proj / "results" / f"{id}.json"
+        try:
+            if not result.exists() or json.loads(result.read_text()).get("status") != "passed":
+                continue
+            triggers = ["diff"] if "diff" in kinds else []
+            if triggers:
+                reassess(repo, proj, meta, tasks, triggers, fc_ledger.run_id(proj, id), layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id))
+        except fc_models.PaymentRequired:
+            raise
+        except Exception as e:
+            failed[id] = str(e)
+    return failed
 
 
 def after_run(repo, proj, results, tasks, trunk):
