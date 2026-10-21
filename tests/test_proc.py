@@ -83,6 +83,23 @@ class Slots(unittest.TestCase):
         for c in yes: self.assertTrue(fc.fc_proc.scoped(c), c)
         for c in no: self.assertFalse(fc.fc_proc.scoped(c), c)
 
+    def test_only_a_whole_suite_takes_a_suite_slot(self):
+        suites = ("python3 -m unittest discover -s tests", "pytest", "npm test", "make test", "go test ./...", "cd app && npm run test", "cargo nextest run",
+                  "uv run pytest tests", "pytest -k a; pytest")
+        others = ("python3 bin/compose.py --help", "bp help", "uv sync --locked", "git status", "npm install test-pkg", "cd app", "",
+                  "pytest -k foo", "node --test test/bp.test.mjs", "pytest tests/test_a.py tests/test_b.py", "npm test -- -t foo")
+        for c in suites: self.assertTrue(fc.fc_proc.suite(c), c)
+        for c in others: self.assertFalse(fc.fc_proc.suite(c), c)
+
+    def test_a_command_that_is_not_a_suite_runs_while_every_suite_slot_is_held(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}):
+            os.environ.pop("COMPOSE_TEST_SLOT", None)
+            with fc.fc_proc.slot():
+                t0 = time.time()
+                r = fc.fc_implement.timed("echo hi", os.getcwd(), 10)
+                self.assertEqual((r.returncode, r.stdout.strip()), (0, "hi"))
+                self.assertLess(time.time() - t0, 3)
+
     def test_a_quick_run_gets_a_slot_while_every_suite_slot_is_held_and_waits_only_on_quick_runs(self):
         env = {"COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
         said = []

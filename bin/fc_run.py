@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -116,6 +116,10 @@ def preflight(models):
         finally:
             shutil.rmtree(root, ignore_errors=True)
     models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
+    for name in sorted({p[0] for p in map(fc_config.provider_of, models) if p}):
+        ok, why = fc_providers.reach(name)
+        if not ok:
+            sys.exit("preflight stopped; nothing was cloned or run. " + why)
     # pi takes a provider's key from its own auth.json before the workspace key compose hands it, so such an entry bills elsewhere.
     shadowing = [p for p in fc_pi.pi_auth_overrides(fc_pi.PI_AUTH) if any(m.startswith(f"pi:{p}/") for m in models)]
     if shadowing:
@@ -147,10 +151,19 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
+    released, still = fc_blockers.released(repo, proj, tasks, a.trunk)  # said first: which outside blockers git lets go, and why the rest hold
+    for b, proof in released.items():
+        fc_core.say(f"unblocked  {b}  {proof}")
+    for b, why in still.items():
+        fc_core.say(f"waits      {b}  {why}")
     if not a.no_stack and fc_worktree.stack_order(repo, proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         # `--no-stack` leaves the chain alone: a task with `after:` still rebases what it stacks on, the rest never wait on it.
+        # A task this run rebuilds is replaced first (run_task would, later): its old commits conflicting with the trunk must not stop the run.
+        for m in tasks:
+            if not fc_tasks.task_finished(proj, m, redo=bool(os.environ.get("COMPOSE_REDO"))):
+                fc_worktree.replace_branch(repo, proj, fc_worktree.task_branch(repo, proj, m["id"]))
         fc_layers.linearize(repo, proj, a.trunk, fc_worktree.stack_worktree(repo, proj, a.trunk))
         if fc_layers.STACK_STOP:
             sys.exit(f"stack  STOP  {fc_layers.STACK_STOP}")
@@ -166,7 +179,7 @@ def run_tasks(repo, proj, tasks, a):
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
     results, pending, failed_ids, halt, reflecting, capped = [], dict(deps), set(), None, [], set()
-    waits = fc_tasks.waiting(tasks)  # an unfinished blocker outside the feature's tasks holds its task like a hold
+    waits = fc_tasks.waiting(tasks, released)  # an outside blocker git does not place in the trunk holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
@@ -198,6 +211,7 @@ def run_tasks(repo, proj, tasks, a):
             except KeyboardInterrupt:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 fc_proc.stop()
+                fc_tasks.mark_interrupted(proj)
                 print(f"\n[{fc_core.now()}] run stopped by Ctrl-C; `compose resume` continues it", file=sys.stderr)
                 os._exit(130)
             for f in finished:

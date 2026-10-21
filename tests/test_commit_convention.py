@@ -54,6 +54,12 @@ class CommitConvention(unittest.TestCase):
         self.assertEqual(msg("Wire compose run into CI", ["ci.yml"], CONV), "chore: Update ci.yml")
         self.assertEqual(msg("Cover the toggle", ["tests/toggle.test.js"], CONV), "test: Cover the toggle")
 
+    def test_a_task_title_with_a_role_word_still_names_the_change(self):
+        msg = lambda title, files: fc.fc_layers.commit_message({"title": title, "files": files})
+        self.assertEqual(msg("herdr implementer runs a local model in pi", ["bin/fc_implement.py"]), "herdr implementer runs a local model in pi")
+        self.assertEqual(msg("Setup probes a local implementer without an OpenRouter key", ["bin/fc_defaults.py"]), "Setup probes a local implementer without an OpenRouter key")
+        self.assertEqual(msg("Show the team lead which teammates are idle", ["a.py"]), "Show the team lead which teammates are idle")
+
     def test_scrub_message_keeps_what_describes_the_change_and_drops_the_process(self):
         scrub = fc.fc_layers.scrub_message
         self.assertEqual(scrub("task 001: add search\n\nDone by the implementer.\nIndex the title.", ["a.js"]), "add search\n\nIndex the title.")

@@ -3,6 +3,7 @@ fc_prompt
 fc_proc
 fc_auth
 fc_config
+fc_providers
 fc_tasks
 fc_plan
 fc_linear
@@ -18,6 +19,7 @@ fc_keys
 fc_perms
 fc_steps
 fc_layers
+fc_blockers
 fc_stack
 fc_change
 fc_frame0
@@ -39,6 +41,7 @@ fc_figmaplan
 fc_figma
 fc_briefs
 fc_libapi
+fc_gate
 fc_implement
 fc_jev
 fc_accept

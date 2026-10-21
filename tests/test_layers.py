@@ -45,7 +45,7 @@ class Grouping(unittest.TestCase):
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
         (r / "package.json").write_text('{"vite": "8"}\n'); (r / "yarn.lock").write_text("x\n" * 5000)
-        self.assertEqual(fc.fc_implement.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
+        self.assertEqual(fc.fc_gate.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
 
 
 class PrText(unittest.TestCase):
@@ -311,6 +311,19 @@ class Layers(unittest.TestCase):
         self.assertEqual(len(stops), 1)
         self.assertIn(f"compose/p conflicts with main {main} in setup.txt; the layers and the stack are left as they were. "
                       "Rebase compose/p onto main, then re-run", stops[0])
+
+    def test_a_checkout_on_a_task_branch_stops_the_stack_and_keeps_every_layer(self):
+        for at in ("compose/p-003", "compose/p-002"):  # all task branches are in HEAD, or only the ones below
+            with self.subTest(at):
+                stops = self.stop(lambda: self.git("checkout", "-q", at))
+                self.assertEqual(len(stops), 1)
+                self.assertIn(f"HEAD is on {at}, one of the project's own branches, not on compose/p", stops[0])
+                self.git("checkout", "-q", "compose/p")
+
+    def test_a_detached_head_that_holds_task_branches_stops_the_stack_too(self):
+        stops = self.stop(lambda: self.git("checkout", "-q", "--detach", "compose/p-003"))
+        self.assertEqual(len(stops), 1)
+        self.assertIn("HEAD holds the unmerged task branches compose/p-001, compose/p-002, compose/p-003, which would be left out of the stack", stops[0])
 
     def test_a_chain_rebase_that_stops_stops_the_stack_verify_and_top_before_they_act_on_the_layers_below_it(self):
         def task_003_conflicts_with_002():
@@ -771,7 +784,7 @@ class DeletionBudget(unittest.TestCase):
         return r
 
     def budget(self, r, allowed, delete=()):
-        return fc.fc_implement.branch_budget(r, "main", allowed=allowed, delete=delete)
+        return fc.fc_gate.branch_budget(r, "main", allowed=allowed, delete=delete)
 
     def test_deleting_a_400_line_file_the_task_owns_counts_one_line(self):
         r = self.repo({"big.py": 400, "keep.py": 3})
