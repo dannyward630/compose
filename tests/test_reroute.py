@@ -836,7 +836,7 @@ class LedgerRerun(unittest.TestCase):
              mock.patch.object(fc.fc_worktree, "review_base", return_value="BASE"), mock.patch.object(fc.fc_worktree, "dirty_paths", return_value=[]), mock.patch.object(fc.fc_worktree, "ready_checkout"), \
              mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc.fc_linear, "linear_reconcile"), mock.patch.object(fc.fc_core, "say"):
             with self.assertRaises(SystemExit) as exit:
-                fc.fc_verify.verify_rounds(repo, proj, {"main_repo": main} if main else {}, SimpleNamespace(fix=fix, review_only=False), rounds, 0)
+                fc.fc_verify.verify_rounds(repo, proj, {"main_repo": main} if main else {}, SimpleNamespace(fix=fix, skip_review=False), rounds, 0)
         return exit.exception.code, order, run.call_args_list, rounds, cu.call_args_list, fixer, json.loads((proj / "results" / "verify.json").read_text())["passed"], repo, proj, reports
 
     def test_without_a_raise_the_stages_run_once_and_after_round_follows_the_recorded_evidence_with_the_main_checkout_and_base(self):
