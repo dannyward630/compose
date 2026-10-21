@@ -348,3 +348,63 @@ class VerifyUnsaved(unittest.TestCase):
         self.assertEqual([c.args[:3] for c in record_task.call_args_list], [(self.repo, self.proj, task)] * 2)
         self.assertEqual([[e["phase"] for e in c.args[3]] for c in record_task.call_args_list], [["scoped"], ["acceptance"]])
         self.assertEqual({c.args[0] for c in record.call_args_list}, {"ENG-1"})
+
+
+class Relevance(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main"); (self.repo / "a.py").write_text("1\n"); git("add", "-A"); git("commit", "-q", "-m", "a")
+        self.old = git("rev-parse", "HEAD")
+        git("checkout", "-q", "-b", "task-021"); (self.repo / "b.py").write_text("x\n"); git("add", "-A"); git("commit", "-q", "-m", "b")
+        self.tip = git("rev-parse", "HEAD")
+        git("checkout", "-q", "main")
+        (self.proj / "results" / "runs.json").write_text('{"021": "r1"}')
+        (self.proj / "results" / "021.json").write_text('{"branch": "task-021"}')
+        h = lambda t: hashlib.sha256(t.encode()).hexdigest()[:8]
+        self.a, self.b = f"021.1:{h('a')}", f"021.2:{h('b')}"
+
+    def row(self, n, **kw):
+        return {"event_id": n, "run_id": "r1", "commit_sha": "", "task_ids": [], "criterion_id": [], "phase": "final", "source": "run",
+                "result": "pass", "fails_on_base": None, "detail": "", "at": "2026-10-21T10:00:00Z", "shared": False, **kw}
+
+    def counted(self, rows, files=(), protected=()):
+        meta = {"id": "021", "body": "## Acceptance criteria\n* a\n* b\n", "files": list(files), "protected": list(protected)}
+        return fc_ledger.counted(self.repo, self.proj, meta, rows)
+
+    def ids(self, *args, **kw):
+        return [r["event_id"] for r in self.counted(*args, **kw)]
+
+    def test_task_and_run_decide_and_a_row_with_no_commit_counts_by_them_alone(self):
+        rows = [self.row("all"), self.row("mine", task_ids=["021"]), self.row("other", task_ids=["022", "023"]), self.row("old-run", run_id="r0"),
+                self.row("shared", run_id="r0", shared=True), self.row("base", fails_on_base=True), self.row("other-shared", shared=True, task_ids=["022"])]
+        self.assertEqual(self.ids(rows), ["all", "mine", "shared", "base"])
+
+    def test_the_tip_counts_and_an_older_commit_only_while_the_files_are_unchanged(self):
+        rows = [self.row("tip", commit_sha=self.tip), self.row("old", commit_sha=self.old), self.row("unknown", commit_sha="0" * 40)]
+        self.assertEqual([self.ids(rows), self.ids(rows, files=["a.py"]), self.ids(rows, files=["b.py"])], [["tip"], ["tip", "old"], ["tip"]])
+
+    def test_a_fails_on_base_row_follows_the_protected_files_not_the_tip_or_the_files(self):
+        rows = [self.row("tip", commit_sha=self.tip, fails_on_base=True), self.row("old", commit_sha=self.old, fails_on_base=True)]
+        self.assertEqual([self.ids(rows, files=["b.py"], protected=["a.py"]), self.ids(rows, files=["a.py"], protected=["b.py"]), self.ids(rows, files=["a.py"])],
+                         [["tip", "old"], ["tip"], []])
+
+    def test_the_tip_is_the_result_branch_or_else_head(self):
+        rows = [self.row("tip", commit_sha=self.tip), self.row("head", commit_sha=self.old)]
+        self.assertEqual(self.ids(rows), ["tip"])
+        for text in (None, "{}", '{"branch": "gone"}'):
+            (self.proj / "results" / "021.json").unlink(missing_ok=True)
+            if text: (self.proj / "results" / "021.json").write_text(text)
+            self.assertEqual(self.ids(rows), ["head"], text)
+
+    def test_a_row_keeps_only_the_current_criteria_and_is_dropped_when_none_remain(self):
+        rows = [self.row("none"), self.row("both", criterion_id=[self.a, self.b]), self.row("mixed", criterion_id=["021.1:00000000", self.b]),
+                self.row("stale", criterion_id=["021.1:00000000", "021.3:" + self.a[6:]])]
+        self.assertEqual([(r["event_id"], r["criterion_id"]) for r in self.counted(rows)], [("none", []), ("both", [self.a, self.b]), ("mixed", [self.b])])
+
+    def test_rows_come_back_in_order_as_copies_and_the_given_rows_stay_unchanged(self):
+        rows = [self.row("2", criterion_id=[self.a, "021.1:00000000"]), self.row("1")]
+        before = json.loads(json.dumps(rows))
+        out = self.counted(rows)
+        self.assertEqual(([r["event_id"] for r in out], rows, any(o is r for o, r in zip(out, rows))), (["2", "1"], before, False))
