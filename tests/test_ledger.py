@@ -128,3 +128,61 @@ class AddRow(unittest.TestCase):
             refresh.assert_not_called()
             self.assertTrue(fc_ledger.record("NEB-1", [row(2)]))
             refresh.assert_called_once_with("NEB-1")
+
+
+class RunEvidence(unittest.TestCase):
+    BODY = "## Acceptance criteria\n* works\n* fast\n"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"
+        self.proj.mkdir()
+        self.repo = Path(tempfile.mkdtemp())
+        git = lambda *a: __import__("subprocess").run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "one")
+        self.base = git("rev-parse", "HEAD")
+        git("branch", "task", "HEAD")
+        git("commit", "-q", "--allow-empty", "-m", "two")
+        self.head, self.task = git("rev-parse", "HEAD"), git("rev-parse", "task")
+        self.meta = {"id": "003", "body": self.BODY}
+
+    def events(self, **result):
+        return fc_ledger.run_events(self.proj, self.repo, self.meta, {"id": "003", "title": "t", "attempts": 0, **result})
+
+    def ev(self, sha, phase, result, base, detail):
+        return fc_ledger.event(fc_ledger.run_id(self.proj, "003"), sha, ["003"], fc_ledger.criterion_ids(self.meta), phase, "run", result, base, detail)
+
+    def test_held_has_no_events_and_already_green_has_one_red_pass(self):
+        self.assertEqual(self.events(status="held", log=[{"attempt": 1, "test_exit": 1}]), [])
+        self.assertEqual(self.events(status="already_green", base=self.base, log=[]),
+                         [self.ev(self.head, "red", "pass", False, "test already passes before the change")])
+
+    def test_a_task_that_ran_gives_red_each_attempt_and_the_final_in_order(self):
+        log = [{"attempt": 1, "test_exit": 1, "tampered": [], "test_output": "ok a\nFAIL x\n\n"},
+               {"attempt": 2, "rate_limited": True, "error": "429; giving up after 4 waits"},
+               {"attempt": 2, "error": "implementer timed out"},
+               {"attempt": 2, "test_exit": 0, "tampered": ["a.py", "b.py"], "test_output": ""},
+               {"attempt": 3, "test_exit": 0, "tampered": [], "test_output": "OK"}]
+        self.assertEqual(self.events(status="passed", base=self.base, branch="task", attempts=3, log=log), [
+            self.ev(self.base, "red", "fail_expected", True, "test fails before the change"),
+            self.ev("", "attempt", "fail", None, "attempt 1: test exit 1: FAIL x"),
+            self.ev("", "attempt", "error", None, "attempt 2: implementer timed out"),
+            self.ev("", "attempt", "fail", None, "attempt 2: test exit 0, tampered a.py, b.py"),
+            self.ev("", "attempt", "pass", None, "attempt 3: test exit 0: OK"),
+            self.ev(self.task, "final", "pass", None, "passed after 3 attempts")])
+
+    def test_final_result_by_status_and_no_red_without_a_base(self):
+        for status, result in (("failed", "fail"), ("rejected_tampered", "fail"), ("blocked_by_001", "error"), ("unchained", "error")):
+            self.assertEqual(self.events(status=status, attempts=2, log=[], branch="task"), [self.ev("", "final", result, None, f"{status} after 2 attempts")], status)
+
+    def test_run_tasks_records_each_finished_tasks_events_on_its_issue(self):
+        (self.proj / "results").mkdir()
+        passed = lambda repo, proj, meta, attempts: {"id": meta["id"], "title": "t", "status": "passed", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-"}
+        task = {"id": "004", "model": "pi:x/glm", "linear": "ENG-4", "body": self.BODY}
+        with mock.patch.object(fc.fc_implement, "run_task", passed), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
+                mock.patch.object(fc_ledger, "record") as record, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+            fc.fc_run.run_tasks(self.repo, self.proj, [task], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
+        (issue, events), = [c.args for c in record.call_args_list]
+        self.assertEqual((issue, [(e["phase"], e["result"], e["task_ids"], e["criterion_id"]) for e in events]),
+                         ("ENG-4", [("final", "pass", ["004"], fc_ledger.criterion_ids(task))]))
