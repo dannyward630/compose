@@ -401,5 +401,67 @@ class PostureEntry(unittest.TestCase):
             self.assertEqual("yolo" in "".join(msgs), p == "yolo")
 
 
+class PostureMismatchAndDigest(unittest.TestCase):
+    SINCE = "2026-01-01 09:00:00"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.file = self.proj / "results" / "yolo.json"
+
+    def put(self, mode):
+        self.file.write_text(json.dumps({"since": self.SINCE, "push": True, "words": "w", "decisions": [{"ts": "2026-01-01 09:30:00", "text": "db?: postgres"}]}
+                                        | ({"mode": mode} if mode else {})))
+
+    def run_as(self, cmd, *words, clear_words=False):
+        """Everything the command printed, plus its exit code (None when it did not exit)."""
+        out, code = io.StringIO(), None
+        a = SimpleNamespace(repo=".", project="hw", push=False, clear_words=clear_words, words=list(words), cmd=cmd)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap()), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                fc.fc_yolo.cmd_yolo(a)
+            except SystemExit as e:
+                code = e.code
+        if isinstance(code, str):
+            print(code, file=out)
+        return out.getvalue(), code
+
+    def test_the_other_postures_words_refuse_with_one_line_and_leave_the_file(self):
+        for on, p in (("yolo", "away"), ("away", "yolo"), (None, "yolo")):  # no mode in the file reads as away
+            for word in ("off", "digest", "decided", "--clear-words"):
+                self.put(on)
+                before = self.file.read_bytes()
+                out, code = self.run_as(p, *({"decided": ["decided", "db?: postgres"], "--clear-words": []}.get(word, [word])), clear_words=word == "--clear-words")
+                self.assertEqual(out, f"{on or 'away'} is on for hw, not {p}; run `compose {on or 'away'} {word} --project hw`\n")
+                self.assertTrue(code == 1 or isinstance(code, str), code)
+                self.assertEqual(self.file.read_bytes(), before)
+
+    def test_digest_prints_its_headline_and_sections_and_leaves_the_file_and_nothing_on_exits_1(self):
+        for p in ("away", "yolo"):
+            self.put(p)
+            before = self.file.read_bytes()
+            out, code = self.run_as(p, "digest")
+            self.assertEqual(out.splitlines()[:3], [f"{p} digest for hw: on since {self.SINCE}", "", "Your instructions"])
+            self.assertIn("2026-01-01 09:30:00  db?: postgres", out)
+            self.assertIsNone(code)
+            self.assertEqual(self.file.read_bytes(), before)
+            self.file.unlink()
+            out, code = self.run_as(p, "digest")
+            self.assertEqual((out, code), (f"{p} is not on for hw; `compose {p} --project hw [--push] [words]` turns it on\n", 1))
+
+    def test_off_prints_its_headline_first_then_archives_and_entering_the_other_posture_switches(self):
+        for p, other in (("away", "yolo"), ("yolo", "away")):
+            self.put(p)
+            out, code = self.run_as(p, "off")
+            self.assertEqual(out.splitlines()[0], f"{p} off for hw: on since {self.SINCE}")
+            self.assertFalse(self.file.exists())
+            self.assertTrue((self.proj / "results" / "yolo-2026-01-01T090000.json").exists())
+            self.put(p)
+            self.run_as(other)
+            self.assertEqual(json.loads(self.file.read_text())["mode"], other)
+
+
 if __name__ == "__main__":
     unittest.main()
