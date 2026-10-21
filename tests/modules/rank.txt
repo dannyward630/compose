@@ -10,9 +10,14 @@ fc_linear
 fc_evidence
 fc_ledger
 fc_linear_cmd
+fc_policy
+fc_routectx
+fc_routerec
 fc_readguard
 fc_claude
 fc_models
+fc_routejev
+fc_route
 fc_herdr
 fc_worktree
 fc_checks

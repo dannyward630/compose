@@ -10,6 +10,7 @@ done
 sync
 linear
 tasks
+route
 spec-check
 ready
 projects
