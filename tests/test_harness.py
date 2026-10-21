@@ -109,3 +109,67 @@ class CodexSkillRow(unittest.TestCase):
         self.codex(); out = io.StringIO()
         with contextlib.redirect_stdout(out): fc_init.check_deps()
         self.assertIn("MISSING: Codex skill link: ~/.codex/skills/compose is missing (install: compose setup) - optional\n", out.getvalue())
+
+
+class CodexCommands(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co = tmp / "bin", tmp / "home", tmp / "co"
+        for d in (self.bin, self.home, self.co / "commands"): d.mkdir(parents=True)
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        for n in ("yolo", "planner"): (self.co / f"commands/{n}.md").write_bytes(f"# {n}\r\nRun $ARGUMENTS \xe9\n".encode())
+        (self.co / "commands/notes.txt").write_text("not a command")
+        s = self.home / ".codex/skills"
+        self.planner, self.yolo = s / "compose-planner/SKILL.md", s / "compose-yolo/SKILL.md"
+
+    def tool(self, name="codex"):
+        (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(stat.S_IRWXU)
+
+    def test_without_the_exe_nothing_is_listed_checked_or_created(self):
+        self.assertEqual(fc_checks.command_copies("codex", self.co), [])
+        self.assertEqual(fc_checks.commands_ok("codex", self.co), (True, ""))
+        fc_links.relink_owned(self.co)
+        self.assertFalse((self.home / ".codex").exists())
+
+    def test_one_copy_per_command_sorted_by_name(self):
+        self.tool()
+        self.assertEqual(fc_checks.command_copies("codex", self.co), [(self.planner, self.co / "commands/planner.md"), (self.yolo, self.co / "commands/yolo.md")])
+
+    def test_check_names_the_first_missing_or_stale_copy(self):
+        self.tool()
+        self.assertEqual(fc_checks.commands_ok("codex", self.co), (False, "~/.codex/skills/compose-planner/SKILL.md is missing"))
+        fc_links.write_commands("codex", self.co)
+        self.assertEqual(fc_checks.commands_ok("codex", self.co), (True, ""))
+        self.yolo.write_bytes(b"old")
+        self.assertEqual(fc_checks.commands_ok("codex", self.co), (False, "~/.codex/skills/compose-yolo/SKILL.md is stale"))
+
+    def test_write_copies_bytes_replaces_stale_then_a_second_write_changes_nothing(self):
+        self.tool(); self.yolo.parent.mkdir(parents=True); self.yolo.write_bytes(b"old")
+        self.assertEqual(fc_links.write_commands("codex", self.co), [f"wrote {self.planner}", f"wrote {self.yolo}"])
+        for copy, name in ((self.planner, "planner"), (self.yolo, "yolo")): self.assertEqual(copy.read_bytes(), (self.co / f"commands/{name}.md").read_bytes())
+        self.assertEqual(fc_links.write_commands("codex", self.co), [f"ok {self.planner}", f"ok {self.yolo}"])
+
+    def test_a_symlink_or_directory_is_refused_untouched(self):
+        self.tool(); other = self.home / "other.md"; other.write_bytes(b"mine")
+        self.planner.parent.mkdir(parents=True); self.planner.symlink_to(other)
+        self.yolo.mkdir(parents=True)
+        lines = fc_links.write_commands("codex", self.co)
+        self.assertTrue(lines[0].startswith(f"refused {self.planner}: ") and lines[1].startswith(f"refused {self.yolo}: "))
+        self.assertEqual((os.readlink(self.planner), other.read_bytes()), (str(other), b"mine"))
+        self.assertTrue(self.yolo.is_dir() and not any(self.yolo.iterdir()))
+
+    def test_relink_ends_with_one_commands_line_per_copy(self):
+        self.tool()
+        self.assertEqual(fc_links.relink_owned(self.co)[-2:], [f"Codex commands: wrote {self.planner}", f"Codex commands: wrote {self.yolo}"])
+        self.assertEqual(fc_links.relink_owned(self.co)[-2:], [f"Codex commands: ok {self.planner}", f"Codex commands: ok {self.yolo}"])
+
+    def test_another_row_gets_its_own_copies_under_its_skills_dir(self):
+        self.tool("other")
+        row = {**fc_harness.HARNESSES.get("codex", {}), "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": row}):
+            copy = self.home / ".other/skills/compose-yolo/SKILL.md"
+            self.assertEqual(fc_checks.command_copies("other", self.co)[1], (copy, self.co / "commands/yolo.md"))
+            self.assertEqual(fc_links.write_commands("other", self.co)[1], f"wrote {copy}")
+            self.assertIn(f"Other commands: ok {copy}", fc_links.relink_owned(self.co))
+        self.assertFalse((self.home / ".codex").exists())
