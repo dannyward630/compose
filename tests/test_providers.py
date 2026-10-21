@@ -251,3 +251,37 @@ class Reach(unittest.TestCase):
         self.assertEqual([r[1](Path(".")) for r in rows], [(False, "not answering"), (True, "not answering")])
     def test_no_providers_give_no_rows(self):
         self.providers(); self.assertEqual(fc_providers.doctor_rows(), [])
+
+class ProbeReach(unittest.TestCase):
+    LOCAL, DOWN = "pi:fakelocal/fake-1", "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+    def setUp(self):
+        self.cache, self.reach = Path(tempfile.mkdtemp()) / "model-probe.json", mock.Mock(return_value=(False, self.DOWN))
+        self.probe = mock.Mock(return_value=(True, "answered", False)); m = fc.fc_models
+        for p in (mock.patch.object(fc.fc_config, "PROBE_CACHE", self.cache), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": FAKE}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc_providers, "reach", self.reach), mock.patch.object(m, "probe_once", self.probe)):
+            p.start(); self.addCleanup(p.stop)
+        m._PROBED.clear(); self.addCleanup(m._PROBED.clear)
+    def test_down_provider_fails_at_once_and_a_later_up_probes(self):
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, self.DOWN)); self.reach.assert_called_once_with("fakelocal")
+        self.probe.assert_not_called(); self.assertFalse(self.cache.exists()); self.assertEqual(fc.fc_models._PROBED, {})
+        self.reach.return_value = (True, "HTTP 200")
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered")); self.probe.assert_called_once()
+    def test_a_cached_pass_still_reaches_first(self):
+        self.reach.return_value = (True, "HTTP 200"); self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered"))
+        self.assertIn("fakelocal/fake-1", json.loads(self.cache.read_text()))
+        self.reach.return_value = (False, self.DOWN)
+        for _ in range(2):  # the in-memory pass, then a new process reading the day cache
+            self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, self.DOWN)); fc.fc_models._PROBED.clear()
+        self.reach.return_value = (True, "HTTP 200"); self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered"))
+        self.assertEqual((self.reach.call_count, self.probe.call_count), (4, 1))
+    def test_transient_failure_is_not_retried_and_not_cached(self):
+        self.reach.return_value, self.probe.return_value = (True, "HTTP 200"), (False, "timed out", True)
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, "timed out"))
+        self.assertEqual(self.probe.call_args_list, [mock.call(self.LOCAL, 60)]); self.assertFalse(self.cache.exists())
+    def test_models_that_are_not_local_never_reach_and_retry_as_before(self):
+        self.probe.return_value = (False, "timed out", True)
+        for model in ("pi:openrouter-fast/z-ai/glm", "claude:opus"):
+            with self.subTest(model=model):
+                self.probe.reset_mock(); fc.fc_models.model_available(model)
+                self.assertEqual(self.probe.call_args_list, [mock.call(model, 60), mock.call(model, 180)])
+        self.reach.assert_not_called()
