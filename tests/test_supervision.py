@@ -391,8 +391,8 @@ class Rewake(unittest.TestCase):
     def test_a_wake_carries_the_skill_change_notice(self):
         skill = Path(tempfile.mkdtemp()).resolve()
         (skill / "SKILL.md").write_text("v1\n")
-        with mock.patch.object(fc.fc_crew, "SKILL_DIR", skill), mock.patch.object(fc.fc_crew, "SKILL_SEEN", skill / "seen"):
-            fc.fc_crew.skill_notice("lead")  # the version the team lead read
+        with mock.patch.object(fc.fc_hooks, "SKILL_DIR", skill), mock.patch.object(fc.fc_hooks, "SKILL_SEEN", skill / "seen"):
+            fc.fc_hooks.skill_notice("lead")  # the version the team lead read
             (skill / "SKILL.md").write_text("v2\n")
             code, err, _ = self.rewake([wsnap("running"), wsnap("passed")], session="lead")
         self.assertEqual(code, 2)

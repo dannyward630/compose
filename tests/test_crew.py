@@ -580,35 +580,35 @@ class Guard(unittest.TestCase):
 
     def test_team_lead_cannot_edit_repo_files(self):
         for f in ("src/app.go", "tests/app_test.go", "README.md", "package.json", ".compose/shop/notes.md"):
-            self.assertIsNotNone(fc.fc_crew.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
+            self.assertIsNotNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / f), "orchestrator"), f)
 
     def test_team_lead_keeps_its_own_files(self):
         for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json", ".compose/shop/pr/001-002.md"):
-            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
+            self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(self.repo / f), "orchestrator"), f)
         for role in ("orchestrator", "planner"):
-            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".compose/shop/scratch/sync.json"), role), role)
-        self.assertIsNotNone(fc.fc_crew.guard_decision("Write", str(self.repo / ".compose/shop/scratch.md"), "planner"))
-        self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
+            self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(self.repo / ".compose/shop/scratch/sync.json"), role), role)
+        self.assertIsNotNone(fc.fc_hooks.guard_decision("Write", str(self.repo / ".compose/shop/scratch.md"), "planner"))
+        self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "brief.txt"), "orchestrator"))  # scratch outside a repo
 
     def test_crew_and_unmarked_sessions_are_untouched(self):
         for role in ("crew", None, ""):
-            self.assertIsNone(fc.fc_crew.guard_decision("Edit", str(self.repo / "src/app.go"), role))
-        self.assertIsNone(fc.fc_crew.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
+            self.assertIsNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / "src/app.go"), role))
+        self.assertIsNone(fc.fc_hooks.guard_decision("Read", str(self.repo / "src/app.go"), "orchestrator"))
 
     def test_planner_is_guarded_like_the_team_lead(self):
-        self.assertEqual(fc.fc_crew.GUARDED_ROLES, ("orchestrator", "planner"))
+        self.assertEqual(fc.fc_hooks.GUARDED_ROLES, ("orchestrator", "planner"))
         self.assertEqual(fc.fc_config.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
-        for tool in fc.fc_crew.GUARDED_TOOLS:
-            for role in fc.fc_crew.GUARDED_ROLES:
-                why = fc.fc_crew.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
+        for tool in fc.fc_hooks.GUARDED_TOOLS:
+            for role in fc.fc_hooks.GUARDED_ROLES:
+                why = fc.fc_hooks.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
                 self.assertIn("team lead", why, (tool, role))
                 self.assertIn("planner", why.lower(), (tool, role))
         for f in (".compose/shop/linear.json", ".compose/shop/verify.json", ".compose/linear.json"):
-            self.assertIsNone(fc.fc_crew.guard_decision("Write", str(self.repo / f), "planner"), f)
-        self.assertIsNone(fc.fc_crew.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
-        self.assertIsNone(fc.fc_crew.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
+            self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(self.repo / f), "planner"), f)
+        self.assertIsNone(fc.fc_hooks.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
+        self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
         for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
-            self.assertIsNone(fc.fc_crew.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
+            self.assertIsNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
 
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
@@ -616,7 +616,7 @@ class Guard(unittest.TestCase):
             out = io.StringIO()
             with mock.patch.dict(os.environ, {"COMPOSE_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(ev)), \
                     mock.patch.object(sys, "stdout", out):
-                fc.fc_crew.cmd_guard(None)
+                fc.fc_hooks.cmd_guard(None)
             if denied:
                 self.assertTrue(out.getvalue(), role)
                 self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny", role)

@@ -99,7 +99,7 @@ class TestCrewWorktrees(unittest.TestCase):
         self.crew_commits("002", "b_test.go", "b\n", state="done")
         with mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), \
              mock.patch.object(fc.fc_run, "run_tasks") as rt, self.assertRaises(SystemExit) as e:
-            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False))
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False, no_stack=False))
         self.assertIn("tests-003", str(e.exception)); rt.assert_not_called()  # its test is still to be written
         self.assertEqual(started[-1], "tests-003")  # started by the collect, off the branch that now holds 001's test
         wt = self.crew_commits("003", "a_test.go", "a\nc\n")
@@ -184,7 +184,7 @@ class TestCrewWorktrees(unittest.TestCase):
         from types import SimpleNamespace
         self.crew_commits("001", "a_test.go", "a\n")
         self.crew_commits("002", "b_test.go", "b\n")
-        a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False)
+        a = SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False, no_stack=False)
         with mock.patch.object(fc.fc_run, "run_tasks") as rt, mock.patch.object(fc.fc_crew, "crew_reports", return_value=[{"state": "working"}]):
             with self.assertRaises(SystemExit) as e:
                 fc.fc_run.cmd_run(a)
@@ -197,12 +197,12 @@ class TestCrewWorktrees(unittest.TestCase):
     def test_run_refuses_a_task_whose_protected_test_is_not_on_the_project_branch(self):
         self.main_commits("a_test.go", "a\n", "Test a")
         with mock.patch.object(fc.fc_run, "run_tasks") as rt, self.assertRaises(SystemExit) as e:
-            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False))
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False, no_stack=False))
         rt.assert_not_called()
         self.assertIn("002 b_test.go", str(e.exception))
         self.assertNotIn("a_test.go", str(e.exception))
         with mock.patch.object(fc.fc_run, "run_tasks") as rt:
-            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only="001", redo=False))
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.repo), project="p", only="001", redo=False, no_stack=False))
         rt.assert_called_once()
 
     def test_a_conflict_names_the_task_and_keeps_its_branch(self):
@@ -465,7 +465,7 @@ class SharedSpaceClean(unittest.TestCase):
             (crew / f"{n}.status").write_text(json.dumps({"state": "working", "message": "test ready"}) + "\n")
         self.calls = []
         with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True):
-            self.assertEqual(fc.fc_init.live_crew(proj), ["manager last reported working"])
+            self.assertEqual(fc.fc_clean.live_crew(proj), ["manager last reported working"])
 
     def test_clean_closes_the_projects_tabs_and_counts_only_its_agents(self):
         wt = Path(tempfile.mkdtemp()); proj = wt / ".compose" / "shop"
@@ -473,8 +473,8 @@ class SharedSpaceClean(unittest.TestCase):
         fc.fc_herdr.space_record(proj).write_text(json.dumps({"space": "w7"}))
         self.calls = []
         with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True):
-            self.assertEqual(fc.fc_init.live_crew(proj), [])
-            fc.fc_init.close_space(proj, "shop")
+            self.assertEqual(fc.fc_clean.live_crew(proj), [])
+            fc.fc_clean.close_space(proj, "shop")
         self.assertEqual([c for c in self.calls if c[0] in ("tab", "workspace") and c[1] == "close"], [("tab", "close", "t2"), ("tab", "close", "t3")])
 
     def clean(self, proj, crew):
@@ -485,7 +485,7 @@ class SharedSpaceClean(unittest.TestCase):
             for st in states: fc.fc_crew.write_report(proj, n, st, "m")
         self.calls, out = [], io.StringIO()
         with mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch("sys.stdout", out):
-            fc.fc_init.close_space(proj, "shop")
+            fc.fc_clean.close_space(proj, "shop")
         return [c for c in self.calls if c[0] in ("tab", "workspace") and c[1] == "close"], sorted(l for l in out.getvalue().splitlines() if "left" in l)
 
     def test_clean_keeps_the_tabs_of_teammates_whose_last_report_is_not_done(self):
@@ -648,7 +648,7 @@ class LocallyMergedLayers(unittest.TestCase):
         linear = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2"))
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
                 mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True)
+            fc.fc_clean.clean_project(r, "p", wt, proj, explicit=True)
         self.assertEqual(run("branch", "--format=%(refname:short)").stdout.split(), ["main"])
         self.assertFalse(wt.exists())
         self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
@@ -720,7 +720,7 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
     def clean_here(self):
         out = io.StringIO()
         with mock.patch.dict(os.environ, self.env), mock.patch("sys.stdout", out):
-            fc.fc_init.clean_project(self.r, "p", self.r.parent / "compose-p", self.proj, explicit=True)
+            fc.fc_clean.clean_project(self.r, "p", self.r.parent / "compose-p", self.proj, explicit=True)
         return out.getvalue()
 
     def test_clean_moves_the_tasks_it_proves_merged_to_done_and_rolls_the_story_and_the_feature_up(self):
@@ -849,7 +849,7 @@ class CleanUnderTheTeamLead(unittest.TestCase):
             return linear(query, variables)
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
                 mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+            fc.fc_clean.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
         self.assertEqual(seen, [("ENG-3", True), ("ENG-2", True), ("ENG-1", True)])
         self.assertFalse(self.wt.exists())
 
@@ -862,7 +862,7 @@ class CleanUnderTheTeamLead(unittest.TestCase):
             self.assertEqual(self.cli(*task016).returncode, 0)
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", io.StringIO()), \
                 mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+            fc.fc_clean.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
         self.assertFalse(self.wt.exists())
 
     def test_a_merged_project_moves_its_task_done_by_hand_without_a_branch_and_rolls_up(self):
@@ -884,7 +884,7 @@ class CleanUnderTheTeamLead(unittest.TestCase):
         os.chdir(self.wt)
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out), \
                 mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+            fc.fc_clean.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
         os.chdir(here)
         self.assertEqual(linear.states("ENG-3", "ENG-2", "ENG-1"), ["Done", "Done", "Done"])
         self.assertIn(f"kept while this command runs inside it: run `compose clean --repo {self.r} --project p` from outside it", out.getvalue())
@@ -936,7 +936,7 @@ class MergeChangesNothing(unittest.TestCase):
             run("add", "-A"); run("commit", "-qm", name)
         branch("b", "base\nx\n"); branch("same", "base\nx\n", "y\n"); branch("conf", "base\nz\n")  # same: b's change in another patch
         run("checkout", "-q", "-b", "pick", "main"); run("cherry-pick", "-x", "b")  # -x: a new commit, never b itself
-        why = lambda b, *t: fc.fc_init.merge_evidence(r, b, list(t), False)
+        why = lambda b, *t: fc.fc_clean.merge_evidence(r, b, list(t), False)
         self.assertEqual(why("b", "nope", "conf", "same"), "merging it into same changes nothing")
         self.assertEqual(why("main", "same"), "contained in same")
         self.assertEqual(why("b", "pick", "same"), "contained in pick by patch")
@@ -979,7 +979,7 @@ else: sys.exit(1)
         linear, out = FakeLinear(ENG_1=("In Review", None), ENG_2=("In Review", "ENG-1"), ENG_3=("In Review", "ENG-2"), ENG_4=("In Review", "ENG-2")), io.StringIO()
         with mock.patch.dict(os.environ, env), mock.patch("sys.stdout", out), \
                 mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True)
+            fc.fc_clean.clean_project(r, "p", wt, proj, explicit=True)
         left = run("branch", "--format=%(refname:short)").stdout.split()
         self.assertEqual([b for b in left if b in ("compose/p", "compose/p-001", "compose/p-002")], [], out.getvalue())
         self.assertFalse(wt.exists())
@@ -1007,7 +1007,7 @@ class ReviewBaseFirst(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out), \
                 mock.patch.object(fc.fc_linear, "linear_gql", linear), mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"):
-            fc.fc_init.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
+            fc.fc_clean.clean_project(self.r, "p", self.wt, self.proj, explicit=True)
         return out.getvalue().splitlines()
 
     def test_task_branches_meet_the_review_base_first_and_kept_ones_name_their_first_unmatched_commit(self):
@@ -1049,7 +1049,7 @@ class ProjectBranchNamedFirst(unittest.TestCase):
         land(r, run, proj)
         out = io.StringIO()
         with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out):
-            fc.fc_init.clean_project(r, "p", wt, proj, explicit=True, delete_unmerged=delete_unmerged)
+            fc.fc_clean.clean_project(r, "p", wt, proj, explicit=True, delete_unmerged=delete_unmerged)
         return out.getvalue().splitlines(), wt
 
     def same_change_with_more(self, r, run, proj):  # main holds the groundwork's change inside a bigger patch

@@ -1,6 +1,6 @@
-import ast, hashlib, json, os, re, shlex, shutil, subprocess, sys, time
+import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -246,7 +246,7 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
-    role = a.role if a.role in GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
+    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
     tab = fc_herdr.herdr_tab(space, fc_herdr.tab_label(proj, title), cwd, "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                              check=True)
     pane = tab["root_pane"]["pane_id"]
@@ -256,7 +256,7 @@ def cmd_crew(a):
     brief_file.write_text(fc_core.scrub(crew_preamble(proj, name, title, reports_to) + brief))
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
-        skill = {"skill": skill_hashes()} if model.startswith("pi:") else {}
+        skill = {"skill": fc_hooks.skill_hashes()} if model.startswith("pi:") else {}
     except OSError:
         skill = {}
     fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, **({"worktree": str(work)} if work else {}), "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
@@ -312,84 +312,6 @@ def cmd_crew(a):
     fc_herdr.herdr_name_manager(proj)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `compose report`, `watch` wakes on it")
-
-GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
-GUARDED_ROLES = ("orchestrator", "planner")
-CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+|[^/]+/pr/[^/]+\.md)$")  # the team lead's own: the CLI's config and the layers' PR text
-
-def guard_decision(tool, path, role):
-    """None to allow, else why not. The team lead writes Linear, the CLI's JSON, and the layers' PR text; code, tests, and docs
-    are teammate work. The toolsmith edits in its own worktree of the compose repo, never in a shared checkout of it."""
-    if role not in (*GUARDED_ROLES, "toolsmith") or tool not in GUARDED_TOOLS or not path:
-        return None
-    p = Path(path).expanduser().resolve()
-    d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
-    if role == "toolsmith":
-        return f"A toolsmith never edits {why}: fix on a branch in your own worktree of the compose repo." if (why := fc_worktree.shared_checkout(d, CLI_REPO)) else None
-    if CLI_FILE.search(str(p)):
-        return None
-    if fc_core.sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
-        return None  # scratch outside any repository, e.g. a brief in /tmp
-    return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "
-            f"`compose crew start --role <job> --brief -`, or put it in a task issue for `run`.")
-
-def cmd_guard(a):
-    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository."""
-    try:
-        ev = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        return
-    ti = ev.get("tool_input") or {}
-    why = guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), os.environ.get("COMPOSE_ROLE"))
-    if why:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
-
-SKILL_DIR = Path.home() / ".claude" / "skills" / "compose"  # the main checkout every live session reads: a merge changes it
-SKILL_SEEN = fc_config.CONFIG_PATH.parent / "skill-seen"  # one file per session: the skill files' blob hashes it last saw
-# ponytail: never pruned, a few hundred bytes per session; prune by mtime if the directory grows
-SKILL_FILES = ("SKILL.md", "sections/*.md", "commands/*.md")
-
-def skill_hashes():
-    """Each skill file's git blob hash, by absolute path."""
-    files = sorted(f for g in SKILL_FILES for f in SKILL_DIR.resolve().glob(g))
-    if not files:
-        raise FileNotFoundError(SKILL_DIR)
-    return {str(f): hashlib.sha1(b"blob %d\0" % len(b := f.read_bytes()) + b).hexdigest() for f in files}
-
-def skill_changed(seen, cur):
-    """The skill files whose hash differs between two skill_hashes() results: changed, added, or removed."""
-    return sorted(p for p in cur.keys() | seen.keys() if cur.get(p) != seen.get(p))
-
-def skill_notice(session):
-    """Record the skill version this session sees; the notice naming what changed since it last saw one, else None."""
-    if not session:  # no session id: every such caller would share one file
-        return None
-    cur, f = skill_hashes(), SKILL_SEEN / f"{session}.json"
-    seen = json.loads(f.read_text()) if f.exists() else None
-    if seen != cur:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(cur))
-    changed = skill_changed(seen or {}, cur)
-    if seen is None or not changed:
-        return None
-    return f"compose's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
-
-def cmd_skillcheck(a):
-    """Claude Code UserPromptSubmit and PostToolUse(Skill) hook: a session with a role, or one that loaded the compose skill
-    (the Skill tool, or a typed /compose command), hears once when the skill's files changed. Any error prints nothing."""
-    try:
-        ev = json.load(sys.stdin)
-        session = re.sub(r"[^\w-]", "", ev.get("session_id") or "")
-        if not session:
-            return
-        loads = "/" + (ev.get("tool_input") or {}).get("skill", "") if ev.get("hook_event_name") == "PostToolUse" else ev.get("prompt", "")
-        if re.match(r"/compose(:|\s|$)", loads):
-            skill_notice(session)  # the version it loads now is the one it read
-        elif os.environ.get("COMPOSE_ROLE") or (SKILL_SEEN / f"{session}.json").exists():
-            if ev.get("hook_event_name") == "UserPromptSubmit" and (note := skill_notice(session)):
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}}))
-    except Exception:
-        pass
 
 def write_report(proj, name, state, message):
     with open(crew_dir(proj) / f"{name}.status", "a") as f:

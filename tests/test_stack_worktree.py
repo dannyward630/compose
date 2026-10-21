@@ -62,7 +62,7 @@ class StackWorktree(unittest.TestCase):
         self.assertEqual(json.loads((self.proj / "results" / "slots.json").read_text()), {"tests-002": str(mine), "tests-003": str(other / "gone")})
         for role in ("stackroot", "tests-001"):
             self.assertIn(f"{role} {theirs}", out.getvalue())
-        fc.fc_init.clean_project(self.repo, "p", self.repo, self.proj)
+        fc.fc_clean.clean_project(self.repo, "p", self.repo, self.proj)
         self.assertTrue((theirs / ".trail").is_dir())
 
     def test_verify_installs_in_the_worktree_at_the_stack_top(self):

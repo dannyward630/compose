@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status, fc_briefs
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs
 
 
 YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
@@ -56,10 +56,10 @@ def watch_snapshot(repo, proj, agents=None):
     snap["owner"] = crew_owners(records, agents)  # which engineering manager session each teammate is: watch_scope
     pis = [c for c in records if "skill" in c and c.get("agent", c["name"]) in snap["agents"]]
     try:
-        cur = fc_crew.skill_hashes() if pis else {}
+        cur = fc_hooks.skill_hashes() if pis else {}
     except OSError:
         pis = []
-    snap["skill"] = {c["name"]: changed for c in pis if (changed := fc_crew.skill_changed(c["skill"], cur))}  # live pi teammates reading an old skill
+    snap["skill"] = {c["name"]: changed for c in pis if (changed := fc_hooks.skill_changed(c["skill"], cur))}  # live pi teammates reading an old skill
     v = proj / "results" / "verify.json"
     if v.exists():
         try:
@@ -374,7 +374,7 @@ def cmd_watch(a, rewake=False):
                 if rewake:
                     emit("compose watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
                     try:
-                        if note := fc_crew.skill_notice(a.session):  # a wake is a prompt the UserPromptSubmit hook never sees
+                        if note := fc_hooks.skill_notice(a.session):  # a wake is a prompt the UserPromptSubmit hook never sees
                             emit(note)
                     except Exception:
                         pass

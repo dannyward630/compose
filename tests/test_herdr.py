@@ -256,7 +256,7 @@ class PaneNames(unittest.TestCase):
         (proj / "results").mkdir(parents=True)
         self.labels["w7:p1"] = "manager: shop"
         with mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value=None):
-            self.run_as({}, fc.fc_init.close_space, proj, "shop")
+            self.run_as({}, fc.fc_clean.close_space, proj, "shop")
         self.assertIsNone(self.labels["w7:p1"])
 
 

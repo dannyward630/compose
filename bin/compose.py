@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -103,7 +103,7 @@ def main():
                             ("stack", fc_ship.cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit checks each layer on its own tree, then pushes and opens one draft PR per layer"),
                             ("reword", fc_ship.cmd_reword, "list the stack layers' commits with the ones that break the commit rules flagged; --set SHA=MESSAGE rewords one and rebuilds the layers (never pushes)"),
                             ("land", fc_ship.cmd_land, "merge the submitted stack bottom up with gh pr merge, rebasing and retargeting each next PR; prints the plan, acts only with --yes"),
-                            ("clean", fc_init.cmd_clean, "the post-merge step: remove task clones and merged branches, move the tasks proven merged to Done in Linear and roll their story and the feature up, and remove a merged project's worktree and branch"),
+                            ("clean", fc_clean.cmd_clean, "the post-merge step: remove task clones and merged branches, move the tasks proven merged to Done in Linear and roll their story and the feature up, and remove a merged project's worktree and branch"),
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
@@ -125,10 +125,10 @@ def main():
                             ("frame0", fc_f0pages.cmd_frame0_pages, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go; pages | move | delete | links | lint list, reorder, remove, and check its pages"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge | publish: store the target Figma file key, prove Framelink reads it, record the plan's limits; save a task's node tree; judge it with Jev; say whether a library publish is pending"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
-                            ("guard", fc_crew.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
+                            ("guard", fc_hooks.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", fc_watch.cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
                             ("reenter", fc_watch.cmd_reenter, "Claude Code SessionStart hook: after a compaction, point the teammate back at its brief, the board, and Linear"),
-                            ("skillcheck", fc_crew.cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a compose session the skill changed since it read it"),
+                            ("skillcheck", fc_hooks.cmd_skillcheck, "Claude Code UserPromptSubmit and PostToolUse(Skill) hook: tell a compose session the skill changed since it read it"),
                             ("workspace", fc_config.cmd_workspace, f"show workspaces, or switch: `workspace personal` (config: {fc_config.CONFIG_PATH})")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("--repo", default=".")
@@ -324,7 +324,7 @@ def main():
         return detach(a)
     if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it
         fc_update.hold(a.cmd, fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project)).name, a.repo)
-    if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
+    if a.fn not in (fc_config.cmd_workspace, fc_hooks.cmd_guard, fc_watch.cmd_rewake, fc_hooks.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config(move=not getattr(a, "dry_run", False))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
         if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line

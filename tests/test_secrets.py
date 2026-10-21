@@ -102,8 +102,8 @@ class Secrets(unittest.TestCase):
         env.pop("COMPOSE_CONFIG", None)
         timed = lambda cmd: subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--", cmd],
                                            capture_output=True, text=True, env=env, cwd=self.root)
-        where = ("import sys; sys.path.insert(0, sys.argv[1]); import fc_config, fc_crew; "
-                 "print(fc_config.CONFIG_PATH, fc_config.ENV_FILE, fc_config.PROBE_CACHE, fc_crew.SKILL_SEEN)")
+        where = ("import sys; sys.path.insert(0, sys.argv[1]); import fc_config, fc_hooks; "
+                 "print(fc_config.CONFIG_PATH, fc_config.ENV_FILE, fc_config.PROBE_CACHE, fc_hooks.SKILL_SEEN)")
         p = timed(f"python3 -c '{where}' {ROOT / 'bin'}")
         self.assertEqual(p.returncode, 0, p.stderr)
         paths = [Path(x) for x in p.stdout.split()]

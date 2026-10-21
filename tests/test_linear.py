@@ -188,9 +188,9 @@ class DesignTasks(unittest.TestCase):
         (self.proj / "a_test.go").write_text("")
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_run, "run_tasks") as run, \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
-            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False))
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False, no_stack=False))
             with self.assertRaises(SystemExit) as e:
-                fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False))
+                fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001,003", redo=False, no_stack=False))
         self.assertEqual([m["id"] for m in run.call_args.args[2]], ["002"])
         self.assertIn("no tasks on Linear under this feature carry a compose block", str(e.exception))
         with mock.patch.object(fc.fc_worktree, "task_branches", return_value={"compose/p-001": None, "compose/p-002": None}), \
@@ -506,7 +506,7 @@ class ReadyRefresh(unittest.TestCase):
         calls = mock.Mock()
         with mock.patch.object(fc.fc_linear, "linear_merged", calls.linear_merged), mock.patch.object(fc.fc_linear, "refresh_ready", calls.refresh_ready), \
                 mock.patch("sys.stdout", io.StringIO()), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
-            fc.fc_init.clean_project(r, "p", r, proj, explicit=True)
+            fc.fc_clean.clean_project(r, "p", r, proj, explicit=True)
         self.assertEqual(calls.mock_calls[-2:], [mock.call.linear_merged("ENG-7", [], False, scope=None), mock.call.refresh_ready(proj, "ENG-7")])
 
 

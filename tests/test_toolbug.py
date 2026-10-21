@@ -262,7 +262,7 @@ class OwnWorktree(unittest.TestCase):
         self.git(self.main, "worktree", "add", "-q", "-b", "toolsmith-fix", str(self.wt))
         self.log = root / ".compose" / "tool-bugs.jsonl"; self.log.parent.mkdir()
         self.log.write_text(json.dumps({"at": self.AT, "project": "shop", "message": "boom", "issue": self.URL}) + "\n")
-        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}), mock.patch.object(fc.fc_crew, "CLI_REPO", self.main),
+        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}), mock.patch.object(fc.fc_crew, "CLI_REPO", self.main), mock.patch.object(fc.fc_core, "CLI_CHECKOUT", self.main),
                   mock.patch.object(fc.fc_crew, "TOOL_BUGS", self.log), mock.patch.object(fc.fc_config, "CONFIG_PATH", root / ".compose" / "config.json")):
             p.start(); self.addCleanup(p.stop)
         self.gh_calls = []
@@ -303,10 +303,10 @@ class OwnWorktree(unittest.TestCase):
             self.assertIn("the installed copy of compose", sc(p))
 
     def test_the_edit_guard_lets_a_toolsmith_edit_only_its_own_worktree(self):
-        gd = fc.fc_crew.guard_decision
+        gd = fc.fc_hooks.guard_decision
         why = gd("Edit", str(self.main / "bin" / "new" / "x.py"), "toolsmith")  # the directory does not exist yet
         self.assertIn("toolsmith", why); self.assertIn("own worktree", why)
-        for tool in fc.fc_crew.GUARDED_TOOLS:
+        for tool in fc.fc_hooks.GUARDED_TOOLS:
             self.assertIsNone(gd(tool, str(self.wt / "x.py"), "toolsmith"), tool); self.assertIsNotNone(gd(tool, str(self.main / "x.py"), "toolsmith"), tool)
         self.assertIsNone(gd("Read", str(self.main / "a"), "toolsmith"))
         self.assertIsNone(gd("Write", str(self.root / "elsewhere" / "brief.md"), "toolsmith"))
