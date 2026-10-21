@@ -282,6 +282,7 @@ def main():
             s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
+            s.add_argument("--harness", help="start: the harness whose `harnesses` block picks the crew's models, when this session's own is not detected, as in Codex")
             s.add_argument("--takeover", action="store_true", help="start, stop: drive the project from this session although another live engineering manager session does (its teammates then report here)")
         if name == "models":
             s.add_argument("--probe", action="store_true")

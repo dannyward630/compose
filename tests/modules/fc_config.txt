@@ -28,8 +28,10 @@ TIER_NAMES
 DEFAULT_TIERS
 TIERS
 PROVIDERS
+HARNESS
 read_config
 write_config
+session_harness
 settings
 apply_config
 needs_linear_key
