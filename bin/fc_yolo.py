@@ -3,12 +3,12 @@ from pathlib import Path
 import fc_cost, fc_core, fc_tasks, fc_worktree, fc_watch
 
 
-# ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
+# ---------- `away` and `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
 YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
               "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
-YOLO_TAG = "(yolo recommendation, unconfirmed, {date})"  # what the map's Decisions so far shows after a decision taken for the product owner
+YOLO_TAG = "({mode} recommendation, unconfirmed, {date})"  # what the map's Decisions so far shows after a decision taken for the product owner
 def yolo_digest(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
@@ -36,7 +36,7 @@ def yolo_digest(repo, proj, y):
     sections = [("Your instructions", [y.get("words") or "(no words)", f"push: {'yes' if y.get('push') else 'no'}"]),
                 ("Decided for you", [f"{d['ts']}  {d['text']}" for d in y.get("decisions", [])]),
                 ("To confirm", [f"the {len(y['decisions'])} decision(s) above are recommendations, not your answers: the map's Decisions so far shows them as "
-                                f"{YOLO_TAG.format(date='<date>')}. Ask once: accept all, or name the ones to change; the wayfinder then "
+                                f"{YOLO_TAG.format(mode=y.get('mode', 'yolo'), date='<date>')}. Ask once: accept all, or name the ones to change; the wayfinder then "
                                 f"rewrites each line as the product owner's, and work cut on one is redone if you change it"] if y.get("decisions") else []),
                 ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
                 ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
@@ -51,12 +51,13 @@ def cmd_yolo(a):
     path = proj / "results" / "yolo.json"
     y = fc_tasks.yolo_state(proj)
     words = list(a.words or [])
+    P = a.cmd
     if (words[:1] in (["off"], ["decided"]) or a.clear_words) and not y:
-        print(f"yolo is not on for {proj.name}; `compose yolo --project {proj.name} [--push] [words]` turns it on")
+        print(f"{P} is not on for {proj.name}; `compose {P} --project {proj.name} [--push] [words]` turns it on")
         sys.exit(1)
     if a.clear_words:
         if words or a.push:
-            sys.exit(f"--clear-words changes only the words; run it alone: `compose yolo --project {proj.name} --clear-words`")
+            sys.exit(f"--clear-words changes only the words; run it alone: `compose {P} --project {proj.name} --clear-words`")
         y["words"] = ""
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"words cleared for {proj.name}; kept: since {y['since']}, push: {'yes' if y.get('push') else 'no'}, {len(y['decisions'])} decision(s)")
@@ -67,27 +68,28 @@ def cmd_yolo(a):
         return
     if words[:1] == ["decided"]:
         if len(words) < 2:
-            sys.exit('yolo decided needs "<question>: <answer taken>"')
+            sys.exit(f'{P} decided needs "<question>: <answer taken>"')
         y["decisions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": " ".join(words[1:])})
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"logged for the product owner's return: {' '.join(words[1:])}")
-        print(f"send the answer to the teammate as `yolo: <card id>: <answer>`: it writes the map line "
-              f"\"<card id>: <answer> {YOLO_TAG.format(date=time.strftime('%Y-%m-%d'))}\", never as the product owner's")
+        print(f"send the answer to the teammate as `{P}: <card id>: <answer>`: it writes the map line "
+              f"\"<card id>: <answer> {YOLO_TAG.format(mode=P, date=time.strftime('%Y-%m-%d'))}\", never as the product owner's")
         return
     # A shell variable holding a whole command reaches here as one word (zsh never splits an unquoted one): refuse it, never store it.
     if any(w.startswith(("--repo", "--project")) for w in words) or " decided " in f" {' '.join(words)} ":
         sys.exit(f"these words look like a compose command passed as one word, so nothing changed: {' '.join(words)!r}\n"
                  f"write the command out and quote only the words:\n"
-                 f"  compose yolo --project {proj.name} [--push] \"<words>\"\n"
-                 f"  compose yolo decided --project {proj.name} \"<question>: <answer taken>\"\n"
-                 f"words that themselves say ` decided ` are taken for a mislaid `yolo decided`: reword them")
+                 f"  compose {P} --project {proj.name} [--push] \"<words>\"\n"
+                 f"  compose {P} decided --project {proj.name} \"<question>: <answer taken>\"\n"
+                 f"words that themselves say ` decided ` are taken for a mislaid `{P} decided`: reword them")
     y = y or {"since": time.strftime("%Y-%m-%d %H:%M:%S"), "decisions": []}
-    y.update(push=bool(a.push), words=" ".join(words) if words else y.get("words", ""),
+    switch = "mode" in y and y["mode"] != P
+    y.update(mode=P, push=bool(a.push) or (switch and y.get("push", False)), words=" ".join(words) if words else y.get("words", ""),
              by={"role": os.environ.get("COMPOSE_ROLE") or "manager", "session": fc_core.session_id()})  # watch and status say who: fc_tasks.yolo_by
     path.parent.mkdir(parents=True, exist_ok=True)
     fc_core.atomic_write(path, json.dumps(y, indent=2))
-    print(f"yolo on for {proj.name} since {y['since']}: the engineering manager answers with the recommendation and logs each answer")
+    print(f"{P} on for {proj.name} since {y['since']}: the engineering manager answers with the recommendation and logs each answer")
     print(f"your words: {y['words'] or '(none)'}")
     print(f"push: {'yes, the verified stack is submitted' if y['push'] else 'no, the stack waits for you'}")
     print(YOLO_NEVER)
-    print(f"back: `compose yolo off --project {proj.name}` prints what happened")
+    print(f"back: `compose {P} off --project {proj.name}` prints what happened")
