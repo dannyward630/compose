@@ -31,6 +31,17 @@ def live_work():
             f.unlink(missing_ok=True)
     return found
 
+def refuse_while_verifying(proj, repo):
+    """Exit when another process is running `verify` on this project: it stands in the CLI worktree at the stack top, and anything
+    that checks other branches out there (stack, top, reword, land) would make its stages judge other code. The hold file is
+    matched by project name and by the repository, whichever of its checkouts the verify was started from."""
+    common = lambda path: fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False).stdout.strip()
+    mine = common(repo)
+    for w in live_work():
+        if w.get("kind") == "verify" and w.get("project") == Path(proj).name and w["pid"] != os.getpid() and mine and common(w["repo"]) == mine:
+            sys.exit(f"STOP  verify is running on {w['project']} (pid {w['pid']}, since {w['since']}) and holds the stack top in the CLI worktree: "
+                     "this would check other branches out under it. Wait for it to end, then re-run")
+
 def local_commits(checkout):
     """(branch, upstream, [(mark, sha, subject)]) for the commits the checkout's branch has that its upstream lacks, None when it has none.
     `git cherry` marks each one `-` when its patch is already upstream under another hash, `+` when it is only here."""

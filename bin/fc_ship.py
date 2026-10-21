@@ -1,7 +1,7 @@
 """Shipping a verified stack: check every layer before it is submitted, reword its commits, land it on the base."""
 import hashlib, json, os, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_worktree, fc_layers, fc_stack, fc_jev, fc_verify
+import fc_core, fc_worktree, fc_layers, fc_stack, fc_jev, fc_verify, fc_update
 
 LAND_POLL = 20      # seconds between looks at a pull request that is not ready yet
 LAND_SETTLE = 15    # seconds after a push before its required checks are read: GitHub registers them a moment later
@@ -51,6 +51,7 @@ def layer_checks(repo, proj, layers, trunk, wt):
 def cmd_stack(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
+    fc_update.refuse_while_verifying(proj, repo)
     if not fc_stack.register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit, gate=layer_checks):
         if fc_layers.STACK_STOP:
             sys.exit(1)  # the STOP line already said why and what to do
@@ -89,6 +90,7 @@ def cmd_reword(a):
         show()
         print(f"reword set one with `compose reword --project {proj.name} --set <sha>=<message>`; `compose stack` also rewrites a flagged message on its own")
         return
+    fc_update.refuse_while_verifying(proj, repo)
     every = [c for _, cs in layers for c in cs]
     chosen = dict(fc_layers.rewords(proj))
     for item in a.set:
@@ -245,6 +247,7 @@ def cmd_land(a):
     if not a.yes:
         print(f"land   nothing was merged or pushed. Re-run with --yes once the user has said to land this stack")
         return
+    fc_update.refuse_while_verifying(proj, repo)
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     fc_core.atomic_write(kept, json.dumps(rec, indent=2))
     try:

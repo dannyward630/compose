@@ -296,6 +296,17 @@ class Land(Ship):
         self.assertEqual(refs(), before)
         self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
 
+    def test_it_refuses_while_a_verify_holds_the_stack_top_and_merges_nothing(self):
+        self.submitted()
+        proc = subprocess.Popen(["sleep", "60"]); self.addCleanup(proc.wait); self.addCleanup(proc.kill)
+        live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
+        (live / f"{proc.pid}.json").write_text(json.dumps({"pid": proc.pid, "kind": "verify", "project": "p", "repo": str(self.repo), "since": "21:01"}))
+        log = self.log()
+        with self.assertRaises(SystemExit) as e:
+            fc.fc_ship.cmd_land(self.args(yes=True, method=None, timeout=1))
+        self.assertIn(f"verify is running on p (pid {proc.pid}", str(e.exception))
+        self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
+
     def test_a_stack_that_was_not_submitted_names_the_missing_pull_request(self):
         self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
         out, code = self.land(yes=False)

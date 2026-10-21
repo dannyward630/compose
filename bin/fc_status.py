@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear, fc_update
 
 
 def project_head(repo, proj):
@@ -294,6 +294,7 @@ def cmd_top(a):
     (nothing is merged, so the user's checkout never contains it). `--detach` returns the worktree to the trunk."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = fc_core.current_branch(repo)
+    fc_update.refuse_while_verifying(proj, repo)
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     if a.detach:
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)

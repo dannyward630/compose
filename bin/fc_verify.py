@@ -426,10 +426,17 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     allowed = set(fc_core.sh(["git", "diff", "--name-only", f"{base}...HEAD"], repo, check=False).stdout.splitlines()) if base else set()
     dirty = fc_worktree.dirty_paths(repo)  # the user's own changes, read before any stage: what a check leaves behind is verify's
     rejected, tests = [], None  # the first round runs the full checks; a fix round only the tests of what its fix changed
+    branch = lambda: fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip()
+    stands_on = branch()
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
             fc_worktree.ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
         ok, report, findings = run_stages(repo, proj, cfg, a, tests)
+        if branch() != stands_on:  # a fix commit stays on the branch; only a checkout moves it, and then the stages judged other code
+            fc_core.say(f"verify VOID  nothing verified or recorded: {repo} stood on {stands_on or 'a detached HEAD'} when the stages started and stands on "
+                        f"{branch() or 'a detached HEAD'} now, so something else checked a branch out there during the run (compose stack, top, a hand checkout) "
+                        "and the stages judged that code, not the stack top; run verify again")
+            sys.exit(1)
         rounds.append(report)
         if ok or rnd == a.fix:
             break
