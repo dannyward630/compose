@@ -81,7 +81,7 @@ def _rate_limit_wait(headers, attempt):
     return max(1, min(resets) - time.time()) if resets else min(LINEAR_MAX_WAIT, 10 * 2 ** attempt)
 
 def _linear_post(query, variables, attempt):
-    req =urllib.request.Request(os.environ.get("LINEAR_URL") or LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
+    req = urllib.request.Request(os.environ.get("LINEAR_URL") or LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": fc_config.LINEAR_KEY})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -107,7 +107,7 @@ def _linear_post(query, variables, attempt):
 def linear_gql(query, variables):
     """One GraphQL call. A rate-limited call did not run, so it waits as long as Linear says and runs again, saying so on stderr."""
     if not linear_ready():
-        return {"issue": {"comments": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+        return {}
     for attempt in range(LINEAR_RETRIES + 1):
         try:
             return _linear_post(query, variables, attempt)

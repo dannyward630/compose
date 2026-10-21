@@ -136,7 +136,7 @@ def sufficiency_events(meta, rows, answers, threshold, run_id, commit_sha):
         if result == "proven" and fails:
             result = "unproven"
             cites += [r["event_id"] for r in fails if r["event_id"] not in cites]
-        if result == "proven" and cites and not any(r["result"] != "error" for r in applies if r["event_id"] in cites):
+        if result == "proven" and not any(r["result"] != "error" for r in applies if r["event_id"] in cites):
             result = "unproven"
         d = fc_ledger.event(run_id, commit_sha, [meta["id"]], [c], "sufficiency", "verify", result, None, t)
         d["cites"], d["needs"] = cites, sufficiency_needs(answers.get(f"n{n}"))
