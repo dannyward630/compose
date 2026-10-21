@@ -566,3 +566,65 @@ class VerifyCatchUp(unittest.TestCase):
         with mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set()):
             code, order, *_ = self.verify(linear=("001",), key="lin_test")
         self.assertEqual(([c.args[2]["id"] for c in re.call_args_list], order.rounds.call_count, code), (["001"], 1, None))
+
+
+class PassScope(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
+        # 001 leaves its files (also a logo), 002 stays inside, 003 has no files: so every changed file is outside
+        edits = {"001": ["src/a.py", "logo.png"], "002": ["src/b.py"], "003": ["src/c.py"]}
+        self.tasks = [{"id": t, "after": "", "files": [] if t == "003" else [f"src/{'ab'[int(t) - 1]}.py"], "linear": f"XX-{t}"} for t in edits]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": self.tasks}))
+        for t, paths in edits.items():
+            git("checkout", "-q", "-b", fc.fc_worktree.task_branch(self.repo, self.proj, t), "main")
+            for p in paths: (self.repo / p).parent.mkdir(exist_ok=True); (self.repo / p).write_text(t)
+            git("add", "-A"); git("commit", "-qm", t)
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+        git("checkout", "-q", "main")
+
+    def run_hook(self, hook, fired=(), **kw):
+        """`hook(**kw)` with the pairs `fired` on every issue; returns (its return value, {task id: reassess call args})."""
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set(fired)), \
+                mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"):
+            got = hook(**kw)
+        return got, {c.args[2]["id"]: c.args for c in re.call_args_list}
+
+    def catch_up(self, kinds, fired=(), ids=("001", "002", "003")):
+        return self.run_hook(lambda: fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), fired)
+
+    def test_after_run_asks_diff_and_scope_for_a_layer_outside_its_files_and_diff_only_inside_with_the_layer_base_and_branch(self):
+        got, calls = self.run_hook(lambda: fc_reroute.after_run(self.repo, self.proj, [{"id": t, "status": "passed"} for t in ("001", "002", "003")], self.tasks, "main"))
+        self.assertEqual((got, {t: a[4] for t, a in calls.items()}), (None, {"001": ["diff", "scope"], "002": ["diff"], "003": ["diff", "scope"]}))
+        branch = lambda t: fc.fc_worktree.task_branch(self.repo, self.proj, t)
+        self.assertEqual([(a[5], a[6], a[7]) for a in calls.values()], [("run-001", "main", branch("001")), ("run-002", branch("001"), branch("002")), ("run-003", branch("002"), branch("003"))])
+
+    def test_catch_up_with_scope_alone_asks_only_the_tasks_outside_their_files(self):
+        got, calls = self.catch_up(("scope",))
+        self.assertEqual((got, {t: a[4] for t, a in calls.items()}), ({}, {"001": ["scope"], "003": ["scope"]}))
+
+    def test_a_trigger_fired_for_the_run_id_is_not_asked_again_but_one_fired_for_another_run_is(self):
+        for fired, want in ([("diff", "run-001")], ["scope"]), ([("scope", "run-001")], ["diff"]), ([("diff", "run-001"), ("scope", "run-001")], None), ([("diff", "old"), ("scope", "old")], ["diff", "scope"]):
+            with self.subTest(fired=fired):
+                got, calls = self.catch_up(("diff", "scope"), fired, ("001",))
+                self.assertEqual(calls["001"][4] if calls else None, want)
+
+    def test_before_verify_asks_scope_for_the_stack_tasks_whose_comments_hold_diff_but_not_scope(self):
+        fired = [("diff", "run-001"), ("diff", "run-002"), ("diff", "run-003"), ("scope", "run-003")]
+        got, calls = self.run_hook(lambda: fc_reroute.before_verify(self.repo, self.proj, self.tasks, "main"), fired)
+        self.assertEqual({t: a[4] for t, a in calls.items()}, {"001": ["scope"]})
+        got, calls = self.run_hook(lambda: fc_reroute.before_verify(self.repo, self.proj, self.tasks, "main"), fired + [("scope", "run-001")])
+        self.assertEqual(calls, {})
+
+    def test_a_diff_signals_error_is_that_tasks_failure_and_the_others_go_on(self):
+        real = fc_reroute.diff_signals
+        def signals(repo, meta, *a):
+            if meta["id"] == "001": raise RuntimeError("git diff failed")
+            return real(repo, meta, *a)
+        with mock.patch.object(fc_reroute, "diff_signals", signals):
+            got, calls = self.catch_up(("scope",))
+        self.assertEqual((got, list(calls)), ({"001": "git diff failed"}, ["003"]))
