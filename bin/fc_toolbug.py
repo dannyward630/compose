@@ -99,6 +99,38 @@ def post(title, body, comment=None):
     out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
     return out[-1] if out else None
 
+def find_entry(project, at):
+    """(project, at, note) of the tool-bugs.jsonl entry `at` names: the project's own entry at that time, else the one entry of any
+    project at that time, else the one entry within 2 seconds of it (a `compose watch` event can show a second off), with a note
+    saying which one was used. (project, at, None) when nothing matches; ValueError listing the candidates when several do."""
+    import json
+    from datetime import datetime
+    log = Path(fc_crew.TOOL_BUGS)
+    keys = []
+    for line in log.read_text().splitlines() if log.exists() else []:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and isinstance(e.get("project"), str) and isinstance(e.get("at"), str) and (e["project"], e["at"]) not in keys:
+            keys.append((e["project"], e["at"]))
+    if (project, at) in keys:
+        return project, at, None
+    def secs(t):
+        try:
+            return datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    want = secs(at)
+    for found in ([k for k in keys if k[1] == at],
+                  [k for k in keys if want and secs(k[1]) and abs((secs(k[1]) - want).total_seconds()) <= 2]):
+        if len(found) > 1:
+            raise ValueError(f"{len(found)} tool-bugs.jsonl entries match {at}, pass the exact time of one:\n"
+                             + "\n".join(f"  {p} at {t}" for p, t in found))
+        if found:
+            return found[0][0], found[0][1], f"{at} matched the entry of {found[0][0]} at {found[0][1]}"
+    return project, at, None
+
 def record_issue(project, url, at, field="issue"):
     """Set `field` (`issue`, or `pr`) on the project's last tool-bugs.jsonl entry whose `at` is `at`, only when it has none yet; the URL
     that entry holds afterwards (the new one or the kept one), None when no entry of the project has that `at`."""
@@ -145,13 +177,19 @@ def cmd_tool_bug_pr(a):
     if not subjects:
         sys.exit(f"{wt} has no commit past origin/{base}: commit the fix on your branch first")
     branch = fc_core.sh(["git", "branch", "--show-current"], wt).stdout.strip()
+    project, at, note = a.project, a.entry, None
+    if at is not None:
+        try:
+            project, at, note = find_entry(project, at)
+        except ValueError as e:
+            sys.exit(str(e))
     log, entry = Path(fc_crew.TOOL_BUGS), {}
     for line in log.read_text().splitlines() if log.exists() else []:
         try:
             d = json.loads(line)
         except ValueError:
             continue
-        if isinstance(d, dict) and d.get("project") == a.project and (a.entry in (None, d.get("at"))):
+        if isinstance(d, dict) and d.get("project") == project and (at in (None, d.get("at"))):
             entry = d
     n = re.search(r"/issues/(\d+)$", entry.get("issue", ""))
     pushed = fc_core.sh(["git", "push", "-q", "-u", "origin", branch], wt, check=False)
@@ -164,8 +202,12 @@ def cmd_tool_bug_pr(a):
     if p.returncode or not out:
         sys.exit(f"{branch} is pushed but gh could not open the PR: {' '.join((p.stdout + p.stderr).split())}")
     print(out[-1])
-    if entry and record_issue(a.project, out[-1], entry["at"], "pr") != out[-1]:
+    if note:
+        print(note)
+    if entry and record_issue(project, out[-1], entry["at"], "pr") != out[-1]:
         print(f"{out[-1]} not recorded: {entry['at']} already links another PR")
+    elif a.entry and not entry:
+        print(f"{out[-1]} not recorded: no tool-bugs.jsonl entry has at {a.entry}, or within 2 seconds of it")
 
 def cmd_tool_bug(a):
     """`tool-bug file --body <file> [--comment N | --new] [--approved]`: scrub, then post on the maintainer's machine or with
@@ -197,6 +239,12 @@ def cmd_tool_bug(a):
         print(f"saved {p}\nto post it: compose tool-bug file --project {a.project} --body {p} --approved"
               + (f' --entry "{a.entry}"' if a.entry else "") + (", after `gh auth login`" if state == "no-gh" else ""))
         return
+    project, at, note = a.project, a.entry, None
+    if at is not None:
+        try:
+            project, at, note = find_entry(project, at)
+        except ValueError as e:
+            sys.exit(str(e))
     if a.comment is not None:
         url = post(title, body, comment=a.comment)
     elif a.new:
@@ -215,11 +263,13 @@ def cmd_tool_bug(a):
               + (f' --entry "{a.entry}"' if a.entry else ""))
         sys.exit(1)
     print(url)
+    if note:
+        print(note)
     if a.entry is None:
         print(f'{url} not recorded: pass --entry "<at>" to link it to the tool-bugs.jsonl entry it fixes')
         return
-    got = record_issue(a.project, url, a.entry)
+    got = record_issue(project, url, at)
     if got is None:
-        print(f"{url} not recorded: no tool-bugs.jsonl entry of {a.project} has at {a.entry}")
+        print(f"{url} not recorded: no tool-bugs.jsonl entry has at {a.entry}, or within 2 seconds of it")
     elif got != url:
         print(f"{url} not recorded: {a.entry} already links {got}")

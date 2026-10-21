@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import shutil, subprocess, sys, time
@@ -341,7 +341,7 @@ class Crew(unittest.TestCase):
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
 
     def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
-        for role, env in (("planner", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
+        for role, env in (("planner", "planner"), ("planner-neb-7", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
             calls = []
             def herdr(*args, **kw):
                 calls.append(args)
@@ -358,6 +358,18 @@ class Crew(unittest.TestCase):
             self.assertEqual(calls[1][:2], ("tab", "create"))
             self.assertIn(f"COMPOSE_ROLE={env}", calls[1], role)
             self.assertEqual(calls[3][2], f"shop-{role}")
+
+    def test_a_story_planner_is_named_after_its_ticket_so_it_runs_beside_the_feature_planner(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
+        def named(issue):
+            out = io.StringIO()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
+                fc.fc_briefs.cmd_planner(type("A", (), {"extra": None, "issue": issue}))
+            return out.getvalue().splitlines()[1]
+        self.assertTrue(named(None).endswith("you are shop-planner."))
+        self.assertTrue(named("neb-1").endswith("you are shop-planner."))
+        self.assertTrue(named("NEB-7").endswith("you are shop-planner-neb-7."))
+        self.assertTrue(named("NEB-8").endswith("you are shop-planner-neb-8."))
 
     def test_same_named_agent_in_another_space_neither_blocks_start_nor_shows_in_list(self):
         stranger = {"name": "shop-explore", "workspace_id": "wC", "agent_status": "idle"}
@@ -609,6 +621,22 @@ class Guard(unittest.TestCase):
         self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
         for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
             self.assertIsNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
+
+    def test_a_crew_session_cannot_switch_branches_in_the_shared_project_worktree(self):
+        other = Path(tempfile.mkdtemp()); fc.fc_core.sh(["git", "init", "-q"], other)
+        decide = lambda command, cwd=self.repo, role="crew": fc.fc_hooks.switch_decision(command, str(cwd), role, str(self.repo))
+        for command in ("git checkout feature", "git switch -c work", "git -c core.x=1 checkout main", f"cd {other} && cd {self.repo} && git checkout x", "echo hi; git switch main"):
+            self.assertIn("move the team lead's HEAD", decide(command) or "", command)
+        for command in ("git checkout -- src/app.go", "git checkout -p", "git status", f"git -C {other} checkout x", f"cd {other} && git switch x", "echo git checkout"):
+            self.assertIsNone(decide(command), command)
+        self.assertIsNone(decide("git checkout x", cwd=other))  # the session works in a worktree of its own
+        for role in ("orchestrator", "planner", None):
+            self.assertIsNone(decide("git checkout x", role=role), role)
+        out = io.StringIO()
+        ev = json.dumps({"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": "git switch main"}})
+        with mock.patch.dict(os.environ, {"COMPOSE_ROLE": "crew", "COMPOSE_REPO": str(self.repo)}), mock.patch.object(sys, "stdin", io.StringIO(ev)), mock.patch.object(sys, "stdout", out):
+            fc.fc_hooks.cmd_guard(None)
+        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})

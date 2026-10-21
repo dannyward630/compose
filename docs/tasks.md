@@ -37,6 +37,8 @@ Three more rules apply to the block and the issue around it:
   Each linked task becomes the layer this task stacks on.
 - Any other "blocked by" link (a design story, another feature's issue) does not stack.
   `run` holds the task until that blocker is Done or Canceled, or In Review with the Design label, as of the last `sync`.
+  A blocker in any other state is let go when git shows its code in the trunk the run starts on: the task branch of the blocker, or the top layer of the project that builds it once all its tasks passed, is an ancestor of that trunk.
+  `run` prints the unblocked ids with that proof in its first lines, and the blockers still held with the reason.
 - The `model:` field picks another implementer for one task.
   Leave it unset unless the product owner decided otherwise.
 - Only an issue with the block counts as a task.

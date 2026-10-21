@@ -1,10 +1,12 @@
-import json, sys, urllib.error, urllib.request
+import json, sys, time, urllib.error, urllib.request
 from pathlib import Path
 import fc_core, fc_config, fc_plan, fc_tasks
 
 
-LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier } labels { nodes { name } }
-  inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } }"""
+# A connection costs its `first` times what it holds, and the API key's hour is 3,000,000 points shared by the whole fleet: 50 relations and 20
+# labels keep a page of 50 children near 56,000 points where 250 relations and the default 50 labels cost about 650,000.
+LINEAR_TREE_FIELDS = """identifier title description state { name } parent { identifier } labels(first: 20) { nodes { name } }
+  inverseRelations(first: 50) { nodes { type issue { identifier state { name } labels(first: 20) { nodes { name } } } } }"""
 LINEAR_FEATURE = "query($id: String!) { issue(id: $id) { %s } }" % LINEAR_TREE_FIELDS
 LINEAR_CHILDREN = """query($id: String!, $after: String) { issue(id: $id) { children(first: 50, after: $after) {
   pageInfo { hasNextPage endCursor } nodes { %s } } } }""" % LINEAR_TREE_FIELDS
@@ -58,24 +60,60 @@ LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier state { n
   team { states { nodes { id name type } } } parent { identifier } children { nodes { identifier state { name type } } } } }"""
 _linear_warned = []
 
-def linear_gql(query, variables):
+LINEAR_RETRIES = 5     # waits before a rate-limited call gives up
+LINEAR_MAX_WAIT = 300  # a single wait longer than this fails naming the time instead, so no command hangs for the rest of the hour
+
+class LinearRateLimited(RuntimeError):
+    def __init__(self, message, wait):
+        super().__init__(message)
+        self.wait = wait
+
+def _rate_limit_wait(headers, attempt):
+    """Seconds to wait: Retry-After, else the sooner reset header (UTC epoch seconds or milliseconds), else a doubling pause."""
+    h = headers or {}
+    try:
+        if h.get("Retry-After"):
+            return max(1, float(h["Retry-After"]))
+        resets = [float(h[k]) for k in ("X-RateLimit-Complexity-Reset", "X-RateLimit-Requests-Reset") if h.get(k)]
+    except ValueError:
+        resets = []
+    resets = [r / 1000 if r > 1e11 else r for r in resets]
+    return max(1, min(resets) - time.time()) if resets else min(LINEAR_MAX_WAIT, 10 * 2 ** attempt)
+
+def _linear_post(query, variables, attempt):
     req = urllib.request.Request(LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": fc_config.LINEAR_KEY})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            out = json.load(r)
+            out, headers = json.load(r), getattr(r, "headers", None)
     except urllib.error.HTTPError as e:
         try:
-            parsed = json.loads(e.read().decode(errors="replace"))
+            out = json.loads(e.read().decode(errors="replace"))
         except ValueError:
-            parsed = None
+            out = None
+        headers = e.headers
         e.close()
-        if isinstance(parsed, dict) and parsed.get("errors"):
-            raise RuntimeError("; ".join(x.get("message", "?") for x in parsed["errors"])[:300])
-        raise
+        if not (isinstance(out, dict) and out.get("errors")):
+            if e.code == 429:
+                raise LinearRateLimited("Linear rate limit (HTTP 429)", _rate_limit_wait(headers, attempt))
+            raise
     if out.get("errors"):
-        raise RuntimeError("; ".join(e.get("message", "?") for e in out["errors"])[:300])
+        message = "; ".join(x.get("message", "?") for x in out["errors"])[:300]
+        if any((x.get("extensions") or {}).get("code") == "RATELIMITED" for x in out["errors"]):
+            raise LinearRateLimited(message, _rate_limit_wait(headers, attempt))
+        raise RuntimeError(message)
     return out["data"]
+
+def linear_gql(query, variables):
+    """One GraphQL call. A rate-limited call did not run, so it waits as long as Linear says and runs again, saying so on stderr."""
+    for attempt in range(LINEAR_RETRIES + 1):
+        try:
+            return _linear_post(query, variables, attempt)
+        except LinearRateLimited as e:
+            if e.wait > LINEAR_MAX_WAIT or attempt == LINEAR_RETRIES:
+                raise RuntimeError(f"{e} (Linear lets calls through again in about {int(e.wait)}s; run it again then)") from None
+            print(f"Linear rate limit: waiting {int(e.wait)}s, then retry {attempt + 1} of {LINEAR_RETRIES}", file=sys.stderr)
+            time.sleep(e.wait)
 
 def linear_issue(ident):
     issue = linear_gql(LINEAR_ISSUE, {"id": ident})["issue"]

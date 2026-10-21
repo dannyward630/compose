@@ -218,9 +218,9 @@ class WatchTimeout(unittest.TestCase):
         self.assertIn("herdr agent prompt clean-recut-branche-orchestrator", ev[0])
 
 
-def wsnap(state="pending", run=False, crashed=False, halt=None):
+def wsnap(state="pending", run=False, ended=None, halt=None):
     return {"tasks": {"001": {"state": state, "attempts": 1, "cost": 0.0, "note": "", "linear": "", "title": "t"}}, "agents": {},
-            "crew": {}, "run": run, "crashed": crashed, "verify": None, "halt": halt, "run_end": 0, "last": [0, ""]}
+            "crew": {}, "run": run, "ended": ended, "verify": None, "halt": halt, "run_end": 0, "last": [0, ""]}
 
 
 class WatchMemory(unittest.TestCase):
@@ -349,7 +349,7 @@ class WatchMemory(unittest.TestCase):
         self.assertEqual(fc.fc_watch.watch_events(snaps[0], snaps[1]) + fc.fc_watch.watch_events(snaps[1], snaps[2]), [])
 
     def test_now_reports_a_crashed_run(self):
-        out = self.watch(wsnap("running", crashed=True), now=True)
+        out = self.watch(wsnap("running", ended="crashed"), now=True)
         self.assertTrue(any("run=ended" in line and "CRASHED" in line for line in out), out)
 
 
@@ -459,7 +459,7 @@ class Reenter(unittest.TestCase):
         hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
         cmds = lambda ev, m=None: [h["command"] for e in hooks.get(ev, []) if e.get("matcher") == m for h in e["hooks"]]
         self.assertTrue(any(c.endswith(" reenter") for c in cmds("SessionStart", "compact")), hooks.get("SessionStart"))
-        self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit")[0].endswith(" guard"))
+        self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit|Bash")[0].endswith(" guard"))
         self.assertTrue(cmds("PostToolUse", "Skill")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("UserPromptSubmit")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("Stop")[0].endswith(" rewake"))
@@ -631,7 +631,7 @@ class Timed(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
         script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")
         env = {**os.environ, "COMPOSE_TEST_SLOTS": "1"}
-        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold]
+        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold, "pytest"]
         a = sp.Popen(cmd("a", "3"), env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         time.sleep(0.5)
         b = sp.run(cmd("b", "0"), env=env, capture_output=True, text=True)
@@ -647,7 +647,7 @@ class Timed(unittest.TestCase):
         import subprocess as sp, time
         compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
         env = {**os.environ, "COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
-        suite = sp.Popen([compose, "timed", "30", "--", "sleep", "4"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        suite = sp.Popen([compose, "timed", "30", "--", "sh", "-c", "sleep 4", "pytest"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         time.sleep(0.7)
         t0 = time.time()
         quick = sp.run([compose, "timed", "30", "--", "sh", "-c", "echo quick-ok # -k filter"], env=env, capture_output=True, text=True)
@@ -835,9 +835,21 @@ class RunStop(unittest.TestCase):
         self.assertEqual((stopped.call_count, exits), (1, [(130, False)]))
         self.assertEqual(re.findall(r"\[\d\d:\d\d:\d\d\] (.+)\n", err.getvalue()), ["run stopped by Ctrl-C; `compose resume` continues it"], err.getvalue())
         self.assertNotIn("Traceback", err.getvalue()); self.assertTrue((proj / "results" / "run.json").exists())
+        return proj
 
     def test_ctrl_c_stops_says_so_and_exits_130_without_waiting_on_the_task(self):
         self.ctrl_c()
+
+    def test_watch_calls_a_ctrl_c_run_interrupted_and_a_run_that_just_died_crashed(self):
+        proj = self.ctrl_c()
+        with mock.patch.object(fc.fc_tasks, "pid_alive", return_value=False):  # the run process is gone
+            self.assertEqual(fc.fc_tasks.run_ended(proj), "interrupted")
+            ev = fc.fc_watch.watch_events(wsnap("running", run=True), wsnap("running", ended=fc.fc_tasks.run_ended(proj)))
+            self.assertTrue("INTERRUPTED" in ev[0] and "`compose resume`" in ev[0] and "CRASHED" not in ev[0], ev)
+            (proj / "results" / "run.json").write_text(json.dumps({"pid": 999999}))  # no stop recorded
+            self.assertEqual(fc.fc_tasks.run_ended(proj), "crashed")
+        (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getpid()}))
+        self.assertIsNone(fc.fc_tasks.run_ended(proj))  # a live run has not ended
 
     def test_a_second_ctrl_c_during_the_stop_changes_nothing(self):
         self.ctrl_c(stop=lambda: os.kill(os.getpid(), signal.SIGINT))
@@ -1044,7 +1056,8 @@ class OwnerDigest(unittest.TestCase):
     def test_a_run_ending_and_a_fix_loop_starting_are_told_once(self):
         live, ended = wsnap("running", run=True), wsnap("failed")
         self.assertEqual(self.tell(live, ended), ["event tell='run ended: 0/1 passed, failed 001'"])
-        self.assertEqual(self.tell(live, wsnap("running", crashed=True)), ["event tell='run crashed before finishing'"])
+        self.assertEqual(self.tell(live, wsnap("running", ended="crashed")), ["event tell='run crashed before finishing'"])
+        self.assertEqual(self.tell(live, wsnap("running", ended="interrupted")), ["event tell='run stopped by Ctrl-C - compose resume continues it'"])
         failed = wsnap(); failed["verify"] = (1, False)
         restarted = wsnap("running", run=True); restarted["verify"] = (1, False)
         self.assertEqual(self.tell(failed, restarted), ["event tell='fix loop started: the run restarted after the failed verify'"])

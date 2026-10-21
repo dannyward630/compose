@@ -6,7 +6,7 @@ import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_st
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
 
 # ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
+FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
 
 AGENTS_INTERVAL = 10.0  # seconds between `herdr agent list` calls in one watch loop: a teammate's status moves at the pace of its turns
 
@@ -31,7 +31,7 @@ def watch_snapshot(repo, proj, agents=None):
         time.sleep(0.5)
         rows = fc_status.board(repo, proj)["rows"]
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
-    snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "crashed": bool(fc_tasks.run_marker(proj)) and not fc_tasks.run_alive(proj), "verify": None, "halt": None,
+    snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "ended": fc_tasks.run_ended(proj), "verify": None, "halt": None,
             "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
             if (proj / "results" / "crew").exists() else {}}
     try:
@@ -191,6 +191,9 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         pass
     return ev
 
+RUN_ENDED = {"crashed": "  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `compose resume`",
+             "interrupted": "  INTERRUPTED: the run was stopped by Ctrl-C; `compose resume` continues it"}
+
 def watch_events(before, after):
     """The actionable differences between two snapshots, one line each. Attempt counts, a task starting, and idle/done flaps are not events."""
     ev = []
@@ -205,7 +208,7 @@ def watch_events(before, after):
     if before["run"] and not after["run"]:
         passed = sum(t["state"] in ("passed", "already_green", "merged") for t in after["tasks"].values())
         ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
-                  + ("  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `compose resume`" if after.get("crashed") else ""))
+                  + RUN_ENDED.get(after.get("ended"), ""))
     if after.get("halt") and after["halt"] != before.get("halt"):
         at_, provider, left = after["halt"]
         ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
@@ -245,7 +248,7 @@ def owner_lines(slug, before, after):
         tasks = after["tasks"]
         bad = [t for t, x in tasks.items() if x["state"] in fc_status.FAILED_STATES]
         ok = sum(x["state"].split(" ")[0] in ("merged", "passed", "hand_done", "already_green") for x in tasks.values())
-        out.append("run crashed before finishing" if after.get("crashed") else f"run ended: {ok}/{len(tasks)} passed" + (f", failed {','.join(bad)}" if bad else ""))
+        out.append({"crashed": "run crashed before finishing", "interrupted": "run stopped by Ctrl-C - compose resume continues it"}[after["ended"]] if after.get("ended") else f"run ended: {ok}/{len(tasks)} passed" + (f", failed {','.join(bad)}" if bad else ""))
     elif after.get("run") and not before.get("run") and v and not v[1]:
         out.append("fix loop started: the run restarted after the failed verify")
     orch = fc_herdr.agent_name(slug, "orchestrator")
@@ -316,7 +319,7 @@ def cmd_watch(a, rewake=False):
     key = watch_key()
     if a.now:
         cur = watch_snapshot(repo, proj)
-        empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("crashed"), "verify": None, "halt": None,
+        empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("ended"), "verify": None, "halt": None,
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
         lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, *watch_scope(proj, cur)))
         if y := fc_tasks.yolo_state(proj):

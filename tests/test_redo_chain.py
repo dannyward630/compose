@@ -87,6 +87,26 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "twelve")
 
+    def test_a_stacked_task_rebases_only_the_layers_through_its_dependency_and_leaves_the_ones_above_for_the_redone_layer(self):
+        # 005 sits on 012 without needing it. run --only 011,012 --redo --no-stack: while 012 is rebuilt on the new 011, 005 keeps
+        # the old 011 and 012 (moving it onto 011 would leave it off 012 for good, as no stack pass follows)
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"] = [{**t, "after": {"005": "010"}.get(t["id"], t["after"])} for t in tasks["tasks"]]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/011")
+        self.layer("011", "fast/p/010", "c.txt", "new\n")
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/012")
+        above = self.git("rev-parse", "fast/p/005")
+        base, _ = fc.fc_implement.task_base(self.repo, self.proj, {"id": "012", "after": "011"})
+        self.assertEqual(base, "fast/p/011")
+        self.assertEqual(self.git("rev-parse", "fast/p/005"), above)
+        self.layer("012", "fast/p/011", "012.txt", "new\n")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "main..fast/p/005"), "task 005\ntask 012\ntask 011\ntask 010")
+        self.assertEqual(self.git("for-each-ref", "refs/compose/replaced/"), "")
+
     def test_layers_above_a_replaced_layer_that_moved_up_the_chain_drop_its_old_commit(self):
         # a re-plan put 011 after 005, then --redo replaced it: 012 and 005 still sit on the old 011 while it waits for 005
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
@@ -116,6 +136,21 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("log", "--format=%s", "main..fast/p/013"), "task 013\ntask 012\ntask 011\ntask 010")
         self.assertEqual(self.git("show", "fast/p/013:012.txt"), "new")
 
+    def test_a_layer_built_on_layers_restacked_since_replays_only_its_own_commit_onto_the_layer_below_it(self):
+        # 005 (after 012) was built while 010-012 sat on main; a later pass put 004 below them and 013 above 012, then 005 passed
+        self.git("branch", "-m", "fast/p/005", "held")
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"] += [{"id": "004", "after": ""}, {"id": "013", "after": "012"}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        self.layer("004", "main", "004.txt", "new\n")
+        fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.layer("013", "fast/p/012", "012.txt", "thirteen\n")
+        self.git("branch", "-m", "held", "fast/p/005")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("004", "010", "011", "012", "013", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "fast/p/013..fast/p/005"), "task 005")
+
     def test_a_task_built_on_a_low_layer_goes_to_its_own_place_and_moves_no_layer(self):
         # 006 after 010 starts on 010, as a run bases it, so it counts as many commits as 011; its place is still after 005
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
@@ -129,6 +164,62 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005", "006")])
         self.assertEqual({t: self.git("rev-parse", f"fast/p/{t}") for t in tips}, tips)
         self.assertEqual(self.git("log", "--format=%s", "fast/p/005..fast/p/006"), "task 006")
+
+
+class RedoLayersTheTrunkNowClashesWith(unittest.TestCase):
+    """--redo rebuilds layers whose old commits clash with the trunk or with each other; no rebase before they are rebuilt may stop the run."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {**ENV, "COMPOSE_REDO": "1"}); self.env.start()
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.git("init", "-q", "-b", "trunk")
+        (self.repo / "a.txt").write_text("base\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "init")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+
+    def tearDown(self):
+        self.env.stop()
+
+    def git(self, *a):
+        return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def layer(self, tid, base, name, text):
+        self.git("checkout", "-q", "-b", f"fast/p/{tid}", base)
+        (self.repo / name).write_text(text)
+        self.git("add", "-A"); self.git("commit", "-qm", f"task {tid}")
+        self.git("checkout", "-q", "trunk")
+
+    def run_tasks(self, ids, after, add, also=()):
+        """run_tasks over `ids`, each rebuilt from its dependencies' tip as run_task does (add: the file it writes; also: layers outside the run, still in the plan)."""
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": t, "after": after.get(t, "")} for t in sorted([*ids, *also])]}))
+        built = []
+        def run_task(repo, proj, meta, attempts):
+            tid = meta["id"]
+            base, _ = fc.fc_implement.task_base(repo, proj, meta)
+            fc.fc_worktree.replace_branch(repo, proj, f"fast/p/{tid}")
+            self.layer(tid, base, add[tid], "rebuilt\n"); built.append(tid)
+            return {"id": tid, "title": tid, "status": "passed", "attempts": 1, "seconds": 1.0, "cost": 0.0, "branch": f"fast/p/{tid}"}
+        tasks = [{"id": t, "title": t, "after": after.get(t, ""), "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ids]
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=False)
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_stack, "register_stack"), \
+             mock.patch("builtins.print"), self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(self.repo, self.proj, tasks, a)
+        said = [str(c.args[0]) for c in say.call_args_list]
+        self.assertFalse(any("STOP" in l for l in said), said)
+        self.assertEqual((e.exception.code, built), (0, ids))
+
+    def test_the_layer_about_to_be_rebuilt_is_not_rebased_onto_a_trunk_it_clashes_with(self):
+        self.layer("010", "trunk", "h.txt", "task\n"); self.layer("011", "fast/p/010", "011.txt", "x\n")
+        self.git("checkout", "-q", "trunk"); (self.repo / "h.txt").write_text("trunk\n"); self.git("add", "-A"); self.git("commit", "-qm", "trunk adds h")
+        self.run_tasks(["010"], {"011": "010"}, {"010": "010.txt"}, also=["011"])
+        self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/011"), "1")  # the layer above lost the old 010 commit
+
+    def test_a_redo_layer_waiting_to_start_does_not_unchain_a_task_stacked_above_it(self):
+        # 011 is rebuilt later; 014 starts first on 013, which adds the file 011's old commit also adds
+        self.layer("011", "trunk", "x.txt", "old\n")
+        self.run_tasks(["013", "014", "011"], {"014": "013"}, {"013": "x.txt", "014": "014.txt", "011": "011.txt"})
 
 
 class KeepFinishedLayers(unittest.TestCase):
@@ -319,7 +410,7 @@ class RewrittenTrunk(unittest.TestCase):
         a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=False)
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              self.assertRaises(SystemExit) as e:
-            fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
+            fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "012", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept
         self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
         self.assertIn("(the old base recorded in this pass)", str(e.exception))  # the hint says where the old base came from

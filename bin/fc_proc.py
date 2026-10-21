@@ -112,7 +112,7 @@ def keep_awake(pid=None):
 
 
 SLOTS = 2  # full-suite `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides
-QUICK_SLOTS = 2  # scoped ones (see `scoped`), in lanes of their own so a short run never waits on a suite; COMPOSE_QUICK_SLOTS overrides
+QUICK_SLOTS = 2  # every other command (see `suite`), in lanes of their own so a short run never waits on a suite; COMPOSE_QUICK_SLOTS overrides
 SLOT_SAY_AFTER = 1.0  # seconds a wait for a slot stays silent
 
 SCOPED_RE = re.compile(  # a name filter flag | one test file (python, go, ruby, rust, js/ts, jvm, swift) | one dotted test module
@@ -121,18 +121,34 @@ SCOPED_RE = re.compile(  # a name filter flag | one test file (python, go, ruby,
     r"|(?:^|\s)(?:\w+\.)*test_\w+(?:\.\w+)*(?:\s|$)")
 
 
+SUITE_RE = re.compile(  # a test runner by name | a build tool or package manager asked for its tests or checks
+    r"(?:^|[\s/])(?:pytest|py\.test|tox|nox|jest|vitest|mocha|rspec|playwright|cypress|phpunit|ctest)(?:\s|$)"
+    r"|\bunittest\b|\bnode\s+(?:\S+\s+)*--test\b"
+    r"|\b(?:npm|yarn|pnpm|bun|deno|go|cargo|swift|dotnet|rake|make|mix|mvn|gradlew?|sbt|bazel|xcodebuild|flutter)\b.*?\s(?:test|tests|check|verify|nextest)(?:[\s:]|$)")
+
+
+def _parts(cmd):
+    return [x for x in re.split(r"&&|\|\||;|\n", cmd or "") if x.strip() and not re.match(r"\s*(?:cd|export|source|\.|set|echo)\s", x)]
+
+
 def scoped(cmd):
     """Whether the shell line `cmd` runs a slice of the tests, not a suite: a name filter (`-k`, `-run`, `--grep`, `-t`, ...), one
-    test file, or one test module. Its run is short, so it takes a quick lane (QUICK_SLOTS) and never queues behind a suite. A line of
-    several commands is scoped only when each one past a `cd`, `export` or `source` is."""
-    parts = [x for x in re.split(r"&&|\|\||;|\n", cmd or "") if x.strip() and not re.match(r"\s*(?:cd|export|source|\.|set|echo)\s", x)]
+    test file, or one test module. A line of several commands is scoped only when each one past a `cd`, `export` or `source` is."""
+    parts = _parts(cmd)
     return bool(parts) and all(SCOPED_RE.search(x) for x in parts)
+
+
+def suite(cmd):
+    """Whether the shell line `cmd` runs a whole test suite: a test runner or a `test`/`check` target of a build tool, with no
+    filter or file on it. Only a suite takes a suite slot (SLOTS); anything else (`--help`, `uv sync`, a scoped run) is short or
+    bounded by the caller and takes a quick lane (QUICK_SLOTS), so it never queues behind other teams' suites."""
+    return any(SUITE_RE.search(x) and not SCOPED_RE.search(x) for x in _parts(cmd))
 
 
 @contextlib.contextmanager
 def slot(say=None, quick=False):
     """One of SLOTS machine-wide slots (lock files under ~/.compose/test-slots), held while a timed command runs: five teammates
-    each running a suite at once leave the machine doing little else. A `quick` command (see `scoped`) takes one of QUICK_SLOTS
+    each running a suite at once leave the machine doing little else. A `quick` command (anything but a `suite`) takes one of QUICK_SLOTS
     in a lane of its own (files `q0`, `q1`, ...), so it waits only on other quick runs; the two lanes together bound the load.
     Yields the slot's number, which goes in the command's env as COMPOSE_TEST_SLOT so a compose it runs takes none: a suite under
     a slot runs compose itself, and with one slot its timed commands would wait on their parent for ever; a process already

@@ -149,11 +149,41 @@ class Secrets(unittest.TestCase):
         self.assertEqual(w.returncode, 0, w.stderr)
         (home / "src" / "new-worktree").mkdir()  # git or treehouse in another session
         (home / "auth.json").touch()  # rewritten with the same bytes
+        (home / "live").mkdir()  # a run in another project holds it with its pid's file (fc_update.hold)
+        (home / "live" / "27545.json").write_text("{}")
         go.touch()
         out, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 0, err)
         self.assertIn("other", (home / "config.json").read_text())
         self.assertNotIn("WARNING", out + err)
+
+    def test_the_registry_files_another_compose_keeps_in_the_users_compose_home_are_not_blamed_on_a_timed_command_but_a_stray_file_is(self):
+        home = self.root / "user" / ".compose"
+        env = {**os.environ}
+        env.pop("COMPOSE_CONFIG", None)
+        started, go = self.root / "started", self.root / "go"
+        p = subprocess.Popen([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--",
+                              f"touch {started}; while [ ! -e {go} ]; do sleep 0.05; done"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        for _ in range(200):
+            if started.exists():
+                break
+            time.sleep(0.05)
+        hold = ("import sys; sys.path.insert(0, sys.argv[1]); import fc_update; fc_update.hold('run', 'other', sys.argv[2]); "
+                "open(sys.argv[3], 'a').write('{}\\n')")
+        w = subprocess.run([sys.executable, "-c", hold, str(ROOT / "bin"), str(self.root), str(home / "tool-bugs.jsonl")],
+                           capture_output=True, text=True, env=env)  # another project's run registers itself, a toolsmith files a tool-bug
+        self.assertEqual(w.returncode, 0, w.stderr)
+        (home / "test-slots").mkdir(exist_ok=True)
+        (home / "live").mkdir(exist_ok=True)
+        (home / "live" / "1.json").write_text("{}")  # a run still alive when the command ends
+        go.touch()
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertNotIn("WARNING", out + err)
+        p = subprocess.run([sys.executable, str(ROOT / "bin" / "compose.py"), "timed", "30", "--", "echo x > \"$HOME/.compose/stray.json\""],
+                           capture_output=True, text=True, env=env, cwd=self.root)
+        self.assertIn("WARNING: ~/.compose changed while", p.stdout)
+        self.assertIn("stray.json", p.stdout)
 
     def test_the_journal_of_writes_to_the_users_compose_home_stays_small_and_keeps_the_newest(self):
         home = self.root / "user" / ".compose"

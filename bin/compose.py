@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -220,6 +220,7 @@ def main():
             s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
             s.add_argument("--collect", action="store_true", help="cherry-pick every test-writing teammate's commits onto the project branch in task order")
             s.add_argument("--redo", action="store_true", help="rewrite the tests of passed tasks too, for a re-plan that changed their briefs (as run --redo)")
+            s.add_argument("--parallel", type=int, help="writers to start at once, Claude Code ones too (default: parallel in ~/.compose/config.json, and claude_parallel for Claude writers)")
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "reflect":
@@ -294,6 +295,7 @@ def main():
             g = s.add_mutually_exclusive_group()
             g.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
             g.add_argument("--typesafe", action="store_true", help="key: store the TypeSafe key (stdin); one key serves every workspace")
+            g.add_argument("--provider", metavar="NAME", help="key: store the key (stdin) of a provider declared in the config")
         if name == "update":
             s.add_argument("--force", action="store_true", help="update although a run or verify is live on this machine")
         if name == "clean":
