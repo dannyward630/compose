@@ -246,7 +246,7 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
-    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
+    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "planner" if a.role.startswith("planner-") else "crew"  # `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code
     tab = fc_herdr.herdr_tab(space, fc_herdr.tab_label(proj, title), cwd, "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                              check=True)
     pane = tab["root_pane"]["pane_id"]
