@@ -413,3 +413,36 @@ class Sweep(unittest.TestCase):
         with self.assertRaises(fc.fc_models.PaymentRequired):
             self.sweep(reassess={"side_effect": broke})
         self.assertEqual(seen, ["001"])
+
+
+class Once(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        self.tasks = [{"id": t, "linear": f"XX-{t}"} for t in ("001", "002", "003")]
+        for t in ("001", "002", "003"):
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+
+    def once(self, fired, ids=("001", "002", "003")):
+        """catch_up with `fired(issue)` and `reassess` mocked; returns (its return value, fired mock, reassess mock)."""
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "fired", side_effect=fired) as fi, mock.patch.object(fc_reroute, "reassess") as re, \
+                mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"):
+            return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", ("diff",)), fi, re
+
+    def test_a_trigger_fired_for_the_run_id_calls_no_reassess_and_each_task_reads_its_own_issue(self):
+        got, fi, re = self.once(lambda issue: {("diff", "run-001"), ("diff", "run-003")})
+        self.assertEqual((got, [c.args[0] for c in fi.call_args_list]), ({}, ["XX-001", "XX-002", "XX-003"]))
+        self.assertEqual([(c.args[2]["id"], c.args[4], c.args[5]) for c in re.call_args_list], [("002", ["diff"], "run-002")])
+
+    def test_the_trigger_fired_only_under_another_run_id_is_reassessed(self):
+        got, fi, re = self.once(lambda issue: {("diff", "old-run"), ("scope", "run-001")}, ids=("001",))
+        self.assertEqual((got, [(c.args[2]["id"], c.args[4], c.args[5]) for c in re.call_args_list]), ({}, [("001", ["diff"], "run-001")]))
+
+    def test_a_fired_error_is_returned_under_its_id_and_the_other_tasks_go_on(self):
+        def fired(issue):
+            if issue == "XX-002": raise RuntimeError("Linear: boom")
+            return set()
+        got, fi, re = self.once(fired)
+        self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({"002": "Linear: boom"}, ["001", "003"]))
