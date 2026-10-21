@@ -71,7 +71,8 @@ def rebase_local(checkout):
     r = fc_core.sh(["git", "rebase", upstream], checkout, check=False)
     if r.returncode:
         fc_core.sh(["git", "rebase", "--abort"], checkout, check=False)
-        err = " ".join((r.stdout + r.stderr).split())
+        said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.startswith("CONFLICT") or l.startswith("error:")]
+        err = "; ".join(said or (r.stdout + r.stderr).split("\n")[:2])
         return [f"{checkout}: rebasing {branch} onto {upstream} stopped ({err[:300]}); the rebase was aborted and {branch} is back at {before}", diverged(checkout)], False
     kept = [c for c in commits if c[0] == "+"]
     return [f"{checkout}: {branch} had {len(commits)} commit{'s' if len(commits) > 1 else ''} {upstream} lacked; rebased onto it, "
