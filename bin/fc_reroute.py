@@ -33,21 +33,38 @@ def diff_callers(repo, base, branch, meta):
             a, b = re.match(r"@@ -(\d+)(?:,(\d+))? ", line).groups()
             a, b = int(a), 1 if b is None else int(b)
             ranges[path].append((a, a + max(b, 1) - 1))
+    def trail(*args):
+        try:
+            run = fc_core.sh(["trail", *args, "--json"], repo, check=False)
+        except FileNotFoundError:
+            raise LookupError("trail not installed")
+        if run.returncode:
+            raise LookupError(f"trail exited {run.returncode}")
+        try:
+            return json.loads(run.stdout)
+        except ValueError:
+            raise LookupError("trail gave unreadable output")
+
     callers = {}
-    for path, spans in ranges.items():
-        if not (repo / path).exists():
-            continue
-        skeleton = json.loads(fc_core.sh(["trail", "skeleton", path, "--json"], repo, check=False).stdout)
-        names = []
-        for e in skeleton["entries"]:
-            first, last = (int(n) for n in re.fullmatch(r"L(\d+)-L(\d+)", e["span"]).groups())
-            if any(first <= hi and lo <= last for lo, hi in spans):
-                names.append(e["name"])
-        hits = set()
-        for name in names:
-            found = json.loads(fc_core.sh(["trail", "callers", name, "--json"], repo, check=False).stdout)
-            hits.update(h["path"] for m in found["matches"] if m["symbol"]["path"] == path for h in m["hits"])
-        callers[path] = sorted(hits - set(meta["files"]) - {path})[:20]
+    try:
+        for path, spans in ranges.items():
+            if not (repo / path).exists():
+                continue
+            try:
+                names = []
+                for e in trail("skeleton", path)["entries"]:
+                    first, last = (int(n) for n in re.fullmatch(r"L(\d+)-L(\d+)", e["span"]).groups())
+                    if any(first <= hi and lo <= last for lo, hi in spans):
+                        names.append(e["name"])
+                hits = set()
+                for name in names:
+                    found = trail("callers", name)
+                    hits.update(h["path"] for m in found["matches"] if m["symbol"]["path"] == path for h in m["hits"])
+            except (KeyError, TypeError, AttributeError):
+                raise LookupError("trail gave unreadable output")
+            callers[path] = sorted(hits - set(meta["files"]) - {path})[:20]
+    except LookupError as why:
+        return {"unavailable": str(why)}
     return {"callers": callers}
 
 
