@@ -1,4 +1,5 @@
 """Harnesses other than Claude Code and pi: one table of them, and the accessors every other module reads it through."""
+import json
 import os
 import shutil
 from pathlib import Path
@@ -7,10 +8,20 @@ import fc_core
 
 
 def _codex_probe(cid):
-    raise NotImplementedError
+    return ["codex", "exec", "--ephemeral", "--skip-git-repo-check"] + (["-m", cid] if cid else []) + ["Reply with exactly: ok"]
 
 def _codex_result(p):
-    raise NotImplementedError
+    if p.returncode == 0:
+        return True, "answered"
+    for line in p.stderr.splitlines():
+        if line.startswith("ERROR: "):
+            body = line[len("ERROR: "):]
+            try:
+                return False, json.loads(body)["error"]["message"]
+            except (ValueError, KeyError, TypeError):
+                return False, body.strip()
+    tail = [l.strip() for l in p.stderr.splitlines() if l.strip()] or [l.strip() for l in p.stdout.splitlines() if l.strip()]
+    return False, tail[-1] if tail else f"exit {p.returncode}"
 
 def _git_dirs(f):
     raise NotImplementedError
@@ -61,10 +72,10 @@ def skills_dir(key):
     return Path(os.environ.get(row["home_env"]) or os.path.expanduser(row["home"])) / "skills"
 
 def probe_command(model):
-    raise NotImplementedError
+    return HARNESSES[harness_of(model)]["probe"](model_id(model))
 
 def probe_result(model, p):
-    raise NotImplementedError
+    return HARNESSES[harness_of(model)]["result"](p)
 
 def crew_argv(model, effort, prompt, skill, cwd, results, work=None, more=()):
     raise NotImplementedError
