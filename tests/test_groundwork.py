@@ -204,7 +204,7 @@ class Groundwork(unittest.TestCase):
                  mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out), \
                  mock.patch.object(fc.fc_config, "PARALLEL", None), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", cap), mock.patch.object(fc.fc_config, "CREW_MODELS", models):
                 fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
-            self.assertEqual(started, expect, models)
+            self.assertEqual(sorted(started), expect, models)  # the writers start on threads, so their order is not fixed
             self.assertEqual("queued past the cap of 1" in out.getvalue(), len(expect) == 1, models)
 
     def test_parallel_flag_starts_that_many_writers_over_both_config_caps(self):
