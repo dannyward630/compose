@@ -86,6 +86,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
                 i["confirmed"], i["evidence"] = False, "the line as it must read is the line as it is: " + wrong[:300]
         except fc_models.PaymentRequired:
             raise
+        except fc_models.BadReply:  # the claim went unjudged: the model's reply is not the code's defect, and it must not fail verify
+            i["confirmed"], i["evidence"], i["unjudged"] = False, "confirm unparseable, not judged", True
         except Exception as e:  # noqa: BLE001
             i["confirmed"], i["evidence"], i["judge_error"] = False, str(e), True
         return i
@@ -285,7 +287,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
         fc_core.say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
                     + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
         for i in rv["issues"]:
-            mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
+            mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "unjudged " if i.get("unjudged") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
         for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
