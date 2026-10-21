@@ -1,7 +1,7 @@
 import hashlib, json, os, re, sys, time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
-import fc_core, fc_config, fc_models, fc_worktree, fc_jev, fc_verify
+import fc_core, fc_config, fc_models, fc_worktree, fc_jev, fc_verify, fc_ledger
 
 
 # A query or fragment key that forces a flag or experiment variant for whoever opens the URL, which no real user's page carries.
@@ -129,6 +129,13 @@ def cmd_prove(a):
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write(proj / "results" / "prove.json", json.dumps({"passed": ok, "cases": rows, "lint": lint, "e2e_digest": e2e_digest(cfg),
                                                                    "seconds": round(time.time() - t0, 1)}, indent=2))
+    linear = proj / "linear.json"
+    feature = json.loads(linear.read_text()).get("feature") if linear.exists() else None
+    sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    events = [fc_ledger.event("", sha, [], [], "case", "prove",
+                              *{"feature_missing": ("fail_expected", True), "passes": ("pass", False)}.get(row["verdict"], ("error", None)),
+                              f"{row['name']}: {row['why']}") for row in rows]
+    fc_ledger.record(feature, events)
     bad = [x for x in rows if x["verdict"] != "feature_missing"]
     fc_core.say(f"prove  {'PASS' if ok else 'FAIL'}  {len(rows) - len(bad)}/{len(rows)} case(s) fail because the feature is missing" + (f", {len(lint)} lint" if lint else "")
                 + f"  wall {fc_core.fmt(time.time() - t0)}")
