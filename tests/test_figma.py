@@ -94,7 +94,7 @@ class FigmaCheck(unittest.TestCase):
 
     def test_help_lists_check_and_judge(self):
         r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "figma", "--help"], capture_output=True, text=True)
-        self.assertIn("{check,tree,judge}", r.stdout)
+        self.assertIn("{check,tree,judge,publish}", r.stdout)
 
 
 class FigmaTree(unittest.TestCase):
@@ -370,6 +370,210 @@ class FigmaJudge(unittest.TestCase):
         self.assertIn("chunk 2 of", res["judge_errors"][0]["evidence"])
         self.assertIn("max_tokens_exceeded", res["judge_errors"][0]["evidence"])
         self.assertFalse(ev.called)
+
+
+class FigmaCaps(unittest.TestCase):
+    """The capability preflight: plan limits recorded once, a blocking limit is one up-front card, never a failing write."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+
+    def check(self, **kw):
+        ns = dict(repo=".", project="p", action="check", figma=None, only=None, plan=None, pages=None, modes=None, need_pages=None)
+        out = io.StringIO()
+        top = '{"nodes": [{"type": "CANVAS", "id": "0:1"}, {"type": "CANVAS", "id": "0:2"}]}'
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out), \
+             mock.patch.object(fc.fc_figma, "framelink_fetch", return_value=top):
+            try:
+                fc.fc_figma.cmd_figma(SimpleNamespace(**{**ns, **kw}))
+            except SystemExit as e:
+                return out.getvalue(), str(e)
+        return out.getvalue(), None
+
+    def caps(self):
+        return json.loads((self.proj / "linear.json").read_text()).get("figma_caps")
+
+    def test_plan_tier_reads_whoami_text(self):
+        t = fc.fc_figma.fc_figmaplan.plan_tier
+        for text, tier in (("Starter", "starter"), ("free", "starter"), ("pro", "professional"), ("Professional (full seat)", "professional"),
+                           ("org", "organization"), ("Organization", "organization"), ("enterprise", "enterprise"), ("team", None), ("", None), (None, None)):
+            self.assertEqual(t(text), tier, text)
+
+    def test_a_starter_plan_blocks_the_design_system_before_any_planning(self):
+        out, err = self.check(plan="starter")
+        self.assertEqual(err, "the Figma plan blocks the design")
+        self.assertIn("plan starter; pages per file 3; modes per collection 1; library publish no", out)
+        self.assertIn("the file has 2 page(s) now", out)
+        self.assertIn("BLOCKED variable modes: the design system needs 2 per collection (Light and Dark), the starter plan allows 1", out)
+        self.assertIn("raise ONE needs-user card", out)
+        self.assertIn("measure them with the probe", out)
+        self.assertEqual(self.caps()["plan"], "starter")
+        self.assertEqual(self.caps()["source"], "table")
+
+    def test_a_probed_value_replaces_the_predicted_limit_and_an_upgrade_unblocks(self):
+        out, err = self.check(plan="starter", modes="unlimited", pages="3", need_pages=5)
+        self.assertEqual(err, "the Figma plan blocks the design")
+        self.assertNotIn("variable modes", out)
+        self.assertIn("BLOCKED pages: the design needs 5 per file, the starter plan allows 3", out)
+        self.assertNotIn("measure them with the probe", out)  # already measured
+        self.assertEqual(self.caps()["source"], "probe")
+        out, err = self.check(plan="pro", need_pages=5)  # after the upgrade
+        self.assertIsNone(err)
+        self.assertIn("plan professional; pages per file no limit; modes per collection 4; library publish yes", out)
+        self.assertNotIn("BLOCKED", out)
+
+    def test_check_without_a_plan_shows_what_is_stored_or_says_it_is_not_checked(self):
+        out, err = self.check()
+        self.assertIn("capabilities not checked", out)
+        self.assertIn("compose figma check --project <slug> --plan", out)
+        self.check(plan="org")
+        out, _ = self.check()
+        self.assertIn("plan organization", out)
+
+    def test_unknown_plan_and_bad_counts_are_refused(self):
+        for kw, msg in ((dict(plan="team"), "unknown Figma plan"), (dict(plan="pro", pages="lots"), "not a count or `unlimited`: lots")):
+            out, err = self.check(**kw)
+            self.assertIn(msg, err)
+        self.assertIsNone(self.caps())
+
+    def test_designcrews_stops_when_the_tasks_need_more_pages_than_the_plan_allows(self):
+        metas = [{"id": t, "kind": "design", "nodes": [f"{p}/X"], "title": t} for t, p in (("001", "Buttons"), ("002", "Inputs"), ("003", "Cards"), ("004", "Forms"))]
+        self.assertEqual(fc.fc_figma.fc_figmaplan.design_pages(metas + [{"id": "5", "kind": "code", "nodes": ["Z/Y"]}]), {"Buttons", "Inputs", "Cards", "Forms"})
+        caps = fc.fc_figma.fc_figmaplan.figma_caps("starter", modes=None)
+        self.assertEqual(fc.fc_figma.fc_figmaplan.caps_blockers(caps, 4, 0), ["pages: the design needs 4 per file, the starter plan allows 3"])
+        self.assertEqual(fc.fc_figma.fc_figmaplan.caps_blockers(caps, 3, 0), [])
+        (self.proj / "linear.json").write_text(json.dumps({"figma": "AbCdEf123456", "figma_caps": caps}))
+        with mock.patch.object(fc.fc_figma.fc_tasks, "load_tasks", return_value=metas), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
+            with self.assertRaises(SystemExit) as e:
+                fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=None, print_=False, max=None))
+        self.assertIn("pages: the design needs 4 per file, the starter plan allows 3", str(e.exception))
+        self.assertIn("raise ONE needs-user card", str(e.exception))
+
+    def test_the_probe_and_the_publish_step_are_in_the_designer_brief_and_the_stored_caps_follow_it(self):
+        brief = fc.fc_figma.DESIGNER_BRIEF.format(slug="p", wt="/w", feature="ENG-1", figma="AbCd")
+        for text in ("Capability preflight", "compose figma check --project p --plan", "figma.createPage()", "addMode", "create_new_file", "compose-probe",
+                     "--pages <pages> --modes <modes>", "one needs-user card", "compose figma publish --project p --library", "`publish: none`", "`publish: ask`"):
+            self.assertIn(text, brief)
+        wt = Path(tempfile.mkdtemp())
+        for caps, line in ((None, "Figma capabilities: not checked yet"), (fc.fc_figma.fc_figmaplan.figma_caps("pro"), "Figma capabilities (table): plan professional")):
+            (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456", **({"figma_caps": caps} if caps else {})}))
+            out = io.StringIO()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=wt), \
+                 mock.patch.object(fc.fc_figma.fc_init, "check_deps", return_value=[]), mock.patch("sys.stdout", out):
+                fc.fc_figma.cmd_designer(SimpleNamespace(repo=".", project="p", extra=None, figma=None))
+            self.assertIn(line, out.getvalue())
+
+
+class FigmaPublish(unittest.TestCase):
+    """A publish is asked for only when the library shows one pending, and at most one ask is open at a time."""
+    LIB = "LibKey1234567"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        self.set({"feature": "ENG-1", "figma": "AbCdEf123456"})
+        self.library = {"components": [{"key": "ck1", "updated_at": "2026-10-20T10:00:00Z"}, {"key": "ck2", "updated_at": "2026-10-20T10:30:00Z"}],
+                        "component_sets": [], "styles": [{"key": "sk1", "updated_at": "2026-10-20T09:00:00Z"}]}
+        self.modified = "2026-10-20T10:30:30Z"
+
+    def set(self, data):
+        (self.proj / "linear.json").write_text(json.dumps(data))
+
+    def data(self):
+        return json.loads((self.proj / "linear.json").read_text())
+
+    def api(self, path, env_file=None, setup=""):
+        if path.endswith("?depth=1"):
+            return {"lastModified": self.modified}
+        kind = path.rsplit("/", 1)[1]
+        return {"meta": {kind: self.library[kind]}}
+
+    def publish(self, **kw):
+        ns = dict(repo=".", project="p", action="publish", library=self.LIB, keys=None)
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out), \
+             mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", side_effect=self.api):
+            try:
+                fc.fc_figma.cmd_figma(SimpleNamespace(**{**ns, **kw}))
+            except SystemExit as e:
+                return str(e)
+        return out.getvalue()
+
+    def test_a_library_published_after_its_last_edit_has_nothing_pending(self):
+        out = self.publish()
+        self.assertTrue(out.startswith("publish: none\n"), out)
+        self.assertIn("do not ask the product owner", out)
+        self.assertEqual(self.data()["figma_library"], self.LIB)
+        self.assertNotIn("figma_publish_ask", self.data())
+
+    def test_an_unpublished_key_is_pending_and_a_second_check_finds_the_ask_open(self):
+        out = self.publish(keys="ck1,ck9")
+        self.assertTrue(out.startswith("publish: ask\n"), out)
+        self.assertIn("1 needed key(s) are not published: ck9", out)
+        self.assertEqual(self.data()["figma_publish_ask"]["library"], self.LIB)
+        again = self.publish(keys="ck1,ck9,ck8")
+        self.assertTrue(again.startswith("publish: open\n"), again)
+        self.assertIn("do not ask again", again)
+
+    def test_an_edit_after_the_last_publish_is_pending_but_an_edit_within_the_slack_is_not(self):
+        self.modified = "2026-10-20T10:31:30Z"
+        self.assertTrue(self.publish().startswith("publish: none"))
+        self.modified = "2026-10-20T11:00:00Z"
+        out = self.publish()
+        self.assertTrue(out.startswith("publish: ask\n"), out)
+        self.assertIn("edited at 2026-10-20 11:00Z, after its last publish at 2026-10-20 10:30Z", out)
+
+    def test_the_ask_closes_when_the_publish_shows_and_a_new_edit_opens_a_new_one(self):
+        self.modified = "2026-10-20T11:00:00Z"
+        self.assertTrue(self.publish().startswith("publish: ask"))
+        self.library["components"].append({"key": "ck3", "updated_at": "2026-10-21T00:00:00Z"})  # the product owner published
+        self.modified = "2026-10-21T00:00:10Z"
+        self.assertTrue(self.publish().startswith("publish: none"))
+        self.assertNotIn("figma_publish_ask", self.data())
+        self.modified = "2026-10-21T02:00:00Z"
+        self.assertTrue(self.publish().startswith("publish: ask"))
+
+    def test_nothing_published_yet_is_pending(self):
+        self.library = {"components": [], "component_sets": [], "styles": []}
+        out = self.publish()
+        self.assertTrue(out.startswith("publish: ask\n"), out)
+        self.assertIn("nothing in the library is published yet", out)
+
+    def test_a_plan_that_cannot_publish_and_an_unreadable_library_never_ask(self):
+        self.set({"figma_caps": fc.fc_figma.fc_figmaplan.figma_caps("starter")})
+        out = self.publish()
+        self.assertTrue(out.startswith("publish: none\nthe starter plan cannot publish a library"), out)
+        self.set({})
+        with mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", side_effect=RuntimeError("figma api /files/x/components failed: HTTP 403 (the token needs the library_content:read scope)")), \
+             mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
+            with self.assertRaises(SystemExit) as e:
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="publish", library=self.LIB, keys=None))
+        self.assertTrue(str(e.exception).startswith("publish: unknown\n"))
+        self.assertIn("library_content:read", str(e.exception))
+        self.assertIn("do not ask", str(e.exception))
+
+    def test_a_library_is_remembered_and_junk_or_none_is_refused(self):
+        self.publish()
+        self.assertTrue(self.publish(library=None).startswith("publish: none"))
+        self.assertIn("not a Figma file url or key: junk", self.publish(library="junk"))
+        self.set({})
+        self.assertIn("no library file", self.publish(library=None))
+
+    def test_figma_api_needs_the_token_and_never_leaks_it(self):
+        env = self.proj / "fl.env"
+        with self.assertRaises(RuntimeError) as e:
+            fc.fc_figma.fc_figmaplan.figma_api("/files/K/components", env_file=env, setup="SETUP TEXT")
+        self.assertEqual(str(e.exception), "SETUP TEXT")
+        env.write_text("# c\nFIGMA_API_KEY=figd_secret_token\n")
+        err = fc.fc_figma.fc_figmaplan.urllib.error.HTTPError("u", 403, "forbidden", {}, None)
+        self.addCleanup(err.close)
+        with mock.patch.object(fc.fc_figma.fc_figmaplan.urllib.request, "urlopen", side_effect=err) as op, self.assertRaises(RuntimeError) as e:
+            fc.fc_figma.fc_figmaplan.figma_api("/files/K/components?x=1", env_file=env)
+        self.assertEqual(op.call_args[0][0].get_header("X-figma-token"), "figd_secret_token")
+        self.assertIn("HTTP 403 (the token needs the library_content:read scope)", str(e.exception))
+        self.assertNotIn("figd_secret_token", str(e.exception))
+        self.assertNotIn("x=1", str(e.exception))
 
 
 class FigmaConnectorBriefs(unittest.TestCase):

@@ -1,7 +1,7 @@
 import argparse, copy, json, os, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_steps, fc_tasks, fc_linear, fc_models, fc_herdr, fc_crew, fc_init
+import fc_core, fc_config, fc_steps, fc_tasks, fc_linear, fc_models, fc_herdr, fc_crew, fc_init, fc_figmaplan
 
 
 FIGMA_CONNECTOR = ("Figma tools: the authenticated Figma connector, `mcp__claude_ai_Figma__*` or the Figma plugin's `mcp__plugin_figma_figma__*` (the same server; use whichever ToolSearch finds), is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
@@ -36,6 +36,21 @@ def framelink_fetch(key, node=None, depth=None, env_file=None):
         raise RuntimeError(f"framelink fetch failed (exit {r.returncode}): {err}")
     return r.stdout
 
+def figma_publish(a, proj):
+    """`figma publish`, run right before asking the product owner to publish a library; stores the library and the one open ask in linear.json."""
+    path = proj / "linear.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    library = fc_core.figma_key(a.library) if a.library else data.get("figma_library")
+    if not library:
+        sys.exit(f"not a Figma file url or key: {a.library}" if a.library else "no library file: compose figma publish --library <url or key>")
+    data["figma_library"] = library
+    text, data = fc_figmaplan.publish_ruling(data, library, [k.strip() for k in (a.keys or "").split(",") if k.strip()],
+                                             lambda p: fc_figmaplan.figma_api(p, setup=FRAMELINK_SETUP))
+    fc_core.atomic_write(path, json.dumps(data))
+    if text.startswith("publish: unknown"):
+        sys.exit(text)  # a publish that cannot be shown pending is never asked for
+    print(text)
+
 DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear; the
 target Figma file is {figma}.
 1. Read SKILL.md and sections/0d.md, then follow 0d.
@@ -43,20 +58,22 @@ target Figma file is {figma}.
    "Figma"; the Frame0 pages (`compose frame0 up --project {slug}`, then `export_page_as_image` once per page); the repo's tokens through trail
    (`trail ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
    (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
-3. Load the `figma:figma-use` skill before every `use_figma` call.
+3. """ + fc_figmaplan.PROBE_STEPS + """
+4. Load the `figma:figma-use` skill before every `use_figma` call.
    """ + FIGMA_CONNECTOR.replace("\n", "\n   ") + """ Tell every builder and the `design-review` teammate the same.
-4. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
+5. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
    one page per task), and `test: compose figma judge --project {slug} --only NNN`.
-5. Start builders with `compose designcrews --project {slug}`; gate each with
+6. Start builders with `compose designcrews --project {slug}`; gate each with
    `compose figma tree --project {slug} --only NNN --node <ids>` then `compose figma judge --project {slug} --only NNN`;
    then run a `design-review` teammate that reads trees and images through Framelink, one image per story, never `get_screenshot`.
    Hand-off to code pastes Framelink JSON (never `get_design_context`) into the code task.
-6. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
+7. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
    visual.
-7. Before any screen story is built, write a visual direction for the surface as a Linear decision: anatomy, density and spacing
+8. Before any screen story is built, write a visual direction for the surface as a Linear decision: anatomy, density and spacing
    measured from the research or competitors, status styling, hierarchy. Each rule cites research, a Linear decision, or a measured
    value. Lowfi frames define flow and content only, never layout, spacing, or density; a card that only follows the lowfi on a
    visual question says so and gives the research-based alternative.
+9. """ + fc_figmaplan.PUBLISH_STEP + """
 """
 
 def cmd_designer(a):
@@ -72,8 +89,11 @@ def cmd_designer(a):
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma") \
         or "not set: ask the product owner for the Figma file"
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
-    feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
+    stored = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
+    feature = stored.get("feature", "<feature id>")
+    caps = stored.get("figma_caps")
     print(DESIGNER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, figma=figma)
+          + (f"\n{fc_figmaplan.caps_line(caps)}\n" if caps else "\nFigma capabilities: not checked yet; step 3 is your first move.\n")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 
@@ -109,6 +129,11 @@ def cmd_designcrews(a):
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not figma and not all(m.get("figma") for m in metas):
         sys.exit("no Figma file: compose figma check --figma <url or key>")
+    caps = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma_caps")
+    pages = fc_figmaplan.design_pages(tasks)  # pages already built count against the file's limit too
+    blocked = fc_figmaplan.caps_blockers(caps, len(pages), 0) if caps else []
+    if blocked and not a.print_:
+        sys.exit(f"{'; '.join(blocked)} ({', '.join(sorted(pages))}): {fc_figmaplan.BLOCKED_CARD} After the answer: compose figma check --project {proj.name} --plan <tier>")
     states = {m["id"]: m.get("linear_state") for m in tasks}
     waits = {m["id"]: [b for b in (x.strip() for x in str(m.get("after") or "").split(","))
                        if b and states.get(b) not in ("In Review", "Done")] + m.get("waits_on", []) for m in metas}
@@ -424,12 +449,27 @@ def figma_tree(a, proj):
     if absent:
         print(f"instances of {', '.join(absent)} show no hidden slots: their main components are not in the tree; add the local ones to --node")
 
+def figma_capabilities(a, proj, pages_now):
+    """The capability half of `figma check`: stores the plan's limits when --plan is given, prints them, and stops when the design is blocked."""
+    path = proj / "linear.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    lines, blocked = fc_figmaplan.capabilities_report(data, getattr(a, "plan", None), getattr(a, "pages", None), getattr(a, "modes", None),
+                                                      pages_now, getattr(a, "need_pages", None))
+    fc_core.atomic_write(path, json.dumps(data))
+    print("\n".join(lines))
+    if blocked:
+        sys.exit("the Figma plan blocks the design")
+
+
 def cmd_figma(a):
-    """`figma check` stores the target Figma file key and proves Framelink reads it; `figma tree` saves a task's node tree from Framelink;
-    `figma judge` gates a design task with Jev on that tree."""
+    """`figma check` stores the target Figma file key, proves Framelink reads it, and records the plan's capabilities; `figma tree` saves a
+    task's node tree from Framelink; `figma judge` gates a design task with Jev on that tree; `figma publish` says whether a library
+    publish is pending before anyone asks for one."""
     proj = fc_core.project_dir(a)
     if a.action == "tree":
         return figma_tree(a, proj)
+    if a.action == "publish":
+        return figma_publish(a, proj)
     if a.action == "check":
         if a.figma:
             key = fc_core.figma_key(a.figma)
@@ -442,11 +482,11 @@ def cmd_figma(a):
                 sys.exit("no Figma file: compose figma check --figma <url or key>")
         print(f"figma file {key} stored in {proj / 'linear.json'}; confirm the write connector with whoami through the Figma MCP")
         try:
-            framelink_fetch(key, depth=1)
+            top = framelink_fetch(key, depth=1)
         except RuntimeError as e:
             sys.exit(f"framelink cannot read figma file {key}: {e}")
         print(f"framelink reads figma file {key}")
-        return
+        return figma_capabilities(a, proj, fc_figmaplan.count_pages(top))
     if not a.only:
         sys.exit("figma judge needs --only <ids>")
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}

@@ -121,7 +121,7 @@ def main():
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", fc_frame0.cmd_frame0, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go"),
-                            ("figma", fc_figma.cmd_figma, "check | tree | judge: store the target Figma file key and prove Framelink reads it; save a task's node tree; judge it with Jev"),
+                            ("figma", fc_figma.cmd_figma, "check | tree | judge | publish: store the target Figma file key, prove Framelink reads it, record the plan's limits; save a task's node tree; judge it with Jev; say whether a library publish is pending"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", fc_crew.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
                             ("rewake", fc_watch.cmd_rewake, "Claude Code Stop hook: park a watch after each team lead turn; its event wakes the session"),
@@ -238,8 +238,14 @@ def main():
             s.add_argument("action", choices=("up", "draw", "save", "down"))
             s.add_argument("--file", help="draw: the JSON list of frame0 tool calls (default: stdin)")
         if name == "figma":
-            s.add_argument("action", choices=("check", "tree", "judge"))
+            s.add_argument("action", choices=("check", "tree", "judge", "publish"))
             s.add_argument("--figma", help="check: the target Figma file's url or key, stored in linear.json")
+            s.add_argument("--plan", help="check: the plan tier whoami shows (starter, pro, org, enterprise): stores the limits compose's design flow depends on")
+            s.add_argument("--pages", help="check: pages per file the probe measured (a count or unlimited), replacing the tier's predicted limit")
+            s.add_argument("--modes", help="check: modes per collection the probe measured (a count or unlimited), replacing the tier's predicted limit")
+            s.add_argument("--need-pages", type=int, help="check: pages per file the design needs; BLOCKED when the plan allows fewer")
+            s.add_argument("--library", help="publish: the library file's url or key (stored after the first use)")
+            s.add_argument("--keys", help="publish: comma-separated component keys the consumer file needs")
             s.add_argument("--only", help="judge: comma-separated design task ids; tree: one id")
             s.add_argument("--node", help="tree: comma-separated node ids to fetch through Framelink")
             s.add_argument("--depth", type=int, help="tree: how deep Framelink walks (default: all)")
