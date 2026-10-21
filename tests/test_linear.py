@@ -198,7 +198,7 @@ class DesignTasks(unittest.TestCase):
             self.assertEqual(fc.fc_worktree.stack_order(Path("."), self.proj), ["compose/p-002"])
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask:
-            fc.fc_verify.jev_acceptance({}, self.proj, "diff")
+            fc.fc_accept.jev_acceptance({}, self.proj, "diff")
         self.assertEqual([c.args[3]["c0"]["instructions"]["task"] for c in ask.call_args_list], ["002"])
 
     def test_acceptance_passes_only_when_every_criterion_is_met(self):
@@ -206,7 +206,7 @@ class DesignTasks(unittest.TestCase):
             reply = {"model": "m", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.1}}}}
             with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
                     mock.patch.object(fc.fc_models, "fast_json", return_value={"confirmed": False, "evidence": ""}):
-                self.assertEqual(fc.fc_verify.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
+                self.assertEqual(fc.fc_accept.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
 
     def test_acceptance_re_asks_a_refuted_not_met_once_and_a_confirm_error_never(self):
         first = {"model": "m", "answers": {"c0": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}}}}
@@ -215,7 +215,7 @@ class DesignTasks(unittest.TestCase):
                                            ("MET", "nope", False, 1)):
             with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", side_effect=[first, again(second)]) as ask, \
                     mock.patch.object(fc.fc_models, "fast_json", return_value=confirm):
-                res = fc.fc_verify.jev_acceptance({}, self.proj, "diff")
+                res = fc.fc_accept.jev_acceptance({}, self.proj, "diff")
             self.assertEqual((res["pass"], ask.call_count), (ok, calls), (second, confirm))
         self.assertEqual((res["criteria"][0]["choice"]), "NOT_MET")
 
@@ -229,10 +229,10 @@ class DesignTasks(unittest.TestCase):
             issue("ENG-2", "Store", block(id="002", files="a.go, bun.lock", protected="b.go", test="go test"))]})
         reply = {"model": "m", "answers": {"c0": {"choice": "MET", "probabilities": {"MET": 0.9}}}}
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask:
-            fc.fc_verify.jev_acceptance({}, self.proj, "diff", repo=repo)
+            fc.fc_accept.jev_acceptance({}, self.proj, "diff", repo=repo)
         code = ask.call_args.args[2]["code"]
         self.assertNotIn("bun.lock", code)
-        self.assertLessEqual(len(code), fc.fc_verify.JEV_CODE_CAP)
+        self.assertLessEqual(len(code), fc.fc_accept.JEV_CODE_CAP)
 
     def test_a_rejected_request_reports_the_providers_error_body(self):
         err = urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"detail":{"error_type":"max_tokens_exceeded"}}'))
@@ -255,7 +255,7 @@ class DesignTasks(unittest.TestCase):
     def test_acceptance_with_no_criteria_fails_rather_than_passes(self):
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [issue("ENG-2", "Store", "```compose\nid: 002\nfiles: a.go\ntest: go test\n```\n")]})
         with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask") as ask:
-            res = fc.fc_verify.jev_acceptance({}, self.proj, "diff")
+            res = fc.fc_accept.jev_acceptance({}, self.proj, "diff")
         self.assertEqual((res["pass"], res["note"], ask.called), (False, "no acceptance criteria to judge", False))
 
     def test_acceptance_confirm_unwraps_a_list_and_reports_a_failed_confirm_as_an_error(self):
@@ -263,7 +263,7 @@ class DesignTasks(unittest.TestCase):
         for confirm, failed, error in (([{"confirmed": True, "evidence": "x"}], 1, None), ("nope", 0, True)):
             with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
                     mock.patch.object(fc.fc_models, "fast_json", return_value=confirm):
-                res = fc.fc_verify.jev_acceptance({}, self.proj, "diff")
+                res = fc.fc_accept.jev_acceptance({}, self.proj, "diff")
             self.assertEqual((len(res["failed"]), "confirm call failed" in res.get("error", "") if error else "error" not in res, res["pass"]), (failed, True, False))
 
     def test_tasks_lists_nodes_and_warns_once_per_shared_open_page(self):

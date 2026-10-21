@@ -13,7 +13,7 @@ os.environ["HERDR_ENV"] = ""
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 
-RANK = ("fc_core", "fc_prompt", "fc_proc", "fc_auth", "fc_config", "fc_tasks", "fc_plan", "fc_linear", "fc_linear_cmd", "fc_readguard", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_checks", "fc_pi", "fc_keys", "fc_steps", "fc_layers", "fc_stack", "fc_change", "fc_frame0", "fc_crew", "fc_toolbug", "fc_init", "fc_herdrconf", "fc_links", "fc_defaults", "fc_steprun", "fc_finish", "fc_setup", "fc_update", "fc_figma", "fc_briefs", "fc_libapi", "fc_implement", "fc_jev", "fc_verify", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
+RANK = ("fc_core", "fc_prompt", "fc_proc", "fc_auth", "fc_config", "fc_tasks", "fc_plan", "fc_linear", "fc_linear_cmd", "fc_readguard", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_checks", "fc_pi", "fc_keys", "fc_steps", "fc_layers", "fc_stack", "fc_change", "fc_frame0", "fc_crew", "fc_toolbug", "fc_init", "fc_herdrconf", "fc_links", "fc_defaults", "fc_steprun", "fc_finish", "fc_setup", "fc_update", "fc_figma", "fc_briefs", "fc_libapi", "fc_implement", "fc_jev", "fc_accept", "fc_verify", "fc_prove", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
 MODULES = {
     "fc_core": ("now", "fmt", "say", "Ledger", "LEDGER", "sh", "worktrees", "repo_link", "project_config", "project_branch", "commit_convention", "COMMIT_TYPES", "typed", "commit_rule", "all_projects", "project_dir", "atomic_write", "SECRET_VARS", "SECRET_VALUES", "REDACTED", "clean_env", "SCRATCH_CONFIGS", "HOME_WRITES", "HOME_WRITES_MAX", "HOME_WRITES_SLACK", "HOME_HASH_MAX", "CLI_OWN", "CLI_CHECKOUT", "SCRATCH_PREFIX", "scratch_config", "is_scratch", "remove_scratch", "checkout_entries", "entry_state", "home_state", "note_home_write", "home_writes_outside", "flag_home", "scrub", "Scrubbed", "digests", "figma_key", "current_branch", "load_env", "free_port", "port_listening", "report_time", "session_id", "project_after", "tilde"),
     "fc_prompt": ("FRAMES", "paint", "intro", "bars", "note", "step", "outro", "select", "confirm", "password", "spin"),
@@ -51,8 +51,10 @@ MODULES = {
     "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "cmd_toolsmith", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_open", "waiting_writers", "test_written", "test_blockers", "test_ready", "test_worktree", "collect_tests"),
     "fc_libapi": ("INSPECT", "python_api", "js_api", "section"),
     "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "trail_pack", "branch_budget", "task_base", "PRETTIER_EXT", "prettier_opted_in", "format_files", "READER_TIMEOUT", "read_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
-    "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "alive", "reap_orphans", "SETUP_DEADLINE", "await_setup", "case_setup", "driver_e2e", "jev_e2e", "say_case"),
-    "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "well_formed", "llm_review", "JEV_CODE_CAP", "jev_acceptance", "verify_failed", "review_inputs", "e2e_stage", "fix_tests", "run_stages", "verify_root", "at_root", "cmd_verify", "fix_strays", "fix_message", "changed_files", "verify_rounds"),
+    "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "alive", "reap_orphans", "SETUP_DEADLINE", "await_setup", "case_setup", "driver_e2e", "jev_e2e", "ASSERT_BROKE_RE", "LOAD_FAIL_RE", "LOGIN_PATH_RE", "path_of", "env_failure", "say_case"),
+    "fc_accept": ("JEV_CODE_CAP", "jev_acceptance"),
+    "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "well_formed", "llm_review", "verify_failed", "review_inputs", "e2e_stage", "fix_tests", "run_stages", "verify_root", "at_root", "cmd_verify", "fix_strays", "fix_message", "changed_files", "verify_rounds"),
+    "fc_prove": ("OVERRIDE_KEY", "override_keys", "flag_path_lint", "judge_failure", "prove_case", "prove", "verify_config", "cmd_prove", "prototype_cases", "prototype_report", "cmd_prototype"),
     "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "RUN_PARALLEL", "require_committed", "cmd_run", "preflight", "run_tasks", "reflect_task", "cmd_resume"),
     "fc_status": ("project_head", "branch_facts", "task_state", "_git_dirs", "git_dirs", "board_stamp", "_board", "board", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
     "fc_spec": ("file_clashes", "cmd_tasks", "run_waves", "spec_check", "cmd_spec_check", "MAX_TASK_FILES", "MAX_TASK_BRIEF", "too_big"),
@@ -207,7 +209,9 @@ class FcBriefs(ModuleChecks, unittest.TestCase): module = "fc_briefs"
 class FcLibapi(ModuleChecks, unittest.TestCase): module = "fc_libapi"
 class FcImplement(ModuleChecks, unittest.TestCase): module = "fc_implement"
 class FcJev(ModuleChecks, unittest.TestCase): module = "fc_jev"
+class FcAccept(ModuleChecks, unittest.TestCase): module = "fc_accept"
 class FcVerify(ModuleChecks, unittest.TestCase): module = "fc_verify"
+class FcProve(ModuleChecks, unittest.TestCase): module = "fc_prove"
 class FcRun(ModuleChecks, unittest.TestCase): module = "fc_run"
 class FcStatus(ModuleChecks, unittest.TestCase): module = "fc_status"
 class FcSpec(ModuleChecks, unittest.TestCase): module = "fc_spec"
@@ -269,7 +273,7 @@ class TestModules(unittest.TestCase):
                 self.assertRegex(f.read_text(), r'(?m)^os\.environ\["HERDR_ENV"\] = ""$')
 
 
-MODULE_CLASSES = {"fc_core": FcCore, "fc_prompt": FcPrompt, "fc_proc": FcProc, "fc_auth": FcAuth, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_plan": FcPlan, "fc_linear": FcLinear, "fc_linear_cmd": FcLinearCmd, "fc_readguard": FcReadguard, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_checks": FcChecks, "fc_pi": FcPi, "fc_keys": FcKeys, "fc_steps": FcSteps, "fc_layers": FcLayers, "fc_stack": FcStack, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_herdrconf": FcHerdrconf, "fc_links": FcLinks, "fc_defaults": FcDefaults, "fc_steprun": FcSteprun, "fc_finish": FcFinish, "fc_setup": FcSetup, "fc_update": FcUpdate, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_libapi": FcLibapi, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_verify": FcVerify, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
+MODULE_CLASSES = {"fc_core": FcCore, "fc_prompt": FcPrompt, "fc_proc": FcProc, "fc_auth": FcAuth, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_plan": FcPlan, "fc_linear": FcLinear, "fc_linear_cmd": FcLinearCmd, "fc_readguard": FcReadguard, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_checks": FcChecks, "fc_pi": FcPi, "fc_keys": FcKeys, "fc_steps": FcSteps, "fc_layers": FcLayers, "fc_stack": FcStack, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_herdrconf": FcHerdrconf, "fc_links": FcLinks, "fc_defaults": FcDefaults, "fc_steprun": FcSteprun, "fc_finish": FcFinish, "fc_setup": FcSetup, "fc_update": FcUpdate, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_libapi": FcLibapi, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_accept": FcAccept, "fc_verify": FcVerify, "fc_prove": FcProve, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
 
 
 def load_tests(loader, tests, pattern):

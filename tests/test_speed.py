@@ -125,7 +125,7 @@ class E2EBesideReview(unittest.TestCase):
                 mock.patch.object(fc.fc_verify, "review_inputs", return_value=("", "", "", [])), \
                 mock.patch.object(fc.fc_jev, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
                 mock.patch.object(fc.fc_verify, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \
-                mock.patch.object(fc.fc_verify, "jev_acceptance", lambda *a, **k: {"pass": True, "criteria": [], "failed": []}):
+                mock.patch.object(fc.fc_accept, "jev_acceptance", lambda *a, **k: {"pass": True, "criteria": [], "failed": []}):
             ok, report, _ = fc.fc_verify.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, args)
         self.assertTrue(ok)
         self.assertEqual(len(report["e2e"]), 1)
@@ -165,7 +165,7 @@ class AcceptanceJudge(unittest.TestCase):
             return True, "x"
         with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply) as ask, \
                 mock.patch.object(fc.fc_models, "confirm_call", side_effect=confirm_call):
-            res = fc.fc_verify.jev_acceptance({}, proj, diff, repo=repo)
+            res = fc.fc_accept.jev_acceptance({}, proj, diff, repo=repo)
         states = {c.args[2]["task"]: c.args[2] for c in ask.call_args_list if c.args[4] == "Jev acceptance"}
         a, b, c = states["002"], states["003"], states["004"]
         self.assertEqual(a["files"], ["a.py", "tests/test_a.py"])
@@ -174,8 +174,8 @@ class AcceptanceJudge(unittest.TestCase):
         self.assertNotIn("B" * 10, a["code"])
         self.assertNotIn("R" * 10, a["code"] + b["code"])  # the state never reads the repo
         self.assertTrue(b["code"].startswith("diff --git a/b.py b/b.py"))
-        self.assertEqual(len(b["code"]), fc.fc_verify.JEV_CODE_CAP)
-        self.assertEqual(c["code"], diff[:fc.fc_verify.JEV_CODE_CAP])  # no hunk of its own: the whole diff, capped
+        self.assertEqual(len(b["code"]), fc.fc_accept.JEV_CODE_CAP)
+        self.assertEqual(c["code"], diff[:fc.fc_accept.JEV_CODE_CAP])  # no hunk of its own: the whole diff, capped
         for prefix in ("a", "b"):
             calls = [code for crit, code in sent if crit.startswith(prefix)]
             self.assertEqual(len(calls), 2, prefix)  # the second call gets the rest of the budget, the third none
@@ -203,7 +203,7 @@ class AcceptanceJudge(unittest.TestCase):
             return True, "x"
         with mock.patch.object(fc.fc_config, "ENV_FILE", proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
                 mock.patch.object(fc.fc_models, "confirm_call", side_effect=confirm_call):
-            res = fc.fc_verify.jev_acceptance({}, proj, hunk("a.py", "x"), repo=repo)  # raises IsADirectoryError if a directory is read
+            res = fc.fc_accept.jev_acceptance({}, proj, hunk("a.py", "x"), repo=repo)  # raises IsADirectoryError if a directory is read
         whole = "==== a.py ====\n" + "A" * 50000
         a = sorted((code for crit, code in sent if crit.startswith("a")), key=len)
         self.assertEqual(a, [whole[:60000 - len(whole)], whole])  # the directories cost nothing; the second call gets the rest
