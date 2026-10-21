@@ -7,6 +7,7 @@ import sys
 
 import fc_config
 import fc_core
+import fc_evidence
 import fc_ledger
 import fc_linear
 import fc_models
@@ -160,7 +161,12 @@ def catch_up(repo, proj, tasks, ids, trunk, kinds):
             done = fired(meta["linear"])
             base, branch = layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id)
             outside = "scope" in kinds and diff_signals(repo, meta, base, branch)["outside"]
-            triggers = [t for t in (["diff"] if "diff" in kinds else []) + (["scope"] if outside else []) if (t, run_id) not in done]
+            ledger = []
+            if any(k in LEDGER for k in kinds):
+                feature = json.loads((proj / "linear.json").read_text()).get("feature") if (proj / "linear.json").exists() else None
+                rows = fc_evidence.task_rows(meta["linear"], feature, meta["id"])
+                ledger = [t for t in ledger_triggers(repo, proj, meta, rows) if t in kinds]
+            triggers = [t for t in (["diff"] if "diff" in kinds else []) + (["scope"] if outside else []) + ledger if (t, run_id) not in done]
             if triggers:
                 reassess(repo, proj, meta, tasks, triggers, run_id, base, branch)
         except fc_models.PaymentRequired:
