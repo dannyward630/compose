@@ -186,7 +186,7 @@ class RunEvidence(unittest.TestCase):
             fc.fc_run.run_tasks(self.repo, self.proj, [task], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
         (issue, events), = [c.args for c in record.call_args_list] + [(c.args[2].get("linear"), c.args[3]) for c in record_task.call_args_list]
         self.assertEqual((issue, [(e["phase"], e["result"], e["task_ids"], e["criterion_id"]) for e in events]),
-                         ("ENG-4", [("final", "pass", ["004"], fc_ledger.criterion_ids(task))]))
+                         ("ENG-4", [("final", "pass", ["004"], fc_ledger.criterion_ids(task)), ("cost", "pass", ["004"], fc_ledger.criterion_ids(task))]))
 
 
 class VerifyShared(unittest.TestCase):
@@ -326,23 +326,27 @@ class VerifyUnsaved(unittest.TestCase):
             fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0, skip_review=True), [], 0)
         return cm.exception.code, said, out.getvalue(), json.loads((self.proj / "results" / "verify.json").read_text()), add, failed
 
+    def batches(self, add):
+        """each add_row call as (issue, its events' phases): verify's cost batch on the feature comes before the unsaved retries"""
+        return [(c.args[0], [e["phase"] for e in c.args[1]]) for c in add.call_args_list]
+
     def test_rows_still_unsaved_fail_even_a_passing_verify_and_skip_the_failure_screen(self):
         for passed in (True, False):
             code, said, out, final, add, failed = self.rounds(passed, [("ENG-4", "e1"), ("ENG-4", "e2"), ("ENG-5", "e3")])
-            self.assertEqual(add.call_args_list, [mock.call("ENG-4", []), mock.call("ENG-5", [])], passed)
+            self.assertEqual(self.batches(add), [("ENG-1", ["cost"]), ("ENG-4", []), ("ENG-5", [])], passed)
             self.assertIn("verify FAIL  evidence not saved on Linear: e1, e2, e3", said)
             self.assertEqual((code, final["passed"], failed.called, "Unresolved" in out), (1, False, False, False), passed)
 
     def test_rows_saved_on_the_retry_leave_the_verdict(self):
         code, said, _, final, add, _ = self.rounds(True, [("ENG-4", "e1")], saves=True)
-        self.assertEqual((code, final["passed"], add.call_args_list), (0, True, [mock.call("ENG-4", [])]))
+        self.assertEqual((code, final["passed"], self.batches(add)), (0, True, [("ENG-1", ["cost"]), ("ENG-4", [])]))
         self.assertFalse([s for s in said if "not saved" in s])
 
     def test_nothing_unsaved_keeps_the_verdict_and_exit(self):
         code, said, out, final, add, failed = self.rounds(True)
-        self.assertEqual((code, final["passed"], add.called, failed.called), (0, True, False, False))
+        self.assertEqual((code, final["passed"], self.batches(add), failed.called), (0, True, [("ENG-1", ["cost"])], False))
         code, said, out, final, add, failed = self.rounds(False)
-        self.assertEqual((code, final["passed"], add.called, failed.call_count, "Unresolved" in out), (1, False, False, 1, True))
+        self.assertEqual((code, final["passed"], self.batches(add), failed.call_count, "Unresolved" in out), (1, False, [("ENG-1", ["cost"])], 1, True))
         self.assertFalse([s for s in said if "not saved" in s])
 
     def test_verify_record_writes_each_tasks_scoped_then_acceptance_with_record_task(self):
@@ -504,9 +508,10 @@ class RedoRunId(unittest.TestCase):
         with mock.patch.object(fc.fc_implement, "run_task", passed), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
                 mock.patch.object(fc_ledger, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
+                mock.patch.object(fc.fc_run.fc_costevent, "run_event", side_effect=lambda proj, meta, r, final: f"cost of {final}"), \
                 mock.patch.object(fc_ledger, "record_task") as record_task, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.fc_run.run_tasks(self.repo, self.proj, [t1, t3], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
-        self.assertEqual(sorted((c.args for c in record_task.call_args_list), key=lambda a: a[2]["id"]), [(self.repo, self.proj, t1, ["001", "passed"]), (self.repo, self.proj, t3, ["003", "passed"])])
+        self.assertEqual(sorted((c.args for c in record_task.call_args_list), key=lambda a: a[2]["id"]), [(self.repo, self.proj, t1, ["001", "passed", "cost of passed"]), (self.repo, self.proj, t3, ["003", "passed", "cost of passed"])])
 
 
 class DoneUnsaved(unittest.TestCase):
