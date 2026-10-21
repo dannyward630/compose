@@ -146,4 +146,31 @@ def sufficiency_events(meta, rows, answers, threshold, run_id, commit_sha):
 
 def jev_sufficiency(cfg, proj, repo):
     """Jev judges each task's criteria from its counted evidence; the events are recorded on the task issue and returned."""
-    raise NotImplementedError("fc_accept.jev_sufficiency")
+    import json, fc_evidence
+    env = {**fc_core.load_env(cfg.get("env_file", fc_config.ENV_FILE)), **os.environ}
+    threshold = cfg.get("acceptance_threshold", 0.6)
+    f = proj / "linear.json"
+    feature = json.loads(f.read_text()).get("feature") if f.exists() else None
+    sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    out = []
+    for meta in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)):
+        if not fc_tasks.parse_criteria(meta["body"]) or not meta.get("linear"):
+            continue
+        try:
+            rows = [r for r in fc_ledger.counted(repo, proj, meta, fc_evidence.task_rows(meta["linear"], feature, meta["id"]))
+                    if r["phase"] not in ("sufficiency", "cost")]
+            shown = rows[-JEV_EVENTS:]
+            questions = sufficiency_questions(meta, shown)
+            state = {"task": meta.get("title", ""), "criteria": fc_tasks.parse_criteria(meta["body"]), "events": shown}
+            names, answers = list(questions), {}
+            for i in range(0, len(names), JEV_BATCH):
+                chunk = {k: questions[k] for k in names[i:i + JEV_BATCH]}
+                answers.update(fc_models.jev_ask(env, cfg, state, chunk, "Jev sufficiency").get("answers", {}))
+            events = sufficiency_events(meta, rows, answers, threshold, fc_ledger.run_id(proj, meta["id"]), sha)
+            fc_ledger.record_task(repo, proj, meta, events)
+            count = lambda v: sum(e["result"] == v for e in events)
+            fc_core.say(f"jev    sufficiency {meta['id']}: {count('proven')} proven, {count('unproven')} unproven, {count('contradicted')} contradicted")
+            out += events
+        except Exception as e:
+            fc_core.say(f"jev    sufficiency {meta['id']}: not judged ({str(e)[:200]})")
+    return out
