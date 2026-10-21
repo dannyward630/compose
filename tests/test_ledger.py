@@ -57,3 +57,66 @@ class Events(unittest.TestCase):
         self.assertNotEqual(fresh, a)
         self.assertEqual(json.loads((proj / "results" / "runs.json").read_text()), {"003": fresh, "004": other})
         self.assertEqual(fc_ledger.run_id(proj, "003"), fresh)
+
+
+def row(n, phase="attempt", source="run"):
+    return {"event_id": f"{n:012x}", "run_id": "r", "commit_sha": "", "task_ids": ["003"], "criterion_id": [], "phase": phase,
+            "source": source, "result": "fail", "fails_on_base": None, "detail": f"d{n}"}
+
+
+class AddRow(unittest.TestCase):
+    def setUp(self):
+        self.calls, self.comments, self.fail, self.err, self.said = [], [], 0, "boom", []
+
+        def gql(query, variables):
+            self.calls.append(variables)
+            if "commentCreate" not in query:
+                return {"issue": {"id": "uuid-" + variables["id"], "identifier": variables["id"]}}
+            if self.fail:
+                self.fail -= 1
+                raise RuntimeError(self.err)
+            self.comments.append(variables["b"])
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "lin_api_x"), (fc.fc_linear, "linear_gql", gql), (fc_ledger, "UNSAVED", []),
+                                 (fc_ledger, "SAVED", set()), (fc.fc_core, "say", self.said.append)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        p = mock.patch("time.sleep"); self.sleep = p.start(); self.addCleanup(p.stop)
+
+    def test_one_comment_holds_every_row_in_the_exact_text(self):
+        rows = [row(1, "red"), row(2), row(3), row(4, "final", "prove")]
+        self.assertTrue(fc_ledger.add_row("NEB-1", rows))
+        self.assertEqual(self.comments[0].splitlines(), ["Evidence: run red, attempt, final", "", "```evidence", *map(json.dumps, rows), "```"])
+        self.assertEqual((len(self.comments), self.calls[-1]["id"]), (1, "uuid-NEB-1"))
+
+    def test_three_failed_tries_say_the_line_and_keep_the_rows_for_the_next_call(self):
+        self.fail, self.err = 3, "x" * 300
+        a, b, c = row(1), row(2), row(3)
+        self.assertFalse(fc_ledger.add_row("NEB-1", [a, b]))
+        self.assertEqual((len(self.calls) - 1, [c.args for c in self.sleep.call_args_list], fc_ledger.unsaved()), (3, [(2,), (2,)], [a, b]))
+        self.assertEqual(self.said[-1], f"ledger NEB-1: evidence not saved after 3 tries, kept in memory: {a['event_id']}, {b['event_id']} ({'x' * 200})")
+        self.assertTrue(fc_ledger.add_row("NEB-2", [c]))
+        self.assertEqual((fc_ledger.unsaved(), self.comments[-1]), ([a, b], fc_ledger.comment_text([c])))
+        self.assertTrue(fc_ledger.add_row("NEB-1", [c]))
+        self.assertEqual((fc_ledger.unsaved(), self.comments[-1]), ([], fc_ledger.comment_text([a, b, c])))
+
+    def test_a_late_success_saves_and_a_saved_row_is_never_written_again(self):
+        self.fail = 2
+        a, b = row(1), row(2)
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a, a]))
+        self.assertEqual((self.comments, fc_ledger.unsaved(), self.said), ([fc_ledger.comment_text([a])], [], []))
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))
+        self.assertEqual(self.comments[1:], [fc_ledger.comment_text([b])])
+
+    def test_no_key_or_no_issue_writes_nothing_and_keeps_nothing(self):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None):
+            self.assertTrue(fc_ledger.add_row("NEB-1", [row(1)]))
+        self.assertTrue(fc_ledger.add_row("", [row(1)]))
+        self.assertEqual((self.calls, fc_ledger.unsaved()), ([], []))
+
+    def test_record_refreshes_only_when_the_write_succeeded(self):
+        with mock.patch.object(fc_evidence, "refresh") as refresh:
+            self.fail = 3
+            self.assertFalse(fc_ledger.record("NEB-1", [row(1)]))
+            refresh.assert_not_called()
+            self.assertTrue(fc_ledger.record("NEB-1", [row(2)]))
+            refresh.assert_called_once_with("NEB-1")
