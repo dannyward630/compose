@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import hashlib, importlib.machinery, importlib.util, io, json, os, re, tempfile, unittest
+import hashlib, importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -137,7 +137,7 @@ class RunEvidence(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp()) / "feat"
         self.proj.mkdir()
         self.repo = Path(tempfile.mkdtemp())
-        git = lambda *a: __import__("subprocess").run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
         git("init", "-q", "-b", "main")
         git("commit", "-q", "--allow-empty", "-m", "one")
         self.base = git("rev-parse", "HEAD")
