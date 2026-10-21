@@ -160,6 +160,10 @@ def run_tasks(repo, proj, tasks, a):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
         # `--no-stack` leaves the chain alone: a task with `after:` still rebases what it stacks on, the rest never wait on it.
+        # A task this run rebuilds is replaced first (run_task would, later): its old commits conflicting with the trunk must not stop the run.
+        for m in tasks:
+            if not fc_tasks.task_finished(proj, m, redo=bool(os.environ.get("COMPOSE_REDO"))):
+                fc_worktree.replace_branch(repo, proj, fc_worktree.task_branch(repo, proj, m["id"]))
         fc_layers.linearize(repo, proj, a.trunk, fc_worktree.stack_worktree(repo, proj, a.trunk))
         if fc_layers.STACK_STOP:
             sys.exit(f"stack  STOP  {fc_layers.STACK_STOP}")
