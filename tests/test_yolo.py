@@ -463,5 +463,50 @@ class PostureMismatchAndDigest(unittest.TestCase):
             self.assertEqual(json.loads(self.file.read_text())["mode"], other)
 
 
+class AwaySubcommand(unittest.TestCase):
+    TAIL = "[--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"
+    AWAY = "the product owner is away until their first message: " + TAIL
+    YOLO = "the engineering manager answers until an explicit off, and the product owner may steer: " + TAIL
+    WORDS = "what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`"
+
+    def parse(self, *argv):
+        seen = []
+        with mock.patch.object(sys, "argv", ["compose", *argv]), mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), \
+                mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
+            fc.main()
+        self.assertEqual(len(seen), 1)
+        return seen[0]
+
+    def help(self, *argv):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["compose", *argv, "--help"]), mock.patch.dict(os.environ, {"COLUMNS": "400"}), \
+                contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+            fc.main()
+        return " ".join(out.getvalue().split())
+
+    def test_each_name_reaches_cmd_yolo_with_its_own_cmd_and_the_same_parse(self):
+        for name in ("away", "yolo"):
+            a = self.parse(name, "--project", "hw", "--push", "ship", "it")
+            self.assertEqual((a.cmd, a.push, a.clear_words, a.words), (name, True, False, ["ship", "it"]))
+            a = self.parse(name, "decided", "--project", "hw", "db?: postgres")
+            self.assertEqual((a.cmd, a.push, a.words), (name, False, ["decided", "db?: postgres"]))
+            a = self.parse(name, "--project", "hw", "--clear-words")
+            self.assertEqual((a.cmd, a.clear_words, a.words), (name, True, []))
+            self.assertEqual(self.parse(name, "--project", "hw", "off").words, ["off"])
+            self.assertEqual(self.parse(name, "--project", "hw").words, [])
+
+    def test_extra_words_after_the_flags_fold_into_words_for_both(self):
+        for name in ("away", "yolo"):
+            self.assertEqual(self.parse(name, "digest", "--project", "hw").words, ["digest"])
+            self.assertEqual(self.parse(name, "--project", "hw", "--push", "a", "b").words, ["a", "b"])
+
+    def test_top_help_lists_away_right_before_yolo_with_both_helps(self):
+        self.assertIn(f" away {self.AWAY} yolo {self.YOLO} ", self.help())
+
+    def test_each_help_shows_the_words_help(self):
+        for name in ("away", "yolo"):
+            self.assertIn(self.WORDS, self.help(name))
+
+
 if __name__ == "__main__":
     unittest.main()
