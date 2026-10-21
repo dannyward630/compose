@@ -408,3 +408,48 @@ class Relevance(unittest.TestCase):
         before = json.loads(json.dumps(rows))
         out = self.counted(rows)
         self.assertEqual(([r["event_id"] for r in out], rows, any(o is r for o, r in zip(out, rows))), (["2", "1"], before, False))
+
+
+class RecordTask(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "results" / "runs.json").write_text('{"021": "r1"}')
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "a"]):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+        self.meta = {"id": "021", "linear": "ENG-4", "body": "## Acceptance criteria\n* a\n", "files": [], "protected": []}
+        self.issues = {"ENG-4": [self.row("mine"), self.row("old-run", run_id="r0")], "ENG-1": [self.row("shared", run_id="r0"), self.row("other", task_ids=["022"])]}
+        self.writes, self.description, self.events = [], "## Goal\nx\n", [{"event_id": "new"}]
+
+    def row(self, n, **kw):
+        return {"event_id": n, "run_id": "r1", "commit_sha": "", "task_ids": [], "criterion_id": [], "phase": "final", "source": "run",
+                "result": "pass", "fails_on_base": None, "detail": "", "at": "2026-10-21T10:00:00.000Z", **kw}
+
+    def gql(self, query, variables):
+        self.writes.append(query)
+        if "issueUpdate" in query:
+            self.description = variables["d"]
+        return {"issue": {"id": "uuid-" + variables["id"], "description": self.description}}
+
+    def record(self, saved=True, linear=True):
+        if linear: (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        with mock.patch.object(fc_ledger, "add_row", return_value=saved) as add_row, mock.patch.object(fc.fc_linear, "linear_gql", self.gql), \
+                mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_api_x"), mock.patch.object(fc_evidence, "rows", lambda issue, **kw: list(self.issues[issue])):
+            result = fc_ledger.record_task(self.repo, self.proj, self.meta, self.events)
+        add_row.assert_called_once_with("ENG-4", self.events)
+        return result
+
+    def test_saved_events_refresh_the_table_from_the_counted_rows_of_both_issues(self):
+        self.assertIs(self.record(), True)
+        self.assertEqual([k in self.description for k in ("mine", "shared", "old-run", "other")], [True, True, False, False])
+
+    def test_unsaved_events_refresh_nothing_and_return_false(self):
+        self.assertIs(self.record(saved=False), False)
+        self.assertEqual((self.writes, self.description), ([], "## Goal\nx\n"))
+
+    def test_without_linear_json_or_a_feature_the_table_holds_the_task_issue_rows_only(self):
+        self.issues["ENG-1"] = None  # reading the feature issue would fail
+        self.assertIs(self.record(linear=False), True)
+        self.assertEqual([k in self.description for k in ("mine", "old-run")], [True, False])
+        (self.proj / "linear.json").write_text("{}")
+        self.assertIs(self.record(linear=False), True)
