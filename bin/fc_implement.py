@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate, fc_fast
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -299,8 +299,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "commit", "-qam", fc_core.typed("reset implementation", "deps", fc_core.commit_convention(proj)) if fc_core.commit_convention(proj) else "bench: reset implementation"], wt, check=False)
     before = fc_core.digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
+    fast = fc_fast.workflow(proj, meta) == "fix-then-regression-test"
     red = run_test(meta, wt)
-    if red.returncode == 0:
+    if fast and red.returncode:
+        return fc_fast.broken_base(proj, meta, red, base_name, branch, wt)
+    if red.returncode == 0 and not fast:
         fc_core.say(f"{tid} skip    test already passes on {base_name}; fix the test or drop the task")
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
                   "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}
@@ -563,12 +566,14 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "fetch", "-q", str(wt), f"{branch}:{branch}"], repo)  # the task branch now exists in the main repo: a layer for review, never merged here
         if fc_worktree.names_lockfile(meta):
             fc_worktree.adopt_installs(repo, wt)
+    if fast and status == "passed":
+        status = "unproven"
     diff = fc_core.sh(["git", "diff", base, "--stat"], wt, check=False).stdout
     total = round(time.time() - started, 1)
     fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={spent()}  ${cost:.4f}")
     if isinstance(session, dict):
         fc_herdr.herdr_label(session, status, cost, state="idle")
-        if status == "passed":  # its branch is the record; a missed task's pane stays for the team lead to read and steer
+        if status in ("passed", "unproven"):  # its branch is the record; a missed task's pane stays for the team lead to read and steer
             fc_herdr.herdr("pane", "close", session["pane"])
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": spent(),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
@@ -576,7 +581,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
     if not reset_files and not tag:
-        fc_linear.linear_event(proj, meta, "passed" if status == "passed" else "failed", result)
+        fc_linear.linear_event(proj, meta, status if status in ("passed", "unproven") else "failed", result)
     return result
 
 
