@@ -161,9 +161,9 @@ def openrouter_key():
     """The OpenRouter key a harness bills to: the workspace's from auth.json, else the shell's. None leaves the harness on its own auth store."""
     return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or None
 
-def key_file(key):
+def key_file(key, name="openrouter.key"):
     """A 0600 file beside the config holding `key`, for a harness that reads its key from a file its config names, not from the env its tools inherit."""
-    f = CONFIG_PATH.parent / "openrouter.key"
+    f = CONFIG_PATH.parent / name
     if not (f.exists() and f.read_text() == key):
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
@@ -180,7 +180,7 @@ def provider_of(model) -> tuple[str, str] | None:
 
 def provider_env(name) -> str:
     """The env var apply_config exports provider `name`'s auth.json key as."""
-    return ""
+    return re.sub(r"[^A-Z0-9]", "_", name.upper()) + "_API_KEY"
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
