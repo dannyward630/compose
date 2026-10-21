@@ -131,6 +131,62 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("log", "--format=%s", "fast/p/005..fast/p/006"), "task 006")
 
 
+class RedoLayersTheTrunkNowClashesWith(unittest.TestCase):
+    """--redo rebuilds layers whose old commits clash with the trunk or with each other; no rebase before they are rebuilt may stop the run."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {**ENV, "COMPOSE_REDO": "1"}); self.env.start()
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.git("init", "-q", "-b", "trunk")
+        (self.repo / "a.txt").write_text("base\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "init")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True); (self.proj / "worktrees").mkdir()
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+
+    def tearDown(self):
+        self.env.stop()
+
+    def git(self, *a):
+        return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def layer(self, tid, base, name, text):
+        self.git("checkout", "-q", "-b", f"fast/p/{tid}", base)
+        (self.repo / name).write_text(text)
+        self.git("add", "-A"); self.git("commit", "-qm", f"task {tid}")
+        self.git("checkout", "-q", "trunk")
+
+    def run_tasks(self, ids, after, add, also=()):
+        """run_tasks over `ids`, each rebuilt from its dependencies' tip as run_task does (add: the file it writes; also: layers outside the run, still in the plan)."""
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": t, "after": after.get(t, "")} for t in sorted([*ids, *also])]}))
+        built = []
+        def run_task(repo, proj, meta, attempts):
+            tid = meta["id"]
+            base, _ = fc.fc_implement.task_base(repo, proj, meta)
+            fc.fc_worktree.replace_branch(repo, proj, f"fast/p/{tid}")
+            self.layer(tid, base, add[tid], "rebuilt\n"); built.append(tid)
+            return {"id": tid, "title": tid, "status": "passed", "attempts": 1, "seconds": 1.0, "cost": 0.0, "branch": f"fast/p/{tid}"}
+        tasks = [{"id": t, "title": t, "after": after.get(t, ""), "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ids]
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=False)
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_stack, "register_stack"), \
+             mock.patch("builtins.print"), self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(self.repo, self.proj, tasks, a)
+        said = [str(c.args[0]) for c in say.call_args_list]
+        self.assertFalse(any("STOP" in l for l in said), said)
+        self.assertEqual((e.exception.code, built), (0, ids))
+
+    def test_the_layer_about_to_be_rebuilt_is_not_rebased_onto_a_trunk_it_clashes_with(self):
+        self.layer("010", "trunk", "h.txt", "task\n"); self.layer("011", "fast/p/010", "011.txt", "x\n")
+        self.git("checkout", "-q", "trunk"); (self.repo / "h.txt").write_text("trunk\n"); self.git("add", "-A"); self.git("commit", "-qm", "trunk adds h")
+        self.run_tasks(["010"], {"011": "010"}, {"010": "010.txt"}, also=["011"])
+        self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/011"), "1")  # the layer above lost the old 010 commit
+
+    def test_a_redo_layer_waiting_to_start_does_not_unchain_a_task_stacked_above_it(self):
+        # 011 is rebuilt later; 014 starts first on 013, which adds the file 011's old commit also adds
+        self.layer("011", "trunk", "x.txt", "old\n")
+        self.run_tasks(["013", "014", "011"], {"014": "013"}, {"013": "x.txt", "014": "014.txt", "011": "011.txt"})
+
+
 class KeepFinishedLayers(unittest.TestCase):
     """A plain `run` re-enters every task: a layer that passed, or that a teammate finished by hand on top of its pass, keeps its
     branch. Rebuilding a hand-done layer threw away the teammate's commit, so the team lead could not record it."""
@@ -319,7 +375,7 @@ class RewrittenTrunk(unittest.TestCase):
         a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=False)
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              self.assertRaises(SystemExit) as e:
-            fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "010", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
+            fc.fc_run.run_tasks(self.repo, self.proj, [{"id": "012", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}], a)
         self.assertEqual(self.git("rev-list", "--count", "trunk..fast/p/010"), "1")  # the layer below is kept
         self.assertIn("fast/p/011", str(e.exception)); self.assertIn("git rebase --onto fast/p/010 ", str(e.exception))
         self.assertIn("(the old base recorded in this pass)", str(e.exception))  # the hint says where the old base came from
