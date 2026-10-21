@@ -20,21 +20,23 @@ COMPOSE_COMMANDS = "verify|run|stack|resume|status|clean|sync|init|done|watch|cr
 PROCESS_RE = re.compile(
     rf"(?<![\w./-])compose(?=\s+(?:{COMPOSE_COMMANDS})\b)|\bby compose\b|(?<![\w./-])compose['’]s\b|`compose`"
     r"|\bwaves?\b(?=\s*[-#]?\d)|\b(?:this|next|last|first|second|third|each|every|previous) wave\b"
-    r"|\btasks?[ -]?#?\d{2,3}\b|\bteammates?\b|\bimplementers?\b|\bteam lead\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
+    r"|\btasks?[ -]?#?\d{2,3}\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
     r"|\b(?:fix|verify|review) rounds?\b|^co-authored-by:", re.I | re.M)
+ROLE_RE = re.compile(r"\bteammates?\b|\bimplementers?\b|\bteam lead\b", re.I)  # narration in a body ("done by the implementer"), plain nouns in a task title
 
 def typed_subject(subject, conv):
     """Whether a subject starts with one of the convention's types (`feat:`, `fix(api):`, `feat!:`); True when there is no convention."""
     return not conv or bool(re.match(r"(?:%s)(?:\([^)]*\))?!?: \S" % "|".join(map(re.escape, conv["types"])), subject))
 
-def message_problem(message, conv=None):
+def message_problem(message, conv=None, title=False):
     """Why a commit message breaks the commit rules, or "" when it keeps them: it names the process (compose and its commands,
     waves, task ids, teammates, implementers, the team lead, Linear issues, verify or fix rounds, a co-author trailer), or the
-    repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types."""
+    repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types. A task
+    title (`title=True`) may use the role words (implementer, teammate, team lead): in a title they name a part of the code."""
     subject = (message or "").strip().split("\n")[0]
     if not subject:
         return "the message is empty"
-    if (hit := PROCESS_RE.search(message)):
+    if (hit := PROCESS_RE.search(message) or (not title and ROLE_RE.search(message))):
         return f"it mentions the process (`{hit.group(0).strip()}`); a commit describes the change itself, in plain words"
     if re.match(r"\s*\d{3}[:.\s-]", subject):
         return "it starts with a task id; a commit describes the change itself, in plain words"
@@ -58,12 +60,12 @@ def scrub_message(message, files, conv=None):
     first, *rest = message.strip().split("\n")
     subject = re.sub(r"^\s*(?:tasks?[ -]?#?)?\d{3}[:.\s-]*", "", first).strip()
     kind = commit_kind(files, subject)
-    if not subject or PROCESS_RE.search(subject):
+    if not subject or PROCESS_RE.search(subject) or ROLE_RE.search(subject):
         names = ", ".join(Path(f).name for f in files[:3]) or "files"
         subject = f"Add tests in {names}" if kind == "test" else f"Update {names}"
     if not typed_subject(subject, conv):
         subject = fc_core.typed(subject, kind, conv)
-    return "\n".join([subject, *(l for l in rest if not PROCESS_RE.search(l))]).rstrip()
+    return "\n".join([subject, *(l for l in rest if not PROCESS_RE.search(l) and not ROLE_RE.search(l))]).rstrip()
 
 def commit_message(meta, conv=None):
     """A task's commit says what changed, in the task title's words: no tool name, task id, or process (a title that names the
@@ -71,7 +73,7 @@ def commit_message(meta, conv=None):
     files only, else fix for a "Fix ..." title, else feat."""
     title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
     files = meta.get("files") or []
-    msg = title if title and not message_problem(title) else "Update " + ", ".join(files or ["files"])
+    msg = title if title and not message_problem(title, title=True) else "Update " + ", ".join(files or ["files"])
     return fc_core.typed(msg, commit_kind(files, title), conv)
 
 
