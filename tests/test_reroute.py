@@ -657,11 +657,11 @@ class FixScope(unittest.TestCase):
         patches = [mock.patch.object(fc_reroute, "reassess", re), mock.patch.object(fc_reroute, "fired", lambda issue: set(done)), mock.patch.object(fc.fc_config, "LINEAR_KEY", key),
                    mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(fc.fc_verify, "run_stages", stage),
                    mock.patch.object(fc.fc_implement, "implementer", fixer), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_worktree, "ready_checkout"),
-                   mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
+                   mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(importlib.import_module("fc_ledger"), "verify_record"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
         with contextlib.ExitStack() as stack:
             for p in patches: stack.enter_context(p)
             with self.assertRaises(SystemExit) as exit:
-                fc.fc_verify.verify_rounds(wt, proj, {"main_repo": str(main)}, SimpleNamespace(fix=len(stages) - 1, review_only=False), [], 0)
+                fc.fc_verify.verify_rounds(wt, proj, {"main_repo": str(main)}, SimpleNamespace(fix=len(stages) - 1, skip_review=True), [], 0)
         return exit.exception.code, asked, said, ran, json.loads((proj / "results" / "verify.json").read_text())["passed"]
 
     def test_a_kept_fix_reassesses_the_top_task_for_scope_once_before_the_next_round_and_a_second_fix_asks_nothing(self):
