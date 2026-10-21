@@ -192,7 +192,7 @@ FRAME0_ALIGN = {"bring-to-front": "align:bring-to-front", "send-to-back": "align
                 "align-bottom": "align:align-bottom", "align-vertical-center": "align:align-middle",
                 "distribute-horizontally": "align:horizontal-distribute", "distribute-vertically": "align:vertical-distribute"}
 FRAME0_TOOLS = {  # tool: (required args, optional args)
-    "add_page": ({"name"}, set()),
+    "add_page": ({"name"}, {"after"}),  # after: a page id, to put the page right behind it; else it goes behind the current page
     "set_current_page_by_id": ({"pageId"}, set()),
     "create_frame": ({"frameType", "name"}, {"fillColor"}),
     "create_rectangle": ({"name", "left", "top", "width", "height"}, {"parentId", "fillColor", "strokeColor", "corners"}),
@@ -223,6 +223,8 @@ def frame0_op(call, tool, a):
     def shape(kind, **props):
         return call("shape:create-shape", {"type": kind, "shapeProps": frame0_props(**props), "parentId": g("parentId"), "convertColors": True})
     if tool == "add_page":
+        if g("after"):
+            call("page:set-current-page", {"pageId": a["after"]})  # page:add puts a page behind the current one, so a page for a journey lands behind that journey's pages
         page = call("page:add", {"pageProps": {"name": a["name"]}})
         return page.get("id") if isinstance(page, dict) else page
     if tool == "set_current_page_by_id":
@@ -279,7 +281,7 @@ def frame0_op(call, tool, a):
     call("shape:set-link", {"shapeId": a["shapeId"], "linkProps": frame0_props(linkType=a["linkType"], url=g("url"), pageId=g("pageId"))})
     return a["shapeId"]
 
-FRAME0_ID_ARGS = ("parentId", "startId", "endId", "shapeId", "pageId", "shapeIdArray")  # where `$name` means an id; a text's "$5" stays text
+FRAME0_ID_ARGS = ("parentId", "startId", "endId", "shapeId", "pageId", "shapeIdArray", "after")  # where `$name` means an id; a text's "$5" stays text
 
 def frame0_refs(op):
     """The `$name` references in an op's id arguments."""
@@ -355,8 +357,7 @@ def frame0_draw(proj, ops):
 
 def cmd_frame0(a):
     """`frame0 up` starts the project's own Frame0 on design.f0, `draw` runs a JSON list of frame0 tool calls in one go and saves,
-    `save` writes the drawing to it, `down` saves and quits.
-    (`frame0 mcp` is the session's MCP server, run by Claude Code through main.)"""
+    `save` writes the drawing to it, `down` saves and quits. (`frame0 pages|move|delete|links|lint` are fc_f0pages'; `frame0 mcp` is the session's MCP server, run by Claude Code through main.)"""
     proj = fc_core.project_dir(a)
     design = proj / "design.f0"
     try:
@@ -375,7 +376,7 @@ def cmd_frame0(a):
             print(f"drew {len(ops)} ops, saved {design}")
         elif a.action == "save":
             print(f"saved {design}" if frame0_save(proj) else f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
-        else:
+        elif a.action == "down":
             print(f"frame0 for {proj.name} saved to {design} and stopped" if frame0_down(proj) else f"{proj.name}'s Frame0 is not running")
     except RuntimeError as e:
         sys.exit(f"frame0 {a.action}: {e}")
