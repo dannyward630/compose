@@ -552,6 +552,13 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
             if tests is None:
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
+            main = cfg.get("main_repo") or repo
+            order = fc_worktree.stack_order(main, proj)
+            unrouted = fc_reroute.catch_up(main, proj, fc_tasks.load_tasks(proj), [order[-1].removeprefix(fc_worktree.task_prefix(main, proj))], base, ("scope",)) if order else {}
+            for id, why in unrouted.items():
+                fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+            if unrouted:
+                break
         else:
             break
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}
