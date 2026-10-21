@@ -322,3 +322,44 @@ class Floor(unittest.TestCase):
         self.assertEqual(self.route(policies=[self.DOCS])["checks"], ["make lint", "make e2e", "make docs"])
         self.assertEqual(self.route(checks="none", policies=[self.DOCS])["checks"], ["make e2e", "make docs"])
         self.assertEqual(self.route(jev=RuntimeError("no key"))["checks"], ["make lint", "make e2e"])
+
+
+class Record(unittest.TestCase):
+    HASH = "0123456789abcdef"
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
+        (self.repo / "a.py").write_text("n\n"); git("add", "-A"); git("commit", "-qm", "task")
+
+    def reassess(self, triggers=("diff",), **record):
+        """Reassess a synced task with a recorded route; returns (route, record_route mock, context_hash mock, the policies read_policies gave)."""
+        desc = "## Goal\nGreet.\n\n## Acceptance criteria\n* greets\n\n## Route\n\n* workflow: implement-then-test\n* depth: STANDARD\n* verification requirements: make lint\n\n```compose\nid: 001\ntest: t\nfiles: a.py\n```\n"
+        tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1"}, "issues": [{"id": "ENG-2", "title": "Greet", "description": desc, "status": "Todo"}]})
+        self.meta, policies = tasks[0], [{"name": "Keys", "statement": "Keys are checked.", "globs": [], "checks": ["make keys"]}]
+        reply = {"model": "jev-test", "answers": {"depth": {"choice": "DEEP", "probabilities": {"DEEP": 0.9}, "confidence": 0.9}}}
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), mock.patch.object(fc_reroute, "diff_callers", return_value={"callers": {}}), \
+                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", return_value=(policies, "")), mock.patch.object(fc.fc_linear, "linear_gql", return_value={}), \
+                mock.patch.object(importlib.import_module("fc_routectx"), "context_hash", return_value=self.HASH) as ctx, mock.patch.object(importlib.import_module("fc_route"), "record_route", **record) as rec:
+            return fc_reroute.reassess(self.repo, self.proj, self.meta, tasks, list(triggers), "3f9a0c1b2d4e", "main", "task"), rec, ctx, policies
+
+    def test_the_route_is_hashed_with_the_policies_and_its_reason_ends_with_the_note(self):
+        route, rec, ctx, policies = self.reassess()
+        self.assertEqual((route["hash"], ctx.call_args.args), (self.HASH, (self.repo, self.meta, policies)))
+        self.assertTrue(route["note"].startswith("rerouted after diff") and route["reason"].endswith(route["note"]))
+
+    def test_the_section_is_the_route_section_then_the_rerouted_bullet_with_every_trigger_and_the_run_id(self):
+        route, rec, _, _ = self.reassess(("diff", "scope"))
+        proj, meta, section = rec.call_args.args
+        self.assertEqual((rec.call_count, proj, meta), (1, self.proj, self.meta))
+        self.assertEqual(section, importlib.import_module("fc_routerec").route_section(route) + "\n* rerouted: diff, scope (run 3f9a0c1b2d4e)")
+        self.assertTrue(section.endswith(f"\n* context hash: {self.HASH}\n* rerouted: diff, scope (run 3f9a0c1b2d4e)"))
+
+    def test_a_record_that_fails_raises(self):
+        with self.assertRaisesRegex(RuntimeError, "Linear: down"):
+            self.reassess(side_effect=RuntimeError("Linear: down"))
