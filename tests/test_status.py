@@ -47,7 +47,7 @@ class DoneEvidence(unittest.TestCase):
     def test_record_comes_right_after_the_hand_done_linear_event(self):
         self.done("021")
         names = [c[0] for c in self.calls.mock_calls]
-        self.assertEqual(names[names.index("linear_event") + 1], "record")
+        self.assertEqual(names[names.index("linear_event") + 1:], ["record"])
 
     def test_unknown_id_records_nothing_and_writes_no_result(self):
         out = self.done("999")
