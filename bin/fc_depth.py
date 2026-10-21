@@ -44,9 +44,28 @@ def depth_config(cfg, proj, tasks):
 
 def depth_events(cfg, run_cfg, depth, task_id, sha):
     """One `skipped` ledger event per stage `cfg` runs and `run_cfg` does not."""
-    raise NotImplementedError("depth_events")
+    import fc_ledger
+    ev = lambda phase, stage: fc_ledger.event("", sha, [], [], phase, "verify", "skipped", None, f"{stage} skipped at depth {depth} (deepest task {task_id})")
+    events = []
+    if cfg.get("review", True) and not run_cfg.get("review", True):
+        events.append(ev("review", "review"))
+    if depth == "FAST" and cfg.get("jev_acceptance", True):
+        events.append(ev("acceptance", "acceptance"))
+    names = {c["name"] for c in run_cfg.get("e2e", [])}
+    for c in cfg.get("e2e", []):
+        if c["name"] not in names:
+            events.append(ev("e2e", f"e2e {c['name']}"))
+    return events
 
 
 def record_depth(proj, repo, cfg, run_cfg, depth, task_id):
     """Write the skipped stages on the feature issue's ledger; add_row's answer, True with none."""
-    raise NotImplementedError("record_depth")
+    import fc_core
+    import fc_ledger
+    import json
+    sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    events = depth_events(cfg, run_cfg, depth, task_id, sha)
+    if not events:
+        return True
+    feature = json.loads((proj / "linear.json").read_text()).get("feature")
+    return fc_ledger.add_row(feature, events)
