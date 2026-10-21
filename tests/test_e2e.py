@@ -416,8 +416,8 @@ class ToolErrors(unittest.TestCase):
         d = tempfile.mkdtemp()
         t = {"wall": 1000.0, "awake": 50.0}
         clock = SimpleNamespace(time=lambda: t["wall"], monotonic=lambda: t["awake"])
-        real = fc.fc_core.sh
-        def sh(*a, **k):
+        real = fc.fc_proc.run
+        def run(*a, **k):
             p = real(*a, **k)
             if not t.get("napped"):  # the lid closed while the first run waited on its network
                 t.update(napped=1, wall=t["wall"] + 5400, awake=t["awake"] + 60)
@@ -425,7 +425,7 @@ class ToolErrors(unittest.TestCase):
         said = []
         cmd = f"echo x >> {d}/n; test $(wc -l < {d}/n) -gt 1"
         with mock.patch.object(fc.fc_proc, "time", clock), mock.patch.object(fc.fc_verify, "time", clock), \
-                mock.patch.object(fc.fc_core, "sh", sh), mock.patch.object(fc.fc_core, "say", said.append):
+                mock.patch.object(fc.fc_proc, "run", run), mock.patch.object(fc.fc_core, "say", said.append):
             ok, report, findings = self.check(cmd)
         self.assertTrue(ok)
         self.assertEqual((len((Path(d) / "n").read_text().split()), findings), (2, ""))

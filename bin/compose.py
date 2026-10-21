@@ -323,6 +323,8 @@ def main():
         sub.choices[a.cmd].error(f"unrecognized arguments: {' '.join(extra)}")
     if a.cmd == "tool-bug" and not (a.body if a.action == "file" else a.worktree):
         sub.choices[a.cmd].error(f"tool-bug {a.action} needs " + ("--body" if a.action == "file" else "--worktree"))
+    if a.cmd in DETACHED:
+        fc_proc.restore_sigint()  # the long commands are stopped with a SIGINT, even when whoever started them ignored it
     detached = os.environ.pop("COMPOSE_DETACHED", None)  # the marker is for this process alone: a compose run by anything it starts must detach on its own
     if a.cmd in DETACHED and not detached:
         return detach(a)
@@ -336,6 +338,7 @@ def main():
     try:
         a.fn(a)
     except KeyboardInterrupt:
+        fc_proc.stop()  # what the command started in groups of their own goes with it
         print(f"\n[{fc_core.now()}] {a.cmd} stopped by Ctrl-C" + ("; `compose resume` continues it" if a.cmd in ("run", "resume") else ""), file=sys.stderr)
         sys.exit(130)
 

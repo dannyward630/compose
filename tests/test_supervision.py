@@ -520,6 +520,36 @@ class Detach(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("runs in its own session", (self.dir / "nested.out").read_text())
 
+    def test_a_sigint_stops_a_detached_verify_started_with_sigint_ignored_and_its_suite(self):
+        """A background job of a non-interactive shell starts with SIGINT ignored, and so did the verify and the suite under it: a
+        `kill -INT` stopped neither. Now it ends the verify, the suite, and what the suite started, and the log says why."""
+        cli = Path(__file__).resolve().parents[1] / "bin" / "compose.py"
+        repo = Path(tempfile.mkdtemp())
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
+            subprocess.run(["git", *args], cwd=repo, check=True)
+        (repo / ".compose" / "p").mkdir(parents=True)
+        suite = f"echo $$ > {self.dir}/suite.pid; ps -o ppid= -p $$ > {self.dir}/verify.pid; sleep 300 & echo $! > {self.dir}/child.pid; wait"  # the stub suite: sleeps
+        (repo / ".compose" / "p" / "verify.json").write_text(json.dumps({"review": False, "jev_acceptance": False, "checks": [suite]}))
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_DETACHED"}
+        follower = subprocess.Popen([sys.executable, str(cli), "verify", "--repo", str(repo), "--project", "p", "--skip-review", "--skip-e2e", "--fix", "0"],
+                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+        pids = {n: self.dir / f"{n}.pid" for n in ("suite", "verify", "child")}
+        alive = lambda pid: subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip() not in ("", "Z")
+        def wait_for(until):  # generous deadline, polled: a loaded machine can take seconds to start python
+            for _ in range(300):
+                if until():
+                    return True
+                time.sleep(0.1)
+            return False
+        def pid_of(name):
+            return int(pids[name].read_text()) if pids[name].exists() and pids[name].read_text().strip() else 0
+        self.addCleanup(lambda: [os.kill(pid, 9) for pid in (pid_of(n) for n in pids) if pid and alive(pid)])
+        self.assertTrue(wait_for(lambda: all(pid_of(n) for n in pids)), "the stub suite never started")
+        os.kill(pid_of("verify"), signal.SIGINT)
+        self.assertTrue(wait_for(lambda: not any(alive(pid_of(n)) for n in pids)), "verify or its suite survived the SIGINT")
+        self.assertEqual(follower.wait(30), 130)
+        self.assertIn("verify stopped by Ctrl-C", (repo / ".compose" / "p" / "results" / "verify.log").read_text())
+
     def test_killing_the_follower_leaves_the_work_running(self):
         done = self.dir / "done"
         started = self.dir / "started"

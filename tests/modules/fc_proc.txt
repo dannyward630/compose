@@ -6,6 +6,7 @@ run
 kill_group
 stop
 on_termination
+restore_sigint
 AWAKE
 keep_awake
 SLEPT_MIN
