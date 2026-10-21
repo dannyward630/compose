@@ -21,6 +21,9 @@ def ensure_link(link, target):
     link.symlink_to(target)
     return "linked", f"linked {link} -> {target}"
 
+def write_codex_commands(checkout):
+    raise NotImplementedError
+
 def relink_owned(checkout):
     """ensure_link for each fc_checks.owned_links(checkout); one line per link naming it and its state."""
     lines = []

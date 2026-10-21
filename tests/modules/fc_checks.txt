@@ -1,4 +1,7 @@
+codex_skills
 owned_links
+codex_command_copies
+codex_commands_ok
 link_state
 local_bin_on_path
 gh_authed
