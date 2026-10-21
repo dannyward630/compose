@@ -182,6 +182,7 @@ class Yolo(unittest.TestCase):
     def test_watch_now_prints_yolo_first_and_marks_needs_user(self):
         self.assertFalse(any("yolo" in line for line in self.watch_now(snap())))
         self.yolo("ship", "it", push=True)
+        self.file.write_text(json.dumps(json.loads(self.file.read_text()) | {"mode": "yolo"}))
         out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}))
         self.assertTrue(out[0].startswith("event yolo=on push=yes since="), out)
         self.assertIn("by='this session'", out[0])
@@ -192,6 +193,7 @@ class Yolo(unittest.TestCase):
     def test_another_session_sees_who_set_yolo(self):
         """yolo is per project: a second engineering manager session on it is told the posture is not its own."""
         self.yolo("ship", "it", pane="w1:p2")
+        self.file.write_text(json.dumps(json.loads(self.file.read_text()) | {"mode": "yolo"}))
         self.assertEqual(json.loads(self.file.read_text())["by"], {"role": "manager", "session": "w1:p2"})
         out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}), pane="w1:p1")
         self.assertIn("by='an engineering manager session in herdr pane w1:p2'", out[0])
@@ -283,6 +285,51 @@ class StatusNamesPosture(unittest.TestCase):
 
     def test_status_says_nothing_when_no_posture_is_on(self):
         self.assertFalse([l for l in self.status() if l.startswith(("  away on", "  yolo on"))])
+
+
+class WatchNamesPosture(unittest.TestCase):
+    """`watch --now` names the posture in its event line and in the hint on each needs-user line; a file without a mode reads as away."""
+    SINCE = "2026-01-01 09:00:00"
+    HINT = "(answer with the recommendation; log it: compose {m} decided ...)"
+    CREW = {"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}], "hw-r": [{"at": stamp(), "state": "blocked", "message": "no key"}]}
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+
+    def watch_now(self, posture=True, **file):
+        """`watch --now` in herdr pane w1:p1 with a posture file holding `file`; returns the event, needs-user, and blocked lines."""
+        if posture:
+            (self.proj / "results" / "yolo.json").write_text(json.dumps({"since": self.SINCE, "push": False, "words": "", "decisions": []} | file))
+        a = SimpleNamespace(repo=".", project="hw", now=True, from_=None, timeout=0, interval=0.01, stall=10_000)
+        env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_ROLE", "HERDR_PANE_ID")} | {"HERDR_PANE_ID": "w1:p1"}
+        out = []
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap(crew=self.CREW)), \
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
+            fc.fc_watch.cmd_watch(a)
+        return out[0], next(l for l in out if "state=needs-user" in l), next(l for l in out if "state=blocked" in l)
+
+    def test_the_event_names_the_mode_and_a_file_without_one_reads_as_away(self):
+        for mode, push in (("yolo", True), ("away", False), (None, True)):
+            event, *_ = self.watch_now(**({"mode": mode} if mode else {}), push=push)
+            self.assertTrue(event.startswith(f"event {mode or 'away'}=on push={'yes' if push else 'no'} since="), event)
+
+    def test_the_needs_user_line_ends_with_the_mode_hint_and_other_lines_do_not(self):
+        for mode in ("away", "yolo"):
+            for by in ({"role": "manager", "session": "w1:p1"}, None):
+                _, ask, blocked = self.watch_now(mode=mode, **({"by": by} if by else {}))
+                self.assertTrue(ask.endswith(f"  {mode}=on {self.HINT.format(m=mode)}"), ask)
+                self.assertNotIn("=on", blocked)
+
+    def test_another_session_is_named_after_the_mode_under_each_mode(self):
+        for mode in ("away", "yolo"):
+            event, ask, _ = self.watch_now(mode=mode, by={"role": "manager", "session": "w1:p2"})
+            self.assertIn("by='an engineering manager session in herdr pane w1:p2'", event)
+            self.assertTrue(ask.endswith(f"  {mode}=on set by an engineering manager session in herdr pane w1:p2 {self.HINT.format(m=mode)}"), ask)
+
+    def test_no_line_names_a_posture_when_none_is_on(self):
+        event, ask, blocked = self.watch_now(posture=False)
+        self.assertFalse([l for l in (event, ask, blocked) if "away=on" in l or "yolo=on" in l])
 
 
 if __name__ == "__main__":
