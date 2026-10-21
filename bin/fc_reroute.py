@@ -200,7 +200,13 @@ LEDGER = ("failed tests", "invalid evidence", "unmet requirements")
 
 def ledger_triggers(repo, proj, meta, rows):
     """The `LEDGER` triggers of the task's counted rows, each once in `LEDGER` order."""
-    raise NotImplementedError("ledger_triggers")
+    c = fc_ledger.counted(repo, proj, meta, rows)
+    fired = (
+        any(r["source"] == "verify" and r["phase"] in ("checks", "scoped", "e2e") and r["result"] == "fail" for r in c),
+        any(r["result"] == "contradicted" for r in c),
+        any(r["phase"] == "acceptance" and r["result"] in ("fail", "unclear") or r["phase"] == "sufficiency" and r["result"] == "unproven" for r in c),
+    )
+    return [t for t, on in zip(LEDGER, fired) if on]
 
 
 def after_round(repo, proj, trunk):
