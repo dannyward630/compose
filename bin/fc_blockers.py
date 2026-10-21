@@ -32,8 +32,7 @@ def judge(repo, base, blocker, owners):
                 return f"{slug} task {task['id']}: {branch} is in {base}", None
             why += [f"{slug} task {task['id']}: {missing(repo, branch, base)}"]
         open_ = [m["id"] for m in tasks if not fc_tasks.task_finished(owner, m)]
-        layers = sorted(fc_core.sh(["git", "branch", "--list", f"{fc_layers.layer_prefix(repo, owner)}layer-*", "--format=%(refname:short)"],
-                                   repo, check=False).stdout.split(), key=lambda b: int(b.rsplit("layer-", 1)[1]))
+        layers = fc_layers.layer_branches(repo, owner)
         if open_:
             why += [f"{slug}: task{'s' * (len(open_) > 1)} {', '.join(open_)} not passed yet"]
         elif not layers:

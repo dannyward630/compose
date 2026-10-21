@@ -84,6 +84,14 @@ class OutsideBlockers(unittest.TestCase):
             {"id": "010", "kind": "code", "linear": "NEB-20", "waits_on": ["NEB-99 (In Review)"]}]}))
         self.assertEqual(self.released(), ({}, {"NEB-99": "no project of this repository has NEB-99 in its last sync"}))
 
+    def test_a_backup_branch_beside_the_layers_is_not_a_layer(self):
+        for b in ("found-layer-01", "found-layer-02", "found-layer-01-prerebase"):
+            self.git("checkout", "-q", "-b", b, "main"); self.commit(b); self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "m", "found-layer-02")
+        out, still = self.released()
+        self.assertEqual((list(out), still), (["NEB-10"], {}))
+        self.assertIn("found-layer-02", out["NEB-10"])
+
     def test_status_shows_the_task_as_pending_once_its_blocker_is_in_the_trunk(self):
         meta, facts = fc.fc_tasks.load_tasks(self.app)[0], {"prefix": "app-", "have": set(), "merged": set()}
         self.assertEqual(fc.fc_status.task_state(self.repo, self.app, meta, "", facts)["state"], "held")
