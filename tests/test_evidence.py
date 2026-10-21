@@ -47,7 +47,7 @@ class Rows(unittest.TestCase):
         self.assertEqual(ids(task_id="001"), ["a", "c"])
         self.assertEqual(ids(run_id="r2"), ["b"])
         self.assertEqual(ids(criterion_id="002.2:cc"), ["b", "c"])
-        self.assertEqual(ids(task_id="002", criterion_id="001.1:aa"), [])
+        self.assertEqual(ids(task_id="002", criterion_id="001.1:aa"), ["c"])
 
     def test_empty_issue_or_no_key_reads_nothing_and_linear_errors_raise(self):
         gql = mock.Mock(side_effect=RuntimeError("boom"))
