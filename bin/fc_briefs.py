@@ -99,8 +99,9 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"` (the answers so far are
    acknowledged first), and poll again.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, starting with its card id and ending `(product owner, <date>)`.
-   An answer that starts `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
-   end its line `(yolo recommendation, unconfirmed, <date>)`, and change that tag to `(product owner, <date>)` only when they confirm it. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write.
+   An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
+   end its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
+   and change that tag to `(product owner, <date>)` only when they confirm it. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write.
 6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
    are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
@@ -141,7 +142,8 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
       the brief at the contract.
       A test that pins a line width or exact text (a wrapped message, a limit on characters per line) gets that text, already
       wrapped as the test expects, in the brief, line by line: a model cannot count columns, and a task that misses its width fails every attempt.
-   A Decisions line ending `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
+   A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation
+   the product owner has not confirmed:
    a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line, never silently.
    Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
    recommendation) under Not yet specified on the map first, with a card id per card, never reused; then report one line per issue,
@@ -254,7 +256,8 @@ The screen that raised it: {reflect}
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
    "keep it as is" changes nothing in the map.
-   An answer that starts `yolo:` is the engineering manager's recommendation, never the product owner's: end its line `(yolo recommendation, unconfirmed, <date>)`.
+   An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's:
+   end its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names.
 6. Evidence the team lead forwards while {cid} is open becomes new cards, asked the same way; visual ones on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered: `npx -y lavish-axi end {page}` if the page was opened, then report `done` with each answer in one line.
