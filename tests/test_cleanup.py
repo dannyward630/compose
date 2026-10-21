@@ -359,6 +359,90 @@ class CleanSafety(unittest.TestCase):
         self.assertFalse(self.wt["work"].exists())
 
 
+class AbandonUnmerged(unittest.TestCase):
+    """`compose clean --abandon --project <slug>` drops an unmerged project on an explicit flag: it lists what goes and what stays, then removes."""
+    def setUp(self):
+        self.r, self.run = repo()
+        self.env = {**os.environ, **ENV}
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
+        self.wt = self.r.parent / "compose-p"; self.proj = self.wt / ".compose" / "p"
+        self.run("checkout", "-q", "-b", "compose/p-001", cwd=self.wt)
+        (self.wt / "f.txt").write_text("f\n"); self.run("add", "f.txt", cwd=self.wt); self.run("commit", "-qm", "Add f", cwd=self.wt)
+        self.run("checkout", "-q", "compose/p", cwd=self.wt); self.run("merge", "-q", "--no-ff", "-m", "stack", "compose/p-001", cwd=self.wt)
+        (self.wt / "wip.txt").write_text("not committed\n")
+        self.remote = self.r.parent / "remote.git"  # the project branch was pushed once: that copy outlives the abandon
+        subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
+        self.run("remote", "add", "origin", str(self.remote)); self.run("push", "-q", "origin", "compose/p")
+        self.run("fetch", "-q", "origin")
+
+    def cli(self, *args, cwd=None):
+        return subprocess.run([CLI, "clean", "--repo", str(self.r), *args], cwd=cwd or self.r, capture_output=True, text=True, env=self.env)
+
+    def branches(self):
+        return self.run("branch", "--format=%(refname:short)").stdout.split()
+
+    def test_without_the_flag_an_unmerged_project_is_kept_as_before(self):
+        for args in (("--project", "p"), ("--project", "p", "--dry-run"), ()):
+            self.cli(*args)
+            self.assertTrue(self.wt.exists(), args); self.assertIn("compose/p", self.branches())
+
+    def test_abandon_names_one_project_and_refuses_anything_else(self):
+        for args, why in (("--abandon",), "names one project"), (("--abandon", "--project", "nope"), "known"), \
+                (("--abandon", "--project", "p", "--delete-unmerged"), "names one project"):
+            p = self.cli(*args)
+            self.assertEqual(p.returncode, 1, args); self.assertIn(why, p.stdout + p.stderr); self.assertTrue(self.wt.exists())
+
+    def test_dry_run_lists_what_goes_and_what_stays_and_removes_nothing(self):
+        p = self.cli("--abandon", "--project", "p", "--dry-run")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        out = p.stdout
+        self.assertLess(out.index("abandon  p: removes"), out.index("abandon  keeps"))
+        removes, keeps = out.split("abandon  keeps")
+        for part in (f"worktree {self.wt}", "1 uncommitted path(s)", "compose/p-001", "compose/p", "herdr tabs"):
+            self.assertIn(part, removes)
+        for part in ("Linear issues, untouched", "origin/compose/p", "GitHub PRs"):
+            self.assertIn(part, keeps)
+        self.assertIn("--dry-run, nothing removed", out)
+        self.assertTrue((self.wt / "wip.txt").exists()); self.assertEqual(sorted(self.branches()), ["compose/p", "compose/p-001", "main"])
+
+    def test_abandon_removes_the_worktree_and_local_branches_and_keeps_the_pushed_copy_and_the_main_checkout(self):
+        p = self.cli("--abandon", "--project", "p")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(f"abandon  p: removed worktree {self.wt} and 2 local branch(es)", p.stdout)
+        self.assertFalse(self.wt.exists()); self.assertEqual(self.branches(), ["main"])
+        self.assertIn("compose/p", subprocess.run(["git", "-C", str(self.remote), "branch", "--list"], capture_output=True, text=True).stdout)
+        self.assertEqual(self.run("worktree", "list", "--porcelain").stdout.count("worktree "), 1)
+        self.assertEqual(self.run("status", "--porcelain").stdout, "")
+        self.assertEqual(self.run("log", "--format=%s").stdout.split("\n")[0], "init")
+
+    def test_a_live_run_or_standing_inside_the_worktree_stops_it_with_nothing_removed(self):
+        sleeper = subprocess.Popen(["sleep", "60"]); self.addCleanup(sleeper.wait); self.addCleanup(sleeper.kill)
+        (self.proj / "results").mkdir(exist_ok=True)
+        (self.proj / "results" / "run.json").write_text(json.dumps({"pid": sleeper.pid}))
+        for force in ((), ("--force",)):  # --force never overrides a live run
+            p = self.cli("--abandon", "--project", "p", *force)
+            self.assertEqual(p.returncode, 1); self.assertIn(f"a run is live (pid {sleeper.pid})", p.stdout + p.stderr); self.assertTrue(self.wt.exists())
+        (self.proj / "results" / "run.json").unlink()
+        p = self.cli("--abandon", "--project", "p", cwd=self.wt)
+        self.assertEqual(p.returncode, 1); self.assertIn("this command runs inside it", p.stdout + p.stderr); self.assertTrue(self.wt.exists())
+
+    def test_live_crew_stops_it_until_forced(self):
+        d = self.proj / "results" / "crew"; d.mkdir(parents=True, exist_ok=True)
+        (d / "p-b1.json").write_text(json.dumps({"name": "p-b1", "title": "b1"}))
+        (d / "p-b1.status").write_text(json.dumps({"state": "working", "message": "m"}) + "\n")
+        p = self.cli("--abandon", "--project", "p")
+        self.assertEqual(p.returncode, 1); self.assertIn("live crew", p.stdout + p.stderr); self.assertIn("--force overrides", p.stdout + p.stderr)
+        self.assertTrue(self.wt.exists())
+        p = self.cli("--abandon", "--project", "p", "--force")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr); self.assertFalse(self.wt.exists()); self.assertEqual(self.branches(), ["main"])
+
+    def test_a_project_in_the_main_checkout_has_no_worktree_to_abandon(self):
+        main_proj = self.r / ".compose" / "m"; main_proj.mkdir(parents=True)
+        (main_proj / "verify.json").write_text(json.dumps({"branch": "main"}))
+        p = self.cli("--abandon", "--project", "m")
+        self.assertEqual(p.returncode, 1); self.assertTrue(self.r.exists()); self.assertIn("main", self.branches())
+
+
 class SharedSpaceClean(unittest.TestCase):
     """In the space compose was started from, clean closes the project's tabs, never the space, and other agents there are not its crew."""
     def herdr(self, *args, check=False, timeout=120):

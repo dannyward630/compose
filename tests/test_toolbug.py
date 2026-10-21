@@ -239,6 +239,130 @@ class FileCommand(unittest.TestCase):
         self.assertEqual(self.run_cmd("maintainer", raw="no title\n")[0], 1); self.m["post"].assert_not_called()
 
 
+GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+class OwnWorktree(unittest.TestCase):
+    """The toolsmith fixes on its own branch in its own worktree of the compose repo: never a main checkout, never the installed copy."""
+    URL, PR = "https://github.com/prodoxx/compose/issues/2", "https://github.com/prodoxx/compose/pull/5"
+    AT = "2026-10-17 15:30:00"
+
+    def git(self, cwd, *args):
+        return subprocess.run([*GIT, "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
+
+    def commit(self, repo, name):
+        (repo / name).write_text(name); self.git(repo, "add", name); self.git(repo, "commit", "-qm", f"Fix {name}")
+
+    def setUp(self):
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup); self.root = root = Path(os.path.realpath(t.name))
+        self.main, self.remote, self.wt, self.home = root / "compose", root / "remote.git", root / "fix", root / "home"
+        self.git(root, "init", "-q", "-b", "main", str(self.main)); self.commit(self.main, "a")
+        self.git(root, "clone", "-q", "--bare", str(self.main), str(self.remote))
+        self.git(self.main, "remote", "add", "origin", str(self.remote)); self.git(self.main, "fetch", "-q", "origin")
+        self.git(self.main, "branch", "-u", "origin/main")
+        self.git(self.main, "worktree", "add", "-q", "-b", "toolsmith-fix", str(self.wt))
+        self.log = root / ".compose" / "tool-bugs.jsonl"; self.log.parent.mkdir()
+        self.log.write_text(json.dumps({"at": self.AT, "project": "shop", "message": "boom", "issue": self.URL}) + "\n")
+        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home)}), mock.patch.object(fc.fc_crew, "CLI_REPO", self.main),
+                  mock.patch.object(fc.fc_crew, "TOOL_BUGS", self.log), mock.patch.object(fc.fc_config, "CONFIG_PATH", root / ".compose" / "config.json")):
+            p.start(); self.addCleanup(p.stop)
+        self.gh_calls = []
+
+    def gh(self, state="maintainer", code=0):
+        """gh_status says `state`; `gh pr create` prints the PR URL (or fails with `code`)."""
+        real = subprocess.run
+        def run(cmd, *a, **kw):
+            if cmd and cmd[0] == "gh":
+                self.gh_calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, code, self.PR + "\n" if not code else "", "boom" if code else "")
+            return real(cmd, *a, **kw)
+        for p in (mock.patch.object(fc.fc_toolbug, "gh_status", return_value=(state, None if state == "no-gh" else "alice9")),
+                  mock.patch("subprocess.run", run)):
+            p.start(); self.addCleanup(p.stop)
+
+    def pr(self, worktree=None, **kw):
+        a = SimpleNamespace(**{**dict(project="shop", action="pr", worktree=str(worktree or self.wt), entry=None, title=None), **kw})
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            try: fc.fc_toolbug.cmd_tool_bug(a); status = 0
+            except SystemExit as e: status = 1 if isinstance(e.code, str) else e.code; out.write(str(e.code))
+        return status, out.getvalue()
+
+    def test_shared_checkout_names_the_installed_copy_main_checkouts_and_main_worktrees(self):
+        sc = lambda p: fc.fc_worktree.shared_checkout(p, self.main)
+        self.assertIn("a main checkout of the compose repo", sc(self.main))
+        self.assertIsNone(sc(self.wt))  # its own worktree on its own branch
+        (self.wt / "sub").mkdir(); self.assertIsNone(sc(self.wt / "sub"))
+        other = self.root / "other"; self.git(self.main, "worktree", "add", "-q", "-b", "master", str(other))
+        self.assertIn("on master", sc(other))
+        self.git(self.wt, "switch", "-q", "--detach"); self.assertIn("on no branch", sc(self.wt))
+        elsewhere = self.root / "elsewhere"; elsewhere.mkdir(); self.assertIsNone(sc(elsewhere))  # not the compose repo: none of this
+        self.git(self.root, "init", "-q", "-b", "side", str(self.root / "side")); self.assertIsNone(sc(self.root / "side"))
+        src = self.home / ".compose" / "src"; src.mkdir(parents=True); self.git(self.root, "init", "-q", "-b", "feature", str(src))
+        (src / "bin").mkdir()
+        for p in (src, src / "bin"):
+            self.assertIn("the installed copy of compose", sc(p))
+
+    def test_the_edit_guard_lets_a_toolsmith_edit_only_its_own_worktree(self):
+        gd = fc.fc_crew.guard_decision
+        why = gd("Edit", str(self.main / "bin" / "new" / "x.py"), "toolsmith")  # the directory does not exist yet
+        self.assertIn("toolsmith", why); self.assertIn("own worktree", why)
+        for tool in fc.fc_crew.GUARDED_TOOLS:
+            self.assertIsNone(gd(tool, str(self.wt / "x.py"), "toolsmith"), tool); self.assertIsNotNone(gd(tool, str(self.main / "x.py"), "toolsmith"), tool)
+        self.assertIsNone(gd("Read", str(self.main / "a"), "toolsmith"))
+        self.assertIsNone(gd("Write", str(self.root / "elsewhere" / "brief.md"), "toolsmith"))
+        self.assertIsNone(gd("Edit", str(self.main / "a"), "crew"))  # other roles are not this guard's business
+        src = self.home / ".compose" / "src"; src.mkdir(parents=True); self.git(self.root, "init", "-q", "-b", "feature", str(src))
+        self.assertIn("installed copy", gd("Write", str(src / "bin" / "compose.py"), "toolsmith"))
+
+    def test_tool_bug_file_from_a_toolsmith_is_refused_in_a_shared_checkout_and_goes_through_in_its_own_worktree(self):
+        (self.root / "b.md").write_text("# crew start: hangs\n## Summary\n\nIt hangs.\n")
+        a = SimpleNamespace(project="shop", action="file", body=str(self.root / "b.md"), comment=None, new=False, approved=False, entry=None)
+        self.gh("no-gh")
+        for cwd, refused in ((self.main, True), (self.wt, False)):
+            with self.subTest(cwd=cwd.name), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "toolsmith"}), \
+                    mock.patch.object(Path, "cwd", return_value=cwd), mock.patch("sys.stdout", io.StringIO()) as out:
+                if refused:
+                    with self.assertRaises(SystemExit) as cm: fc.fc_toolbug.cmd_tool_bug(a)
+                    self.assertIn("never in a shared checkout", cm.exception.code)
+                else:
+                    fc.fc_toolbug.cmd_tool_bug(a); self.assertIn("saved", out.getvalue())
+        with mock.patch.object(Path, "cwd", return_value=self.main), mock.patch("sys.stdout", io.StringIO()) as out:
+            fc.fc_toolbug.cmd_tool_bug(a); self.assertIn("saved", out.getvalue())  # any other role files from anywhere
+
+    def test_pr_pushes_the_branch_opens_the_pr_fixing_the_issue_and_records_it(self):
+        self.commit(self.wt, "fix.py"); self.gh()
+        status, out = self.pr()
+        self.assertEqual((status, out.strip()), (0, self.PR))
+        self.assertIn("toolsmith-fix", self.git(self.remote, "branch", "--list"))
+        [call] = self.gh_calls
+        self.assertEqual(call[:3], ["gh", "pr", "create"]); self.assertEqual(call[call.index("--repo") + 1], "prodoxx/compose")
+        self.assertEqual(call[call.index("--head") + 1], "toolsmith-fix"); self.assertEqual(call[call.index("--base") + 1], "main")
+        self.assertEqual(call[call.index("--title") + 1], "Fix fix.py"); self.assertIn("Fixes #2", call[call.index("--body") + 1])
+        self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR)
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.remote, "rev-parse", "main"))  # main moved nowhere
+        status, out = self.pr(title="Better title"); self.assertEqual(status, 0)
+        self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR); self.assertEqual(self.gh_calls[-1][self.gh_calls[-1].index("--title") + 1], "Better title")
+
+    def test_pr_refuses_what_a_toolsmith_may_not_do_and_pushes_nothing(self):
+        self.commit(self.wt, "fix.py"); self.gh()
+        status, out = self.pr(self.main); self.assertEqual(status, 1); self.assertIn("a main checkout of the compose repo", out)
+        elsewhere = self.root / "elsewhere"; elsewhere.mkdir(); self.git(self.root, "init", "-q", str(elsewhere))
+        status, out = self.pr(elsewhere); self.assertEqual(status, 1); self.assertIn("no worktree of the compose repo", out)
+        (self.wt / "dirty").write_text("x"); status, out = self.pr(); self.assertEqual(status, 1); self.assertIn("uncommitted", out)
+        (self.wt / "dirty").unlink()
+        self.git(self.wt, "reset", "-q", "--hard", "origin/main"); status, out = self.pr(); self.assertEqual(status, 1); self.assertIn("no commit past origin/main", out)
+        self.commit(self.wt, "fix.py")
+        self.assertEqual(self.git(self.remote, "branch", "--list"), "* main\n"); self.assertEqual(self.gh_calls, [])
+
+    def test_pr_needs_a_maintainer_and_says_when_gh_cannot_open_it(self):
+        self.commit(self.wt, "fix.py")
+        for state in ("reporter", "no-gh"):
+            self.gh(state); status, out = self.pr()
+            self.assertEqual(status, 1); self.assertIn("tool-bug file", out); self.assertEqual(self.gh_calls, [])
+        self.gh(code=1); status, out = self.pr()
+        self.assertEqual(status, 1); self.assertIn("is pushed but gh could not open the PR", out); self.assertNotIn("pr", json.loads(self.log.read_text()))
+
+
 class Cli(unittest.TestCase):
     """`compose tool-bug` and `compose toolsmith` through the real entry point."""
 
@@ -257,9 +381,14 @@ class Cli(unittest.TestCase):
         a = self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md", "--new", "--approved", "--entry", "2026-10-17 15:30:00")[0].call_args.args[0]
         self.assertEqual((a.comment, a.new, a.approved, a.entry), (None, True, True, "2026-10-17 15:30:00"))
 
+    def test_tool_bug_pr_takes_the_worktree_title_and_entry(self):
+        a = self.run_main("tool-bug", "pr", "--project", "shop", "--worktree", "/tmp/fix", "--title", "Fix it", "--entry", "2026-10-17 15:30:00")[0].call_args.args[0]
+        self.assertEqual((a.action, a.project, a.worktree, a.title, a.entry), ("pr", "shop", "/tmp/fix", "Fix it", "2026-10-17 15:30:00"))
+
     def test_tool_bug_usage_errors(self):
         self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md")[0].assert_called_once()
-        for args in (["file", "--body", "b.md", "--comment", "3", "--new"], ["file"], ["post", "--body", "b.md"], ["file", "--body", "b.md", "--comment", "x"]):
+        for args in (["file", "--body", "b.md", "--comment", "3", "--new"], ["file"], ["post", "--body", "b.md"], ["file", "--body", "b.md", "--comment", "x"],
+                     ["pr"], ["pr", "--body", "b.md"]):
             with self.subTest(args), self.assertRaises(SystemExit) as cm:
                 self.run_main("tool-bug", "--project", "shop", *args)
             self.assertEqual(cm.exception.code, 2)
