@@ -764,3 +764,45 @@ class CodexStart(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
         self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))
         with self.assertRaises(SystemExit): fc.fc_crew.crew_pick_full("tester", "grok:x")
+
+
+class HarnessTable(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home = tmp / "bin", tmp / "home"
+        for d in (self.bin, self.home): d.mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+
+    def exe(self, name, mode=stat.S_IRWXU):
+        (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(mode)
+
+    def test_the_table_holds_the_codex_row_first_and_two_name_only_entries(self):
+        h = fc_harness
+        self.assertEqual((h.RESERVED, h.HARNESSES["gemini"], h.HARNESSES["grok"]), (("codex", "gemini", "grok"), {}, {}))
+        self.assertEqual(h.HARNESSES["codex"], {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$", "example": "gpt-6.1-sol",
+                                                "herdr_ready": False, "probe": h._codex_probe, "result": h._codex_result, "argv": h._codex_argv})
+
+    def test_harness_of_and_model_id_read_only_a_key_that_has_fields(self):
+        for m, want in (("codex", ("codex", None)), ("codex:", ("codex", None)), ("codex:gpt-6-sol", ("codex", "gpt-6-sol")), ("codex:a:b", ("codex", "a:b")),
+                        ("gemini:x", (None, None)), ("grok", (None, None)), ("grok:x", (None, None)), ("codex/gpt-6-sol", (None, None)), ("codexx:y", (None, None)),
+                        ("Codex:x", (None, None)), ("claude:opus", (None, None)), ("pi:x/y", (None, None)), ("", (None, None)), (None, (None, None))):
+            self.assertEqual((fc_harness.harness_of(m), fc_harness.model_id(m)), want, m)
+
+    def test_a_row_with_fields_is_named_by_its_key_and_listed_in_table_order(self):
+        self.exe("other")
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": {"name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}}):
+            self.assertEqual((fc_harness.harness_of("other:m"), fc_harness.model_id("other:m"), fc_harness.rows(), fc_harness.installed()), ("other", "m", ["codex", "other"], ["other"]))
+            self.exe("codex"); self.assertEqual(fc_harness.installed(), ["codex", "other"])
+            os.environ["OTHER_HOME"] = str(self.home / "o"); self.assertEqual(fc_harness.skills_dir("other"), self.home / "o/skills")
+
+    def test_rows_is_codex_and_installed_needs_an_executable_codex_on_path(self):
+        self.assertEqual((fc_harness.rows(), fc_harness.installed()), (["codex"], []))
+        self.exe("codex", stat.S_IRUSR | stat.S_IWUSR); self.assertEqual(fc_harness.installed(), [])
+        self.exe("codex"); self.assertEqual(fc_harness.installed(), ["codex"])
+
+    def test_skills_dir_prefers_a_non_empty_codex_home_and_reads_home_at_call_time(self):
+        self.assertEqual(fc_harness.skills_dir("codex"), self.home / ".codex/skills")
+        os.environ["CODEX_HOME"] = ""; self.assertEqual(fc_harness.skills_dir("codex"), self.home / ".codex/skills")
+        os.environ["HOME"] = str(self.home / "moved"); self.assertEqual(fc_harness.skills_dir("codex"), self.home / "moved/.codex/skills")
+        os.environ["CODEX_HOME"] = str(self.home / "elsewhere"); self.assertEqual(fc_harness.skills_dir("codex"), self.home / "elsewhere/skills")
