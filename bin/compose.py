@@ -219,6 +219,7 @@ def main():
             s.add_argument("--budget", type=int, help="test lines per task (default 60; a task's test_lines: wins)")
             s.add_argument("--collect", action="store_true", help="cherry-pick every test-writing teammate's commits onto the project branch in task order")
             s.add_argument("--redo", action="store_true", help="rewrite the tests of passed tasks too, for a re-plan that changed their briefs (as run --redo)")
+            s.add_argument("--parallel", type=int, help="writers to start at once, Claude Code ones too (default: parallel in ~/.compose/config.json, and claude_parallel for Claude writers)")
         if name == "triage":
             s.add_argument("--only", help="comma-separated task ids (default: every passed task)")
         if name == "reflect":

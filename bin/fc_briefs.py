@@ -373,7 +373,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
 def cmd_testcrews(a):
     """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
-    their briefs needs their tests rewritten first."""
+    their briefs needs their tests rewritten first. `--parallel N` starts up to N writers now, Claude Code or not, over the config's caps."""
     proj = fc_core.project_dir(a)
     if getattr(a, "collect", False):
         return collect_tests(proj, a.only)
@@ -400,9 +400,9 @@ def cmd_testcrews(a):
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
     model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
-    cap = fc_config.PARALLEL  # unset: every writer starts at once
+    cap = getattr(a, "parallel", None) or fc_config.PARALLEL  # unset: every writer starts at once
     key, chain = fc_crew.crew_chain("tests", model)
-    if key is None or fc_claude.is_claude(chain[0][0]):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is
+    if not getattr(a, "parallel", None) and (key is None or fc_claude.is_claude(chain[0][0])):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is, unless --parallel says otherwise
         cap = min(cap or fc_config.CLAUDE_PARALLEL, fc_config.CLAUDE_PARALLEL)
     metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
