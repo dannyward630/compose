@@ -162,6 +162,7 @@ def main():
             s.add_argument("--trunk", default=None, help="trunk branch the stack targets (default: the branch you are on)")
             s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
+            s.add_argument("--unproven", action="store_true", help="run although `verify --prove` has not passed on the current e2e cases")
         if name == "resume":
             s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else the halted run's)")
         if name == "done":

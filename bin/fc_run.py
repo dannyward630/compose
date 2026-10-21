@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -64,6 +64,10 @@ def require_committed(repo, stack=True):
 def cmd_run(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
+    why = None if getattr(a, "unproven", False) else fc_prove.unproven(repo, proj, fc_prove.verify_config(a)[2])
+    if why:  # an e2e case that fails for the environment fails every verify, and no implementer can fix it
+        sys.exit(f"run stopped before anything was cloned: {why}. Run `compose verify --project {proj.name} --prove` and fix every case it "
+                 "names first; `--unproven` runs anyway.")
     require_committed(repo, not a.no_stack)
     tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:

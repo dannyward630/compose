@@ -84,12 +84,13 @@ AWAKE = {}  # pid -> the caffeinate that keeps the Mac awake while that process 
 def keep_awake(pid=None):
     """Keep a Mac awake while `pid` (default: this process) lives: `caffeinate -dims -w <pid>` holds the display, idle, disk and
     (on AC) system-sleep assertions, and ends with that process however it dies, so none leaks. One per pid; returns it, or None
-    off macOS and where caffeinate is missing. It cannot stop a lid closed on battery (see fc_checks.battery_warning)."""
+    off macOS, where caffeinate is missing, and under COMPOSE_NO_AWAKE=1. It cannot stop a lid closed on battery (see
+    fc_checks.battery_warning)."""
     pid = pid or os.getpid()
     held = AWAKE.get(pid)
     if held and held.poll() is None:
         return held
-    if sys.platform != "darwin" or not shutil.which("caffeinate"):
+    if sys.platform != "darwin" or not shutil.which("caffeinate") or os.environ.get("COMPOSE_NO_AWAKE"):
         return None
     try:
         AWAKE[pid] = subprocess.Popen(["caffeinate", "-dims", "-w", str(pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

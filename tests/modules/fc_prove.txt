@@ -5,6 +5,9 @@ judge_failure
 prove_case
 prove
 verify_config
+PROVED_KEYS
+e2e_digest
+unproven
 cmd_prove
 prototype_cases
 prototype_report

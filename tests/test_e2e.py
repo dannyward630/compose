@@ -275,7 +275,7 @@ class UnattendedBrowser(unittest.TestCase):
         bin_.mkdir()
         (bin_ / "caffeinate").write_text(f"#!/bin/sh\necho $$ \"$@\" > {self.dir}/caffeinate\nexec sleep 30\n")
         (bin_ / "caffeinate").chmod(0o755)
-        env = {"BP_CHROME": str(chromium), "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"}
+        env = {"BP_CHROME": str(chromium), "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}", "COMPOSE_NO_AWAKE": ""}  # this case asks for the fake caffeinate
         p = mock.patch.dict(os.environ, env); p.start(); self.addCleanup(p.stop)
         os.environ.pop("COMPOSE_E2E_HEADLESS")  # restored with the rest of the environment after the test
         held = mock.patch.dict(fc.fc_proc.AWAKE, clear=True); held.start(); self.addCleanup(held.stop)  # no hold of an earlier test hides the fake

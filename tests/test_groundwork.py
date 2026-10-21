@@ -62,6 +62,7 @@ class Groundwork(unittest.TestCase):
         self.assertIn(str(self.proj / "results" / "contract.md"), brief)
         self.assertIn("$E2E_CLIENT_PORT", brief)
         self.assertIn("copied from the briefs, never added", brief)  # implementers never see the contract
+        self.assertIn("`compose verify --project p --prove`: each must fail only because the feature is missing, and `run` refuses", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
     def test_wayfinder_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
@@ -72,8 +73,8 @@ class Groundwork(unittest.TestCase):
         brief = out.getvalue()
         page = str(self.proj / "lavish" / "wayfinder.html")
         self.assertIn("NEB-9", brief)
-        self.assertIn("Text (the default)", brief)
-        self.assertIn("Lavish only for a card whose content IS visual", brief)
+        self.assertIn("Words are text (the default)", brief)
+        self.assertIn("A visual card is never asked as text, and a text card is never put on the page", brief)
         self.assertIn("needs-user", brief)
         self.assertIn("before any poll", brief)
         self.assertIn('data-lavish-annotate="off"', brief)
@@ -887,7 +888,8 @@ class ToolsmithBrief(unittest.TestCase):
         self.entry("shopping", "a later entry of that project", at="2026-10-16 23:00:00")
         for state in ("maintainer", "reporter", "no-gh"):
             out = self.brief(state)
-            self.assertEqual(out.count('--entry "2026-10-16 21:45:07"'), 1, state)
+            self.assertEqual(out.count('compose tool-bug file --project shop --entry "2026-10-16 21:45:07"'), 1, state)
+            self.assertEqual(out.count('--entry "2026-10-16 21:45:07"'), 2 if state == "maintainer" else 1, state)
             self.assertNotIn("--entry 2026", out, state)
             for s in ("08:00:00", "09:00:00", "23:00:00"):
                 self.assertNotIn(s, out, state)
@@ -896,7 +898,7 @@ class ToolsmithBrief(unittest.TestCase):
     def test_the_maintainers_toolsmith_fixes_on_a_branch_and_never_merges(self):
         self.entry("shop", "report crashed")
         out = self.brief("maintainer")
-        for s in ("gh issue comment", "never merge or push", "Fixes #"):
+        for s in ("your own worktree", "compose tool-bug pr --project shop --entry", "You never merge", "Fixes #"):
             self.assertIn(s, out)
         self.assertNotIn("never edit or commit", out)
 
@@ -906,7 +908,7 @@ class ToolsmithBrief(unittest.TestCase):
             out = self.brief(state)
             for s in ("never edit or commit", "needs-user", "--approved"):
                 self.assertIn(s, out, state)
-            self.assertNotIn("never merge or push", out, state)
+            self.assertNotIn("You never merge", out, state)
 
     def test_no_entry_for_the_project_exits_naming_it(self):
         for setup in (lambda: None, lambda: self.entry("other", "not ours")):

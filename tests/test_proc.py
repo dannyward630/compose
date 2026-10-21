@@ -114,7 +114,7 @@ class KeepAwake(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.dir, True)
         (self.dir / "caffeinate").write_text(f"#!/bin/sh\necho \"$@\" >> {self.dir}/args\nexec sleep 30\n")
         (self.dir / "caffeinate").chmod(0o755)
-        for p in (mock.patch.dict(os.environ, {"PATH": f"{self.dir}{os.pathsep}{os.environ['PATH']}"}), mock.patch.object(sys, "platform", "darwin"),
+        for p in (mock.patch.dict(os.environ, {"PATH": f"{self.dir}{os.pathsep}{os.environ['PATH']}", "COMPOSE_NO_AWAKE": ""}), mock.patch.object(sys, "platform", "darwin"),
                   mock.patch.dict(fc.fc_proc.AWAKE, clear=True)):
             p.start(); self.addCleanup(p.stop)
         self.addCleanup(lambda: [(h.terminate(), h.wait()) for h in list(fc.fc_proc.AWAKE.values())])
@@ -144,6 +144,11 @@ class KeepAwake(unittest.TestCase):
             self.assertIsNone(fc.fc_proc.keep_awake())
         (self.dir / "caffeinate").unlink()
         with mock.patch("shutil.which", return_value=None):
+            self.assertIsNone(fc.fc_proc.keep_awake())
+        self.assertEqual(fc.fc_proc.AWAKE, {})
+
+    def test_it_does_nothing_under_compose_no_awake(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_AWAKE": "1"}):
             self.assertIsNone(fc.fc_proc.keep_awake())
         self.assertEqual(fc.fc_proc.AWAKE, {})
 

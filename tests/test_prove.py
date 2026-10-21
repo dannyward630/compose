@@ -206,6 +206,52 @@ class ProveCommand(Repo):
         cp.assert_called_once()
 
 
+class RunGate(ProveCommand):
+    """`run` starts only on e2e cases a passing prove ran: never proven, a failed prove, or cases changed since stop it first."""
+    CASES = [jev_case("export", MISSING)]
+
+    def start(self, **flags):
+        """cmd_run's exit message, or "preflight" when the gate let it through to the doctor preflight."""
+        a = SimpleNamespace(repo=str(self.repo), project="p", only=None, no_stack=False, **flags)
+        with mock.patch.object(fc.fc_run, "require_committed", side_effect=SystemExit("preflight")), self.assertRaises(SystemExit) as cm:
+            fc.fc_run.cmd_run(a)
+        return str(cm.exception.code)
+
+    def test_never_proven_cases_stop_run_before_the_preflight_and_name_the_prove(self):
+        self.config(e2e=self.CASES)
+        out = self.start()
+        self.assertIn("its e2e cases were never proven", out)
+        self.assertIn("`compose verify --project p --prove`", out)
+        self.assertIn("`--unproven` runs anyway", out)
+
+    def test_a_passing_prove_opens_run_until_the_cases_or_their_setup_change(self):
+        self.assertEqual(self.prove(e2e=self.CASES)[0], 0)
+        self.assertEqual(self.start(), "preflight")
+        self.config(e2e=self.CASES, e2e_setup="npm run dev")
+        self.assertIn("its e2e cases or their setup changed since the last prove", self.start())
+        self.config(e2e=[*self.CASES, jev_case("export again", MISSING)])
+        self.assertIn("changed since the last prove", self.start())
+
+    def test_a_failed_prove_stops_run(self):
+        self.assertEqual(self.prove(e2e=[jev_case("export", {"statuses": ["done"]})])[0], 1)
+        self.assertIn("the last prove failed", self.start())
+
+    def test_unproven_no_cases_or_a_built_stack_skip_the_gate(self):
+        self.config(e2e=self.CASES)
+        self.assertEqual(self.start(unproven=True), "preflight")
+        with mock.patch.object(fc.fc_worktree, "stack_order", return_value=["001"]):
+            self.assertEqual(self.start(), "preflight")  # a later run of the same feature: the cases already pass on its layers
+        self.config(e2e=[])
+        self.assertEqual(self.start(), "preflight")
+
+    def test_it_is_a_run_flag(self):
+        with mock.patch.object(sys, "argv", ["compose", "run", "--project", "p", "--unproven"]), \
+                mock.patch.object(fc.fc_run, "cmd_run", side_effect=SystemExit(0)) as cr, mock.patch.object(fc.fc_config, "apply_config", return_value="default"), \
+                mock.patch.object(fc, "detach", side_effect=lambda a: a.fn(a)), self.assertRaises(SystemExit):
+            fc.main()
+        self.assertIs(cr.call_args[0][0].unproven, True)
+
+
 class PrototypeCommand(Repo):
     SCREEN = {"name": "settings", "url": "http://127.0.0.1:$E2E_PORT/settings", "goal": "Open the settings page", "reference": "frame0 page Settings",
               "must_match": ["icons", "empty state copy"]}

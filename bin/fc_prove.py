@@ -1,4 +1,4 @@
-import json, os, re, sys, time
+import hashlib, json, os, re, sys, time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 import fc_core, fc_config, fc_models, fc_worktree, fc_jev, fc_verify
@@ -96,6 +96,23 @@ def verify_config(a):
     path = proj / "verify.json"
     return Path(a.repo).resolve(), proj, json.loads(path.read_text()) if path.exists() else {}
 
+PROVED_KEYS = ("e2e", "e2e_setup", "e2e_env")  # what a prove ran: the cases and the environment they start in
+
+def e2e_digest(cfg):
+    """A short hash of what a prove ran, so `run` can tell when the cases or their setup changed after it."""
+    return hashlib.sha256(json.dumps({k: cfg.get(k) for k in PROVED_KEYS}, sort_keys=True).encode()).hexdigest()[:16]
+
+def unproven(repo, proj, cfg):
+    """Why `run` must not start yet, or None: the e2e cases were never proven, the last prove failed, or the cases or their setup
+    changed since it. None without e2e cases, and once the stack holds layers (a later run of the same feature cannot be proven)."""
+    if not cfg.get("e2e"):
+        return None
+    path = proj / "results" / "prove.json"
+    last = json.loads(path.read_text()) if path.exists() else None
+    why = ("its e2e cases were never proven" if last is None else "the last prove failed" if not last.get("passed")
+           else "its e2e cases or their setup changed since the last prove" if last.get("e2e_digest") != e2e_digest(cfg) else None)
+    return None if why is None or fc_worktree.stack_order(repo, proj) else why
+
 def cmd_prove(a):
     repo, proj, cfg = verify_config(a)
     if not cfg.get("e2e"):
@@ -110,7 +127,8 @@ def cmd_prove(a):
     except fc_models.PaymentRequired as e:
         sys.exit(f"prove stopped, nothing recorded: {e}")
     (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write(proj / "results" / "prove.json", json.dumps({"passed": ok, "cases": rows, "lint": lint, "seconds": round(time.time() - t0, 1)}, indent=2))
+    fc_core.atomic_write(proj / "results" / "prove.json", json.dumps({"passed": ok, "cases": rows, "lint": lint, "e2e_digest": e2e_digest(cfg),
+                                                                   "seconds": round(time.time() - t0, 1)}, indent=2))
     bad = [x for x in rows if x["verdict"] != "feature_missing"]
     fc_core.say(f"prove  {'PASS' if ok else 'FAIL'}  {len(rows) - len(bad)}/{len(rows)} case(s) fail because the feature is missing" + (f", {len(lint)} lint" if lint else "")
                 + f"  wall {fc_core.fmt(time.time() - t0)}")

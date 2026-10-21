@@ -1329,7 +1329,7 @@ class MachineDocs(unittest.TestCase):
         self.assertLines("docs/new-machine.md", MACHINE, 101)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 137)
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 138)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):

@@ -36,7 +36,7 @@ Phase A, toolchain (probe and report; you never change dependencies):
 Phase B, after the go (the settled choices reach the planner as tasks):
 1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: the planner splits them like any other work, and a choice the probe found is a wayfinder card the product owner settles first. Change no dependency.
 2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
-3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.compose or /tmp. Prove them with `compose verify --project {slug} --skip-review --fix 0` (checks and e2e only, no task sync needed), run directly: under `compose timed` jev has no TypeSafe key.
+3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.compose or /tmp. Run the checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0` (no task sync needed), then prove the e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds, so fix every case, seed, or setup it names. Run both directly: under `compose timed` jev has no TypeSafe key.
 4. Commit.
 
 Phase C, the contract (you write no tests: one teammate per task writes them in parallel from your contract):
@@ -326,7 +326,7 @@ def cmd_toolsmith(a):
    the compose repo, with a test that fails without the fix and passes with it, and run the full suite, not only your test.
    Never commit on main of any checkout, in ~/.compose/src, or in the project worktree: the tool refuses there.
 5. Commit the fix with a plain message and no `Fixes #` in it, then run
-   `compose tool-bug pr --project {project} --entry "{at}" --worktree <your worktree>`: it pushes your branch and opens the PR,
+   `compose tool-bug pr --project {proj.name} --entry "{entry['at']}" --worktree <your worktree>`: it pushes your branch and opens the PR,
    which closes the issue when the product owner merges it. You never merge.
 6. Report `done` with the PR's URL.
 """
