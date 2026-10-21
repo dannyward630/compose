@@ -15,6 +15,7 @@ test_brief
 cmd_testcrews
 test_branch
 test_open
+test_collected
 waiting_writers
 test_written
 test_blockers
