@@ -500,3 +500,58 @@ class RedoRunId(unittest.TestCase):
                 mock.patch.object(fc_ledger, "record_task") as record_task, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.fc_run.run_tasks(self.repo, self.proj, [t1, t3], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
         self.assertEqual(sorted(c.args for c in record_task.call_args_list), [(self.repo, self.proj, t1, ["001", "passed"]), (self.repo, self.proj, t3, ["003", "passed"])])
+
+
+class DoneUnsaved(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "verify.json").write_text('{"task_prefix": "task-"}')
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": t, "title": f"t{t}", "linear": f"ENG-{t}", "body": "## Acceptance criteria\n* a\n"} for t in ("003", "004", "005")]}))
+        self.old = json.dumps({"id": "003", "status": "failed", "branch": "task-003"})
+        (self.proj / "results" / "003.json").write_text(self.old)
+
+    def done(self, saved, only="003,004,005"):
+        """cmd_done with record_task answering `saved` per id; returns (printed, record_task, linear_event, exit code, result files seen at each record_task call)."""
+        seen, out = [], io.StringIO()
+        def record_task(repo, proj, meta, events):
+            seen.append((meta["id"], (proj / "results" / f"{meta['id']}.json").exists() and (proj / "results" / f"{meta['id']}.json").read_text()))
+            return saved[meta["id"]]
+        code = None
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc_ledger, "record_task", side_effect=record_task) as rt, \
+                mock.patch.object(fc.fc_linear, "linear_event") as le, contextlib.redirect_stdout(out):
+            try:
+                fc.fc_status.cmd_done(SimpleNamespace(repo=str(self.repo), only=only, note="by hand"))
+            except SystemExit as e:
+                code = e.code
+        return out.getvalue(), rt, le, code, seen
+
+    def result(self, tid):
+        f = self.proj / "results" / f"{tid}.json"
+        return f.read_text() if f.exists() else None
+
+    def test_an_unsaved_done_event_marks_nothing_and_exits_1_after_every_id(self):
+        out, rt, le, code, _ = self.done({"003": False, "004": True, "005": False})
+        self.assertEqual([c.args[2]["id"] for c in rt.call_args_list], ["003", "004", "005"])
+        self.assertEqual(code, 1)
+        self.assertEqual(self.result("003"), self.old)
+        self.assertIsNone(self.result("005"))
+        self.assertEqual(json.loads(self.result("004"))["status"], "hand_done")
+        self.assertEqual([c.args[1]["id"] for c in le.call_args_list], ["004"])
+        self.assertIn("003 not done: its done event is not saved on Linear; run compose done again\n", out)
+        self.assertIn("005 not done: its done event is not saved on Linear; run compose done again\n", out)
+        self.assertNotIn("004 not done", out)
+        self.assertIn("004 hand_done  t004  (by hand)\n", out)
+        self.assertNotIn("hand_done  t003", out)
+
+    def test_each_task_records_its_done_event_before_its_result_is_written(self):
+        out, rt, le, code, seen = self.done({"003": True, "004": True, "005": True})
+        self.assertIn(code, (None, 0))
+        self.assertEqual(seen, [("003", self.old), ("004", False), ("005", False)])
+        for c, tid in zip(rt.call_args_list, ("003", "004", "005")):
+            self.assertEqual(c.args[:2], (self.repo.resolve(), self.proj))
+            self.assertEqual((c.args[2]["id"], len(c.args[3]), c.args[3][0]["phase"], c.args[3][0]["task_ids"]), (tid, 1, "done", [tid]))
+        self.assertEqual([json.loads(self.result(t))["status"] for t in ("003", "004", "005")], ["hand_done"] * 3)
+        self.assertEqual(le.call_count, 3)
+        self.assertNotIn("not done", out)
+        self.assertIn("003 hand_done  t003  (by hand)\n", out)
