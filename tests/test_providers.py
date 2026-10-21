@@ -10,6 +10,7 @@ fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 import fc_providers  # bin/ is on sys.path once compose.py is loaded
+import fc_defaults, fc_finish, fc_steps
 
 FAKE = {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1", "fake-2"]}
 
@@ -347,3 +348,38 @@ class DoctorProviders(unittest.TestCase):
             bad, lines = self.deps()
         self.assertEqual(bad, ["req"])
         self.assertEqual([l.split(":")[1] for l in lines], [" req (install", " herdr config", " local provider alpha", " local provider fakelocal"])
+
+class SetupLocal(unittest.TestCase):
+    LOCAL, OR, DOWN = "pi:fakelocal/fake-1", "pi:openrouter-fast/z-ai/glm", "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+    def setUp(self):
+        self.tmp, self.up = Path(tempfile.mkdtemp()), mock.Mock(return_value=(True, "answered")); c = fc.fc_config
+        for p in (mock.patch.object(c, "CONFIG_PATH", self.tmp / "config.json"), mock.patch.object(c, "AUTH_PATH", self.tmp / "auth.json"), mock.patch.object(c, "ENV_FILE", self.tmp / ".env"),
+                  mock.patch.object(c, "PROBE_CACHE", self.tmp / "model-probe.json"), mock.patch.object(c, "PROVIDERS", {"fakelocal": FAKE}), mock.patch.dict(os.environ),
+                  mock.patch.object(c, "provider_of", lambda m: ("fakelocal", m.partition("/")[2]) if m.startswith("pi:fakelocal/") else None),
+                  mock.patch.object(fc.fc_models, "model_available", self.up), mock.patch.object(fc_steps, "FRAMELINK_ENV", self.tmp / "figma.env"),
+                  mock.patch.object(fc_finish.shutil, "which", lambda n, *a, **k: f"/bin/{n}"), mock.patch("sys.stdin.isatty", lambda: True)):
+            p.start(); self.addCleanup(p.stop)
+    def finish(self, model, key, dry=False):
+        (self.tmp / "config.json").write_text(json.dumps({"providers": {"fakelocal": FAKE}, "workspaces": {"w": {"target": "x"}}, "models": {"implementer": model}}))
+        (self.tmp / "auth.json").write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test"} if key else {}}}))
+        with mock.patch("fc_herdrconf.apply_herdr_config", return_value=("ok", [])):
+            return fc_finish.finish([("pi", "ok")], False, dry)
+    def test_local_implementer_is_probed_without_a_key_and_the_key_stays_missing(self):
+        lines, code = self.finish(self.LOCAL, key=False)
+        self.up.assert_called_once_with(self.LOCAL); self.assertIn(f"implementer {self.LOCAL}: answered", lines)
+        self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.assertEqual(code, 1); self.assertTrue(lines[-1].startswith("setup is not finished: missing OpenRouter"))
+    def test_failed_local_probe_prints_the_providers_line_without_preset_steps(self):
+        self.up.return_value = (False, self.DOWN)
+        lines, code = self.finish(self.LOCAL, key=True)
+        self.assertIn(self.DOWN, lines); self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.assertEqual(code, 1)
+        self.assertEqual(fc_defaults.probe_implementer({"models": {"implementer": self.LOCAL}}), (False, [self.DOWN]))
+    def test_dry_run_names_the_check_without_preset_steps_or_a_key(self):
+        lines, _ = self.finish(self.LOCAL, key=False, dry=True)
+        self.assertIn(f"would check implementer {self.LOCAL}", lines); self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.up.assert_not_called()
+    def test_openrouter_implementer_is_unchanged(self):
+        self.up.return_value = (False, "no preset")
+        lines, _ = self.finish(self.OR, key=True)
+        self.assertTrue(set(fc_defaults.PRESET_STEPS) <= set(lines)); self.up.assert_called_once_with(self.OR)
+        self.up.reset_mock(); lines, _ = self.finish(self.OR, key=False)
+        self.assertTrue(set(fc_defaults.PRESET_STEPS) <= set(lines)); self.up.assert_not_called()
+        self.assertEqual(fc_defaults.probe_implementer({"models": {"implementer": self.OR}}), (False, ["no preset", *fc_defaults.PRESET_STEPS]))
