@@ -133,6 +133,10 @@ def apply_config(move=True):
         os.environ["OPENROUTER_API_KEY"] = os.environ["TEXT_MODEL_API_KEY"] = OPENROUTER_KEY
     if auth.get("typesafe"):
         os.environ["TYPESAFE_API_KEY"] = auth["typesafe"]
+    for prov in PROVIDERS:
+        if key := fc_auth.workspace_key(auth, WORKSPACE, f"provider:{prov}"):
+            os.environ[provider_env(prov)] = key
+            fc_core.SECRET_VARS.add(provider_env(prov))
     dotenv = fc_core.load_env(ENV_FILE)
     fc_core.SECRET_VALUES.update(v for v in [OPENROUTER_KEY, LINEAR_KEY, auth.get("typesafe"), *(key for ws in held.values() for key in ws.values()),
                                              *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
