@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_update
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update
 
 
 def project_head(repo, proj):
@@ -289,6 +289,8 @@ def cmd_done(a):
         fc_core.atomic_write(res, json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
         fc_linear.linear_event(proj, meta, "hand_done", prev)
+        sha = fc_core.sh(["git", "rev-parse", "--verify", "-q", prev["branch"] + "^{commit}"], repo, check=False).stdout.strip()
+        fc_ledger.record(meta.get("linear"), [fc_ledger.event(fc_ledger.run_id(proj, tid), sha, [tid], fc_ledger.criterion_ids(meta), "done", "done", "pass", None, f"hand done: {a.note}")])
 
 def cmd_top(a):
     """Check out the project's stack top in the CLI worktree and print its path, for manual testing of the whole feature
