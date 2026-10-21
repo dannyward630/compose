@@ -162,6 +162,11 @@ class Record(unittest.TestCase):
         self.assertEqual((sorted(routes), self.cache.read_bytes()), (["001", "002"], saved))
         self.assertTrue(all(f"linear {i}: route not recorded (division by zero)" in out for i in ("ENG-3", "ENG-4")))
 
+    def test_a_task_without_a_linear_id_is_routed_and_not_recorded(self):
+        self.tasks = [{k: v for k, v in self.tasks[0].items() if k != "linear"}]
+        (routes, _), _ = self.route()
+        self.assertEqual((sorted(routes), self.linear_gql.called), (["001"], False))
+
 
 class RunRoutes(unittest.TestCase):
     def setUp(self):

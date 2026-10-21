@@ -8,7 +8,7 @@ import fc_tasks
 
 def route_context(repo, proj, meta, tasks, issues):
     """The Jev state for one task: task, criteria, files, other_files, story, bug, pin."""
-    mine = issues.get(meta["linear"]) or {}
+    mine = issues.get(meta.get("linear")) or {}
     parent = issues.get(mine.get("parentId"))
     rep = re.search(r"## Reproduction\n(.*?)(?:\n## |\Z)", meta["body"], re.S)
     text = (rep.group(1) if rep else "").strip()

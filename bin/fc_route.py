@@ -21,7 +21,7 @@ def route_tasks(repo, proj, tasks, recalculate=False):
     for m in tasks:
         state = fc_routectx.route_context(repo, proj, m, tasks, issues)
         h = fc_routectx.context_hash(repo, m, policies)
-        rec = fc_routerec.parse_route((issues.get(m["linear"]) or {}).get("description") or "")
+        rec = fc_routerec.parse_route((issues.get(m.get("linear")) or {}).get("description") or "")
         if rec and rec.get("context hash") == h and not recalculate:
             route = {"workflow": rec["workflow"], "depth": rec["depth"], "reason": rec["reason"], "hash": h}
             routes[m["id"]] = route
@@ -33,7 +33,7 @@ def route_tasks(repo, proj, tasks, recalculate=False):
         route["reason"] = fc_routerec.route_reason(route, state)
         routes[m["id"]] = route
         print(f"{m['id']} {route['depth']} {route['workflow']}  {route['reason']}")
-        if fc_config.LINEAR_KEY:
+        if fc_config.LINEAR_KEY and m.get("linear"):
             try:
                 record_route(proj, m, fc_routerec.route_section(route))
             except Exception as e:
