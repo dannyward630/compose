@@ -1,7 +1,8 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
 from unittest import mock
 from pathlib import Path
+from types import SimpleNamespace
 os.environ.update(COMPOSE_NO_TREEHOUSE="1", HERDR_ENV="")
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
@@ -628,3 +629,50 @@ class PassScope(unittest.TestCase):
         with mock.patch.object(fc_reroute, "diff_signals", signals):
             got, calls = self.catch_up(("scope",))
         self.assertEqual((got, list(calls)), ({"001": "git diff failed"}, ["003"]))
+
+
+class FixScope(unittest.TestCase):
+    def rounds(self, stages, outside=True, layers=True, key="lin_test", reassess=None):
+        """verify_rounds in a worktree of a stack (001 inside src/a.py, 002 on src/b.py plus a logo when `outside`) with the stages `stages` (ok per round) and a fixer
+        that commits one edit to src/b.py. Returns (exit code, reassess call args, said lines, stages run, passed from verify.json)."""
+        main = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, main, True); wt = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, wt, True)
+        proj = main / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        git = lambda cwd, *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd, check=True, capture_output=True)
+        git(main, "init", "-q", "-b", "main"); git(main, "commit", "-q", "--allow-empty", "-m", "init")
+        tasks = [{"id": t, "after": "", "title": t, "body": "", "test": "true","protected": [], "files": [f"src/{f}.py"], "linear": f"XX-{t}"} for t, f in (("001", "a"), ("002", "b"))]
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        for t, paths in ({"001": ["src/a.py"], "002": ["src/b.py"] + ["logo.png"] * outside} if layers else {}).items():
+            git(main, "checkout", "-q", "-b", fc.fc_worktree.task_branch(main, proj, t), *(["main"] if t == "001" else []))
+            for p in paths: (main / p).parent.mkdir(exist_ok=True); (main / p).write_text(t)
+            git(main, "add", "-A"); git(main, "commit", "-qm", t); (proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+        git(main, "checkout", "-q", "main"); wt.rmdir(); git(main, "worktree", "add", "-q", "-b", "stack", str(wt), fc.fc_worktree.task_branch(main, proj, "002") if layers else "main")
+        asked, said, ran, done = [], [], [], set()
+        def re(*args):
+            asked.append(args); done.update((k, args[5]) for k in args[4])
+            if reassess: raise reassess
+        def stage(*args):
+            ran.append(len(asked)); return (stages[len(ran) - 1], {}, "finding")
+        def fixer(cwd, model, prompt): (wt / "src").mkdir(exist_ok=True); (wt / "src/b.py").write_text(f"fix {len(ran)}"); return None, "Tidy b", 1, {"cost": 0.0}
+        patches = [mock.patch.object(fc_reroute, "reassess", re), mock.patch.object(fc_reroute, "fired", lambda issue: set(done)), mock.patch.object(fc.fc_config, "LINEAR_KEY", key),
+                   mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(fc.fc_verify, "run_stages", stage),
+                   mock.patch.object(fc.fc_implement, "implementer", fixer), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_worktree, "ready_checkout"),
+                   mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
+        with contextlib.ExitStack() as stack:
+            for p in patches: stack.enter_context(p)
+            with self.assertRaises(SystemExit) as exit:
+                fc.fc_verify.verify_rounds(wt, proj, {"main_repo": str(main)}, SimpleNamespace(fix=len(stages) - 1, review_only=False), [], 0)
+        return exit.exception.code, asked, said, ran, json.loads((proj / "results" / "verify.json").read_text())["passed"]
+
+    def test_a_kept_fix_reassesses_the_top_task_for_scope_once_before_the_next_round_and_a_second_fix_asks_nothing(self):
+        code, asked, _, ran, passed = self.rounds([False, False, True])
+        self.assertEqual(([a[2]["id"] for a in asked], [a[4] for a in asked], [a[5] for a in asked], ran, code, passed), (["002"], [["scope"]], ["run-002"], [0, 1, 1], 0, True))
+
+    def test_a_top_layer_inside_its_files_or_a_stack_without_layers_or_a_key_reassesses_nothing_and_fails_nothing(self):
+        for kw in {"outside": False}, {"layers": False}, {"key": None}:
+            with self.subTest(**kw):
+                code, asked, said, ran, passed = self.rounds([False, True], **kw)
+                self.assertEqual((asked, [s for s in said if "route not recorded" in s], ran, code, passed), ([], [], [0, 0], 0, True))
+
+    def test_a_scope_reassessment_not_recorded_says_why_runs_no_further_round_and_fails_verify(self):
+        code, asked, said, ran, passed = self.rounds([False, True], reassess=RuntimeError("Linear: down"))
+        self.assertEqual((len(asked), "verify FAIL  route not recorded for 002: Linear: down" in said, ran, code, passed), (1, True, [0], 1, False))
