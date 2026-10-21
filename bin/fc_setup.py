@@ -1,7 +1,7 @@
 """`compose setup [--yes]`: one prompt flow on a terminal, every default otherwise."""
 import shutil, sys
 from pathlib import Path
-import fc_checks, fc_config, fc_finish, fc_keys, fc_prompt, fc_steprun, fc_steps
+import fc_checks, fc_config, fc_finish, fc_keys, fc_perms, fc_prompt, fc_steprun, fc_steps
 
 
 MODES = ("Quick start (every default, designer extras off)", "Custom (choose each step)")
@@ -12,7 +12,7 @@ def walk_steps(checkout, custom, yes, dry=False):
     results, designer = [], False
     for row in fc_steps.STEPS:
         name, _, install, level, _, mode = row
-        if mode == "key":
+        if mode in ("key", "perms"):  # asked for after the steps: fc_keys.ask_keys, fc_perms.offer
             continue
         lines = []
         if custom and fc_steps.check(row, checkout)[0]:
@@ -45,13 +45,14 @@ def run_setup(checkout, yes, dry=False):
     if not yes:
         custom = fc_prompt.select("How do you want to set up?", MODES) == 1
     results, designer = walk_steps(checkout, custom, yes, dry)
-    kinds = []
+    kinds, rules = [], fc_perms.offer(yes, dry)
     if not yes:
         kinds = fc_keys.ask_keys(fc_config.settings(fc_config.read_config())[0], fc_steps.FRAMELINK_ENV, designer, dry)
         with fc_prompt.spin("checking your model"):
             lines, code = fc_finish.finish(results, yes, dry)
     else:
         lines, code = fc_finish.finish(results, yes, dry)
+    lines = rules + lines
     if dry:
         changes = sum(state == "would" for _, state in results) + len(kinds) + sum(line.startswith("would ") for line in lines)
         fc_prompt.note("Summary", lines)

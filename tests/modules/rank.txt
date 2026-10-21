@@ -15,6 +15,7 @@ fc_worktree
 fc_checks
 fc_pi
 fc_keys
+fc_perms
 fc_steps
 fc_layers
 fc_stack

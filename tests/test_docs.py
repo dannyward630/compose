@@ -1266,7 +1266,7 @@ DEVELOPMENT = [
     "## Credits",
 ]
 CLI_HEAD = "| `setup` | Installs and configures everything `compose` needs ([new-machine.md](new-machine.md)). On a terminal it asks one question at a time (Quick start or Custom, a yes or no per missing step under Custom, each key with hidden input); `--yes`, or no terminal, runs the same steps with every default and never prompts."
-CLI_TAIL = " It exits 1 when Claude Code is missing. Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
+CLI_TAIL = " It shows the Claude Code permission rules `compose` needs (`gh pr view`, `compose land`, moving a `compose/*` branch) and writes them to `~/.claude/settings.json` only on your yes; `--yes` and a dry run never write them, and rules that stay asking (`git push`, force-push, `gh pr merge`, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`) are never added. It exits 1 when Claude Code is missing. Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
 
 
 class SetupDocs(unittest.TestCase):

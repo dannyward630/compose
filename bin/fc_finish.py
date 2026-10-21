@@ -21,7 +21,7 @@ def _finish(results, yes, dry=False):
     state = dict(results)
     groups = {s: [] for s in ("failed", "claude", "manual", "skipped")}
     for name, _, _, _, _, mode in fc_steps.STEPS:
-        if mode != "key" and state.get(name) in groups:
+        if mode not in ("key", "perms") and state.get(name) in groups:
             groups[state.get(name)].append(name)
     lines = [f"{head}: " + ", ".join(names) for head, names in
              (("failed", groups["failed"]), ("waiting on Claude Code", groups["claude"]),
