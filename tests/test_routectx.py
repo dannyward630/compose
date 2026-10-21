@@ -114,7 +114,7 @@ def sha16(blob_list, body="## Goal\nGrüße", files=("a.py", "src/b.py", "new.py
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-class ContextHash(unittest.TestCase):
+class Hash(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         self.git("init", "-q", "-b", "main")
