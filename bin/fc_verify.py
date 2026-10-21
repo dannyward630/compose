@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_costevent
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -422,6 +422,7 @@ def cmd_verify(a):
         cfg.update({k: at_root(cfg[k], olds, root) for k in ("checks", "e2e", "e2e_setup", "e2e_env") if k in cfg})
         cfg["main_repo"] = repo
     try:
+        fc_reroute.before_verify(repo, proj, tasks, base)
         verify_rounds(root, proj, cfg, a, rounds, t0, left_out)
     except fc_models.PaymentRequired as e:
         fc_models.payment_halt(repo, proj, "verify", [], {"fix": a.fix, "skip_e2e": a.skip_e2e, "skip_review": a.skip_review}, e)

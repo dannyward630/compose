@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sys
 
 import fc_config
 import fc_core
@@ -183,7 +184,12 @@ def after_run(repo, proj, results, tasks, trunk):
 
 def before_verify(repo, proj, tasks, trunk):
     """`verify`'s hook before its first stage: catch up the stack, else fail closed."""
-    raise NotImplementedError("before_verify")
+    ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in fc_worktree.stack_order(repo, proj, tasks)]
+    whys = catch_up(repo, proj, tasks, ids, trunk, ("diff",))
+    for id, why in whys.items():
+        fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+    if whys:
+        sys.exit(1)
 
 
 LEDGER = ("failed tests", "invalid evidence", "unmet requirements")
