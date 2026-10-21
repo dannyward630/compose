@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, unittest
+import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, tomllib, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -903,3 +903,65 @@ class HooksFile(unittest.TestCase):
         row = {"name": "Other", "home_env": "CODEX_HOME", "home": "~/.codex", "hooks_file": "hooks.json"}
         with mock.patch.dict(fc_harness.HARNESSES, {"other": row}): self.assertEqual(fc_links.write_hooks("other", "/c"), [])
         self.assertFalse(self.file.exists())
+
+
+class HookTrust(unittest.TestCase):
+    SNAKE = {"PreToolUse": "pre_tool_use", "UserPromptSubmit": "user_prompt_submit", "SessionStart": "session_start"}
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp()).resolve()
+        self.home, self.bin = tmp / "home", tmp / "bin"
+        (self.home / "codex").mkdir(parents=True); self.bin.mkdir()
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home), "CODEX_HOME": str(self.home / "codex"), "PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        self.file, self.trust = self.home / "codex/hooks.json", self.home / "codex/config.toml"
+        g = lambda m, sub: {**({"matcher": m} if m else {}), "hooks": [{"type": "command", "command": f'"/c/bin/compose" {sub}', "timeout": 10}]}
+        self.put({"PreToolUse": [g("Write|Edit|MultiEdit|NotebookEdit", "guard"), g("Bash", "guard")], "UserPromptSubmit": [g(None, "skillcheck")], "SessionStart": [g("compact", "reenter")]})
+
+    def put(self, hooks): self.file.write_text(json.dumps({"hooks": hooks}))
+    def hooks(self): return json.loads(self.file.read_text())["hooks"]
+    def records(self):
+        return {f"{self.file}:{self.SNAKE[ev]}:{i}:{j}": fc_harness._codex_hash(ev, g)
+                for ev, gs in self.hooks().items() for i, g in enumerate(gs) for j in range(len(g["hooks"]))}
+
+    def state(self): return {k: v["trusted_hash"] for k, v in tomllib.loads(self.trust.read_text())["hooks"]["state"].items()}
+
+    def test_four_records_are_written_with_the_hashes_and_a_second_call_writes_nothing(self):
+        self.assertEqual([str(p) for p in fc_links.trust_hooks("codex", "/c")], [str(self.trust)])
+        self.assertEqual(self.state(), self.records())
+        self.assertIn(f"[hooks.state.{json.dumps(f'{self.file}:pre_tool_use:1:0')}]", self.trust.read_text())
+        before = self.trust.read_bytes(); self.assertEqual((fc_links.trust_hooks("codex", "/c"), self.trust.read_bytes()), ([], before))
+
+    def test_other_content_and_herdrs_record_stay_and_herdrs_group_gets_none(self):
+        herdr = {"hooks": [{"type": "command", "command": "herdr hook session-start"}]}; self.put({**self.hooks(), "SessionStart": [herdr, *self.hooks()["SessionStart"]]})
+        hk = f"{self.file}:session_start:0:0"
+        old = f'# mine\nmodel = "x"\n\n[projects."{self.home}"]\ntrust_level = "trusted"  # keep\n\n[hooks.state.{json.dumps(hk)}]\ntrusted_hash = "sha256:herdr"\n'
+        self.trust.write_text(old)
+        fc_links.trust_hooks("codex", "/c")
+        self.assertTrue(self.trust.read_text().startswith(old))
+        self.assertEqual(self.state(), {**{k: v for k, v in self.records().items() if k != hk}, hk: "sha256:herdr"})
+
+    def test_a_wrong_hash_has_only_its_trusted_hash_line_replaced(self):
+        key = f"{self.file}:pre_tool_use:0:0"
+        old = f'# top\n[hooks.state.{json.dumps(key)}]\nenabled = true\ntrusted_hash = "sha256:bad"\n\n[other]\ntrusted_hash = "keep"\n'
+        self.trust.write_text(old)
+        fc_links.trust_hooks("codex", "/c")
+        self.assertTrue(self.trust.read_text().startswith(old.replace('"sha256:bad"', json.dumps(self.records()[key]))))
+        self.assertEqual((self.state(), tomllib.loads(self.trust.read_text())["other"]), (self.records(), {"trusted_hash": "keep"}))
+
+    def test_invalid_toml_or_a_header_not_found_as_text_exits_naming_the_file_and_writes_nothing(self):
+        for text in ("[unclosed", f'[hooks.state]\n{json.dumps(f"{self.file}:pre_tool_use:0:0")} = {{ trusted_hash = "sha256:bad" }}\n'):
+            self.trust.write_text(text)
+            with self.assertRaises(SystemExit) as e: fc_links.trust_hooks("codex", "/c")
+            self.assertIn(str(self.trust), str(e.exception))
+            self.assertEqual(self.trust.read_text(), text)
+
+    def test_hooks_ok_names_the_first_missing_hook_or_record_and_passes_after_both_writes(self):
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+        hooks = self.hooks(); self.file.unlink()
+        ok, why = fc_checks.hooks_ok("codex", "/c"); self.assertFalse(ok); self.assertIn("hooks.json", why); self.assertTrue(why.endswith("lacks compose's guard hook"), why)
+        self.put(hooks)
+        ok, why = fc_checks.hooks_ok("codex", "/c"); self.assertFalse(ok); self.assertIn("config.toml", why); self.assertTrue(why.endswith("has no trust record for compose's guard hook"), why)
+        fc_links.trust_hooks("codex", "/c"); self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+        self.trust.write_text(self.trust.read_text().replace(self.records()[f"{self.file}:session_start:0:0"], "sha256:bad"))
+        self.assertTrue(fc_checks.hooks_ok("codex", "/c")[1].endswith("has no trust record for compose's reenter hook"))
+        with mock.patch.dict(fc_harness.HARNESSES, {"codex": {k: v for k, v in fc_harness.HARNESSES["codex"].items() if k != "hooks"}}): self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
