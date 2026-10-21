@@ -701,9 +701,9 @@ class JevLeash(unittest.TestCase):
 
     def test_a_jev_case_is_killed_at_its_limit_and_its_assert_still_runs(self):
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", 124, "", "hung")) as t:
+             mock.patch.object(fc.fc_jev, "run_held", side_effect=lambda cmd, limit, env, then: (subprocess.CompletedProcess("x", 124, "", "hung"), then())) as t:
             r = fc.fc_jev.jev_e2e({"name": "c", "url": "http://x", "goal": "g", "assert": "true", "timeout": 5}, Path("/tmp"))
-        self.assertEqual(t.call_args[0][2], 5)
+        self.assertEqual(t.call_args[0][1], 5)
         self.assertIn("JEV_GAVE_UP", r["stderr"]); self.assertTrue(fc.fc_jev.tool_error(r["stderr"]))
         self.assertEqual((r["exit"], r["assert_exit"]), (124, 0)); self.assertNotIn("run", r)
 
@@ -713,7 +713,7 @@ class JevLeash(unittest.TestCase):
         """jev exits 0 only on a reached goal; verify runs the assert after it, whatever jev's status."""
         stdout = "JEV_RESULT " + json.dumps({"status": status, "elapsed_ms": 413, "steps": 7, "url": "about:blank", "usage": self.USAGE}) + "\n"
         with mock.patch.object(fc.fc_config, "JEV_DIR", Path(tempfile.mkdtemp())), \
-             mock.patch.object(fc.fc_implement, "timed", return_value=subprocess.CompletedProcess("x", int(status != "done"), stdout, "")):
+             mock.patch.object(fc.fc_jev, "run_held", side_effect=lambda cmd, limit, env, then: (subprocess.CompletedProcess("x", int(status != "done"), stdout, ""), then())):
             return fc.fc_jev.jev_e2e({"name": "c", "url": "about:blank", "goal": "g", "assert": f"exit {assert_code}"}, Path(tempfile.mkdtemp()))
 
     def test_a_blocked_jev_fails_the_case_even_when_its_assert_passes(self):

@@ -1,7 +1,7 @@
-import contextlib, shlex, json, os, re, shutil, signal, subprocess, time
+import contextlib, shlex, json, os, re, shutil, signal, subprocess, threading, time
 from pathlib import Path
 from urllib.parse import urlsplit
-import fc_core, fc_proc, fc_config, fc_models, fc_implement
+import fc_core, fc_proc, fc_config, fc_models
 
 
 JEV_TIMEOUT = 150  # seconds one jev e2e case may run; a wandering jev used its whole 60-action budget in run 6
@@ -161,6 +161,45 @@ def driver_e2e(case, repo):
         r["run"] = json.loads(m.group(1))
     return r
 
+def run_held(cmd, limit, env, then):
+    """jev run with --hold, as fc_implement.timed runs a command (under a machine slot, its group in fc_proc.RUNNING, killed
+    at `limit`, its output scrubbed), calling then() while jev still holds the case's tab open: once it printed its
+    JEV_RESULT, or ended or was killed without one. Closing jev's stdin then lets it close the tab.
+    Returns jev's CompletedProcess (exit 124 at the limit) and what then() returned."""
+    with fc_proc.slot(fc_core.say) as held:
+        before = fc_core.home_state()
+        p = subprocess.Popen(cmd, cwd=fc_config.JEV_DIR, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, start_new_session=True, env={**env, "COMPOSE_TEST_SLOT": held})
+        fc_proc.RUNNING.add(p.pid)
+        out, err, result = [], [], threading.Event()
+
+        def read_out():
+            for line in p.stdout:
+                out.append(line)
+                if line.startswith("JEV_RESULT "):
+                    result.set()
+            result.set()
+        readers = [threading.Thread(target=read_out), threading.Thread(target=lambda: err.extend(p.stderr))]
+        for t in readers:
+            t.start()
+        killed = False
+        try:
+            if not result.wait(limit):
+                fc_proc.kill_group(p.pid)
+                killed = True
+            checked = then()
+        finally:
+            p.stdin.close()
+            try:
+                p.wait(30)
+            except subprocess.TimeoutExpired:
+                fc_proc.kill_group(p.pid)
+            for t in readers:
+                t.join()
+            fc_proc.RUNNING.discard(p.pid)
+            fc_core.flag_home(before, f"`{cmd}`", sid=p.pid)
+        return subprocess.CompletedProcess(cmd, 124 if killed else p.wait(), fc_core.scrub("".join(out)), fc_core.scrub("".join(err))), checked
+
 def jev_e2e(case, repo):
     """Drive a real browser with jev (`python -m jev_ultrafast`, in its own uv project, jev/) to the case's goal, then run
     its independent assert after any run, one that gave up, crashed, or hit its limit too: an assert may also reset the app
@@ -190,12 +229,10 @@ def jev_e2e(case, repo):
         shutil.rmtree(record, ignore_errors=True)  # a retry's or an earlier round's steps are not this run's
     env_file = ["--env-file", str(fc_config.ENV_FILE)] if fc_config.ENV_FILE.exists() else []
     flags = (["--secrets", json.dumps(case["secrets"])] if case.get("secrets") else []) + (["--record", str(record)] if record else [])
-    cmd = shlex.join(["uv", "run", "--quiet", *env_file, "python", "-m", "jev_ultrafast", *flags, "--", case["url"], case["goal"]])
-    a = None
+    cmd = shlex.join(["uv", "run", "--quiet", *env_file, "python", "-m", "jev_ultrafast", "--hold", *flags, "--", case["url"], case["goal"]])
+    check = lambda: fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=project_env, timeout=case.get("timeout", 600)) if case.get("assert") else None
     with case_setup(case, repo, project_env):
-        p = fc_implement.timed(cmd, fc_config.JEV_DIR, limit, env=env)
-        if case.get("assert"):
-            a = fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=project_env, timeout=case.get("timeout", 600))
+        p, a = run_held(cmd, limit, env, check)  # the assert reads the case's tab, so it runs before jev closes it
     # JEV_RESULT, its history included, is kept parsed in "run"; stdout keeps what jev and the assert printed besides.
     out = re.sub(r"^JEV_RESULT .*\n?", "", p.stdout, flags=re.M) + (fc_core.scrub(a.stdout) if a else "")
     r = {"name": case.get("name"), "exit": p.returncode, "stdout": out[-3000:], "stderr": (p.stderr + (fc_core.scrub(a.stderr) if a else ""))[-2000:]}

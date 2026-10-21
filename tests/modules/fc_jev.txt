@@ -13,6 +13,7 @@ SETUP_DEADLINE
 await_setup
 case_setup
 driver_e2e
+run_held
 jev_e2e
 ASSERT_BROKE_RE
 LOAD_FAIL_RE

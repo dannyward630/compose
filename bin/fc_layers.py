@@ -114,14 +114,17 @@ def _linearize(repo, proj, trunk, wt):
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     for b in chain:
-        if not contains(prev, b):
+        # A replaced layer's old commits are dropped even while it is not back in the chain (still running, failed, or moved
+        # above b by a re-plan): b may already sit on prev and carry them.
+        stale = [t for rb, t in replaced if rb != b and contains(t, b) and not contains(t, prev)]
+        if stale or not contains(prev, b):
             # b still carries the old commits of what it was built on: a layer below that was rebuilt or rebased, a layer still
             # chained as it was but now below a new one, or the trunk itself when it was rewritten (rebased onto a moved main).
-            # Replay only b's own commits: start above the deepest tip it was built on whose work the chain already holds: one
-            # recorded in this pass (a rebuilt layer, or a layer rebased just now), a chained layer as it is now, or one in the
-            # reflog of the layer below (fork-point), which holds a rewrite made before this pass, by hand or by a redo whose
-            # replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase is the best guess.
-            old = [(t, "the old base recorded in this pass") for rb, t in tips if rb in linear and contains(t, b)]
+            # Replay only b's own commits: start above the deepest tip it was built on whose work the chain already holds, or
+            # that is being rebuilt: one recorded in this pass (a replaced layer, or a layer rebased just now), a chained layer
+            # as it is now, or one in the reflog of the layer below (fork-point), which holds a rewrite made before this pass,
+            # by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase.
+            old = [(t, "the old base recorded in this pass") for rb, t in tips if (rb in linear or t in stale) and contains(t, b)]
             old += [(x, f"{x}, the chained layer it sits on") for x in linear if contains(x, b)]
             fork = fc_core.sh(["git", "merge-base", "--fork-point", prev, b], repo, check=False).stdout.strip()
             old += [(fork, f"the old base from the reflog of {prev}")] if fork else []

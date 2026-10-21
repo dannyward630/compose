@@ -87,6 +87,35 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "twelve")
 
+    def test_layers_above_a_replaced_layer_that_moved_up_the_chain_drop_its_old_commit(self):
+        # a re-plan put 011 after 005, then --redo replaced it: 012 and 005 still sit on the old 011 while it waits for 005
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"] = [{**t, "after": {"011": "005", "012": "010"}.get(t["id"], t["after"])} for t in tasks["tasks"]]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/011")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "012", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "main..fast/p/005"), "task 005\ntask 012\ntask 010")
+        self.assertEqual(self.git("for-each-ref", "refs/compose/replaced/"), "")
+
+    def test_a_layer_above_two_redone_layers_replays_only_its_own_commit(self):
+        # 013 sits on 012 without needing it. run --redo of 011 and 012: 013 is chained while 012 runs, then once 012 is rebuilt
+        self.git("branch", "-D", "fast/p/005")
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [
+            {"id": "010", "after": ""}, {"id": "011", "after": "010"}, {"id": "012", "after": "011"}, {"id": "013", "after": "011"}]}))
+        self.layer("013", "fast/p/012", "013.txt", "old\n")
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/011")
+        self.layer("011", "fast/p/010", "c.txt", "new\n")
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/012")
+        fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.layer("012", "fast/p/011", "012.txt", "new\n")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "013")])
+        self.assertEqual(self.git("log", "--format=%s", "main..fast/p/013"), "task 013\ntask 012\ntask 011\ntask 010")
+        self.assertEqual(self.git("show", "fast/p/013:012.txt"), "new")
+
     def test_a_task_built_on_a_low_layer_goes_to_its_own_place_and_moves_no_layer(self):
         # 006 after 010 starts on 010, as a run bases it, so it counts as many commits as 011; its place is still after 005
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
