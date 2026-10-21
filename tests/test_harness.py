@@ -1,12 +1,13 @@
 import hermetic  # first: no test sees the real home
 import contextlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_steprun, fc_steps
+import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_steprun, fc_steps
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
 
@@ -356,3 +357,47 @@ class HarnessPassDown(unittest.TestCase):
     def test_a_flag_without_its_block_exits_before_any_herdr_call(self):
         calls, _, _ = self.start("--harness", "codex", cfg={k: v for k, v in self.CFG.items() if k != "harnesses"})
         self.assertEqual((calls, hasattr(self, "exit")), ([], True))
+
+
+class CodexProbe(unittest.TestCase):
+    ID, REFUSED = "gpt-6-sol", 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"m"}}\n'
+
+    def setUp(self):
+        self.calls = []
+        for p in (mock.patch.object(fc_config, "PROBE_CACHE", Path(tempfile.mkdtemp()) / "probe.json"), mock.patch.object(fc_models.subprocess, "run", self.fake_run)):
+            p.start(); self.addCleanup(p.stop)
+        fc_models._PROBED.clear(); self.addCleanup(fc_models._PROBED.clear)
+
+    def fake_run(self, argv, **kw):
+        self.calls.append(argv)  # a model called "bad" is refused
+        bad = "bad" in argv
+        return subprocess.CompletedProcess(argv, int(bad), "", self.REFUSED if bad else "")
+
+    def command(self, mid): return ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-m", mid, "Reply with exactly: ok"]
+
+    def test_command_and_result_are_codexs(self):
+        self.assertEqual(fc_models.probe_command(f"codex:{self.ID}"), self.command(self.ID))
+        self.assertEqual(fc_models.probe_result(f"codex:{self.ID}", subprocess.CompletedProcess([], 0, "", "")), (True, "answered"))
+        self.assertEqual(fc_models.probe_result("codex:bad", subprocess.CompletedProcess([], 1, "", self.REFUSED)), (False, "m"))
+
+    def test_bare_codex_is_available_without_a_process_or_a_cache_read(self):
+        with mock.patch.object(fc_config, "PROBE_CACHE") as cache:
+            for model in ("codex", "codex:"): self.assertEqual(fc_models.model_available(model), (True, "Codex's default model"))
+        self.assertEqual((self.calls, cache.mock_calls), ([], []))
+
+    def test_an_id_is_probed_once_and_a_pass_is_cached_for_the_day(self):
+        self.assertEqual(fc_models.model_available(f"codex:{self.ID}"), (True, "answered"))
+        fc_models._PROBED.clear()  # a new process still finds the day's cache file
+        self.assertEqual(fc_models.model_available(f"codex:{self.ID}"), (True, "answered"))
+        self.assertEqual(self.calls, [self.command(self.ID)])
+
+    def test_a_refusal_is_returned_and_probed_again(self):
+        for _ in range(2): self.assertEqual(fc_models.model_available("codex:bad"), (False, "m"))
+        self.assertEqual(self.calls, [self.command("bad")] * 2)
+
+    def test_models_probe_lists_codex_entries_with_their_results(self):
+        out = []
+        with mock.patch.object(fc_config, "CREW_MODELS", {"a": f"codex:{self.ID}", "b": "codex:bad", "c": "codex"}), mock.patch.object(fc_config, "CREW_FALLBACK", {}), \
+                mock.patch("builtins.print", lambda *a: out.append(" ".join(map(str, a)))):
+            fc_models.cmd_models(SimpleNamespace(probe=True))
+        self.assertEqual(out, [f"codex:{self.ID}: ok (answered)", "codex:bad: unavailable (m)", "codex: ok (Codex's default model)"])
