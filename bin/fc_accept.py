@@ -1,6 +1,6 @@
 import os, threading
 from concurrent.futures import ThreadPoolExecutor
-import fc_core, fc_config, fc_tasks, fc_ledger, fc_models
+import fc_core, fc_config, fc_tasks, fc_evidence, fc_ledger, fc_models
 
 
 # TypeSafe answers HTTP 400 max_tokens_exceeded for a state of about 35k characters of dense text (30k passes, 40k fails); the old 150k cap never fit.
@@ -146,7 +146,7 @@ def sufficiency_events(meta, rows, answers, threshold, run_id, commit_sha):
 
 def jev_sufficiency(cfg, proj, repo):
     """Jev judges each task's criteria from its counted evidence; the events are recorded on the task issue and returned."""
-    import json, fc_evidence
+    import json
     env = {**fc_core.load_env(cfg.get("env_file", fc_config.ENV_FILE)), **os.environ}
     threshold = cfg.get("acceptance_threshold", 0.6)
     f = proj / "linear.json"
