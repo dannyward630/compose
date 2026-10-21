@@ -25,10 +25,10 @@ class Frame0(unittest.TestCase):
         return [c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"]
 
     def test_port_is_stable_per_project_and_in_range(self):
-        other = self.wt / ".compose" / "cart"
-        self.assertEqual(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.frame0_port(self.proj))
-        self.assertIn(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.FRAME0_PORTS)
-        self.assertNotEqual(fc.fc_frame0.frame0_port(self.proj), fc.fc_frame0.frame0_port(other))
+        shop = Path("/compose-test/a/.compose/shop")
+        self.assertEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(shop))
+        self.assertIn(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.FRAME0_PORTS)
+        self.assertNotEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(Path("/compose-test/a/.compose/cart")))
 
     def test_register_adds_replaces_or_leaves_the_local_server(self):
         add = ["claude", "mcp", "add", "-s", "local", "frame0", "--", "compose", "frame0", "mcp", "--api-port=58411"]
