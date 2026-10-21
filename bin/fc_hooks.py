@@ -1,4 +1,4 @@
-import hashlib, json, os, re, sys
+import hashlib, json, os, re, shlex, sys
 from pathlib import Path
 import fc_core, fc_config, fc_worktree
 
@@ -24,14 +24,49 @@ def guard_decision(tool, path, role):
     return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "
             f"`compose crew start --role <job> --brief -`, or put it in a task issue for `run`.")
 
+def toplevel(path):
+    """The worktree root `path` is in, or None."""
+    top = fc_core.sh(["git", "rev-parse", "--show-toplevel"], path, check=False).stdout.strip() if Path(path).is_dir() else ""
+    return Path(top).resolve() if top else None
+
+def switch_decision(command, cwd, role, shared):
+    """None to allow, else why not. A crew session started without its own worktree runs in the project worktree `shared` with the
+    team lead, so a `git checkout` or `git switch` there moves the lead's HEAD, and the stack then reads the wrong task branches.
+    Restoring files (`git checkout -- path`) and any checkout in another worktree (`cd`, `git -C`) are fine."""
+    if role != "crew" or not command or not shared or not toplevel(shared):
+        return None
+    here = Path(cwd or ".")
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            continue
+        if words[:1] == ["cd"] and len(words) > 1:
+            here = here / Path(words[1]).expanduser()
+        if words[:1] != ["git"]:
+            continue
+        i, where = 1, here
+        while i < len(words) and words[i].startswith("-"):  # git's own options; -C and -c take a value
+            if words[i] == "-C" and i + 1 < len(words):
+                where = where / Path(words[i + 1]).expanduser()
+            i += 2 if words[i] in ("-C", "-c") else 1
+        verb, rest = (words[i] if i < len(words) else ""), words[i + 1:]
+        if verb in ("checkout", "switch") and rest[:1] not in (["--"], ["-p"], ["--patch"]) and toplevel(where) == toplevel(shared):
+            return (f"`git {verb}` here would move the team lead's HEAD: {shared} is the project worktree, shared with the team lead. Work in a "
+                    f"worktree of your own (ask for `crew start --work-repo` or `--cwd`) and run git there with `git -C <worktree>`.")
+    return None
+
 def cmd_guard(a):
-    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository."""
+    """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository, and a crew
+    session's branch switch in the shared project worktree."""
     try:
         ev = json.load(sys.stdin)
     except json.JSONDecodeError:
         return
     ti = ev.get("tool_input") or {}
-    why = guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), os.environ.get("COMPOSE_ROLE"))
+    role = os.environ.get("COMPOSE_ROLE")
+    why = (switch_decision(ti.get("command"), ev.get("cwd"), role, os.environ.get("COMPOSE_REPO")) if ev.get("tool_name") == "Bash"
+           else guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), role))
     if why:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 

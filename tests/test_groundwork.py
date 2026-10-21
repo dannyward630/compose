@@ -207,6 +207,22 @@ class Groundwork(unittest.TestCase):
             self.assertEqual(started, expect, models)
             self.assertEqual("queued past the cap of 1" in out.getvalue(), len(expect) == 1, models)
 
+    def test_parallel_flag_starts_that_many_writers_over_both_config_caps(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        for models in ({}, {"tests": "claude:opus"}):
+            for flag, expect in ((2, ["tests-001", "tests-002"]), (None, ["tests-001"])):
+                started, out = [], io.StringIO()
+                with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+                     mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out), \
+                     mock.patch.object(fc.fc_config, "PARALLEL", 1), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 1), mock.patch.object(fc.fc_config, "CREW_MODELS", models):
+                    fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, parallel=flag))
+                self.assertEqual(started, expect, (models, flag))
+
+    def test_testcrews_takes_parallel_on_the_command_line(self):
+        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
+        sub = subprocess.run([sys.executable, cli, "testcrews", "--help"], capture_output=True, text=True)
+        self.assertIn("--parallel", sub.stdout)
+
     def test_a_named_task_that_needs_no_test_writer_says_why(self):
         (self.proj / "results" / "contract.md").write_text("c")
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))

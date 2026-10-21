@@ -3,7 +3,6 @@ LAND_SETTLE
 LAND_METHODS
 layer_checks
 cmd_stack
-layer_branches
 layer_commits
 cmd_reword
 gh

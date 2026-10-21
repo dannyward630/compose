@@ -57,15 +57,10 @@ def cmd_stack(a):
             sys.exit(1)  # the STOP line already said why and what to do
         print("stack  nothing to register: no unmerged task branches")
 
-def layer_branches(repo, proj):
-    """The project's layer branches, bottom first."""
-    prefix = fc_layers.layer_prefix(repo, proj)
-    return sorted(fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo).stdout.split())
-
 def layer_commits(repo, proj, trunk):
     """[(branch, [commit, ...])] bottom first: each layer's own commits, oldest first."""
     out, below = [], fc_stack.layer_base(repo, proj, trunk)
-    for b in layer_branches(repo, proj):
+    for b in fc_layers.layer_branches(repo, proj):
         out.append((b, fc_core.sh(["git", "rev-list", "--reverse", f"{below}..{b}"], repo).stdout.split()))
         below = b
     return out
@@ -224,7 +219,7 @@ def cmd_land(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
     method = a.method or fc_core.project_config(proj).get("land_method") or "squash"
-    names = layer_branches(repo, proj)
+    names = fc_layers.layer_branches(repo, proj)
     stop = lambda why: (fc_core.say(f"land   STOP  {why}"), sys.exit(1))
     if not names:
         stop("no layers: `compose stack --submit` builds and submits them")

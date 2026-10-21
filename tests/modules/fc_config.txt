@@ -23,6 +23,7 @@ CREW_FALLBACK
 PLANNING_ROLES
 CREW_DEFAULTS
 PROBE_CACHE
+PROVIDERS
 read_config
 write_config
 settings
@@ -31,6 +32,8 @@ needs_linear_key
 typesafe_key
 openrouter_key
 key_file
+provider_of
+provider_env
 WORKSPACE_ACTIONS
 read_key
 cmd_workspace

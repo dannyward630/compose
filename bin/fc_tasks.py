@@ -105,9 +105,11 @@ def blocker_finished(status, labels=()):
     s = (status or "").lower()
     return s in ("done", *CANCELED) or (s == "in review" and any(l.lower() == "design" for l in labels))
 
-def waiting(tasks):
-    """{task id: {"reason"}} for each task a blocker outside the feature's tasks holds back, as of the last sync."""
-    return {m["id"]: {"reason": "waits on " + ", ".join(m["waits_on"])} for m in tasks if m.get("waits_on")}
+def waiting(tasks, released=()):
+    """{task id: {"reason"}} for each task a blocker outside the feature's tasks holds back, as of the last sync. `released`: blocker
+    ids git shows are in the trunk already (fc_blockers.released), which hold nothing."""
+    out = {m["id"]: [w for w in m.get("waits_on") or [] if w.split()[0] not in released] for m in tasks}
+    return {tid: {"reason": "waits on " + ", ".join(w)} for tid, w in out.items() if w}
 
 def linear_done(meta):
     """Linear says the task is Done: its work is on trunk, whatever this project's own files say."""
@@ -229,3 +231,19 @@ def pid_alive(pid):
 def run_alive(proj):
     m = run_marker(proj)
     return bool(m and pid_alive(m.get("pid")))
+
+def mark_interrupted(proj):
+    """Ctrl-C stopped the run on purpose: keep its marker for `resume`, and say so in it."""
+    m = run_marker(proj)
+    if m:
+        try:
+            fc_core.atomic_write(proj / "results" / "run.json", json.dumps({**m, "interrupted": True}, indent=2))
+        except OSError:
+            pass  # the stop goes on; watch then reads the run as crashed
+
+def run_ended(proj):
+    """How a run whose process is gone ended: "interrupted" when Ctrl-C stopped it, "crashed" when it just died, None without a marker or while it lives."""
+    m = run_marker(proj)
+    if not m or pid_alive(m.get("pid")):
+        return None
+    return "interrupted" if m.get("interrupted") else "crashed"
