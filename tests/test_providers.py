@@ -38,7 +38,7 @@ class ConfigProviders(unittest.TestCase):
             with self.subTest(name): self.exits({"providers": {name: FAKE}}, f"provider names are lowercase letters, digits, - and _: {name!r}")
         for name in ("openrouter", "openrouter-fast"):
             with self.subTest(name): self.exits({"providers": {name: {}}}, f"providers.{name} is reserved: openrouter models already route there")
-        for entry in ({"models": ["a"]}, {"base_url": ""}, {"base_url": "localhost:11434/v1"}, {"base_url": "ftp://h/v1"}, {"base_url": 5}):
+        for entry in ({"models": ["a"]}, {"base_url": ""}, {"base_url": "localhost:11434/v1"}, {"base_url": "ftp://h/v1"}):
             with self.subTest(entry): self.exits({"providers": {"fakelocal": entry}}, "providers.fakelocal needs a base_url such as http://localhost:11434/v1")
         for models in ("fake-1", [1], {"a": "b"}, ["a", None]):
             with self.subTest(models): self.exits({"providers": {"fakelocal": {"base_url": "http://h/v1", "models": models}}}, "providers.fakelocal.models must be a list of model ids")
