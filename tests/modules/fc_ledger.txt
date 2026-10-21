@@ -9,3 +9,6 @@ add_row
 unsaved
 record
 run_events
+counted
+record_task
+verify_record

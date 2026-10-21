@@ -38,3 +38,15 @@ def record(issue, events):
 def run_events(proj, repo, meta, result):
     """The evidence events of one finished task's run result, in order."""
     raise NotImplementedError("fc_ledger.run_events")
+
+def counted(repo, proj, meta, ref, rows):
+    """Copies of the rows that count for the task: its run, its revision at `ref`, and its current criteria."""
+    raise NotImplementedError("fc_ledger.counted")
+
+def record_task(repo, proj, meta, ref, events):
+    """`record` for a task issue: write the events, then refresh its `## Evidence` section from the rows that count."""
+    raise NotImplementedError("fc_ledger.record_task")
+
+def verify_record(proj, repo, report):
+    """Record one verify round's evidence: checks, e2e, review on the feature issue, scoped and acceptance on each task issue; True when all saved"""
+    raise NotImplementedError("fc_ledger.verify_record")
