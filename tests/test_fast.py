@@ -58,6 +58,50 @@ class RunHolds(unittest.TestCase):
 
 class FastAttempts(unittest.TestCase):
     """A FAST task needs a green base: its existing tests pass before the fix, and the fix ends unproven."""
+    def run_task(self, workflow, test, write="ok\n"):
+        """Runs task 001 in a real repo whose a.txt is `ok`; the implementer writes `write` into it. Returns the result, with calls, sent, closed and repo on self."""
+        self.repo = Path(tempfile.mkdtemp()).resolve(); proj = self.repo / ".compose" / "p"; proj.mkdir(parents=True); self.proj = proj
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); (self.repo / "a.txt").write_text("ok\n"); git("add", "-A"); git("commit", "-qm", "init")
+        meta = {"id": "001", "title": "t", "files": ["a.txt"], "protected": [], "test": test, "model": "m", "after": "", "linear": "ENG-1", "body": "## Goal\nFix it."}
+        self.calls, self.closed = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            self.calls.append(prompt); (Path(cwd) / "a.txt").write_text(write)
+            return {"pane": "p1"}, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc_fast, "workflow", return_value=workflow), mock.patch.object(fc.fc_implement, "implementer", impl), \
+             mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_config, "TEST_READER", None), \
+             mock.patch.object(fc.fc_linear, "linear_event") as self.events, mock.patch.object(fc.fc_core, "say") as self.say, mock.patch.object(fc.fc_herdr, "herdr_label"), \
+             mock.patch.object(fc.fc_herdr, "herdr", side_effect=lambda *a, **k: self.closed.append(a)), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
+            r = fc.fc_implement.run_task(self.repo, proj, meta, 1)
+        self.sent = [c.args[2:] for c in self.events.call_args_list]  # (event, result?) of each linear_event
+        return r
+
+    def test_a_fast_task_failing_on_head_is_broken_base_with_no_turn_and_no_base_key(self):
+        r = self.run_task(FIX, "echo boom; exit 3")
+        self.assertEqual((r["status"], r["attempts"], self.calls, "base" in r), ("broken_base", 0, [], False))
+        self.assertEqual(r["log"], [{"base_exit": 3, "test_output": "boom\n"}])
+        self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text()), r)
+        self.assertEqual(self.say.call_args_list[-1].args, ("001 broken  test exits 3 on HEAD before any change: an environment problem, so no implementer turn",))
+        self.assertEqual(self.sent, [("failed", r)])
+
+    def test_a_fast_attempt_that_passes_ends_unproven_with_its_branch_fetched_and_its_pane_closed(self):
+        r = self.run_task(FIX, "grep -q ok a.txt", write="ok fixed\n")
+        self.assertEqual((r["status"], r["attempts"], len(self.calls), self.sent[-1:]), ("unproven", 1, 1, [("unproven", r)]))
+        self.assertEqual(subprocess.run(["git", "show", f"{r['branch']}:a.txt"], cwd=self.repo, capture_output=True, text=True).stdout, "ok fixed\n")
+        self.assertEqual(self.closed, [("pane", "close", "p1")])
+        self.assertEqual(self.say.call_args_list[-1].args[0].split()[:2], ["001", "unproven"])
+
+    def test_a_fast_attempt_that_fails_stays_failed(self):
+        r = self.run_task(FIX, "grep -q ok a.txt", write="no\n")
+        self.assertEqual((r["status"], [e for e, *_ in self.sent][-1:]), ("failed", ["failed"]))
+
+    def test_a_test_first_task_still_skips_a_green_base_and_passes_a_red_one(self):
+        for flow in (None, "test-first"):
+            with self.subTest(flow=flow):
+                r = self.run_task(flow, "grep -q ok a.txt")
+                self.assertEqual((r["status"], self.calls, self.sent), ("already_green", [], []))
+                r = self.run_task(flow, "grep -q fixed a.txt", write="fixed\n")
+                self.assertEqual((r["status"], len(self.calls), [e for e, *_ in self.sent]), ("passed", 1, ["dispatched", "passed"]))
 
 
 class UnprovenLinear(unittest.TestCase):
