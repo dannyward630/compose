@@ -4,6 +4,7 @@ import json
 import re
 
 import fc_core
+import fc_linear
 import fc_tasks
 import fc_worktree
 
@@ -83,7 +84,21 @@ def layer_base(repo, proj, tid, trunk):
 
 def fired(issue):
     """The `(trigger, run id)` pairs of every `* rerouted:` line across the issue's comment pages."""
-    raise NotImplementedError("fired")
+    query = "query($id: String!, $after: String) { issue(id: $id) { comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { body } } } }"
+    found, after = set(), None
+    while True:
+        data = fc_linear.linear_gql(query, {"id": issue, "after": after})
+        if data["issue"] is None:
+            raise RuntimeError(f"no issue {issue}")
+        comments = data["issue"]["comments"]
+        for node in comments["nodes"]:
+            for line in node["body"].splitlines():
+                m = re.fullmatch(r"[*-] rerouted: (.+) \(run (\S+)\)", line.strip())
+                if m:
+                    found.update((t, m.group(2)) for t in m.group(1).split(", "))
+        if not comments["pageInfo"]["hasNextPage"]:
+            return found
+        after = comments["pageInfo"]["endCursor"]
 
 
 def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
