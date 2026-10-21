@@ -243,5 +243,59 @@ class RouteColumns(unittest.TestCase):
             self.assertEqual(self.table(), {"001": ("-", "1", "1", "0", "$0.0000")})
 
 
+class RouteSummary(unittest.TestCase):
+    """`status` sums attempts, escalations, fix rounds and cost per workflow and per depth, under the task table."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init"), ("checkout", "-q", "-b", "compose/p")):
+            subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "verify.json").write_text(json.dumps({"task_prefix": "compose/p-"}))
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        import fc_routecost
+        self.summary = fc_routecost.summary
+
+    def rows(self, *specs):
+        return [dict(zip(("workflow", "depth", "attempts", "escalations", "fix_rounds", "cost"), s)) for s in specs]
+
+    def test_the_example_gives_the_header_and_a_line_per_value_that_has_rows(self):
+        self.assertEqual(self.summary(self.rows(("test-first", "FAST", 1, 0, 0, 0.0123), ("test-first", "FAST", 3, 1, 2, 0.0456), ("-", "-", 0, 0, 0, 0.0))), [
+            "  route cost                         tasks  att  esc  fix      cost",
+            "  workflow test-first                    2    4    1    2   $0.0579",
+            "  workflow -                             1    0    0    0   $0.0000",
+            "  depth FAST                             2    4    1    2   $0.0579",
+            "  depth -                                1    0    0    0   $0.0000"])
+        self.assertEqual(self.summary([]), [])
+
+    def test_lines_follow_the_declared_order_whatever_the_row_order_and_skip_values_without_rows(self):
+        lines = self.summary(self.rows(("fix-then-regression-test", "DEEP", 1, 0, 1, 0.5), ("-", "STANDARD", 2, 1, 0, 0.25),
+                                       ("test-first", "-", 3, 0, 0, 1.0), ("implement-then-test", "DEEP", 4, 2, 3, 0.125)))
+        self.assertEqual([(l[2:36].strip(), l[36:].split()) for l in lines[1:]], [
+            ("workflow test-first", ["1", "3", "0", "0", "$1.0000"]), ("workflow implement-then-test", ["1", "4", "2", "3", "$0.1250"]),
+            ("workflow fix-then-regression-test", ["1", "1", "0", "1", "$0.5000"]), ("workflow -", ["1", "2", "1", "0", "$0.2500"]),
+            ("depth STANDARD", ["1", "2", "1", "0", "$0.2500"]), ("depth DEEP", ["2", "5", "2", "4", "$0.6250"]), ("depth -", ["1", "3", "0", "0", "$1.0000"])])
+
+    def test_status_prints_the_block_right_after_the_task_rows_and_digest_is_unchanged(self):
+        route = lambda body: {"description": "## Route\n\n" + body}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "a", "linear": "XX-1"}, {"id": "002", "title": "b"}],
+                                                                       "issues": {"XX-1": route("* workflow: test-first\n* depth: FAST\n")}}))
+        (self.proj / "results" / "001.json").write_text(json.dumps({"status": "passed", "attempts": 3, "cost": 0.42}))
+        lines = fc.fc_status.render_status(self.repo, [self.proj]).split("\n")
+        self.assertEqual(lines[-6:], [
+            "  route cost                         tasks  att  esc  fix      cost",
+            "  workflow test-first                    1    3    0    0   $0.4200",
+            "  workflow -                             1    0    0    0   $0.0000",
+            "  depth FAST                             1    3    0    0   $0.4200",
+            "  depth -                                1    0    0    0   $0.0000", ""])
+        self.assertTrue(lines[-7].startswith("  002 "), lines)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fc.fc_status.cmd_status(SimpleNamespace(repo=str(self.repo), project=None, digest=True, watch=False, json=False))
+        self.assertEqual(out.getvalue(), fc.fc_status.digest(self.repo, self.proj) + "\n")
+
+
 if __name__ == "__main__":
     unittest.main()
