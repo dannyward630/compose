@@ -294,6 +294,7 @@ def main():
             g = s.add_mutually_exclusive_group()
             g.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
             g.add_argument("--typesafe", action="store_true", help="key: store the TypeSafe key (stdin); one key serves every workspace")
+            g.add_argument("--provider", metavar="NAME", help="key: store the key (stdin) of a provider declared in the config")
         if name == "update":
             s.add_argument("--force", action="store_true", help="update although a run or verify is live on this machine")
         if name == "clean":

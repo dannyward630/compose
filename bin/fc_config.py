@@ -211,6 +211,15 @@ def cmd_workspace(a):
         spaces[name] = {}
         fc_auth.set_key(AUTH_PATH, name, "openrouter", key)  # empty fails loudly on use instead of billing another account
         print(f"added {name}" + ("" if key else f"; no key yet: pbpaste | compose workspace key {name}"))
+    elif action == "key" and getattr(a, "provider", None):
+        prov = a.provider
+        if prov not in cfg.get("providers", {}) and prov not in spaces.get(name, {}).get("providers", {}):
+            sys.exit(f"no provider {prov!r} in {CONFIG_PATH}; declare providers.{prov} with a base_url first")
+        key = read_key(name, f"{prov} provider")
+        if not key:
+            sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + f" --provider {prov}")
+        fc_auth.set_key(AUTH_PATH, name, f"provider:{prov}", key)
+        print(f"{name}: provider {prov} key set")
     elif action == "key":
         linear = getattr(a, "linear", False)
         ts = getattr(a, "typesafe", False)
