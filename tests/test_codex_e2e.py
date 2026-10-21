@@ -75,7 +75,7 @@ class CodexFence(unittest.TestCase):
 class CodexTeammate(unittest.TestCase):
     def test_reports_working(self):
         repo = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, repo, True)
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        (repo / ".compose/p/results").mkdir(parents=True); (repo / ".compose/p/verify.json").write_text("{}")
         crew = [ROOT / "bin/compose.py", "crew", "--repo", str(repo), "--project", "p"]
         env = {**os.environ, "HERDR_ENV": "1", "CODEX_HOME": str(SIGNED_IN)}  # a real teammate reports `working`
         subprocess.run([sys.executable, *crew, "start", "--role", "tester", "--title", "t", "--model", "codex", "--brief", "Report working with the text hi, then stop."], env=env, check=True, timeout=300)
