@@ -1,4 +1,4 @@
-import json, sys, time, urllib.error, urllib.request
+import json, os, sys, time, urllib.error, urllib.request
 from pathlib import Path
 import fc_core, fc_config, fc_plan, fc_tasks
 
@@ -81,7 +81,7 @@ def _rate_limit_wait(headers, attempt):
     return max(1, min(resets) - time.time()) if resets else min(LINEAR_MAX_WAIT, 10 * 2 ** attempt)
 
 def _linear_post(query, variables, attempt):
-    req = urllib.request.Request(LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
+    req = urllib.request.Request(os.environ.get("LINEAR_URL") or LINEAR_URL, data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": fc_config.LINEAR_KEY})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
