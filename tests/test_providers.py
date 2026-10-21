@@ -413,20 +413,31 @@ class ProviderKeyCommand(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.splitlines()[:1]), (0, ["w: OpenRouter key set"]), r.stderr)
         self.assertEqual(self.auth(), {"openrouter": "sk-or", "provider:fakelocal": "sk-local"})
 
-class ProviderKeys(unittest.TestCase):
-    def test_apply_config_exports_the_active_workspaces_key_else_defaults_and_clean_env_drops_it(self):
-        c, d = fc.fc_config, Path(tempfile.mkdtemp())
-        for p in (mock.patch.object(c, "CONFIG_PATH", d / "config.json"), mock.patch.object(c, "AUTH_PATH", d / "auth.json"), mock.patch.object(c, "ENV_FILE", d / ".env"),
-                  mock.patch.object(c, "PROBE_CACHE", d / "model-probe.json"), mock.patch.object(c, "PROVIDERS", {"fakelocal": FAKE}), mock.patch.dict(os.environ),
-                  mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS))):
+class ProviderKeyExport(unittest.TestCase):
+    def setUp(self):
+        c, self.d = fc.fc_config, Path(tempfile.mkdtemp())
+        for p in (mock.patch.object(c, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(c, "AUTH_PATH", self.d / "auth.json"), mock.patch.object(c, "ENV_FILE", self.d / ".env"),
+                  mock.patch.object(c, "PROBE_CACHE", self.d / "model-probe.json"), mock.patch.object(c, "PROVIDERS", {}), mock.patch.dict(os.environ),
+                  mock.patch.object(c, "provider_env", lambda n: n.upper() + "_API_KEY"), mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS))):
             p.start(); self.addCleanup(p.stop)
-        def exported(held):
-            (d / "config.json").write_text(json.dumps({"workspace": "w", "providers": {"fakelocal": FAKE}, "workspaces": {"w": {}}})); os.environ.pop("FAKELOCAL_API_KEY", None)
-            (d / "auth.json").write_text(json.dumps({"workspaces": held})); (d / "auth.json").chmod(0o600); c.apply_config(); return os.environ.get("FAKELOCAL_API_KEY")
-        self.assertEqual(exported({"w": {"provider:fakelocal": "own"}, "default": {"provider:fakelocal": "dflt"}}), "own")
-        self.assertEqual(exported({"w": {}, "default": {"provider:fakelocal": "dflt"}}), "dflt")
+        for var in ("FAKELOCAL_API_KEY", "PLAIN_API_KEY", "GHOST_API_KEY"): os.environ.pop(var, None)
+    def export(self, held):
+        (self.d / "config.json").write_text(json.dumps({"workspace": "w", "providers": {"fakelocal": FAKE, "plain": FAKE}, "workspaces": {"w": {}}}))
+        (self.d / "auth.json").write_text(json.dumps({"workspaces": held})); (self.d / "auth.json").chmod(0o600); fc.fc_config.apply_config()
+        return {v: os.environ.get(v) for v in ("FAKELOCAL_API_KEY", "PLAIN_API_KEY", "GHOST_API_KEY")}
+    def test_the_active_workspaces_key_wins_over_defaults(self):
+        self.assertEqual(self.export({"w": {"provider:fakelocal": "own"}, "default": {"provider:fakelocal": "dflt"}})["FAKELOCAL_API_KEY"], "own")
+    def test_default_key_is_exported_when_the_workspace_holds_none(self):
+        self.assertEqual(self.export({"w": {}, "default": {"provider:fakelocal": "dflt"}})["FAKELOCAL_API_KEY"], "dflt")
+    def test_no_key_held_exports_nothing_and_adds_nothing_to_secret_vars(self):
+        self.assertEqual(self.export({"default": {}}), {"FAKELOCAL_API_KEY": None, "PLAIN_API_KEY": None, "GHOST_API_KEY": None}); self.assertNotIn("FAKELOCAL_API_KEY", fc.fc_core.SECRET_VARS)
+    def test_an_exported_key_is_a_secret_var_and_clean_env_drops_it(self):
+        self.export({"default": {"provider:fakelocal": "dflt"}})
         self.assertIn("FAKELOCAL_API_KEY", fc.fc_core.SECRET_VARS); self.assertNotIn("FAKELOCAL_API_KEY", fc.fc_core.clean_env())
-        self.assertIsNone(exported({"default": {}}))
+    def test_only_declared_providers_get_the_keys_held_for_them_by_the_active_or_default_workspace(self):
+        got = self.export({"w": {"provider:ghost": "g"}, "x": {"provider:plain": "other"}, "default": {"provider:fakelocal": "dflt"}})
+        self.assertEqual(got, {"FAKELOCAL_API_KEY": "dflt", "PLAIN_API_KEY": None, "GHOST_API_KEY": None})
+        self.assertNotIn("PLAIN_API_KEY", fc.fc_core.SECRET_VARS); self.assertNotIn("GHOST_API_KEY", fc.fc_core.SECRET_VARS)
 
 class ProviderEnvName(unittest.TestCase):
     def test_provider_env_upcases_and_replaces_other_characters(self):
