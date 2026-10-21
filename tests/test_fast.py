@@ -138,6 +138,43 @@ class UnprovenLinear(unittest.TestCase):
 
 class UnprovenRun(unittest.TestCase):
     """An unproven task's dependents wait, and its run events carry no red event."""
+    def setUp(self):
+        self.ledger = importlib.import_module("fc_ledger")  # the foundation's module, not on every branch
+        keys = ("run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail")
+        mock.patch.object(self.ledger, "event", side_effect=lambda *a: dict(zip(keys, a))).start()
+        self.ev = lambda phase, result="passed", detail="d": self.ledger.event("r1", "abc", ["001"], "001.1:x", phase, "run", result, None, detail)
+        mock.patch.object(self.ledger, "run_events", side_effect=lambda proj, repo, meta, r: [self.ev(p, r["status"] if p == "final" else "passed") for p in ("red", "green", "final")]).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_a_fast_task_has_no_red_event_and_an_unproven_one_ends_with_a_final_unproven_event_while_other_workflows_keep_every_event(self):
+        events = lambda flow, status: (mock.patch.object(fc_fast, "workflow", return_value=flow).start(), fc_fast.run_events(Path("p"), Path("r"), {"id": "001"}, {"status": status, "attempts": 3}))[1]
+        for status in ("passed", "failed"):
+            self.assertEqual(events(FIX, status), [self.ev("green"), self.ev("final", status)])
+        self.assertEqual(events(FIX, "unproven"), [self.ev("green"), self.ev("final", "unproven", "unproven after 3 attempts")])
+        for flow in ("test-first", IMPL, None):
+            self.assertEqual(events(flow, "unproven"), [self.ev(p, "unproven" if p == "final" else "passed") for p in ("red", "green", "final")])
+
+    def run_tasks(self, specs, statuses):
+        """Runs tasks (id, after) whose run_task answers `statuses`; returns (say lines, {id: status} of the rows, exit code, record calls)."""
+        repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        tasks = [{"id": t, "title": t, "after": after, "files": [], "protected": [], "test": "true", "model": "m", "linear": f"ENG-{t}"} for t, after in specs]
+        run_task = lambda repo, proj, task, attempts: {"id": task["id"], "title": task["id"], "status": statuses[task["id"]], "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "b", "log": []}
+        a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True, redo=False)
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_run, "reflect_task"), mock.patch.object(fc.fc_linear, "linear_reconcile"), \
+             mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc_fast, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
+             mock.patch.object(self.ledger, "record") as record, mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(repo, proj, tasks, a)
+        rows = {c.args[0].split()[0]: c.args[0].split()[1] for c in out.call_args_list if c.args and c.args[0][:1].isdigit()}
+        return [c.args[0] for c in say.call_args_list], rows, e.exception.code, sorted(c.args for c in record.call_args_list)
+
+    def test_dependents_of_an_unproven_task_are_held_with_no_row_and_a_failed_tasks_dependents_stay_blocked_and_the_run_exits_1(self):
+        specs = [("001", ""), ("007", ""), ("002", "007,001"), ("003", "002"), ("004", ""), ("005", "004"), ("010", "005"), ("006", "")]
+        say, rows, code, record = self.run_tasks(specs, {"001": "unproven", "007": "unproven", "004": "failed", "006": "passed"})
+        self.assertEqual(rows, {"001": "unproven", "007": "unproven", "004": "failed", "005": "blocked_by_004", "010": "blocked_by_005", "006": "passed"})
+        self.assertEqual([l for l in say if " held " in l], ["002 held    after unproven 001,007", "003 held    after held 002"])
+        self.assertEqual(record, [(f"ENG-{t}", [t, s]) for t, s in (("001", "unproven"), ("004", "failed"), ("006", "passed"), ("007", "unproven"))])  # fc_fast.run_events' events
+        self.assertEqual(self.run_tasks([("001", ""), ("002", "001")], {"001": "unproven"})[2], 1)
 
 
 class UnprovenWhy(unittest.TestCase):
