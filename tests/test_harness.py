@@ -734,22 +734,23 @@ class CodexStart(unittest.TestCase):
                 mock.patch.object(fc.fc_hooks, "SKILL_DIR", skill), mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
-        return start, ready, json.loads(next(fc.fc_crew.crew_dir(proj).glob("*.json")).read_text()), proj
+        return start, ready, json.loads(next(fc.fc_crew.crew_dir(proj).glob("*.json")).read_text()), proj, calls
 
     def test_codex_role_starts_with_crew_argv_and_never_waits_for_ready(self):
-        start, ready, rec, proj = self.start(trusted=False)  # a folder Claude Code does not trust
+        start, ready, rec, proj, calls = self.start(trusted=False)  # a folder Claude Code does not trust
         self.assertEqual((start[3:10], rec["effort"], "skill" in rec), (("--kind", "codex", "--pane", "w9:p7", "--timeout", "60000", "--"), "high", True))
         argv = fc_harness.crew_argv("codex:gpt-6.1-sol", "high", fc.fc_crew.TRUST_PROMPT, fc.fc_crew.CLI_REPO / "SKILL.md", rec["cwd"], fc.fc_crew.crew_dir(proj).parent, None)
         self.assertEqual([str(x) for x in start[10:]], [str(x) for x in argv])
         ready.assert_not_called()
+        self.assertFalse([c for c in calls if any("key" in str(x) for x in c[:2])])  # Codex's "Hooks need review" dialog is never answered
 
     def test_model_flag_codex_ids_start_as_codex(self):
         for m in ("codex", "codex:x"):
-            start, ready, _, _ = self.start(m)
+            start, ready = self.start(m)[:2]
             self.assertEqual((start[4], "-m" in start, ready.called), ("codex", m != "codex", False))
 
     def test_claude_and_pi_roles_start_as_before(self):
-        start, ready, rec, _ = self.start(entry="claude:claude-sonnet-5-5")
+        start, ready, rec = self.start(entry="claude:claude-sonnet-5-5")[:3]
         self.assertEqual((start[4], ready.call_count, "skill" in rec, self.start(entry="pi:x/y")[0][4]), ("claude", 1, False, "pi"))
         with self.assertRaises(SystemExit): self.start(entry="claude:claude-sonnet-5-5", trusted=False)  # only a Codex teammate skips the trust check
 
@@ -762,3 +763,4 @@ class CodexStart(unittest.TestCase):
         self.assertEqual(str(e.exception), refusal("--model", ""))
         with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
         self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))
+        with self.assertRaises(SystemExit): fc.fc_crew.crew_pick_full("tester", "grok:x")
