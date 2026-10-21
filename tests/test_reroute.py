@@ -230,7 +230,7 @@ class JevState(unittest.TestCase):
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
         for f in ("docs/note.md", "src/greet.py"): (self.repo / f).parent.mkdir(exist_ok=True); (self.repo / f).write_text("n\n")
-        git("add", "-A"); git("commit", "-qm", "task")
+        git("add", "docs", "src"); git("commit", "-qm", "task")
 
     def reassess(self, route=ROUTE, jev=None, policies=()):
         """Reassess the synced task whose recorded route is `route`; Jev replies `jev` (raised when an exception), `policies` is what read_policies gives."""
@@ -289,7 +289,7 @@ class Floor(unittest.TestCase):
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
         for f in ("docs/note.md", "src/greet.py"): (self.repo / f).parent.mkdir(exist_ok=True); (self.repo / f).write_text("n\n")
-        git("add", "-A"); git("commit", "-qm", "task")
+        git("add", "docs", "src"); git("commit", "-qm", "task")
 
     def route(self, recorded="DEEP", jev="FAST", checks="make lint, make e2e", policies=(), triggers=("diff",)):
         """The route reassess returns for a recorded `recorded` depth and checks, Jev answering depth `jev` (or raising) and `policies`."""
@@ -337,7 +337,7 @@ class Record(unittest.TestCase):
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
-        (self.repo / "a.py").write_text("n\n"); git("add", "-A"); git("commit", "-qm", "task")
+        (self.repo / "a.py").write_text("n\n"); git("add", "a.py"); git("commit", "-qm", "task")
 
     def reassess(self, triggers=("diff",), **record):
         """Reassess a synced task with a recorded route; returns (route, record_route mock, context_hash mock, the policies read_policies gave)."""
@@ -585,7 +585,7 @@ class PassScope(unittest.TestCase):
         for t, paths in edits.items():
             git("checkout", "-q", "-b", fc.fc_worktree.task_branch(self.repo, self.proj, t), "main")
             for p in paths: (self.repo / p).parent.mkdir(exist_ok=True); (self.repo / p).write_text(t)
-            git("add", "-A"); git("commit", "-qm", t)
+            git("add", *paths); git("commit", "-qm", t)
             (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
         git("checkout", "-q", "main")
 
@@ -645,7 +645,7 @@ class FixScope(unittest.TestCase):
         for t, paths in ({"001": ["src/a.py"], "002": ["src/b.py"] + ["logo.png"] * outside} if layers else {}).items():
             git(main, "checkout", "-q", "-b", fc.fc_worktree.task_branch(main, proj, t), *(["main"] if t == "001" else []))
             for p in paths: (main / p).parent.mkdir(exist_ok=True); (main / p).write_text(t)
-            git(main, "add", "-A"); git(main, "commit", "-qm", t); (proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+            git(main, "add", *paths); git(main, "commit", "-qm", t); (proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
         git(main, "checkout", "-q", "main"); wt.rmdir(); git(main, "worktree", "add", "-q", "-b", "stack", str(wt), fc.fc_worktree.task_branch(main, proj, "002") if layers else "main")
         asked, said, ran, done = [], [], [], set()
         def re(*args):
