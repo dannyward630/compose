@@ -203,7 +203,7 @@ class VerifyShared(unittest.TestCase):
     def ev(self, phase, result, detail):
         return fc_ledger.event("", self.sha, [], [], phase, "verify", result, None, detail)
 
-    def record(self, report, saved=(True, True, True)):
+    def record(self, report, saved=(True, True, True, True)):
         with mock.patch.object(fc_ledger, "record", side_effect=list(saved)) as record:
             ok = fc_ledger.verify_record(self.proj, self.repo, report)
         return ok, [c.args for c in record.call_args_list]
@@ -213,33 +213,34 @@ class VerifyShared(unittest.TestCase):
         ok, calls = self.record({"checks": [e(cmd="a", exit=0), e(cmd="b", exit=2), e(cmd="c", exit=0, output="JEV_GAVE_UP"), e(cmd="d", exit=127, tool_error=True)],
                                  "e2e": [e(name="w", exit=0), e(name="x", exit=1), e(name="y", exit=0, stdout="JEV_GAVE_UP"), e(name="z", exit=0, stderr="JEV_GAVE_UP")],
                                  "review": {"pass": False, "issues": [{}, {}], "confirmed": [{}]}})
-        self.assertEqual(calls, [("ENG-1", [self.ev("checks", "pass", "a: exit 0"), self.ev("checks", "fail", "b: exit 2"), self.ev("checks", "error", "c: exit 0"), self.ev("checks", "error", "d: exit 127")]),
+        self.assertEqual(calls[:3], [("ENG-1", [self.ev("checks", "pass", "a: exit 0"), self.ev("checks", "fail", "b: exit 2"), self.ev("checks", "error", "c: exit 0"), self.ev("checks", "error", "d: exit 127")]),
                                  ("ENG-1", [self.ev("e2e", "pass", "w: exit 0"), self.ev("e2e", "fail", "x: exit 1"), self.ev("e2e", "error", "y: exit 0"), self.ev("e2e", "error", "z: exit 0")]),
                                  ("ENG-1", [self.ev("review", "fail", "1 confirmed of 2 raised")])])
         self.assertTrue(ok)
 
     def test_a_stage_that_did_not_run_is_one_skipped_event(self):
         _, calls = self.record({"checks": [], "e2e": [], "review": None})
-        self.assertEqual([c[1] for c in calls], [[self.ev("checks", "skipped", "no checks ran")], [self.ev("e2e", "skipped", "no e2e cases ran")], [self.ev("review", "skipped", "review did not run")]])
+        self.assertEqual([c[1] for c in calls], [[self.ev("checks", "skipped", "no checks ran")], [self.ev("e2e", "skipped", "no e2e cases ran")], [self.ev("review", "skipped", "review did not run")],
+                                                    [self.ev("acceptance", "skipped", "acceptance did not run")]])
         _, calls = self.record({"checks": [], "e2e": [], "review": {"pass": True, "issues": [], "confirmed": []}})
         self.assertEqual(calls[2][1], [self.ev("review", "pass", "0 confirmed of 0 raised")])
 
     def test_false_when_any_record_fails_and_every_stage_is_still_tried(self):
         report = {"checks": [], "e2e": [], "review": None}
-        for saved in ((False, True, True), (True, False, True), (True, True, False)):
+        for saved in ((False, True, True, True), (True, False, True, True), (True, True, False, True), (True, True, True, False)):
             ok, calls = self.record(report, saved)
-            self.assertEqual((ok, len(calls)), (False, 3), saved)
+            self.assertEqual((ok, len(calls)), (False, 4), saved)
 
     def test_no_linear_file_records_on_no_issue(self):
         (self.proj / "linear.json").unlink()
         _, calls = self.record({"checks": [], "e2e": [], "review": None})
-        self.assertEqual([c[0] for c in calls], [None] * 3)
+        self.assertEqual([c[0] for c in calls], [None] * 4)
 
     def test_verify_rounds_records_its_round_with_the_report(self):
         report = {"checks": [], "e2e": [], "review": None}
         with mock.patch.object(fc.fc_verify, "run_stages", return_value=(True, report, "")), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc_ledger, "verify_record") as vr, mock.patch.object(fc.fc_core, "say"), self.assertRaises(SystemExit):
-            fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0), [], 0)
+            fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0, skip_review=True), [], 0)
         self.assertEqual([c.args for c in vr.call_args_list], [(self.proj, self.repo, report)])
 
 
@@ -322,7 +323,7 @@ class VerifyUnsaved(unittest.TestCase):
                 mock.patch.object(fc_ledger, "verify_record"), mock.patch.object(fc_ledger, "UNSAVED", unsaved), mock.patch.object(fc_ledger, "add_row", add), \
                 mock.patch.object(fc_ledger, "unsaved", lost), mock.patch.object(fc.fc_verify, "verify_failed") as failed, mock.patch.object(fc.fc_linear, "linear_reconcile"), \
                 mock.patch.object(fc.fc_core, "say", said.append), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
-            fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0), [], 0)
+            fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0, skip_review=True), [], 0)
         return cm.exception.code, said, out.getvalue(), json.loads((self.proj / "results" / "verify.json").read_text()), add, failed
 
     def test_rows_still_unsaved_fail_even_a_passing_verify_and_skip_the_failure_screen(self):

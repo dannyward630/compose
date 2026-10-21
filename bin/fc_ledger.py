@@ -18,7 +18,7 @@ def event(run_id, commit_sha, task_ids, criterion_id, phase, source, result, fai
 def criterion_ids(meta):
     """`<task id>.<order>:<hash of the text>` for each criterion of the task, in order."""
     return [f"{meta['id']}.{n}:{hashlib.sha256(c.encode()).hexdigest()[:8]}"
-            for n, c in enumerate(fc_tasks.parse_criteria(meta["body"]), 1)]
+            for n, c in enumerate(fc_tasks.parse_criteria(meta.get("body", "")), 1)]
 
 def run_id(proj, tid, fresh=False):
     """The task's run id, kept in results/runs.json; a new one when it has none or `fresh` is true."""
@@ -153,14 +153,14 @@ def verify_record(proj, repo, report):
         return "pass" if e["exit"] == 0 else "fail"
 
     ev = lambda phase, r, detail: event("", sha, [], [], phase, "verify", r, None, detail)
-    checks = [ev("checks", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report["checks"]]
-    e2e = [ev("e2e", result(c), f"{c['name']}: exit {c['exit']}") for c in report["e2e"]]
-    rv = report["review"]
+    checks = [ev("checks", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report.get("checks", [])]
+    e2e = [ev("e2e", result(c), f"{c['name']}: exit {c['exit']}") for c in report.get("e2e", [])]
+    rv = report.get("review")
     if rv is None:
         review = [ev("review", "skipped", "review did not run")]
     else:
         review = [ev("review", "pass" if rv["pass"] else "fail", f"{len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")]
-    acc = report["acceptance"]
+    acc = report.get("acceptance")
     rows = (acc or {}).get("criteria")
     oks = [record(feature, checks or [ev("checks", "skipped", "no checks ran")]),
            record(feature, e2e or [ev("e2e", "skipped", "no e2e cases ran")]),
@@ -174,9 +174,9 @@ def verify_record(proj, repo, report):
             oks.append(record(feature, [ev("acceptance", "skipped", acc.get("note", ""))]))
     for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)):
         ids, rid = criterion_ids(t), run_id(proj, t["id"])
-        texts = fc_tasks.parse_criteria(t["body"])
+        texts = fc_tasks.parse_criteria(t.get("body", ""))
         tev = lambda cid, phase, r, detail: event(rid, sha, [t["id"]], cid, phase, "verify", r, None, detail)
-        scoped = [tev(ids, "scoped", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report["scoped"] if c["cmd"] == t["test"]]
+        scoped = [tev(ids, "scoped", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report.get("scoped", []) if c["cmd"] == t["test"]]
         acceptance = []
         for row in (rows or []):
             if row["task"] != t["id"]:

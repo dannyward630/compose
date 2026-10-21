@@ -332,7 +332,7 @@ class FixScope(unittest.TestCase):
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})), \
                 mock.patch.object(fc.fc_core, "say", self.said.append):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
-                fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2})(), [], time.time())
+                fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2, "skip_review": True})(), [], time.time())
         return cm.exception.code, repo, json.loads((proj / "results" / "verify.json").read_text())
 
     def committed(self, repo):
