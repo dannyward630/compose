@@ -8,7 +8,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_fast, fc_regproof, fc_regress, fc_regwriter  # noqa: E402
+import fc_fast, fc_regproof, fc_regress, fc_regwriter, fc_unproven  # noqa: E402
 import json, subprocess, tempfile
 from unittest import mock
 
@@ -132,3 +132,49 @@ class Regress(unittest.TestCase):
 
 class Reprove(unittest.TestCase):
     """A regression test that is not proof re-prompts its writer up to the attempts, then leaves the task unproven."""
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        self.repo = Path(tempfile.mkdtemp()).resolve(); self.proj = self.repo / ".compose" / "p"; (self.proj / "results").mkdir(parents=True)
+        self.meta = {"id": "001", "title": "t", "after": "", "files": [], "protected": [], "test": "true", "model": "m"}
+
+    def go(self, proofs, attempts=3, saved=True, ready=True, restart=None, live=True):
+        """Run regress with `proofs` as prove's answers; ready lines end after them unless `ready`."""
+        res = {"id": "001", "title": "t", "status": "unproven", "attempts": 1, "branch": "fast/p/001", "log": []}
+        if restart: res["proof"] = restart
+        lines = [("c%d" % i, "cmd") for i in range(len(proofs))] + ([] if ready else [None])
+        P = lambda **kw: mock.patch.object(**kw)
+        with P(target=fc_regwriter, attribute="start_writer", return_value=self.repo) as start, P(target=fc_regwriter, attribute="wait_ready", side_effect=lines) as wait, \
+             P(target=fc_regproof, attribute="prove", side_effect=proofs) as prove, P(target=fc_regproof, attribute="record_proof", return_value=saved) as rec, \
+             P(target=fc_regress, attribute="pin_test"), P(target=fc_regress, attribute="end_writer"), P(target=fc.fc_crew, attribute="crew_reports", return_value=[0] * 3), \
+             P(target=fc_unproven, attribute="prompt_text", side_effect=lambda p: "again " + p["commit"]), P(target=fc_unproven, attribute="writer_live", return_value=live), \
+             P(target=fc_unproven, attribute="reason", side_effect=lambda p, saved=True: "why %s %s" % (p["commit"], saved)), P(target=fc_unproven, attribute="reprompt") as rep, \
+             P(target=fc.fc_linear, attribute="linear_event") as ev:
+            out = fc_regress.regress(self.repo, self.proj, self.meta, res, attempts)
+        self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["status"], out["status"])
+        return out, start, wait, prove, rep, rec, ev
+
+    def test_a_base_pass_a_base_error_and_a_tip_failure_reprompt_and_the_next_ready_commit_passes(self):
+        bad = [dict(PROOF, commit=c, base=b, tip_exit=t, proven=False) for c, b, t in (("c0", ("pass", False), 0), ("c1", ("error", None), 0), ("c2", ("fail_expected", True), 1))]
+        out, start, wait, prove, rep, rec, ev = self.go(bad + [dict(PROOF, commit="c3")], attempts=4)
+        self.assertEqual((out["status"], out["proof"]["commit"], rec.call_count), ("passed", "c3", 4)); start.assert_called_once()
+        self.assertEqual([c.args for c in rep.call_args_list], [(self.proj, "001", "again c%d" % i) for i in range(3)])
+        self.assertEqual([c.args[:3] for c in wait.call_args_list], [(self.proj, "001", 3)] * 4)
+        self.assertEqual([c.args[4:] for c in prove.call_args_list], [("c%d" % i, "cmd") for i in range(4)])
+
+    def test_out_of_attempts_leaves_the_task_unproven_with_the_last_proof_and_its_reason_logged(self):
+        out, start, wait, prove, rep, rec, ev = self.go([dict(PROOF, commit="c0", proven=False), dict(PROOF, commit="c1", proven=False)], attempts=2)
+        self.assertEqual((out["status"], out["proof"]["commit"], out["log"][-1], prove.call_count, rep.call_count), ("unproven", "c1", {"error": "why c1 True"}, 2, 1))
+        ev.assert_called_once_with(self.proj, self.meta, "unproven", out); self.assertEqual(ev.call_args.args[3]["log"][-1], {"error": "why c1 True"})
+
+    def test_a_proof_that_was_not_saved_ends_unproven_at_once_without_a_reprompt(self):
+        for proven in (True, False):
+            with self.subTest(proven=proven):
+                out, start, wait, prove, rep, rec, ev = self.go([dict(PROOF, proven=proven), dict(PROOF, commit="c1")], saved=False)
+                self.assertEqual((out["status"], out["log"][-1], prove.call_count), ("unproven", {"error": "why abc1234 False"}, 1)); rep.assert_not_called()
+
+    def test_a_restart_reprompts_a_live_writer_else_starts_one_and_keeps_its_proof_when_no_ready_line_comes(self):
+        old = dict(PROOF, commit="old", proven=False)
+        out, start, wait, prove, rep, rec, ev = self.go([], restart=old, ready=False)
+        start.assert_not_called(); rep.assert_called_once_with(self.proj, "001", "again old"); self.assertEqual((out["status"], out["proof"]), ("unproven", old))
+        out, start, wait, prove, rep, rec, ev = self.go([], restart=old, ready=False, live=False)
+        start.assert_called_once(); rep.assert_not_called(); self.assertEqual(out["proof"], old); self.assertTrue(out["log"][-1]["error"].startswith("why old"))
