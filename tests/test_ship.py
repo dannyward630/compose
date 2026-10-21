@@ -223,7 +223,7 @@ class Reword(Ship):
         self.assertEqual(code, 0)
         self.assertIn("Update 001.src", self.subjects("compose/p-layer-02"))
         self.assertNotIn("task 001: wire compose verify", self.subjects("compose/p-layer-02"))
-        self.assertTrue(any("stack  note" in l and "wire compose verify" in l for l in out))
+        self.assertTrue(any("stack  note" in l and "wire compose verify" in l and "mentions the process (`task 001`)" in l for l in out))
         self.assertEqual(self.git("log", "-1", "--format=%s", "compose/p-001"), "task 001: wire compose verify")  # the task branch is left alone
         body = self.git("log", "--format=%B", "--grep=^Update 001.src", "compose/p-layer-02")
         self.assertIn("Index the title.", body)
