@@ -88,12 +88,14 @@ class Fallback(unittest.TestCase):
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
         self.assertEqual(r["attempts"], 1)  # the refused turn cost no attempt
 
-    def busy_run(self, refusals, said, slept):
-        """One task with one attempt allowed and no fallback, whose provider turns the first `refusals` turns away as busy."""
-        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
+    def busy_run(self, refusals, said, slept, err=None, nap=lambda: None):
+        """One task with one attempt allowed and no fallback, whose first `refusals` turns end as `err` (default: the provider turns
+        them away as busy), `nap` running just before each one ends."""
+        busy = iter([err or fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             err = next(busy, None)
             if err:
+                nap()
                 raise err
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
@@ -120,6 +122,17 @@ class Fallback(unittest.TestCase):
         self.assertTrue(any(s.startswith("001 passed") and "attempts=1 " in s for s in said), said)
         r, _ = self.busy_run(5, [], [])  # the provider never answers: four waits, then the task gives up having spent none
         self.assertEqual((r["status"], r["attempts"], len(r["log"])), ("failed", 0, 5))
+
+    def test_a_turn_that_timed_out_across_a_sleep_costs_no_attempt(self):
+        t = {"wall": 1000.0, "awake": 50.0}  # the lid closes in the first turn: 90 minutes pass on the wall clock, 3 on the awake one
+        clock = types.SimpleNamespace(time=lambda: t["wall"], monotonic=lambda: t["awake"])
+        nap = lambda: t.update(wall=t["wall"] + 5400, awake=t["awake"] + 180)
+        said, slept = [], []
+        with mock.patch.object(fc.fc_proc, "time", clock):
+            r, _ = self.busy_run(1, said, slept, err=subprocess.TimeoutExpired("pi", 180), nap=nap)
+        self.assertEqual((r["status"], r["attempts"]), ("passed", 1))  # one attempt allowed, and the turn the machine slept in did not spend it
+        self.assertTrue(any(s.startswith("001 attempt 1 timeout") and "the machine slept for 87 minutes: it does not count" in s for s in said), said)
+        self.assertEqual(r["log"][0]["slept"], 5220)
 
     def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
         r, calls = self.run_once("rate", edit="yes\n")

@@ -100,6 +100,26 @@ def keep_awake(pid=None):
     return AWAKE[pid]
 
 
+SLEPT_MIN = 60  # seconds of sleep that count: a short gap between the two clocks is no more than their read skew
+
+
+def clock():
+    """The wall clock and the awake clock now, for `slept`. time.monotonic() stops while a Mac sleeps (and so does every timeout
+    built on it, subprocess's included); time.time() does not."""
+    return time.time(), time.monotonic()
+
+
+def slept(since):
+    """Seconds the machine slept since `since` (a `clock()`): the wall time that passed less the awake time. 0 under SLEPT_MIN."""
+    wall, awake = since
+    gap = (time.time() - wall) - (time.monotonic() - awake)
+    return gap if gap >= SLEPT_MIN else 0
+
+
+def slept_text(seconds):
+    return f"the machine slept for {round(seconds / 60)} minutes"
+
+
 SLOTS = 2  # full-suite `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides
 QUICK_SLOTS = 2  # every other command (see `suite`), in lanes of their own so a short run never waits on a suite; COMPOSE_QUICK_SLOTS overrides
 SLOT_SAY_AFTER = 1.0  # seconds a wait for a slot stays silent
