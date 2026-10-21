@@ -1,4 +1,9 @@
 """Harnesses other than Claude Code and pi: one table of them, and the accessors every other module reads it through."""
+import os
+import shutil
+from pathlib import Path
+
+import fc_core
 
 
 def _codex_probe(cid):
@@ -22,28 +27,38 @@ def _codex_once(cid, cwd, prompt, read_only=False):
 def _codex_hash(event, group):
     raise NotImplementedError
 
-HARNESSES = {}
+HARNESSES = {
+    "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
+              "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv},
+    "gemini": {},
+    "grok": {},
+}
 
-RESERVED = ()
+RESERVED = tuple(HARNESSES)
 
 
 def harness_of(model):
-    raise NotImplementedError
+    for key in rows():
+        if model == key or (model or "").startswith(key + ":"):
+            return key
+    return None
 
 def model_id(model):
-    raise NotImplementedError
+    key = harness_of(model)
+    return (model[len(key) + 1:] or None) if key and model != key else None
 
 def rows():
-    raise NotImplementedError
+    return [k for k, v in HARNESSES.items() if v]
 
 def installed():
-    raise NotImplementedError
+    return [k for k in rows() if shutil.which(HARNESSES[k]["exe"])]
 
 def home_dir(key):
     raise NotImplementedError
 
 def skills_dir(key):
-    raise NotImplementedError
+    row = HARNESSES[key]
+    return Path(os.environ.get(row["home_env"]) or os.path.expanduser(row["home"])) / "skills"
 
 def probe_command(model):
     raise NotImplementedError
