@@ -551,6 +551,12 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
         else:
             break
+    for issue in list(dict.fromkeys(i for i, _ in fc_ledger.UNSAVED)):
+        fc_ledger.add_row(issue, [])
+    lost = fc_ledger.unsaved()
+    if lost:
+        ok = False
+        fc_core.say("verify FAIL  evidence not saved on Linear: " + ", ".join(r["event_id"] for r in lost))
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}
     if left_out:
         final["left_out"] = left_out
@@ -564,7 +570,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     if ok and not left_out:
         fc_linear.linear_reconcile(proj, verified=True)
     fc_core.say(fc_core.LEDGER.line())
-    if not ok and not left_out:  # a smoke run is a sign of life only; its findings never reach the reflect screen
+    if not ok and not left_out and not lost:  # a smoke run is a sign of life only; its findings never reach the reflect screen
         print("\nUnresolved after the fix budget. Escalate to the team lead with the confirmed findings above.")
         verify_failed(proj, rounds, findings)
     sys.exit(0 if ok else 1)

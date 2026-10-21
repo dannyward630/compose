@@ -183,6 +183,6 @@ def verify_record(proj, repo, report):
                 continue
             r = "error" if row.get("judge_error") or row["choice"] is None else "pass" if row["choice"] == "MET" else "fail" if row.get("confirmed") else "unclear"
             acceptance.append(tev([ids[texts.index(row["criterion"])]], "acceptance", r, f"{row['choice']}: p_met {row['p_met']}, p_not_met {row['p_not_met']}"))
-        oks.append(record(t.get("linear"), scoped))
-        oks.append(record(t.get("linear"), acceptance))
+        oks.append(record_task(repo, proj, t, scoped))
+        oks.append(record_task(repo, proj, t, acceptance))
     return all(oks)
