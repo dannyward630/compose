@@ -705,3 +705,25 @@ class ReadyTreeQuery(unittest.TestCase):
 
     def test_the_fragment_is_unchanged_and_follows_the_operation(self):
         self.assertEqual(self.fields(fc.fc_linear.LINEAR_READY_TREE)[1:], [self.norm(self.FRAGMENT)])
+
+
+class EvidenceBrief(unittest.TestCase):
+    """The CLI-owned Evidence section after the compose block is not part of the implementer's brief."""
+    setUp, sync = Sync.setUp, Sync.sync
+    SECTION = "\n## Evidence\n\nVerdict: not judged\n\n| id | at | detail |\n|---|---|---|\n| abc123 | 2026-10-21 10:00 | a |\n"
+    BRIEF = "## Goal\nDo it.\n\n## Acceptance criteria\n- works"
+
+    def task(self, desc):
+        return self.sync([issue("ENG-3", "First", desc)])[0]
+
+    def test_the_section_and_its_table_are_cut_from_the_body_and_the_other_fields_stay(self):
+        meta = self.task(block(id="001", files="a.go", protected="a_test.go", test="go test") + self.SECTION)
+        self.assertEqual(meta["body"], self.BRIEF)
+        self.assertEqual((meta["id"], meta["files"], meta["protected"], meta["test"]), ("001", ["a.go"], ["a_test.go"], "go test"))
+        self.assertEqual(self.task(block(id="001", test="t"))["body"], self.BRIEF)  # no section: as before
+
+    def test_trailing_blanks_still_cut_but_a_mention_or_a_longer_heading_does_not(self):
+        self.assertEqual(self.task(block(id="001", test="t") + self.SECTION.replace("## Evidence", "## Evidence \t"))["body"], self.BRIEF)
+        for line in ("See ## Evidence below", "### Evidence", "## Evidence log", " ## Evidence"):
+            desc = block(id="001", test="t") + f"\nNote:\n{line}\nmore\n"
+            self.assertEqual(self.task(desc)["body"], self.BRIEF + f"\nNote:\n{line}\nmore", line)
