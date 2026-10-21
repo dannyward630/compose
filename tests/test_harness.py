@@ -633,3 +633,46 @@ class CodexArgv(unittest.TestCase):
 
     def test_no_unfenced_sandbox(self):
         for a in self.argv(work=self.work): self.assertFalse(a == "danger-full-access" or a.startswith("--dangerously"), a)
+
+
+class CodexStart(unittest.TestCase):
+    def start(self, model=None, entry="codex:gpt-6.1-sol", trusted=True):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
+        calls, ready = [], mock.Mock()
+        def herdr(*args, **kw):
+            calls.append(args)
+            return {"agents": []} if args[:2] == ("agent", "list") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else {}
+        a = type("A", (), {"action": "start", "role": "tester", "title": "t", "brief": "b", "model": model})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
+                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {"tester": "high"}), mock.patch("builtins.print"):
+            fc.fc_crew.cmd_crew(a)
+        start = next(c for c in calls if c[:2] == ("agent", "start"))
+        return start, ready, json.loads(next(fc.fc_crew.crew_dir(proj).glob("*.json")).read_text()), proj
+
+    def test_codex_role_starts_with_crew_argv_and_never_waits_for_ready(self):
+        start, ready, rec, proj = self.start(trusted=False)  # a folder Claude Code does not trust
+        self.assertEqual((start[3:10], rec["effort"], "skill" in rec), (("--kind", "codex", "--pane", "w9:p7", "--timeout", "60000", "--"), "high", True))
+        argv = fc_harness.crew_argv("codex:gpt-6.1-sol", "high", fc.fc_crew.TRUST_PROMPT, fc.fc_crew.CLI_REPO / "SKILL.md", rec["cwd"], fc.fc_crew.crew_dir(proj).parent, None)
+        self.assertEqual([str(x) for x in start[10:]], [str(x) for x in argv])
+        ready.assert_not_called()
+
+    def test_model_flag_codex_ids_start_as_codex(self):
+        for m in ("codex", "codex:x"):
+            start, ready, _, _ = self.start(m)
+            self.assertEqual((start[4], "-m" in start, ready.called), ("codex", m != "codex", False))
+
+    def test_claude_and_pi_roles_start_as_before(self):
+        start, ready, rec, _ = self.start(entry="claude:claude-sonnet-5-5")
+        self.assertEqual((start[4], ready.call_count, "skill" in rec, self.start(entry="pi:x/y")[0][4]), ("claude", 1, False, "pi"))
+        with self.assertRaises(SystemExit): self.start(entry="claude:claude-sonnet-5-5", trusted=False)  # only a Codex teammate skips the trust check
+
+    def test_crew_pick_full_accepts_codex_and_refuses_the_rest_exactly(self):
+        for m in ("codex", "codex:x"): self.assertEqual(fc.fc_crew.crew_pick_full("tester", m)[0], m)
+        def refusal(label, where): return (f"{label} is 'codex/x', but teammate sessions run in Claude Code, pi, or Codex: use claude:<model-id> (e.g. claude:claude-sonnet-5-5), "
+                                           f"pi:<provider/model> (e.g. pi:openai/gpt-6-astra), or codex:<model> (e.g. codex:gpt-6.1-sol){where}; OpenCode ids are for implementers only")
+        with self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester", "codex/x")
+        self.assertEqual(str(e.exception), refusal("--model", ""))
+        with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
+        self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))

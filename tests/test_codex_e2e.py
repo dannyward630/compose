@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import json, os, pwd, shutil, subprocess, sys, tempfile, unittest
+import json, os, pwd, shutil, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -69,6 +69,22 @@ class CodexFence(unittest.TestCase):
     def test_linear_get(self):
         p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515", self.repo, COMPOSE_CONFIG=str(hermetic.REAL / "config.json"))
         self.assertIn("NEB-1515", p.stdout.split("\ncodex\n")[-1], p.stdout[-3000:])
+
+
+@unittest.skipUnless(CODEX and os.environ.get("HERDR_SOCKET_PATH"), "codex or a herdr pane is missing")
+class CodexTeammate(unittest.TestCase):
+    def test_reports_working(self):
+        repo = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, repo, True)
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        crew = [ROOT / "bin/compose.py", "crew", "--repo", str(repo), "--project", "p"]
+        env = {**os.environ, "HERDR_ENV": "1", "CODEX_HOME": str(SIGNED_IN)}  # a real teammate reports `working`
+        subprocess.run([sys.executable, *crew, "start", "--role", "tester", "--title", "t", "--model", "codex", "--brief", "Report working with the text hi, then stop."], env=env, check=True, timeout=300)
+        self.addCleanup(subprocess.run, [sys.executable, *crew, "stop", "--role", "tester", "--force"], env=env)
+        status = next((repo / ".compose/p/results/crew").glob("*.status"))
+        for _ in range(120):
+            if '"message": "hi"' in status.read_text(): return
+            time.sleep(2)
+        self.fail(status.read_text())
 
 
 if __name__ == "__main__":
