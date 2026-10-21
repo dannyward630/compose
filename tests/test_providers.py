@@ -423,3 +423,40 @@ class ProviderKeys(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"):
             f, g = fc.fc_config.key_file("k1", "fakelocal.key"), fc.fc_config.key_file("k2")
         self.assertEqual((f, f.read_text(), f.stat().st_mode & 0o777), (d / "fakelocal.key", "k1", 0o600)); self.assertEqual((g, g.read_text()), (d / "openrouter.key", "k2"))
+
+class KpHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.server.seen.append(self.headers.get("Authorization")); self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
+
+def kp_env(name): return name.upper().replace("-", "_") + "_API_KEY"
+
+class KeyedProvider(unittest.TestCase):
+    KEY = "sk-local-secret-123"
+    def setUp(self):
+        s = ThreadingHTTPServer(("127.0.0.1", 0), KpHandler); s.seen = []
+        threading.Thread(target=s.serve_forever, daemon=True).start(); self.addCleanup(s.server_close); self.addCleanup(s.shutdown)
+        url, self.d, self.server = f"http://127.0.0.1:{s.server_address[1]}/v1", Path(tempfile.mkdtemp()), s
+        providers = {"fakelocal": {"base_url": url, "models": ["fake-1"]}, "plain": {"base_url": url, "models": ["p-1"]}}  # plain never gets a key
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", providers),
+                  mock.patch.object(fc.fc_config, "provider_env", kp_env), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_config, "provider_of", lambda m: (m.removeprefix("pi:").split("/", 1)[0], m.split("/", 1)[1]) if m.removeprefix("pi:").split("/", 1)[0] in providers else None)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("FAKELOCAL_API_KEY", None); os.environ.pop("PLAIN_API_KEY", None)
+    def test_extension_names_the_env_var_never_the_key_and_a_keyless_provider_stays_null(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; text = fc_providers.pi_extension_text()
+        self.assertIn('"apiKeyEnv": "FAKELOCAL_API_KEY"', text); self.assertEqual(text.count('"apiKeyEnv": null'), 1); self.assertNotIn(self.KEY, text)
+        del os.environ["FAKELOCAL_API_KEY"]; self.assertEqual(fc_providers.pi_extension_text().count('"apiKeyEnv": null'), 2)
+    def test_env_adds_the_key_under_its_var_for_the_keyed_provider_only(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        for m in ("pi:fakelocal/fake-1", "fakelocal/fake-1"): self.assertEqual(fc_providers.pi_env(m), {"COMPOSE_PI_MODEL": "fakelocal/fake-1", "FAKELOCAL_API_KEY": self.KEY})
+        self.assertEqual(fc_providers.pi_env("pi:plain/p-1"), {"COMPOSE_PI_MODEL": "plain/p-1"})
+        del os.environ["FAKELOCAL_API_KEY"]; self.assertEqual(fc_providers.pi_env("pi:fakelocal/fake-1"), {"COMPOSE_PI_MODEL": "fakelocal/fake-1"})
+    def test_reach_sends_a_bearer_header_only_for_the_keyed_provider(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        self.assertTrue(fc_providers.reach("fakelocal")[0]); self.assertTrue(fc_providers.reach("plain")[0])
+        self.assertEqual(self.server.seen, [f"Bearer {self.KEY}", None])
+    def test_key_stays_out_of_pi_args_and_the_written_file(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; args = fc_providers.pi_args("pi:fakelocal/fake-1")
+        self.assertEqual(args, ["-e", str(self.d / "pi-providers.js")]); self.assertNotIn(self.KEY, " ".join(args))
+        self.assertNotIn(self.KEY, (self.d / "pi-providers.js").read_text()); self.assertIn("FAKELOCAL_API_KEY", (self.d / "pi-providers.js").read_text())
