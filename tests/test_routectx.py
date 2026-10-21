@@ -1,6 +1,7 @@
 import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, json, os, sys, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
 
@@ -17,6 +18,22 @@ BUG = "## Goal\nFix it.\n\n## Acceptance criteria\n* shows the name\n* keeps the
 def issue(n, files, body="## Goal\nx", status="Todo", block="", **kv):
     desc = f"{body}\n\n```compose\nid: {n:03}\ntest: t\nfiles: {files}\n{block}```\n"
     return {"id": f"ENG-{n}", "title": f"T{n}", "description": desc, "status": status, "blockedBy": [], **kv}
+
+
+FAKE_TRAIL = f"""#!{sys.executable}
+import json, os, sys
+out = json.load(open(os.environ["FAKE_TRAIL"])).get(" ".join(sys.argv[1:3]), 9)  # an unexpected call fails
+if sys.argv[1] == "skeleton" and not os.path.exists(sys.argv[2]): out = 8  # run in the repo
+sys.exit(out) if isinstance(out, int) else print(out)
+"""
+
+
+def ent(name, span):
+    return {"name": name, "kind": "function", "span": span, "signature": f"def {name}()"}
+
+
+def match(path, *hits):
+    return {"symbol": {"name": "s", "path": path}, "hits": [{"path": h, "line": 1} for h in hits], "note": ""}
 
 
 class Context(unittest.TestCase):
@@ -57,3 +74,36 @@ class Context(unittest.TestCase):
             (self.proj / name).unlink()
             self.assertEqual(self.ctx(issue(1, "a.py", BUG))["bug"], {"label": False, "documented": True, "confirmed": False}, name)
 
+
+class Dependencies(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.bin = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        (self.repo / "bin").mkdir()
+        for f in ("bin/a.py", "bin/b.py", "c.py"): (self.repo / f).write_text("x\n")
+        (self.bin / "trail").write_text(FAKE_TRAIL)
+        (self.bin / "trail").chmod(0o755)
+        self.canned = {  # inner sits inside Outer; L22-L100 does not, though as text it would
+            "skeleton bin/a.py": {"entries": [ent("Outer", "L1-L20"), ent("inner", "L3-L5"), ent("helper", "L22-L100")]},
+            "callers Outer": {"matches": [match("bin/a.py", "z.py", "bin/b.py", "m.py", "z.py", "nope.py"), match("other.py", "o.py")]},
+            "callers helper": {"matches": [match("bin/a.py", "h.py")]},
+            "skeleton bin/b.py": {"entries": [ent("Bee", "L1-L2")]},
+            "callers Bee": {"matches": [match("bin/b.py", *[f"c{i:02}.py" for i in range(24, -1, -1)], "c03.py")]},
+            "skeleton c.py": {"entries": [ent("Cee", "L1-L1")]},
+            "callers Cee": {"matches": [match("bin/a.py", "q.py")]}}
+
+    def deps(self, over={}, files=("bin/a.py", "nope.py", "bin/b.py", "c.py"), path=None):
+        canned = {k: v if isinstance(v, (int, str)) else json.dumps(v) for k, v in {**self.canned, **over}.items()}
+        (self.bin / "canned.json").write_text(json.dumps(canned))
+        env = {"FAKE_TRAIL": str(self.bin / "canned.json"), "PATH": path or f"{self.bin}{os.pathsep}{os.environ['PATH']}"}
+        with mock.patch.dict(os.environ, env):
+            return fc_routectx.dependency_context(self.repo, {"id": "001", "files": list(files)})
+
+    def test_callers(self):
+        self.assertEqual(self.deps(), {"callers": {"bin/a.py": ["h.py", "m.py", "z.py"], "bin/b.py": [f"c{i:02}.py" for i in range(20)], "c.py": []}})
+        self.assertEqual(self.deps(files=["nope.py", "gone/x.py"]), {"callers": {}})
+
+    def test_unavailable(self):
+        for over, path, why in [({}, tempfile.mkdtemp(), "trail not installed"), ({"callers helper": 3}, None, "trail exited 3"),
+                                ({"callers Bee": "Traceback (most recent call last):"}, None, "trail gave unreadable output"),
+                                ({"skeleton bin/b.py": {"entries": [{"name": "Bee"}]}}, None, "trail gave unreadable output")]:
+            self.assertEqual(self.deps(over, path=path), {"unavailable": why}, (over, why))
