@@ -78,10 +78,12 @@ def write_config(cfg):
     CONFIG_PATH.chmod(0o600)  # settings stay private
 
 def session_harness(flag=None):
-    raise NotImplementedError
+    """The session's harness: the flag, else $COMPOSE_HARNESS, else "claude" under Claude Code ($CLAUDECODE=1), else None."""
+    return flag or os.environ.get("COMPOSE_HARNESS") or ("claude" if os.environ.get("CLAUDECODE") == "1" else None)
 
 def settings(cfg, harness=None):
-    """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep."""
+    """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep, then
+    harness's block under "harnesses" merged over that the same way ("harnesses" itself never reaches the result)."""
     name = cfg.get("workspace") or "default"
     if name != "default" and name not in cfg.get("workspaces", {}):
         sys.exit(f"{CONFIG_PATH}: active workspace {name!r} is not under \"workspaces\"")
@@ -89,16 +91,26 @@ def settings(cfg, harness=None):
     out = {k: v for k, v in cfg.items() if k not in ("workspace", "workspaces")}
     for k, v in ws.items():
         out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    blocks = out.pop("harnesses", None)
+    if blocks:
+        for n, block in blocks.items():
+            if "default" not in (block.get("models") or {}).get("crew", {}):
+                sys.exit(f'{CONFIG_PATH}: harnesses.{n}.models.crew has no "default"')
+        if harness and harness not in blocks:
+            sys.exit(f'{CONFIG_PATH}: no "harnesses.{harness}" block')
+        for k, v in (blocks.get(harness) or {}).items():
+            out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
     return name, out
 
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS, PRICES
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
-    name, st = settings(read_config())
+    harness = session_harness(harness)
+    name, st = settings(read_config(), harness)
     PROVIDERS = st.get("providers", {})
     for pname, p in PROVIDERS.items():
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pname):
@@ -117,6 +129,7 @@ def apply_config(move=True, harness=None):
     if type(CLAUDE_PARALLEL) is not int or CLAUDE_PARALLEL < 1:
         sys.exit(f"{CONFIG_PATH}: claude_parallel must be a whole number of 1 or more, not {CLAUDE_PARALLEL!r}")
     WORKSPACE = name
+    HARNESS = harness
     auth = fc_auth.read_auth(AUTH_PATH)
     held = auth.get("workspaces", {})
     own = held.get(name, {}).get("openrouter")
