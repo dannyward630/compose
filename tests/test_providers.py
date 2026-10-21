@@ -403,8 +403,6 @@ class ProviderKeys(unittest.TestCase):
         self.assertFalse((self.cfg.parent / "auth.json").exists())
     def test_provider_with_linear_is_an_argparse_error(self):
         r = self.ws("--provider", "fakelocal", "--linear"); self.assertEqual(r.returncode, 2); self.assertIn("not allowed with", r.stderr)
-    def test_provider_env_upcases_and_replaces_other_characters(self):
-        self.assertEqual((fc.fc_config.provider_env("lm-studio"), fc.fc_config.provider_env("fakelocal")), ("LM_STUDIO_API_KEY", "FAKELOCAL_API_KEY"))
     def test_apply_config_exports_the_active_workspaces_key_else_defaults_and_clean_env_drops_it(self):
         c, d = fc.fc_config, Path(tempfile.mkdtemp())
         for p in (mock.patch.object(c, "CONFIG_PATH", d / "config.json"), mock.patch.object(c, "AUTH_PATH", d / "auth.json"), mock.patch.object(c, "ENV_FILE", d / ".env"),
@@ -418,11 +416,16 @@ class ProviderKeys(unittest.TestCase):
         self.assertEqual(exported({"w": {}, "default": {"provider:fakelocal": "dflt"}}), "dflt")
         self.assertIn("FAKELOCAL_API_KEY", fc.fc_core.SECRET_VARS); self.assertNotIn("FAKELOCAL_API_KEY", fc.fc_core.clean_env())
         self.assertIsNone(exported({"default": {}}))
+
+class ProviderEnvName(unittest.TestCase):
+    def test_provider_env_upcases_and_replaces_other_characters(self):
+        for name, var in (("lm-studio", "LM_STUDIO_API_KEY"), ("fakelocal", "FAKELOCAL_API_KEY"), ("gpu2_a.b--c", "GPU2_A_B__C_API_KEY")): self.assertEqual(fc.fc_config.provider_env(name), var)
     def test_key_file_names_the_file_and_defaults_to_openrouter_key(self):
         d = Path(tempfile.mkdtemp())
         with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"):
-            f, g = fc.fc_config.key_file("k1", "fakelocal.key"), fc.fc_config.key_file("k2")
+            f, g, h = fc.fc_config.key_file("k1", "fakelocal.key"), fc.fc_config.key_file("k2"), fc.fc_config.key_file("k3", name="other.key")
         self.assertEqual((f, f.read_text(), f.stat().st_mode & 0o777), (d / "fakelocal.key", "k1", 0o600)); self.assertEqual((g, g.read_text()), (d / "openrouter.key", "k2"))
+        self.assertEqual((h, h.read_text(), h.stat().st_mode & 0o777), (d / "other.key", "k3", 0o600))
 
 class KpHandler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
