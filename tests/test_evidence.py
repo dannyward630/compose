@@ -9,7 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_evidence  # noqa: E402
+import fc_evidence, fc_plan  # noqa: E402
 
 QUERY = "query($id: String!, $after: String) { issue(id: $id) { comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { body createdAt } } } }"
 
@@ -92,7 +92,7 @@ class Refresh(unittest.TestCase):
     def test_appends_a_missing_section_last_then_replaces_it_in_place_and_skips_an_unchanged_write(self):
         self.desc = None
         self.refresh([])
-        self.assertEqual(self.desc, fc.fc_plan.replace_section("", "## Evidence", fc_evidence.table([])))
+        self.assertEqual(self.desc, fc_plan.replace_section("", "## Evidence", fc_evidence.table([])))
         self.desc, self.calls[:] = "## Goal\nx\n\n```compose\nid: 1\n```\n", []
         a, b = [row("a", at="2026-10-21T09:00:00.000Z")], [row("b", at="2026-10-21T10:00:00.000Z")]
         self.assertIsNone(self.refresh(a))
