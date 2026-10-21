@@ -363,7 +363,7 @@ class Rewake(unittest.TestCase):
         """The hook reads its JSON from stdin: feed it here, since the real stdin may be a pipe nobody writes to (then the hook waits forever)."""
         err = io.StringIO()
         with mock.patch.dict(os.environ, env or self.env), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj) as pd, \
-                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=snaps), mock.patch.object(fc.fc_watch, "WATCH_INTERVAL", 0.01), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=snaps), mock.patch.object(fc.fc_watch, "WATCH_INTERVAL", 0.01), mock.patch.object(fc.fc_watch, "WATCH_SETTLE", 0), \
                 mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"session_id": session}))), contextlib.redirect_stderr(err):
             try:
                 fc.fc_watch.cmd_rewake(SimpleNamespace())
@@ -948,6 +948,254 @@ class ManagerSessions(unittest.TestCase):
         self.assertEqual(owner(None), owner([self.A, self.B]))  # herdr cannot say: every session counts as live
         records.append({"name": "hw-old", "reports_to": "manager"})  # from before started_by: nobody's, as before
         self.assertNotIn("hw-old", owner([self.A, self.B]))
+
+
+class OwnerDigest(unittest.TestCase):
+    """The product owner hears every state change once, in one line, and nothing that repeats: `status --digest` and `event tell=`."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+
+    def test_verify_why_names_the_stage_the_count_and_a_tool_error(self):
+        why = fc.fc_status.verify_why
+        self.assertEqual(why({}), "")
+        self.assertEqual(why({"rounds": [{"checks": [{"exit": 0}, {"exit": 1}], "e2e": []}]}), "checks 1/2 failed")
+        self.assertEqual(why({"rounds": [{"checks": [], "e2e": [{"exit": 2, "tool_error": True}]}]}), "e2e 1/1 failed - tool errors, not the code")
+        self.assertEqual(why({"rounds": [{"checks": [{"exit": 1, "tool_error": True}], "e2e": [{"exit": 1}]}]}), "checks 1/1 failed, e2e 1/1 failed")
+        r = {"checks": [{"exit": 0}], "e2e": [], "review": {"pass": False, "confirmed": ["a", "b"]}}
+        self.assertEqual(why({"rounds": [r, r], "rejected_fixes": ["x"]}),
+                         "review 2 confirmed, a fix touched files outside the stack after 1 fix round(s)")
+
+    def test_the_digest_is_one_honest_line(self):
+        rows = [{"id": "001", "state": "merged"}, {"id": "002", "state": "failed"}, {"id": "003", "state": "pending"}]
+        (self.proj / "results" / "verify.json").write_text(json.dumps({"passed": False, "rounds": [{"checks": [{"exit": 1}], "e2e": []}]}))
+        (self.proj / "results" / "crew" / "hw-planner.status").write_text(json.dumps({"state": "needs-user", "message": "which database?"}) + "\n")
+        with mock.patch.object(fc.fc_status, "board", return_value={"rows": rows}):
+            line = fc.fc_status.digest(self.proj, self.proj)
+        self.assertNotIn("\n", line)
+        self.assertRegex(line, r"^hw: 1/3 tasks done, failed 002; no run; verify FAIL at \d\d:\d\d \(checks 1/1 failed\); hw-planner asks: which database\?$")
+
+    def test_status_digest_prints_one_line_per_project_and_nothing_else(self):
+        out = []
+        with mock.patch.object(fc.fc_status, "board", return_value={"rows": []}), mock.patch("builtins.print", out.append), \
+                mock.patch.object(fc.fc_core, "all_projects", return_value={"hw": (self.proj, self.proj)}):
+            fc.fc_status.cmd_status(SimpleNamespace(repo=str(self.proj), project="hw", digest=True, all=False, watch=False, json=False))
+        self.assertEqual(len(out), 1, out)
+        self.assertTrue(out[0].startswith("hw: 0/0 tasks done; no run"), out)
+
+    def tell(self, before, after):
+        return fc.fc_watch.owner_lines("hw", before, after)
+
+    def test_a_failed_verify_says_why_and_a_passed_one_says_in_review(self):
+        a, b = wsnap(), wsnap()
+        b["verify"], b["verify_why"] = (1, False), "checks 1/3 failed"
+        self.assertEqual(self.tell(a, b), ["event tell='verify failed: checks 1/3 failed'"])
+        self.assertEqual(self.tell(b, b), [])  # nothing repeats
+        c = wsnap(); c["verify"] = (2, True)
+        self.assertEqual(self.tell(b, c), ["event tell='verify passed - the feature is In Review'"])
+
+    def test_a_run_ending_and_a_fix_loop_starting_are_told_once(self):
+        live, ended = wsnap("running", run=True), wsnap("failed")
+        self.assertEqual(self.tell(live, ended), ["event tell='run ended: 0/1 passed, failed 001'"])
+        self.assertEqual(self.tell(live, wsnap("running", crashed=True)), ["event tell='run crashed before finishing'"])
+        failed = wsnap(); failed["verify"] = (1, False)
+        restarted = wsnap("running", run=True); restarted["verify"] = (1, False)
+        self.assertEqual(self.tell(failed, restarted), ["event tell='fix loop started: the run restarted after the failed verify'"])
+        self.assertEqual(self.tell(restarted, restarted), [])
+
+    def test_the_team_lead_done_is_told_and_working_is_not(self):
+        a, b = wsnap(), wsnap()
+        a["crew"] = {ORCH: [{"at": at(9), "state": "working", "message": "x"}]}
+        b["crew"] = {ORCH: a["crew"][ORCH] + [{"at": at(1), "state": "working", "message": "still going"}]}
+        self.assertEqual(self.tell(a, b), [])
+        c = {**b, "crew": {ORCH: b["crew"][ORCH] + [{"at": at(0), "state": "done", "message": "shipped"}]}}
+        self.assertEqual(self.tell(b, c), ["event tell='done: shipped'"])
+
+    def test_a_running_task_is_not_an_event_but_a_final_one_is(self):
+        self.assertEqual(fc.fc_watch.watch_events(wsnap("pending"), wsnap("running")), [])
+        self.assertTrue(fc.fc_watch.watch_events(wsnap("running"), wsnap("passed")))
+
+    def test_the_tell_lines_pass_the_filter(self):
+        line = "event tell='verify failed: checks 1/3 failed'"
+        self.assertEqual(fc.fc_watch.watch_filter([line], "hw", [ORCH]), [line])
+
+    def test_progress_pings_are_info_and_the_rest_may_be_urgent(self):
+        is_info, urgent = fc.fc_watch.is_info, fc.fc_watch.URGENT
+        self.assertTrue(is_info("event crew=hw-designer state=working message=drawing page 2"))
+        self.assertFalse(is_info("event crew=hw-tests-001 state=working message=Test ready: abc"))
+        self.assertFalse(is_info("event crew=hw-designer state=done message=x"))
+        for e in ("event stall=quiet x", "event halt=payment", "event crew=a state=needs-user message=q", "event crew=a state=tool-bug message=q"):
+            self.assertTrue(urgent.search(e), e)
+        self.assertFalse(urgent.search("event task=001 state=passed"))
+
+
+class QuietWatch(unittest.TestCase):
+    """Fewer wake-ups: progress pings wait for a wake (or INFO_HOLD), a burst of events is one wake, and the watch never times out."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        self.proj.mkdir(parents=True)
+
+    def snap(self, *reports, state="pending"):
+        s = wsnap(state)
+        s["crew"] = {"hw-designer": [{"at": at(60 - i), "state": st, "message": m} for i, (st, m) in enumerate(reports)]}
+        return s
+
+    def watch(self, base, snaps, hold=300, **kw):
+        fc.fc_watch.watch_save(self.proj, "manager", base=base)
+        a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0, interval=0.01, stall=10_000, rewake=False, settle=0)
+        a.__dict__.update(kw)
+        out, it = [], iter(snaps)
+        snapshot = lambda *_a, **_k: next(it, snaps[-1])
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", snapshot), \
+                mock.patch.object(fc.fc_watch, "watch_key", return_value="manager"), mock.patch.object(fc.fc_watch, "INFO_HOLD", hold), \
+                mock.patch.object(fc.fc_crew, "desktop_notify"), mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.suppress(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        return out
+
+    def test_a_progress_ping_alone_does_not_wake_but_travels_with_the_next_wake(self):
+        base = self.snap(("working", "started"))
+        ping = self.snap(("working", "started"), ("working", "drawing page 2"))
+        done = self.snap(("working", "started"), ("working", "drawing page 2"), ("done", "all pages"))
+        out = self.watch(base, [ping, ping, ping, done])
+        self.assertEqual(len([l for l in out if "event crew=" in l]), 2, out)  # one wake carries both lines
+        self.assertTrue(any("drawing page 2" in l for l in out) and any("state=done" in l for l in out), out)
+
+    def test_a_held_ping_wakes_after_info_hold(self):
+        base = self.snap(("working", "started"))
+        ping = self.snap(("working", "started"), ("working", "drawing page 2"))
+        out = self.watch(base, [ping], hold=0)
+        self.assertTrue(any("drawing page 2" in l for l in out), out)
+
+    def test_a_held_ping_alone_never_wakes_before_info_hold(self):
+        base = self.snap(("working", "started"))
+        ping = self.snap(("working", "started"), ("working", "drawing page 2"))
+        out = self.watch(base, [ping], timeout=0.2)
+        self.assertFalse(any("drawing page 2" in l for l in out), out)
+
+    def test_a_burst_is_one_wake(self):
+        base = self.snap(("working", "started"), state="running")
+        first = self.snap(("working", "started"), state="passed")
+        burst = self.snap(("working", "started"), ("done", "all pages"), state="passed")
+        with mock.patch.object(fc.fc_watch.time, "sleep"):
+            out = self.watch(base, [first, burst], settle=5)
+        self.assertTrue(any("task=001 state=passed" in l for l in out), out)
+        self.assertTrue(any("crew=hw-designer state=done" in l for l in out), out)  # arrived during the settle
+
+    def test_the_watch_has_no_timeout_by_default(self):
+        out = subprocess.run([sys.executable, str(Path(fc.__file__).resolve()), "watch", "--help"], capture_output=True, text=True).stdout
+        self.assertIn("default 0 = forever", out)
+
+
+class NetworkDrop(unittest.TestCase):
+    """A teammate whose last turn ended on an API or network error sits idle with its work unreported: the watch surfaces it once."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+
+    def snap(self, status="idle", state="working", closed=()):
+        return {"tasks": {"001": {"state": "pending"}}, "agents": {"hw-designer": status}, "closed": list(closed),
+                "crew": {"hw-designer": [{"at": at(0), "state": state, "message": "m"}]}, "run": False, "verify": None, "run_end": 0, "last": (NOW, "x")}
+
+    def stalls(self, snap, now, pane):
+        with mock.patch.object(fc.fc_herdr, "herdr_text", return_value=pane):
+            ev = fc.fc_watch.watch_stalls(self.proj, snap, 10_000, now_s=now)
+        return [e for e in ev if "stall=network" in e]
+
+    def test_an_idle_teammate_after_an_api_error_is_surfaced_once_with_the_nudge(self):
+        err = "> drawing\nAPI Error: Unable to connect to API (ENOTFOUND)\n"
+        self.assertEqual(self.stalls(self.snap(), NOW, err), [])  # idle just now: a normal pause
+        ev = self.stalls(self.snap(), NOW + fc.fc_watch.NET_IDLE + 1, err)
+        self.assertEqual(len(ev), 1, ev)
+        self.assertIn("agent=hw-designer", ev[0])
+        self.assertIn("The network dropped and is back; continue exactly where you stopped; re-check any write that may not have landed", ev[0])
+        self.assertIn("herdr agent prompt hw-designer", ev[0])
+        self.assertEqual(self.stalls(self.snap(), NOW + 500, err), [])  # once per idle spell
+
+    def test_a_quiet_pane_a_done_or_closed_or_working_teammate_is_not_a_network_drop(self):
+        later = NOW + fc.fc_watch.NET_IDLE + 1
+        for snap, pane in ((self.snap(), "> drawing\nwaiting for you\n"), (self.snap(state="done"), "API Error: x"),
+                           (self.snap(closed=["hw-designer"]), "API Error: x"), (self.snap("working"), "API Error: x")):
+            self.setUp()
+            self.stalls(snap, NOW, pane)
+            self.assertEqual(self.stalls(snap, later, pane), [], snap)
+
+    def test_the_network_stall_is_urgent_and_passes_the_filter(self):
+        line = "event stall=network agent=hw-designer x"
+        self.assertTrue(fc.fc_watch.URGENT.search(line))
+        self.assertEqual(fc.fc_watch.watch_filter([line], "hw", ["hw-designer"]), [line])
+
+
+class OneManager(unittest.TestCase):
+    """One engineering manager session per project: another one's `crew start` or `watch` refuses unless it says --takeover."""
+    A, B = "w1:p1", "w1:p2"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+        (self.proj / "results" / "crew" / "hw-designer.json").write_text(json.dumps({"name": "hw-designer", "started_by": self.A}))
+        self.live = [self.A, self.B]
+
+    def listed(self, *_a, **_k):
+        return {"agents": [{"pane_id": p, "name": f"claude{i}"} for i, p in enumerate(self.live)]}
+
+    def claim(self, pane, takeover=False, role=None, herdr_on=True):
+        env = {"HERDR_PANE_ID": pane} | ({"COMPOSE_ROLE": role} if role else {})
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_herdr, "herdr", self.listed), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=herdr_on):
+            fc.fc_herdr.herdr_manager_claim(self.proj, takeover)
+
+    def owner(self):
+        return fc.fc_herdr.herdr_manager_record(self.proj).get("session")
+
+    def test_the_first_session_claims_and_a_second_refuses_naming_the_first(self):
+        self.claim(self.A)
+        self.assertEqual(self.owner(), self.A)
+        self.claim(self.A)  # the owner again: nothing changes
+        with self.assertRaises(SystemExit) as e:
+            self.claim(self.B)
+        self.assertIn(self.A, str(e.exception))
+        self.assertIn("--takeover", str(e.exception))
+        self.assertEqual(self.owner(), self.A)
+
+    def test_takeover_moves_the_claim_and_the_owners_teammates(self):
+        self.claim(self.A)
+        self.claim(self.B, takeover=True)
+        self.assertEqual(self.owner(), self.B)
+        self.assertEqual(json.loads((self.proj / "results" / "crew" / "hw-designer.json").read_text())["started_by"], self.B)
+
+    def test_an_owner_whose_pane_is_gone_is_replaced_silently(self):
+        self.claim(self.A)
+        self.live = [self.B]
+        self.claim(self.B)
+        self.assertEqual(self.owner(), self.B)
+
+    def test_a_crew_role_and_a_session_outside_herdr_claim_nothing(self):
+        self.claim(self.A)
+        self.claim(self.B, role="orchestrator")
+        self.claim(self.B, herdr_on=False)
+        self.assertEqual(self.owner(), self.A)
+
+    def test_watch_now_says_who_owns_the_project_without_claiming_it(self):
+        self.claim(self.A)
+        out = []
+        a = SimpleNamespace(repo=".", now=True, from_=None, timeout=0, interval=0.01, stall=10_000, rewake=False, settle=0)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=wsnap()), \
+                mock.patch.object(fc.fc_herdr, "herdr", self.listed), mock.patch("builtins.print", out.append), \
+                mock.patch.dict(os.environ, {"HERDR_PANE_ID": self.B}, clear=True):
+            fc.fc_watch.cmd_watch(a)
+        self.assertTrue(any(l.startswith(f"event owner=other pane={self.A}") for l in out), out)
+        self.assertEqual(self.owner(), self.A)
+
+
+class SharedGuidance(unittest.TestCase):
+    def test_every_teammate_brief_carries_the_wait_and_shell_rules(self):
+        proj = Path(tempfile.mkdtemp()) / "hw"; proj.mkdir(parents=True)
+        for name, title, up in (("hw-orchestrator", "orchestrator", None), ("hw-tests-001", "tests 001", "orchestrator"), ("hw-planner", "planner", "manager")):
+            pre = fc.fc_crew.crew_preamble(proj, name, title, up)
+            for needle in ("not word-split", "ToolSearch", "`sleep` longer than a few seconds is blocked", "cannot wake you", "background command that exits when it is true"):
+                self.assertIn(needle, pre, (name, needle))
 
 
 if __name__ == "__main__":

@@ -169,12 +169,15 @@ def main():
             s.add_argument("--detach", action="store_true")
         if name == "watch":
             s.add_argument("--now", action="store_true", help="print the current state as events and exit (session-start reconcile)")
-            s.add_argument("--timeout", type=float, default=600, help="seconds to wait before exiting 2 with a timeout event and a state summary (0 = forever)")
+            s.add_argument("--timeout", type=float, default=0, help="seconds to wait before exiting 2 with a timeout event and a state summary (default 0 = forever: a timeout is a wake-up with nothing to do, and a stall event already reports silence)")
             s.add_argument("--stall", type=float, default=None, help=f"seconds of silence with work pending before a stall event (default verify.json stall_seconds, else {fc_watch.STALL_SECONDS})")
             s.add_argument("--interval", type=float, default=fc_watch.WATCH_INTERVAL)
+            s.add_argument("--settle", type=float, default=fc_watch.WATCH_SETTLE, help="seconds to gather the events of one burst into one wake (a question, a block, or a stall wakes at once; 0 = off)")
+            s.add_argument("--takeover", action="store_true", help="watch from this session although another live engineering manager session drives the project (its teammates then report here)")
             s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
+            s.add_argument("--digest", action="store_true", help="one line per project: tasks done, run, last verify and why it failed, questions waiting")
         if name == "stack":
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes the layers and opens a draft PR per layer as a GitHub stack")
@@ -232,6 +235,7 @@ def main():
             s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
+            s.add_argument("--takeover", action="store_true", help="start, stop: drive the project from this session although another live engineering manager session does (its teammates then report here)")
         if name == "models":
             s.add_argument("--probe", action="store_true")
         if name == "frame0":

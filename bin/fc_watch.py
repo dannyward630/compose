@@ -63,12 +63,14 @@ def watch_snapshot(repo, proj, agents=None):
     v = proj / "results" / "verify.json"
     if v.exists():
         try:
-            snap["verify"] = [int(v.stat().st_mtime), bool(json.loads(v.read_text()).get("passed"))]  # a list: snapshots round-trip JSON
+            vd = json.loads(v.read_text())
+            snap["verify"] = [int(v.stat().st_mtime), bool(vd.get("passed"))]  # a list: snapshots round-trip JSON
+            snap["verify_why"] = fc_status.verify_why(vd)
         except (json.JSONDecodeError, OSError):
             pass
     # The newest sign of life anywhere in the project, and when the last run ended: the stall rules read these.
     marks = [(fc_core.report_time(r[-1]["at"]), f"teammate {n} reported {r[-1]['state']}") for n, r in snap["crew"].items() if r]
-    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if not f.name.startswith("watch")]
+    marks += [(f.stat().st_mtime, f"result {f.name}") for f in (proj / "results").glob("*.json") if not f.name.startswith("watch") and f.name != "manager.json"]
     snap["last"] = list(max(marks)) if marks else [0, ""]
     cost = proj / "results" / "run-cost.json"
     snap["run_end"] = cost.stat().st_mtime if cost.exists() and not snap["run"] else 0
@@ -94,6 +96,10 @@ def crew_owners(records, agents):
     if lead:
         own |= {c["name"]: lead for c in records if c.get("reports_to") == "orchestrator"}
     return own
+
+NET_ERROR = re.compile(r"API Error|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|Unable to connect to API|fetch failed|socket hang up", re.I)
+NET_IDLE = 60  # seconds a working teammate sits idle before its pane is read for a dropped connection
+NET_NUDGE = "The network dropped and is back; continue exactly where you stopped; re-check any write that may not have landed."
 
 STALL_SECONDS = 240  # verify.json `stall_seconds` or `watch --stall` change it
 
@@ -148,6 +154,17 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         if key not in fired:
             fired.add(key)
             ev.append(f"event stall={what}; {tail}")
+    for n, st in snap["agents"].items():  # a teammate whose last turn ended on an API or network error sits idle with its work unreported
+        if (seen.get(n) or [None])[0] != st:
+            seen[n] = [st, now_s]
+        r = snap.get("crew", {}).get(n) or []
+        since = seen[n][1]
+        if st == "idle" and n not in closed and r and r[-1]["state"] == "working" and now_s - since >= NET_IDLE and f"netchk:{n}:{since}" not in fired:
+            fired.add(f"netchk:{n}:{since}")  # the pane is read once per idle spell
+            pane = "\n".join(fc_herdr.herdr_text("agent", "read", n, "--source", "recent-unwrapped", "--lines", "12").strip().splitlines()[-6:])
+            if m := NET_ERROR.search(pane):
+                fire(f"net:{n}:{since}", f"network agent={n} its last turn ended on an API or network error ({m.group(0)}) and it has been idle since {hm(since)}; "
+                     f"once the network is back, nudge: herdr agent prompt {n} \"{NET_NUDGE}\"")
     for n in snap.get("closed", ()):
         r = snap.get("crew", {}).get(n) or []
         if r and r[-1]["state"] != "done" and not (re.search(r"-tests-\d+$", n) and fc_briefs.test_ready(r[-1])):  # collect closes a writer after its test ready
@@ -175,11 +192,11 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
     return ev
 
 def watch_events(before, after):
-    """The actionable differences between two snapshots, one line each. Attempt counts and idle/done flaps are not events."""
+    """The actionable differences between two snapshots, one line each. Attempt counts, a task starting, and idle/done flaps are not events."""
     ev = []
     for tid, t in after["tasks"].items():
         b = before["tasks"].get(tid, {})
-        if t["state"] != b.get("state") and (t["state"] in FINAL_STATES or t["state"] == "running"):
+        if t["state"] != b.get("state") and t["state"] in FINAL_STATES:  # `running` is the team lead's own run: no wake
             ev.append(f"event task={tid} state={t['state']} attempts={t['attempts']} cost=${t['cost']:.4f}"
                       + (f" branch={t['note']}" if t["note"] else "") + (f" linear={t['linear']}" if t["linear"] else "") + f" title={t['title']!r}")
     for n, st in after["agents"].items():
@@ -216,6 +233,35 @@ def watch_events(before, after):
             ev.append(f"event reflect={path} broken={r['counts'][0]} unclear={r['counts'][1]} trigger={r['trigger']}")
     return ev
 
+def owner_lines(slug, before, after):
+    """What the product owner must hear when the project's state changes, as ready-to-send one-liners (`event tell=...`): a verify
+    that passed or failed and why, a run that ended, a fix loop starting after a failed verify, the team lead done. Only changes:
+    nothing here repeats, and nothing says "still working" or "waiting on you"."""
+    out, v, was = [], after.get("verify"), before.get("verify")
+    if v and v != was:
+        why = after.get("verify_why")
+        out.append("verify passed - the feature is In Review" if v[1] else f"verify failed{': ' + why if why else ''}")
+    if before.get("run") and not after.get("run"):
+        tasks = after["tasks"]
+        bad = [t for t, x in tasks.items() if x["state"] in fc_status.FAILED_STATES]
+        ok = sum(x["state"].split(" ")[0] in ("merged", "passed", "hand_done", "already_green") for x in tasks.values())
+        out.append("run crashed before finishing" if after.get("crashed") else f"run ended: {ok}/{len(tasks)} passed" + (f", failed {','.join(bad)}" if bad else ""))
+    elif after.get("run") and not before.get("run") and v and not v[1]:
+        out.append("fix loop started: the run restarted after the failed verify")
+    orch = fc_herdr.agent_name(slug, "orchestrator")
+    for r in after.get("crew", {}).get(orch, [])[len(before.get("crew", {}).get(orch, [])):]:
+        if r["state"] == "done":
+            out.append(f"done: {r['message']}")
+    return [f"event tell={line!r}" for line in out]
+
+def is_info(e):
+    """A progress ping that wakes nobody alone: a teammate's `working` report (but a test writer's `test ready`, which the team lead
+    collects). It travels with the next wake, or alone after INFO_HOLD."""
+    m = re.match(r"event crew=\S+ state=working message=(.*)$", e)
+    return bool(m) and "test ready" not in m.group(1).lower()
+
+URGENT = re.compile(r"event (?:stall=|halt=|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
+
 def yolo_mark(proj, events):
     """Under yolo, a question line tells the engineering manager it answers it itself, and who set yolo when another session did."""
     if not (y := fc_tasks.yolo_state(proj)):
@@ -233,13 +279,14 @@ def watch_filter(events, slug, sources, direct=(), others=()):
     if others := [n for n in others if n not in sources]:
         events = [e for e in events if not any(f"crew={n} " in e or f"agent={n} " in e for n in others)]
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
-        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith("event stall=")
-                or e.startswith("event ready=")
+        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith(("event stall=", "event ready=", "event tell="))
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
     me = fc_herdr.agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
 
 WATCH_INTERVAL = 2.0
+WATCH_SETTLE = 10.0  # seconds a wake waits for the rest of its burst (a wave of tasks finishing together is one wake, not N)
+INFO_HOLD = 300.0  # seconds progress pings (is_info) wait for a wake to travel with before they wake alone
 
 def watch_key():
     """Whose watch this is: COMPOSE_ROLE, else the engineering manager, one per session (`manager-<herdr pane>`; bare `manager`
@@ -276,10 +323,16 @@ def cmd_watch(a, rewake=False):
         if cur["run"]:
             lines.append(f"event run=live pid={(fc_tasks.run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
                          f"read results/run.log; do not start a second)")
+        rec = {} if os.environ.get("COMPOSE_ROLE") else fc_herdr.herdr_manager_record(proj)
+        if rec.get("session") and rec["session"] != fc_core.session_id() and fc_herdr.herdr_manager_live(rec["session"]):
+            lines.append(f"event owner=other pane={rec['session']} since={rec.get('since')!r}  (another engineering manager session drives this project: look "
+                         f"here, do not start teammates or a watch; --takeover on `crew start` or `watch` moves it to this session)")
         for line in lines or ["event idle  nothing running"]:
             print(line)
         watch_save(proj, key, base=cur)  # the reconcile is the acknowledgement: the next watch reports only what changes after it
         return
+    if not os.environ.get("COMPOSE_ROLE"):
+        fc_herdr.herdr_manager_claim(proj, getattr(a, "takeover", False))  # one engineering manager session per project
     lock = watch_lock(proj, key, wait=not rewake)  # a second watch waits its turn; a second hook leaves it to the parked one
     if not lock:
         return
@@ -293,14 +346,29 @@ def cmd_watch(a, rewake=False):
         except (OSError, json.JSONDecodeError):
             cfg_stall = None
         limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
+        settle, held_since = getattr(a, "settle", 0), None
         agents = Agents()
+        scope = lambda snap: watch_scope(proj, snap)
+        def look(after, stalls):
+            lines = watch_events(before, after) + (owner_lines(proj.name, before, after) if not os.environ.get("COMPOSE_ROLE") else [])
+            return yolo_mark(proj, watch_filter(lines + stalls, proj.name, sources, *scope(after)))
         while True:
             time.sleep(a.interval)
             if rewake and os.getppid() != parent:
                 return  # the session that parked this hook is gone
             after = watch_snapshot(repo, proj, agents)
-            ev = yolo_mark(proj, watch_filter(watch_events(before, after) + watch_stalls(proj, after, limit, key=key), proj.name, sources, *watch_scope(proj, after)))
+            stalls = watch_stalls(proj, after, limit, key=key)
+            ev = look(after, stalls)
+            if ev and all(is_info(e) for e in ev):  # progress pings alone: they wait for a wake to travel with, `before` stays put
+                held_since = held_since or time.time()
+                if time.time() - held_since < INFO_HOLD:
+                    ev = []
             if ev:
+                if settle and not any(URGENT.search(e) for e in ev):  # the rest of the burst joins this wake
+                    time.sleep(settle)
+                    after = watch_snapshot(repo, proj, agents)
+                    stalls += watch_stalls(proj, after, limit, key=key)
+                    ev = look(after, stalls)
                 fc_crew.manager_attention(proj, ev)
                 if rewake:
                     emit("compose watch woke you. When this turn ends the Stop hook parks the next watch; do not start one yourself.")
@@ -315,7 +383,8 @@ def cmd_watch(a, rewake=False):
                 if rewake:
                     sys.exit(2)
                 return
-            before = after
+            if held_since is None:
+                before = after
             if deadline and time.time() > deadline:
                 watch_save(proj, key, base=after)
                 pending = sum(t["state"] in ("pending", "running", "interrupted") for t in after["tasks"].values())
@@ -337,7 +406,7 @@ def cmd_rewake(a):
     except Exception:
         session = ""
     cmd_watch(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project, now=False, from_=None,
-                                 timeout=0, stall=None, interval=WATCH_INTERVAL, session=session), rewake=True)
+                                 timeout=0, stall=None, interval=WATCH_INTERVAL, settle=WATCH_SETTLE, session=session), rewake=True)
 
 def crew_in_pane(proj, pane):
     """The teammate whose record says it runs in herdr pane `pane`, else None."""

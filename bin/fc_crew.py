@@ -88,6 +88,9 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"~/.compose and says if your real one changes, and at most two such commands run at once on this machine "
             f"(`COMPOSE_TEST_SLOTS`): one that waits for a slot says so. Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) "
             f"directly: under `compose timed` they get that scratch config, with no workspace and no keys.\n"
+            f"Shell traps: in zsh a command kept in a variable is not word-split (`R=\"compose report ...\"; $R` exits 127), so define a function. "
+            f"Load the Monitor tool's schema with ToolSearch before its first use. `sleep` longer than a few seconds is blocked: wait with a background until-loop.\n"
+            f"Never end a turn on a wait that cannot wake you (a Monitor expires silently, at most 30 minutes): to wait for one event, run a Bash background command that exits when it is true (`until <test>; do sleep 1; done`); to hear compose's events, run `compose watch` that way, never in a Monitor.\n"
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
@@ -174,6 +177,8 @@ def cmd_crew(a):
         return
     if not a.role:
         sys.exit(f"usage: compose crew {a.action} --project {slug} --role <role>")
+    if a.action in ("start", "stop"):
+        fc_herdr.herdr_manager_claim(proj, getattr(a, "takeover", False))
     name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":

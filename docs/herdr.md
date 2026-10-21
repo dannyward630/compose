@@ -107,6 +107,12 @@ It prints one `event ...` line and exits, so a waiting team lead spends no token
 It also records the session that started it (`started_by`, its herdr pane).
 With two engineering manager sessions on one project, each session's watch wakes on no line of a teammate another live session started, unless `--from` names it.
 A teammate whose starting session has ended is adopted by any engineering manager's watch.
+One engineering manager session drives a project (`results/manager.json`, the herdr pane that first ran `crew start`, `crew stop`, or a continuous `watch`).
+The same from another session while that pane still holds a live agent refuses, naming the pane; `watch --now` and `status --digest` stay read-only and `--takeover` moves the claim and the owner's teammates to the new session.
+An owner whose pane is gone is replaced silently, and outside herdr nothing is claimed.
+The watch spends few wake-ups: a task starting is not an event, a teammate's plain `working` report travels with the next wake (or alone after 5 minutes), a burst of non-urgent events is one wake after a 10 s settle, and the watch never times out.
+For the product owner it adds `event tell='<line>'` on a state change only: verify failed and why, fix loop started, run ended or crashed, verify passed, done.
+A teammate idle for a minute whose last report is `working` and whose pane ends on an API or network error raises `event stall=network` once, with the nudge to send when the network is back.
 A run left silent with work pending raises a stall event after 240 s.
 You can change that limit with `stall_seconds` in `verify.json` or with `watch --stall`.
 
