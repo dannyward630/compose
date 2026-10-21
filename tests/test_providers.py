@@ -207,3 +207,49 @@ class CrewPiLocal(unittest.TestCase):
                 self.calls.clear(); tab, start = self.start(model)
                 self.assertFalse([a for a in tab + start if "COMPOSE_PI_MODEL" in a or "pi-providers.js" in a])
         self.assertFalse(self.js.exists())
+
+import socket, threading, urllib.error, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class ReachHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.server.seen.append(self.path); self.send_response(self.server.code); self.send_header("Content-Length", "0"); self.end_headers()
+
+class Reach(unittest.TestCase):
+    def providers(self, **urls):
+        p = mock.patch.object(fc.fc_config, "PROVIDERS", {n: {"base_url": u} for n, u in urls.items()}); p.start(); self.addCleanup(p.stop)
+    def serve(self, code=200):
+        s = ThreadingHTTPServer(("127.0.0.1", 0), ReachHandler); s.code, s.seen = code, []
+        threading.Thread(target=s.serve_forever, daemon=True).start(); self.addCleanup(s.server_close); self.addCleanup(s.shutdown)
+        return s, f"http://127.0.0.1:{s.server_address[1]}/v1/"
+    def closed(self):
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        return f"http://127.0.0.1:{port}/v1/"
+    def line(self, name, url): return f"local provider {name} at {url} is not answering: start the server, then run again"
+    def test_any_http_answer_is_up_and_gets_models_under_the_base_url(self):
+        for code in (200, 404, 503):
+            with self.subTest(code=code):
+                s, url = self.serve(code); self.providers(fakelocal=url)
+                self.assertEqual(fc_providers.reach("fakelocal"), (True, f"HTTP {code}")); self.assertEqual(s.seen, ["/v1/models"])
+    def test_closed_port_is_not_answering_with_a_5_second_timeout(self):
+        url = self.closed(); self.providers(fakelocal=url)
+        with mock.patch.object(urllib.request, "urlopen", wraps=urllib.request.urlopen) as uo:
+            self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+        args, kw = uo.call_args; self.assertEqual(kw.get("timeout", args[1] if len(args) > 1 else None), 5)
+    def test_url_errors_oserrors_and_timeouts_are_not_answering(self):
+        url = self.closed(); self.providers(fakelocal=url)
+        for err in (urllib.error.URLError("refused"), OSError("down"), socket.timeout("slow")):
+            with self.subTest(err=err), mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+    def test_reach_is_never_cached(self):
+        s, url = self.serve(); self.providers(fakelocal=url)
+        self.assertTrue(fc_providers.reach("fakelocal")[0]); s.shutdown(); s.server_close()
+        self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+    def test_doctor_rows_are_sorted_with_a_check_that_reaches_the_provider(self):
+        s, up = self.serve(); down = self.closed(); self.providers(zeta=up, alpha=down)
+        rows = fc_providers.doctor_rows()
+        self.assertEqual([(r[0], r[2], *r[3:]) for r in rows], [(f"local provider {n}", f"start the server at {u}", "default", False, "manual") for n, u in (("alpha", down), ("zeta", up))])
+        self.assertEqual([r[1](Path(".")) for r in rows], [(False, "not answering"), (True, "not answering")])
+    def test_no_providers_give_no_rows(self):
+        self.providers(); self.assertEqual(fc_providers.doctor_rows(), [])
