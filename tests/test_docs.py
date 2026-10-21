@@ -1603,5 +1603,58 @@ class SkillNamesPostures(unittest.TestCase):
             self.assertNotIn("—", read(rel))
 
 
+class UserDocsNamePostures(unittest.TestCase):
+    STEP = ["`/compose:yolo [words]` works the same but stays on until you send `yolo:off`, and your other messages steer it without ending it.",
+            "`/compose:away digest` or `/compose:yolo digest` prints the digest and leaves it on."]
+    ROWS = ["| `compose away --project <name> [--push] [words]\\|--clear-words\\|digest\\|off` | Lets the engineering manager answer for you while you are away, until your first message, and prints a digest when you turn it off |",
+            "| `compose yolo --project <name> [--push] [words]\\|--clear-words\\|digest\\|off` | Lets the engineering manager answer for you until you send `yolo:off`, while you still steer, and prints a digest when you turn it off |"]
+    WATCH = "`event away=on ... by=<the session that set it>` under away, or `event yolo=on ...` under yolo"
+
+    def cli_row(self, name):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith(f"| `{name} [--push] [words]\\|decided\\|--clear-words\\|digest\\|off` |")]
+        self.assertEqual(len(rows), 1)
+        return rows[0]
+
+    def test_readme_step_away_lines(self):
+        lines = read("README.md").splitlines()
+        i = lines.index(self.STEP[0])
+        self.assertEqual(lines[i:i + 2], self.STEP)
+        self.assertEqual(lines.count(self.STEP[1]), 1)
+        before = lines[i - 5:i]
+        self.assertEqual([l for l in before if "/compose:away" in l], before)
+        self.assertNotIn("/compose:yolo", "".join(before))
+        self.assertEqual(lines[i - 6], "")
+
+    def test_readme_rows_away_then_yolo(self):
+        lines = read("README.md").splitlines()
+        i = lines.index(self.ROWS[0])
+        self.assertEqual(lines[i:i + 2], self.ROWS)
+        self.assertFalse([l for l in lines if l.startswith("| `compose yolo") and "[words]\\|--clear-words\\|off`" in l])
+
+    def test_cli_watch_row(self):
+        row = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `watch` |")][0]
+        self.assertIn(self.WATCH, row)
+        self.assertNotIn("by=<the session that set it>` under yolo.", row)
+
+    def test_cli_rows_away_then_yolo(self):
+        lines = read("docs/cli.md").splitlines()
+        away, yolo = self.cli_row("away"), self.cli_row("yolo")
+        self.assertEqual(lines.index(yolo), lines.index(away) + 1)
+        for row, me, other in ((away, "away", "yolo"), (yolo, "yolo", "away")):
+            for want in ("`digest` prints the digest and leaves it on", "of the posture that is not on exits 1",
+                         f"prints the `{me}: ...` form", f"`(" + f"{me} recommendation, unconfirmed, <date>)`"):
+                self.assertIn(want, row)
+            self.assertNotIn(f"{other}: ...", row)
+            self.assertNotIn(f"({other} recommendation", row)
+        self.assertIn("the product owner's first message ends it", away)
+        self.assertNotIn("yolo:off", away)
+        self.assertIn("stays on until `yolo:off`, `/compose:yolo off`, or `compose yolo off`", yolo)
+        self.assertNotIn("first message ends it", yolo)
+
+    def test_no_em_dash(self):
+        for rel in ("README.md", "docs/cli.md"):
+            self.assertNotIn("—", read(rel))
+
+
 if __name__ == "__main__":
     unittest.main()
