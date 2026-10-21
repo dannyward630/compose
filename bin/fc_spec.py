@@ -1,6 +1,6 @@
 import json, re, sys
 from pathlib import Path
-import fc_core, fc_tasks, fc_worktree, fc_status
+import fc_core, fc_routerec, fc_tasks, fc_worktree, fc_status
 
 
 def file_clashes(tasks):
@@ -40,13 +40,16 @@ def cmd_tasks(a):
     open_tasks = [m for m in tasks if not finished(m, fc_status.task_state(repo, proj, m, trunk_head, facts)["state"].split(" ")[0])]
     # The layers in the order the chain stacks them once each has a branch: the rule stack_order applies to the branches.
     layers = fc_worktree.layer_order(fc_tasks.code_tasks(open_tasks))
+    issues = fc_tasks.linear_cache(proj).get("issues") or {}
     print(f"project {proj.name}   {len(tasks)} tasks   stack order (bottom first): {' <- '.join(layers) or '-'}")
-    print(f"  {'id':4} {'title':40} {'after':10} {'linear':9} files | protected | test")
+    print(f"  {'id':4} {'route':33} {'title':40} {'after':10} {'linear':9} files | protected | test")
     for m in tasks:
+        r = fc_routerec.parse_route((issues.get(m.get("linear")) or {}).get("description") or "")
+        route = f"{r['depth']} {r['workflow']}" if r else "-"
         after = str(m.get("after") or "").strip() or "-"
         linear = str(m.get("linear") or "").strip() or "-"
         owned = ', '.join(m['nodes']) if m.get('kind') == 'design' else ', '.join(m['files'])
-        print(f"  {m['id']:4} {m.get('title', '')[:40]:40} {after:10} {linear:9} {owned or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
+        print(f"  {m['id']:4} {route:33} {m.get('title', '')[:40]:40} {after:10} {linear:9} {owned or '-'} | {', '.join(m['protected']) or '-'} | {m['test']}")
     clashes = file_clashes(open_tasks)
     if clashes:
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
@@ -67,7 +70,7 @@ def cmd_tasks(a):
         for tid, why in big:
             print(f"    {tid}: {why}")
     big_stories = [(k, len(fc_tasks.parse_criteria(v.get("description") or "")))
-                   for k, v in (fc_tasks.linear_cache(proj).get("issues") or {}).items()
+                   for k, v in issues.items()
                    if (v.get("status") or "").lower() not in fc_tasks.CANCELED and not fc_tasks.task_from_issue(dict(v, id=k))
                    and not fc_tasks.hand_task(v)]
     if any(n > 5 for _, n in big_stories):
