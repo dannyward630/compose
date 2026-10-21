@@ -149,6 +149,8 @@ class Secrets(unittest.TestCase):
         self.assertEqual(w.returncode, 0, w.stderr)
         (home / "src" / "new-worktree").mkdir()  # git or treehouse in another session
         (home / "auth.json").touch()  # rewritten with the same bytes
+        (home / "live").mkdir()  # a run in another project holds it with its pid's file (fc_update.hold)
+        (home / "live" / "27545.json").write_text("{}")
         go.touch()
         out, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 0, err)
