@@ -407,7 +407,8 @@ def cmd_testcrews(a):
     metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
-        short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
+        spare = sum(k.startswith("spare-") for k in held)  # slots a collect kept for these writers
+        short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas) - spare)
         if short:
             sys.exit(f"testcrews: {short}")
     asked = only or {m["id"] for m in tasks}
@@ -488,8 +489,13 @@ def test_worktree(proj, tid):
         return Path(held)
     if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", "-f", branch, "HEAD"], wt)
-        path = fc_worktree.slot_on(wt, branch, f"compose:{proj.name}:tests-{tid}")
-        fc_worktree.slots(proj, {f"tests-{tid}": str(path)})
+        spare = next((k for k in fc_worktree.slots(proj) if k.startswith("spare-")), None)  # a collected writer's slot, still leased
+        if spare:
+            path = Path(fc_worktree.slots(proj)[spare])
+            fc_worktree.checkout_in_slot(path, branch)
+        else:
+            path = fc_worktree.slot_on(wt, branch, f"compose:{proj.name}:tests-{tid}")
+        fc_worktree.slots(proj, {f"tests-{tid}": str(path), **({spare: None} if spare else {})})
     else:
         path = proj / "worktrees" / f"tests-{tid}"
         if path.exists():
@@ -531,7 +537,10 @@ def collect_tests(proj, only=None):
                 break
         else:
             held = fc_worktree.slots(proj).get(f"tests-{tid}")
-            if held:
+            if held and waiting_writers(proj):  # the chained next writer takes this slot as it is: returning it leaves a gap for another project's lease
+                fc_worktree.park_slot(held, fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
+                fc_worktree.slots(proj, {f"tests-{tid}": None, f"spare-{tid}": held})
+            elif held:
                 fc_worktree.release_slot(wt, held)
                 fc_worktree.slots(proj, {f"tests-{tid}": None})
             else:
@@ -544,8 +553,13 @@ def collect_tests(proj, only=None):
     groups = {}
     for tid, how in waiting_writers(proj).items():
         groups.setdefault((how["contract"], how["budget"], bool(how.get("redo"))), []).append(tid)
-    for (contract, budget, redo), tids in groups.items():
-        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
-                                         redo=redo))
+    try:
+        for (contract, budget, redo), tids in groups.items():
+            cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
+                                             redo=redo))
+    finally:  # slots kept for writers that did not start (still blocked, failed, or past the cap) go back to the pool
+        for role, held in {k: v for k, v in fc_worktree.slots(proj).items() if k.startswith("spare-")}.items():
+            fc_worktree.release_slot(wt, held)
+            fc_worktree.slots(proj, {role: None})
     if conflicts:
         sys.exit("\n".join(conflicts))

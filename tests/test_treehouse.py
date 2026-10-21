@@ -127,6 +127,44 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(started, ["tests-003"])
         self.assertEqual(list(fc.fc_worktree.slots(proj)), ["tests-003"])
 
+    def test_collect_hands_the_collected_writers_slot_to_the_chained_next_writer_without_a_gap(self):
+        self.cap(2)  # the project holds one slot, the first writer the other: the pool is full
+        wt, proj = self.init()
+        task = lambda tid: {"id": tid, "title": tid, "files": [], "protected": ["t_test.txt"], "test": "true", "body": ""}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [task("001"), task("002")]}))
+        (proj / "results" / "contract.md").write_text("c")
+        slot = fc.fc_briefs.test_worktree(proj, "001")
+        (slot / "t_test.txt").write_text("t\n")
+        self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
+        fc.fc_briefs.waiting_writers(proj, {"002": {"contract": str(proj / "results" / "contract.md"), "budget": None, "redo": False}})
+        real_release, started = fc.fc_worktree.release_slot, []
+        def release_then_another_projects_writer_leases(repo, path):
+            real_release(repo, path)
+            fc.fc_worktree.slot_on(repo, "main", "compose:other:tests-001", detach=True)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+             mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append((ns.role, ns.cwd))), \
+             mock.patch.object(fc.fc_worktree, "release_slot", release_then_another_projects_writer_leases):
+            fc.fc_briefs.collect_tests(proj)
+        self.assertEqual([r for r, _ in started], ["tests-002"])
+        self.assertEqual(Path(started[0][1]).resolve(), slot.resolve())
+        self.assertEqual(self.git("branch", "--show-current", cwd=slot), "compose/p-tests-002")
+        self.assertEqual(list(fc.fc_worktree.slots(proj)), ["tests-002"])
+        self.assertEqual(self.status()[slot.resolve()], "leased")
+        self.assertNotIn("compose/p-tests-001", self.git("branch", "--list", "compose/p-tests-001"))
+
+    def test_collect_returns_a_kept_slot_when_the_waiting_writer_does_not_start(self):
+        wt, proj = self.init()
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
+        slot = fc.fc_briefs.test_worktree(proj, "001")
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
+        fc.fc_briefs.waiting_writers(proj, {"002": {"contract": "c", "budget": None, "redo": False}})
+        with mock.patch.object(fc.fc_briefs, "cmd_testcrews", side_effect=SystemExit("testcrews: no slot")):
+            with self.assertRaises(SystemExit):
+                fc.fc_briefs.collect_tests(proj)
+        self.assertEqual(self.status()[slot.resolve()], "available")
+        self.assertEqual(fc.fc_worktree.slots(proj), {})
+
     def test_a_lease_from_a_full_pool_exits_with_one_line_naming_the_holders(self):
         self.cap(1)
         wt, proj = self.init()
