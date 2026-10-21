@@ -9,7 +9,7 @@ YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are nev
               "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
 YOLO_TAG = "({mode} recommendation, unconfirmed, {date})"  # what the map's Decisions so far shows after a decision taken for the product owner
-def yolo_digest(repo, proj, y):
+def yolo_digest(repo, proj, y, verb="off"):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
     snap = fc_watch.watch_snapshot(repo, proj)
@@ -40,7 +40,7 @@ def yolo_digest(repo, proj, y):
                                 f"rewrites each line as the product owner's, and work cut on one is redone if you change it"] if y.get("decisions") else []),
                 ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
                 ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
-    out = [f"yolo off for {proj.name}: away since {y['since']}"]
+    out = [f"{y['mode']} {verb} for {proj.name}: on since {y['since']}"]
     for head, items in sections:
         out += ["", head] + [f"- {i}" for i in items or ["none"]]
     return "\n".join(out)
@@ -52,8 +52,12 @@ def cmd_yolo(a):
     y = fc_tasks.yolo_state(proj)
     words = list(a.words or [])
     P = a.cmd
-    if (words[:1] in (["off"], ["decided"]) or a.clear_words) and not y:
+    if (words[:1] in (["off"], ["digest"], ["decided"]) or a.clear_words) and not y:
         print(f"{P} is not on for {proj.name}; `compose {P} --project {proj.name} [--push] [words]` turns it on")
+        sys.exit(1)
+    if (words[:1] in (["off"], ["digest"], ["decided"]) or a.clear_words) and y["mode"] != P:
+        word = "--clear-words" if a.clear_words else words[0]
+        print(f"{y['mode']} is on for {proj.name}, not {P}; run `compose {y['mode']} {word} --project {proj.name}`")
         sys.exit(1)
     if a.clear_words:
         if words or a.push:
@@ -61,6 +65,9 @@ def cmd_yolo(a):
         y["words"] = ""
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"words cleared for {proj.name}; kept: since {y['since']}, push: {'yes' if y.get('push') else 'no'}, {len(y['decisions'])} decision(s)")
+        return
+    if words == ["digest"]:
+        print(yolo_digest(repo, proj, y, "digest"))
         return
     if words == ["off"]:
         print(yolo_digest(repo, proj, y))
