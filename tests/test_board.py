@@ -297,5 +297,38 @@ class RouteSummary(unittest.TestCase):
         self.assertEqual(out.getvalue(), fc.fc_status.digest(self.repo, self.proj) + "\n")
 
 
+class RouteRow(unittest.TestCase):
+    """`task_state` adds the task's workflow, depth, escalations and fix rounds to its row."""
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+
+    def write(self, name, data):
+        (self.proj / "results" / name).write_text(json.dumps(data))
+
+    def row(self, meta):
+        facts = {"prefix": "compose/p-", "have": set(), "merged": set()}
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("task_state read Linear")):
+            r = fc.fc_status.task_state(self.proj.parent.parent, self.proj, meta, "", facts)
+        return {k: r[k] for k in ("workflow", "depth", "escalations", "fix_rounds")}
+
+    def test_a_routed_task_shows_its_route_its_fallback_switches_and_the_verify_rounds_that_fixed_it(self):
+        fall = {"fallback": {"from": "a", "to": "b", "why": "x"}}
+        self.write("tasks.json", {"feature": {}, "tasks": [], "issues": {"XX-1": {"description": "## Route\n\n* workflow: test-first\n* depth: FAST\n"}}})
+        self.write("001.json", {"status": "passed", "log": [{"attempt": 1}, fall, {"attempt": 2}, fall]})
+        self.write("verify.json", {"rounds": [{"fix_tasks": ["001", "002"]}, {"fix_tasks": ["002"]}, {}, {"fix_tasks": ["001"]}]})
+        self.assertEqual(self.row({"id": "001", "linear": "XX-1"}), {"workflow": "test-first", "depth": "FAST", "escalations": 2, "fix_rounds": 2})
+
+    def test_a_task_without_a_linear_key_or_a_route_section_has_no_route(self):
+        self.write("tasks.json", {"feature": {}, "tasks": [], "issues": {"XX-2": {"description": "no section here"}}})
+        none = {"workflow": "-", "depth": "-", "escalations": 0, "fix_rounds": 0}
+        self.assertEqual(self.row({"id": "001"}), none)
+        self.assertEqual(self.row({"id": "001", "linear": "XX-2"}), none)
+
+    def test_a_task_with_no_result_no_verify_json_and_no_sync_cache_gets_zeros(self):
+        self.assertEqual(self.row({"id": "001", "linear": "XX-1"}), {"workflow": "-", "depth": "-", "escalations": 0, "fix_rounds": 0})
+
+
 if __name__ == "__main__":
     unittest.main()
