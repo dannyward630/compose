@@ -500,7 +500,8 @@ class OpenCodeLocal(unittest.TestCase):
         self.run = mock.Mock(return_value=mock.Mock(stdout=OL_OUT, stderr="", returncode=0))
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}),
                   mock.patch.object(fc.fc_config, "provider_of", oc_provider_of), mock.patch.object(fc_providers, "opencode_provider", lambda m: self.entry if m.startswith("fakelocal/") else {}),
-                  mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.dict(os.environ)):
+                  mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS) | {"FAKELOCAL_API_KEY"})):  # what apply_config adds for a keyed provider
             p.start(); self.addCleanup(p.stop)
         os.environ.pop("OPENROUTER_API_KEY", None)
     def turn(self, model, key=None):
