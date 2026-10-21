@@ -11,6 +11,7 @@ fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 import fc_reroute  # noqa: E402  (nothing imports it into `fc` yet; compose.py put bin/ on sys.path)
+import fc_evidence, fc_ledger, fc_policy, fc_route, fc_routectx, fc_routerec  # noqa: E402  (the modules fc_reroute holds: a later test file swaps sys.modules)
 
 FILES = ["src/keep.py", "src/new.py", "src/gone.py", "src/a.py", "src/b.py"]
 
@@ -238,7 +239,8 @@ class JevState(unittest.TestCase):
         tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1"}, "issues": [{"id": "ENG-2", "title": "Greet", "description": desc, "status": "Todo"}]})
         kv = lambda v, d: {"side_effect" if isinstance(v, Exception) else "return_value": v or d}
         with mock.patch.object(fc.fc_models, "jev_ask", **kv(jev, {"model": "jev-test", "answers": self.ANS})) as self.ask, \
-                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", **kv(policies, ([], ""))), mock.patch.object(fc_reroute, "diff_callers", return_value=self.CALLERS):
+                mock.patch.object(fc_policy, "read_policies", **kv(policies, ([], ""))), mock.patch.object(fc_reroute, "diff_callers", return_value=self.CALLERS), \
+                mock.patch.object(fc_route, "record_route"):
             return fc_reroute.reassess(self.repo, self.proj, tasks[0], tasks, ("diff", "scope"), "r1", "main", "task")
 
     def test_jev_sees_the_diff_callers_recorded_route_and_triggers_and_is_not_asked_for_the_workflow(self):
@@ -253,9 +255,10 @@ class JevState(unittest.TestCase):
         self.assertEqual((self.ask.call_count, route["workflow"]), (1, "implement-then-test"))
 
     def test_a_policy_matching_a_changed_path_outside_files_floors_deep_with_its_checks(self):
-        route = self.reassess(policies=([self.DOCS, self.PLAIN, {**self.DOCS, "name": "Bin", "globs": ["bin/*"], "checks": ["make bin"]}], ""))
+        fast = "## Route\n\n* workflow: implement-then-test\n* depth: FAST\n* verification requirements: none\n\n"  # no recorded floor under the policy's
+        route = self.reassess(fast, policies=([self.DOCS, self.PLAIN, {**self.DOCS, "name": "Bin", "globs": ["bin/*"], "checks": ["make bin"]}], ""))
         self.assertEqual((route["depth"], route["checks"]), ("DEEP", ["make docs"]))
-        self.assertEqual(self.reassess(policies=([self.PLAIN], ""))["depth"], "FAST")
+        self.assertEqual(self.reassess(fast, policies=([self.PLAIN], ""))["depth"], "FAST")
 
     def test_without_a_recorded_workflow_the_pin_is_test_first_and_none_means_no_checks(self):
         route = self.reassess("## Route\n\n* depth: FAST\n* verification requirements: none\n\n")
@@ -298,7 +301,7 @@ class Floor(unittest.TestCase):
         tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1"}, "issues": [{"id": "ENG-2", "title": "Greet", "description": desc, "status": "Todo"}]})
         reply = jev if isinstance(jev, Exception) else {"model": "jev-test", "answers": {"depth": {"choice": jev, "probabilities": {jev: 0.9}, "confidence": 0.9}}}
         with mock.patch.object(fc.fc_models, "jev_ask", **{"side_effect" if isinstance(jev, Exception) else "return_value": reply}), mock.patch.object(fc_reroute, "diff_callers", return_value={"callers": {}}), \
-                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", return_value=(list(policies), "")), mock.patch.object(importlib.import_module("fc_route"), "record_route"), \
+                mock.patch.object(fc_policy, "read_policies", return_value=(list(policies), "")), mock.patch.object(fc_route, "record_route"), \
                 mock.patch.object(fc.fc_linear, "linear_gql", return_value={}):
             return fc_reroute.reassess(self.repo, self.proj, tasks[0], tasks, list(triggers), "3f9a0c1b2d4e", "main", "task")
 
@@ -346,8 +349,8 @@ class Record(unittest.TestCase):
         self.meta, policies = tasks[0], [{"name": "Keys", "statement": "Keys are checked.", "globs": [], "checks": ["make keys"]}]
         reply = {"model": "jev-test", "answers": {"depth": {"choice": "DEEP", "probabilities": {"DEEP": 0.9}, "confidence": 0.9}}}
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), mock.patch.object(fc_reroute, "diff_callers", return_value={"callers": {}}), \
-                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", return_value=(policies, "")), mock.patch.object(fc.fc_linear, "linear_gql", return_value={}), \
-                mock.patch.object(importlib.import_module("fc_routectx"), "context_hash", return_value=self.HASH) as ctx, mock.patch.object(importlib.import_module("fc_route"), "record_route", **record) as rec:
+                mock.patch.object(fc_policy, "read_policies", return_value=(policies, "")), mock.patch.object(fc.fc_linear, "linear_gql", return_value={}), \
+                mock.patch.object(fc_routectx, "context_hash", return_value=self.HASH) as ctx, mock.patch.object(fc_route, "record_route", **record) as rec:
             return fc_reroute.reassess(self.repo, self.proj, self.meta, tasks, list(triggers), "3f9a0c1b2d4e", "main", "task"), rec, ctx, policies
 
     def test_the_route_is_hashed_with_the_policies_and_its_reason_ends_with_the_note(self):
@@ -359,7 +362,7 @@ class Record(unittest.TestCase):
         route, rec, _, _ = self.reassess(("diff", "scope"))
         proj, meta, section = rec.call_args.args
         self.assertEqual((rec.call_count, proj, meta), (1, self.proj, self.meta))
-        self.assertEqual(section, importlib.import_module("fc_routerec").route_section(route) + "\n* rerouted: diff, scope (run 3f9a0c1b2d4e)")
+        self.assertEqual(section, fc_routerec.route_section(route) + "\n* rerouted: diff, scope (run 3f9a0c1b2d4e)")
         self.assertTrue(section.endswith(f"\n* context hash: {self.HASH}\n* rerouted: diff, scope (run 3f9a0c1b2d4e)"))
 
     def test_a_record_that_fails_raises(self):
@@ -381,7 +384,7 @@ class Sweep(unittest.TestCase):
     def sweep(self, ids=("001", "002", "003", "004", "005", "006"), key="lin_test", kinds=("diff",), reassess=None, run_id=lambda proj, t: f"run-{t}"):
         """catch_up with `reassess` mocked; returns (its return value, the mock)."""
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc_reroute, "reassess", **reassess or {}) as re, mock.patch.object(fc_reroute, "fired", return_value=set()), \
-                mock.patch.object(fc_reroute, "layer_base", side_effect=lambda repo, proj, t, trunk: f"{trunk}/below-{t}"), mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=run_id):
+                mock.patch.object(fc_reroute, "layer_base", side_effect=lambda repo, proj, t, trunk: f"{trunk}/below-{t}"), mock.patch.object(fc_ledger, "run_id", side_effect=run_id):
             return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re
 
     def test_each_passed_task_with_an_issue_is_reassessed_for_diff_in_order_with_its_run_id_layer_base_and_branch(self):
@@ -430,7 +433,7 @@ class Once(unittest.TestCase):
     def once(self, fired, ids=("001", "002", "003")):
         """catch_up with `fired(issue)` and `reassess` mocked; returns (its return value, fired mock, reassess mock)."""
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "fired", side_effect=fired) as fi, mock.patch.object(fc_reroute, "reassess") as re, \
-                mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"):
+                mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(fc_ledger, "run_id", side_effect=lambda proj, t: f"run-{t}"):
             return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", ("diff",)), fi, re
 
     def test_a_trigger_fired_for_the_run_id_calls_no_reassess_and_each_task_reads_its_own_issue(self):
@@ -459,9 +462,9 @@ class AfterRun(unittest.TestCase):
         with mock.patch.object(fc_reroute, "catch_up", **catch_up) as cu, mock.patch.object(fc.fc_core, "say") as say:
             return fc_reroute.after_run("repo", "proj", results, self.TASKS, "main"), cu, say
 
-    def test_catch_up_gets_the_passed_ids_only_in_order_with_diff(self):
+    def test_catch_up_gets_the_passed_ids_only_in_order_with_diff_and_scope(self):
         got, cu, say = self.run_after([("004", "passed"), ("002", "failed"), ("001", "passed"), ("003", "already_green")], return_value={})
-        self.assertEqual((got, cu.call_args_list, say.call_count), (None, [mock.call("repo", "proj", self.TASKS, ["004", "001"], "main", ("diff",))], 0))
+        self.assertEqual((got, cu.call_args_list, say.call_count), (None, [mock.call("repo", "proj", self.TASKS, ["004", "001"], "main", ("diff", "scope"))], 0))
 
     def test_each_route_not_recorded_is_said_with_its_issue_and_why(self):
         got, cu, say = self.run_after([("001", "passed"), ("002", "passed"), ("003", "passed")], return_value={"003": "Linear: down", "001": "policies unreadable: boom"})
@@ -528,7 +531,7 @@ class VerifyCatchUp(unittest.TestCase):
         repo = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, repo, True); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
-        tasks = [{"id": t, "after": "", **({"linear": f"XX-{t}"} if t in linear else {})} for t in ("001", "002")]
+        tasks = [{"id": t, "after": "", "files": [], **({"linear": f"XX-{t}"} if t in linear else {})} for t in ("001", "002")]
         (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002"):
             git("branch", fc.fc_worktree.task_branch(repo, proj, t), git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", t))
@@ -543,9 +546,9 @@ class VerifyCatchUp(unittest.TestCase):
             except SystemExit as e: code = e.code
         return code, order, repo, proj
 
-    def test_the_stack_is_caught_up_once_with_diff_before_any_stage(self):
+    def test_the_stack_is_caught_up_once_with_diff_and_scope_before_any_stage(self):
         code, order, repo, proj = self.verify(return_value={})
-        self.assertEqual(order.catch_up.call_args_list, [mock.call(repo, proj, fc.fc_tasks.load_tasks(proj), ["001", "002"], "main", ("diff",))])
+        self.assertEqual(order.catch_up.call_args_list, [mock.call(repo, proj, fc.fc_tasks.load_tasks(proj), ["001", "002"], "main", ("diff", "scope"))])
         self.assertEqual(([c[0] for c in order.mock_calls if c[0] in ("catch_up", "rounds")], code), (["catch_up", "rounds"], None))
 
     def test_each_route_not_recorded_is_said_exactly_and_verify_exits_1_without_a_stage(self):
@@ -592,7 +595,7 @@ class PassScope(unittest.TestCase):
     def run_hook(self, hook, fired=(), **kw):
         """`hook(**kw)` with the pairs `fired` on every issue; returns (its return value, {task id: reassess call args})."""
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set(fired)), \
-                mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"):
+                mock.patch.object(fc_ledger, "run_id", side_effect=lambda proj, t: f"run-{t}"):
             got = hook(**kw)
         return got, {c.args[2]["id"]: c.args for c in re.call_args_list}
 
@@ -655,9 +658,9 @@ class FixScope(unittest.TestCase):
             ran.append(len(asked)); return (stages[len(ran) - 1], {}, "finding")
         def fixer(cwd, model, prompt): (wt / "src").mkdir(exist_ok=True); (wt / "src/b.py").write_text(f"fix {len(ran)}"); return None, "Tidy b", 1, {"cost": 0.0}
         patches = [mock.patch.object(fc_reroute, "reassess", re), mock.patch.object(fc_reroute, "fired", lambda issue: set(done)), mock.patch.object(fc.fc_config, "LINEAR_KEY", key),
-                   mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(fc.fc_verify, "run_stages", stage),
+                   mock.patch.object(fc_ledger, "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(fc.fc_verify, "run_stages", stage),
                    mock.patch.object(fc.fc_implement, "implementer", fixer), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_worktree, "ready_checkout"),
-                   mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(importlib.import_module("fc_ledger"), "verify_record"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
+                   mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc_ledger, "verify_record"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
         with contextlib.ExitStack() as stack:
             for p in patches: stack.enter_context(p)
             with self.assertRaises(SystemExit) as exit:
@@ -682,7 +685,7 @@ class FixScope(unittest.TestCase):
 class LedgerVerdicts(unittest.TestCase):
     def triggers(self, *rows, kept=None):
         rows = [{"event_id": f"e{i}", "run_id": "r1", "commit_sha": "c", "task_ids": ["001"], "criterion_id": "k", "fails_on_base": None, "detail": "", "at": "t", "shared": False, "source": s, "phase": p, "result": r} for i, (s, p, r) in enumerate(rows)]
-        with mock.patch.object(importlib.import_module("fc_ledger"), "counted", return_value=rows if kept is None else kept) as counted:
+        with mock.patch.object(fc_ledger, "counted", return_value=rows if kept is None else kept) as counted:
             got = fc_reroute.ledger_triggers("repo", "proj", {"id": "001"}, rows)
         self.assertEqual(counted.call_args.args, ("repo", "proj", {"id": "001"}, rows))
         return got
@@ -711,7 +714,7 @@ class LedgerVerdicts(unittest.TestCase):
 
 class LedgerInvalid(unittest.TestCase):
     def triggers(self, *rows, unsaved=()):
-        led = importlib.import_module("fc_ledger")
+        led = fc_ledger
         counted = lambda repo, proj, meta, rs: [r for r in rs if r["run_id"] == "r1" and "001" in r["task_ids"]]
         with mock.patch.object(led, "counted", side_effect=counted) as c, mock.patch.object(led, "criterion_ids", return_value=["001.1:aaaaaaaa", "001.2:bbbbbbbb"]), mock.patch.object(led, "unsaved", return_value=list(unsaved)):
             return fc_reroute.ledger_triggers("repo", "proj", {"id": "001"}, list(rows)), c
@@ -750,10 +753,10 @@ class LedgerCatchUp(unittest.TestCase):
 
     def go(self, kinds, fired=(), fire=("failed tests", "invalid evidence", "unmet requirements"), ids=("001", "002", "003"), rows=None):
         """catch_up with everything but its own logic mocked; returns (its value, reassess, task_rows, ledger_triggers)."""
-        ev = importlib.import_module("fc_evidence")
+        ev = fc_evidence
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set(fired)), \
                 mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(fc_reroute, "diff_signals", return_value={"outside": ["x"]}), \
-                mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(ev, "task_rows", **rows or {"return_value": ["row"]}) as tr, \
+                mock.patch.object(fc_ledger, "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(ev, "task_rows", **rows or {"return_value": ["row"]}) as tr, \
                 mock.patch.object(fc_reroute, "ledger_triggers", side_effect=fire if isinstance(fire, Exception) else lambda repo, proj, meta, rs: list(fire)) as lt:
             return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re, tr, lt
 
@@ -800,7 +803,7 @@ class LedgerRound(unittest.TestCase):
         def catch_up(*args): write(self.AFTER); return failed or {}
         with mock.patch.object(fc.fc_linear, "linear_ready", return_value=ready), mock.patch.object(fc.fc_worktree, "stack_order", return_value=[f"b-{t}" for t in self.ORDER]) as order, \
              mock.patch.object(fc.fc_worktree, "task_prefix", return_value="b-"), mock.patch.object(fc_reroute, "catch_up", side_effect=catch_up) as cu, mock.patch.object(fc.fc_core, "say") as say, \
-             mock.patch.object(importlib.import_module("fc_routerec"), "parse_route", side_effect=lambda d: {"depth": d}):
+             mock.patch.object(fc_routerec, "parse_route", side_effect=lambda d: {"depth": d}):
             got = fc_reroute.after_round("repo", proj, "main")
         return got, cu, say, order, tasks
 
@@ -832,7 +835,7 @@ class LedgerRerun(unittest.TestCase):
         def note(name, value=None): return mock.Mock(side_effect=lambda *a: order.append(name) or value)
         run = mock.Mock(side_effect=lambda *a: (order.append("stages"), (stages[order.count("stages") - 1], reports[order.count("stages") - 1], "finding"))[1])
         cu = mock.Mock(side_effect=lambda *a: (order.append("after_round"), after[order.count("after_round") - 1])[1]); fixer = mock.Mock()
-        with mock.patch.object(fc.fc_verify, "run_stages", run), mock.patch.object(importlib.import_module("fc_ledger"), "verify_record", note("record")), \
+        with mock.patch.object(fc.fc_verify, "run_stages", run), mock.patch.object(fc_ledger, "verify_record", note("record")), \
              mock.patch.object(fc.fc_accept, "jev_sufficiency", note("sufficiency", "judged")), mock.patch.object(fc_reroute, "after_round", cu), mock.patch.object(fc.fc_implement, "implementer", fixer), \
              mock.patch.object(fc.fc_worktree, "review_base", return_value="BASE"), mock.patch.object(fc.fc_worktree, "dirty_paths", return_value=[]), mock.patch.object(fc.fc_worktree, "ready_checkout"), \
              mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc.fc_linear, "linear_reconcile"), mock.patch.object(fc.fc_core, "say"):
