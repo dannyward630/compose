@@ -44,6 +44,7 @@ One that names no branch (a project made before init recorded it holds `main`, a
    A claim whose reply is still unusable is shown as `unjudged` and dropped, and it does not fail the stage.
 3. **jev** asks one MET / NOT_MET / UNCLEAR question per acceptance criterion.
    Failures above the threshold become findings.
+   Then jev judges whether each task's evidence proves each criterion ([Evidence](#evidence)); that never changes the verdict.
 4. **e2e** has jev drive a real browser to each case's goal.
    Then the case's `assert` checks the real DOM or log.
 5. **fix** sends confirmed findings to the fix model.
@@ -90,6 +91,100 @@ It drives jev to each screen of the built app at the top of the stack and keeps 
 It writes one report, `results/prototype.md`: per screen, the reference, the capture, and a `- [ ]` line for each `must_match`.
 The reader opens both images and ticks the lines, and a mismatch becomes a task before the first full verify.
 It fails only when a screen cannot be reached; whether it matches is for the reader to decide.
+
+## Evidence
+
+Every task issue on Linear has an `## Evidence` section that only the CLI writes.
+It is the table of the evidence that counts for the task: a `Verdict:` line with each criterion's latest jev answer (or `not judged`), then the 60 newest rows.
+The CLI rebuilds it from the issue's comments after each write, so a hand edit is lost.
+`compose sync` leaves it out of the task's brief.
+With no Linear key, or on a task with no issue, nothing is recorded.
+
+Each proof is one comment on the issue.
+Its first line is `Evidence: <source> <phases>`, and a fenced `evidence` block holds one JSON row per line:
+
+````
+Evidence: run red, attempt, final
+
+```evidence
+{"event_id": "3f9a1c0b7d42", "run_id": "a1b2c3d4e5f6", "commit_sha": "9c1e0f...", "task_ids": ["003"], "criterion_id": ["003.1:5d41402a"], "phase": "red", "source": "run", "result": "fail_expected", "fails_on_base": true, "detail": "test fails before the change"}
+```
+````
+
+The comments are the record.
+A row saved twice is read once.
+
+| Key | Holds |
+|---|---|
+| `event_id` | The first 12 hex of the sha256 of the other keys |
+| `run_id` | The task's run id; empty on a row about the whole feature |
+| `commit_sha` | The commit the row was recorded on; empty when it has none |
+| `task_ids` | The tasks the row covers; empty when it covers none in particular |
+| `criterion_id` | `<task id>.<order>:<first 8 hex of the sha256 of the criterion text>` for each criterion covered; empty means all of the task's criteria |
+| `phase` | `red`, `attempt`, `final`, `case`, `checks`, `scoped`, `e2e`, `review`, `acceptance`, `sufficiency`, `done`, or `cost` |
+| `source` | `run`, `prove`, `verify`, or `done` |
+| `result` | `pass`, `fail`, `fail_expected`, `error`, `skipped`, `unclear`, `proven`, `unproven`, or `contradicted` |
+| `fails_on_base` | `true` for a test that must fail before the change, `false` for one that passes, else `null` |
+| `detail` | One line, scrubbed of secrets, at most 160 characters |
+
+A `fail_expected` is a test that failed as it should before the change (the red check, or a prove case that fails because the feature is missing); any other failure is `fail`.
+An `error` is a tool error or a jev that gave up: it is never a `pass`, and never counts as proof.
+`skipped` is a stage that did not run, and `unclear` is a criterion jev could not call.
+`proven`, `unproven`, and `contradicted` belong to `sufficiency` rows, which also carry `cites` (event ids) and `needs`.
+`cost` is informational: it is never evidence for a criterion.
+
+### Who writes rows
+
+| Writer | Rows | On |
+|---|---|---|
+| `run` | `red`, `attempt` (one per test run), and `final`, when a task finishes | the task issue |
+| `verify --prove` | `case`, one per e2e case | the feature issue |
+| `verify` | `checks`, `e2e`, and `review` | the feature issue |
+| `verify` | `scoped` and `acceptance` (one per criterion), then `sufficiency` | each task issue |
+| `compose done` | `done` | the task issue |
+
+### What counts for a task
+
+A row counts for a task when all of these hold:
+
+- Its run id is the task's current one.
+  A row on the feature issue that names the task, or no task, counts by revision alone.
+- Its revision is current: the commit is the task branch's tip, or the task's `files` are unchanged between that commit and the tip, so a rebase alone voids nothing.
+  A `fails_on_base` row counts while the task's `protected` files are unchanged since its commit.
+  A row with no commit counts by run id alone.
+- Its criteria are current.
+  Editing a criterion changes its id, so rows that named only the old text stop counting.
+
+`run --redo` mints a new run id for every task it dispatches, so earlier rows leave the table.
+No comment is deleted.
+A `resume` keeps the run id.
+
+### When Linear does not take a row
+
+A row Linear does not take is tried 3 times, 2 seconds apart, then kept in memory with one line naming it.
+The run goes on, and the next write for that issue sends the waiting rows first.
+Rows are never written to a file: if the process dies first, repeat the verification.
+
+`verify` tries the waiting rows once more before it decides.
+If any is still unsaved it never passes: it prints `verify FAIL  evidence not saved on Linear: <ids>` and exits 1.
+`compose done` marks nothing done while its `done` event is unsaved: it prints `<tid> not done: its done event is not saved on Linear; run compose done again`, tries every other id, and exits 1.
+
+### Jev sufficiency
+
+After the acceptance stage of each round, jev reads the rows that count for each task and answers per criterion: `proven`, `unproven`, or `contradicted`.
+Each answer is a `sufficiency` row on the task issue, citing the rows jev ties to the criterion in `cites`.
+`needs` lists what further verification would help, from `test`, `prove`, `check`, `e2e`, `review`, `acceptance`, `manual`, and `none`; anything else is read as `manual`.
+jev reads at most the 30 newest rows per task.
+It runs unless `--skip-review` is set or `jev_acceptance` is `false`.
+
+A `proven` answer is stored as `unproven` when it cites no row, when it cites only `error` rows, or when a counted `attempt`, `final`, `checks`, `scoped`, or `e2e` row failed; those failed rows are then added to `cites`.
+A missing or unknown answer is `unproven`.
+Sufficiency never changes verify's pass or fail, whatever `acceptance_gate` says.
+
+### Linear endpoint
+
+`LINEAR_URL` replaces the Linear GraphQL endpoint (`https://api.linear.app/graphql`) for the CLI's Linear calls, except the key check of `doctor` and the preflight.
+An e2e case points it at a fake server on `$E2E_PORT` to drive `run` with nothing written on Linear.
 
 ## e2e rules
 
