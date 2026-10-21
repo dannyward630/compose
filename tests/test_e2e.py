@@ -392,6 +392,18 @@ class ToolErrors(unittest.TestCase):
         self.assertFalse(report["checks"][0]["tool_error"])
         self.assertIn("FAILED (failures=1)", findings)
 
+    def test_a_failing_check_keeps_its_full_output_in_a_file_and_lists_every_failing_test_for_the_fixer(self):
+        script = ("import sys\n[print('FAIL: test_%d (mod.Case.test_%d)' % (i, i)) if i % 2 else print('ERROR: test_%d (mod.Case.test_%d)' % (i, i)) for i in range(29)]\n"
+                  "print('x' * 9000)\nprint('FAILED (failures=7, errors=22)')\nsys.exit(1)")
+        ok, report, findings = self.check(f"python3 -c \"{script}\"")
+        check = report["checks"][0]
+        self.assertEqual(len(check["output"]), 3000)
+        self.assertGreater(len(Path(check["output_file"]).read_text()), 9000)
+        self.assertEqual(sum(f"test_{i} (mod.Case.test_{i})" in findings for i in range(29)), 29)
+        self.assertIn("FAILED (failures=7, errors=22)", findings)
+        self.assertIn(check["output_file"], findings)
+        self.assertLess(len(findings), 12000)
+
     def test_a_check_that_ends_on_a_harness_error_is_retried_once_and_never_a_finding(self):
         d = tempfile.mkdtemp()
         ok, report, findings = self.check(f"echo x >> {d}/n; echo 'bash: nosuchtool: command not found' >&2; exit 127")

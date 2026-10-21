@@ -232,6 +232,21 @@ def fix_tests(tasks, files):
         return None
     return list(dict.fromkeys(t["test"] for t in cover))
 
+def save_output(results, cmd, started, text):
+    """A check's whole output, in results/checks/ under a name from the start time and the command; returns its path."""
+    folder = Path(results) / "checks"
+    folder.mkdir(parents=True, exist_ok=True)
+    f = folder / f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(started))}-{re.sub(r'[^A-Za-z0-9]+', '-', cmd).strip('-')[:40]}.log"
+    f.write_text(text)
+    return str(f)
+
+def failure_summary(full, tail, path, cap=6000):
+    """What a reflect or fix round reads of a failed check: every failing test (unittest's FAIL:/ERROR: header lines, up to `cap`
+    characters), then the output's tail, then where the whole output is."""
+    ids = "\n".join(re.findall(r"^(?:FAIL|ERROR): .+$", full, re.M))
+    ids = ids if len(ids) <= cap else ids[:cap].rsplit("\n", 1)[0] + "\n(more failing tests in the full output)"
+    return (f"Failing tests:\n{ids}\n\n" if ids else "") + f"End of the output:\n{tail}\n\nThe whole output is in {path}"
+
 def run_stages(repo, proj, cfg, a, tests=None):
     """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance. With `tests` (a fix round's
     `fix_tests`) the first stage runs only those, and the full checks run once at the end, only when every stage passed.
@@ -248,16 +263,22 @@ def run_stages(repo, proj, cfg, a, tests=None):
         for c in cmds:
             t1 = time.time()
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+            full = fc_core.scrub(p.stdout + p.stderr)
+            out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
             if p.returncode and fc_jev.tool_error(out):
                 fc_core.say(f"check  tool error; retrying once  {c}")
                 p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-                out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
+                full = fc_core.scrub(p.stdout + p.stderr)
+                out = full[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
-            into.append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
-            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
+            record = {"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool}
+            if p.returncode:  # the cut hides most of a long suite's failures: the whole output stays in a file
+                record["output_file"] = save_output(proj / "results", c, t1, full)
+            into.append(record)
+            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}"
+                        + (f"\n           full output {record['output_file']}" if p.returncode else ""))
             if p.returncode and not tool:
-                findings.append(f"Command failed: {c}\n{out}")
+                findings.append(f"Command failed: {c}\n{failure_summary(full, out, record['output_file'])}")
         passed = all(c["exit"] == 0 for c in into)
         fc_herdr.herdr_stage(panes, "checks", "idle" if passed else "blocked", "ok" if passed else "FAIL")
         return passed

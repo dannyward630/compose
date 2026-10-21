@@ -132,6 +132,9 @@ A jev run that does not reach its goal ends `blocked` (or `error`, for a crash) 
 The `e2e` line then names jev's stop reason, and the next lines show the page it stopped on and its last steps.
 `results/verify.json` keeps every step of the run, and `results/e2e/<n>-<case>/` keeps a screenshot of each step of a case that did not pass.
 
+A failing check keeps its whole output in `results/checks/` (named on its `check` line and as `output_file` in `results/verify.json`, whose `output` is only the last 3000 characters).
+The reflect and every fix round read the check's failing tests (unittest's `FAIL:` and `ERROR:` lines), then the end of the output, then that path.
+
 When the harness itself fails, for example a jev or browser crash, a missing tool, or a port in use, verify reports `TOOL ERROR` and retries once.
 It never sends that failure to a fix round.
 
