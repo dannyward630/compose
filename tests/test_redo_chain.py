@@ -87,6 +87,25 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("rev-list", "--count", "main..fast/p/005"), "4")
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "twelve")
 
+    def test_a_layer_left_out_of_two_passes_replays_only_its_own_commit_not_its_earlier_copies_of_the_layers_below(self):
+        # 005 sits on the first 011 and is out of the chain while 010 is rebuilt and 011 rebased onto it; no replaced ref is left,
+        # and the layer below 005 (012) never held the old 011: only the reflog of 011 knows the base 005 was built on
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"] = [{**t, "after": {"005": "011", "012": ""}.get(t["id"], t["after"])} for t in tasks["tasks"]]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        self.git("branch", "-D", "fast/p/005", "fast/p/012")
+        self.layer("012", "main", "012.txt", "old\n"); self.layer("005", "fast/p/011", "005.txt", "old\n")
+        self.git("branch", "-m", "fast/p/005", "parked")
+        fc.fc_worktree.replace_branch(self.repo, self.proj, "fast/p/010")
+        self.layer("010", "main", "010.txt", "new\n")
+        fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.git("branch", "-m", "parked", "fast/p/005")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "main..fast/p/005"), "task 005\ntask 012\ntask 011\ntask 010")
+        self.assertEqual(self.git("show", "fast/p/005:010.txt"), "new")
+
     def test_layers_above_a_replaced_layer_that_moved_up_the_chain_drop_its_old_commit(self):
         # a re-plan put 011 after 005, then --redo replaced it: 012 and 005 still sit on the old 011 while it waits for 005
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())

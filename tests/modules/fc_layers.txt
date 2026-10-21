@@ -8,6 +8,7 @@ commit_kind
 scrub_message
 commit_message
 chain_order
+earlier_tips
 STACK_STOP
 linearize
 _linearize

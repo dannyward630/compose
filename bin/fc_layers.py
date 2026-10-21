@@ -95,6 +95,11 @@ def chain_order(repo, proj):
         order.remove(b)
     return out
 
+def earlier_tips(repo, layers):
+    """[(layer, tip)] for every tip each of `layers` has had, its reflog's. A layer above them may still sit on one: a rebuilt
+    layer's replaced ref is gone once no chained layer carried it, but the layer that was out of the chain meanwhile still does."""
+    return [(x, t) for x in layers for t in dict.fromkeys(fc_core.sh(["git", "reflog", "show", "--format=%H", f"refs/heads/{x}"], repo, check=False).stdout.split())]
+
 STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
 def linearize(repo, proj, trunk, wt):
@@ -122,10 +127,12 @@ def _linearize(repo, proj, trunk, wt):
             # chained as it was but now below a new one, or the trunk itself when it was rewritten (rebased onto a moved main).
             # Replay only b's own commits: start above the deepest tip it was built on whose work the chain already holds, or
             # that is being rebuilt: one recorded in this pass (a replaced layer, or a layer rebased just now), a chained layer
-            # as it is now, or one in the reflog of the layer below (fork-point), which holds a rewrite made before this pass,
-            # by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase.
+            # as it is now or as it was before (its reflog), or one in the reflog of the layer below (fork-point), which holds a
+            # rewrite made before this pass, by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without
+            # any, a plain rebase.
             old = [(t, "the old base recorded in this pass") for rb, t in tips if (rb in linear or t in stale) and contains(t, b)]
             old += [(x, f"{x}, the chained layer it sits on") for x in linear if contains(x, b)]
+            old += [(t, f"{t[:8]}, an earlier tip of {x}") for x, t in earlier_tips(repo, linear) if contains(t, b)]
             fork = fc_core.sh(["git", "merge-base", "--fork-point", prev, b], repo, check=False).stdout.strip()
             old += [(fork, f"the old base from the reflog of {prev}")] if fork else []
             upstream, source = max(old, key=lambda o: int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{o[0]}"], repo).stdout)) if old else ("", "")
