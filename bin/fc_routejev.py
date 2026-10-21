@@ -53,6 +53,19 @@ def decide(env, cfg, state, matched, plain, more):
     else:
         workflow = pin or answers["workflow"]["choice"].lower().replace("_", "-")
         depth, decided_by = answers["depth"]["choice"], "jev" if retry is None else "jev after retry"
+    floor = [p["name"] for p in matched]
+    checks = [c for p in matched for c in p["checks"]]
+    if reply is None:
+        checks += [c for p in plain for c in p["checks"]]
+    else:
+        for i, p in enumerate(plain):
+            a = answers.get(f"policy{i}")
+            if not (a and a.get("choice") == "DOES_NOT_APPLY" and (a.get("confidence") or 0) >= threshold):
+                floor.append(p["name"])
+                checks += p["checks"]
+    checks = list(dict.fromkeys(checks))
+    if floor:
+        depth = "DEEP"
     return {"workflow": workflow, "depth": depth, "decided_by": f"pin + {decided_by}" if pin else decided_by,
             "confidence": min(confs) if confs else None, "answers": answers, "retry": retry, "fallback": why,
-            "floor": [], "checks": []}
+            "floor": floor, "checks": checks}
