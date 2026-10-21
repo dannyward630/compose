@@ -33,7 +33,7 @@ class CodexIds(unittest.TestCase):
 
     def test_calls_go_through_the_codex_row(self):
         probe, result, p = mock.Mock(return_value=["x"]), mock.Mock(return_value=(False, "y")), subprocess.CompletedProcess([], 0, "", "")
-        with mock.patch.dict(fc_harness.HARNESSES["codex"], {"probe": probe, "result": result}):
+        with mock.patch.dict(fc_harness.HARNESSES, {"codex": {**fc_harness.HARNESSES.get("codex", {}), "probe": probe, "result": result}}):
             self.assertEqual(fc_harness.probe_command("codex:gpt-6-sol"), ["x"])
             probe.assert_called_once_with("gpt-6-sol")
             fc_harness.probe_command("codex:")
