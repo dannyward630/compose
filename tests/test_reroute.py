@@ -676,3 +676,33 @@ class FixScope(unittest.TestCase):
     def test_a_scope_reassessment_not_recorded_says_why_runs_no_further_round_and_fails_verify(self):
         code, asked, said, ran, passed = self.rounds([False, True], reassess=RuntimeError("Linear: down"))
         self.assertEqual((len(asked), "verify FAIL  route not recorded for 002: Linear: down" in said, ran, code, passed), (1, True, [0], 1, False))
+
+
+class LedgerVerdicts(unittest.TestCase):
+    def triggers(self, *rows, kept=None):
+        rows = [{"event_id": f"e{i}", "run_id": "r1", "commit_sha": "c", "task_ids": ["001"], "criterion_id": "k", "fails_on_base": None, "detail": "", "at": "t", "shared": False, "source": s, "phase": p, "result": r} for i, (s, p, r) in enumerate(rows)]
+        with mock.patch.object(importlib.import_module("fc_ledger"), "counted", return_value=rows if kept is None else kept) as counted:
+            got = fc_reroute.ledger_triggers("repo", "proj", {"id": "001"}, rows)
+        self.assertEqual(counted.call_args.args, ("repo", "proj", {"id": "001"}, rows))
+        return got
+
+    def test_a_counted_row_names_its_trigger_and_every_other_row_names_none(self):
+        failed, invalid, unmet = ["failed tests"], ["invalid evidence"], ["unmet requirements"]
+        for row, want in [(("verify", "checks", "fail"), failed), (("verify", "scoped", "fail"), failed), (("verify", "e2e", "fail"), failed), (("verify", "checks", "pass"), []), (("run", "checks", "fail"), []),
+                          (("run", "red", "fail"), []), (("run", "attempt", "fail"), []), (("run", "final", "fail"), []), (("verify", "review", "fail"), []),
+                          (("verify", "acceptance", "fail"), unmet), (("verify", "acceptance", "unclear"), unmet), (("verify", "sufficiency", "unproven"), unmet),
+                          (("verify", "acceptance", "pass"), []), (("verify", "acceptance", "error"), []), (("verify", "sufficiency", "pass"), []),
+                          (("verify", "checks", "contradicted"), invalid), (("verify", "acceptance", "contradicted"), invalid)]:
+            with self.subTest(row=row):
+                self.assertEqual(self.triggers(row), want)
+
+    def test_each_trigger_appears_once_in_ledger_order_however_many_rows_fire_it(self):
+        rows = [("verify", "acceptance", "fail"), ("verify", "sufficiency", "unproven"), ("verify", "e2e", "contradicted"), ("verify", "scoped", "fail"), ("verify", "checks", "fail"), ("verify", "acceptance", "unclear")]
+        self.assertEqual(self.triggers(*rows), ["failed tests", "invalid evidence", "unmet requirements"])
+        self.assertEqual(self.triggers(*rows[:2]), ["unmet requirements"])
+
+    def test_a_row_counted_drops_fires_nothing_and_only_the_kept_rows_fire(self):
+        rows = [("verify", "checks", "fail"), ("verify", "acceptance", "fail"), ("verify", "e2e", "contradicted")]
+        self.assertEqual(self.triggers(*rows, kept=[]), [])
+        kept = [{"source": "verify", "phase": "acceptance", "result": "unclear"}]
+        self.assertEqual(self.triggers(*rows, kept=kept), ["unmet requirements"])
