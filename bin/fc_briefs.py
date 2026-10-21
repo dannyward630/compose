@@ -1,7 +1,7 @@
 import argparse, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug
+import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug
 
 
 # ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
@@ -139,6 +139,8 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers, and implementers never see it.
       Name the test paths, and state in the brief every signature, export name, and exact line its test asserts; never point
       the brief at the contract.
+      A test that pins a line width or exact text (a wrapped message, a limit on characters per line) gets that text, already
+      wrapped as the test expects, in the brief, line by line: a model cannot count columns, and a task that misses its width fails every attempt.
    A Decisions line ending `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
    a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line, never silently.
    Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
@@ -173,7 +175,7 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 
 4. The task issue: a sub-issue of its story, label Task, state Todo, its title the task's title. Its description, in this order:
    ## Goal
-   One paragraph: what to build, where, exact export names.
+   One paragraph: what to build, where, exact export names, and any width-pinned or exact text the test asserts, verbatim.
    ## Acceptance criteria
    One bullet per behavior, each checked by the test.
    ## Test plan
@@ -359,7 +361,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             "no CSS values, no tooling tests: never a test that asserts dependency lists, lint or tool configuration, or the contents of a config file; test behavior only.\n"
             f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
             "You work in your own worktree on your own branch; the CLI collects every test-writing teammate's commits onto the project branch. "
-            "Run the command and confirm it fails for the right reason, format the file, then commit only your file: "
+            "Run that command, never the whole suite, and confirm it fails for the right reason, format the file, then commit only your file: "
             f"`git add {args} && git commit {args} -m \"{fc_core.typed('<what the test covers>', 'test', conv) if conv else '<plain message>'}\"`.\n"
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
@@ -395,7 +397,11 @@ def cmd_testcrews(a):
         return
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
+    model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
     cap = fc_config.PARALLEL  # unset: every writer starts at once
+    key, chain = fc_crew.crew_chain("tests", model)
+    if key is None or fc_claude.is_claude(chain[0][0]):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is
+        cap = min(cap or fc_config.CLAUDE_PARALLEL, fc_config.CLAUDE_PARALLEL)
     metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
@@ -409,7 +415,6 @@ def cmd_testcrews(a):
     if not metas:
         return
     fc_herdr.herdr_space(proj)  # once, before the parallel starts
-    model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
     wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
     def start(m):
         try:
@@ -425,7 +430,7 @@ def cmd_testcrews(a):
         print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}{again}")
     if queued:
         ids = ",".join(m["id"] for m in queued)
-        print(f"{len(queued)} test writer(s) queued past the cap of {cap} (parallel in {fc_config.CONFIG_PATH}): {ids}\n"
+        print(f"{len(queued)} test writer(s) queued past the cap of {cap} (`parallel`, and `claude_parallel` for Claude writers, in {fc_config.CONFIG_PATH}): {ids}\n"
               f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}{again}")
 
 def test_branch(proj, tid):

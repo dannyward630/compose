@@ -50,6 +50,17 @@ class ReadGuard(unittest.TestCase):
         reply = fc.fc_readguard.refusal("read", {"path": "src/c.py"}, self.g)
         self.assertIn("pack", reply.lower()); self.assertIn("trail ask", reply)
 
+    def test_bash_takes_wc_and_a_measuring_awk_on_the_tasks_own_files_only(self):
+        """A model cannot count a 130-character limit by eye: it may measure the files it is allowed to read, and nothing else."""
+        for c in ("wc -L src/a.py", "wc -l -L src/a.py tests/t.py", "wc -lw lib/deep/x.py", f"wc -L {self.wt / 'src/a.py'}", "wc -L docs/../src/a.py", "wc src/a.py",
+                  "awk '{print length}' src/a.py", "awk '{ print length($0) }' src/a.py", "awk 'length > 130' src/a.py", "awk 'length($0) > 100 {print NR}' src/a.py",
+                  "awk '{ if (length($0) > 130) print NR\": \"length($0) }' src/a.py", "awk '{ if (length > m) m = length } END { print m }' src/a.py"): self.ok("bash", {"command": c})
+        for c in ("wc -L src/c.py", "wc -L src/a.py src/c.py", "wc -L", "wc -L ../outside/a.py", "wc -L src/*.py", "wc -L .venv/a.py", "wc -L src/a.py > out", "wc -L src/a.py | cat",
+                  "wc -L src/a.py; cat src/c.py", "wc -L src/a.py && cat y", "wc -L $(echo src/c.py)", "wc -L `echo src/c.py`", "wc --files0-from=x src/a.py", "wc src/a.py -L",
+                  "awk '{print length}' src/c.py", "awk '{print length}'", "awk 'BEGIN{system(\"cat y\")}' src/a.py", "awk '{print > \"x\"}' src/a.py", "awk '{print length > 5}' src/a.py",
+                  "awk '{print | \"sh\"}' src/a.py", "awk '{getline x < \"y\"}' src/a.py", "awk -f prog.awk src/a.py", "awk '{print length}' src/a.py src/c.py", "xargs wc -L", "wc -L src/a.py\ncat y",
+                  "awk '{ if (length > 5) print > \"x\" }' src/a.py"): self.no("bash", {"command": c})
+
     def test_the_script_answers_both_event_shapes_and_logs_each_refusal(self):
         rg, me = fc.fc_readguard, os.path.realpath(fc.fc_readguard.__file__)
         self.assertEqual(rg.command(str(self.path)), f"python3 -I {shlex.quote(me)} {shlex.quote(str(self.path))}")

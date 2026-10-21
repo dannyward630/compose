@@ -49,7 +49,7 @@ The active workspace is merged over the top level:
                                  "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
                      "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
  "env": {"SOME_VAR": "<any env var the CLI and its tools read>"},
- "parallel": 20,
+ "parallel": 20, "claude_parallel": 3,
  "branch_prefix": "compose/", "max_stack_prs": 10,
  "workspaces": {"work": {},
                 "personal": {"models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"}}}}
@@ -87,11 +87,17 @@ Set it at the top level, or in one workspace to override it there.
 
 | Command | Uses |
 |---|---|
-| `run` | `--parallel`, else `parallel`, else 3 |
-| `resume` | `--parallel`, else `parallel`, else the halted run's value |
-| `testcrews` | `parallel` when set, else every writer at once |
+| `run` | `--parallel`, else `parallel`, else 3; Claude Code tasks also stop at `claude_parallel` |
+| `resume` | `--parallel`, else `parallel`, else the halted run's value; Claude Code tasks also stop at `claude_parallel` |
+| `testcrews` | `parallel` when set, else every writer at once; Claude Code writers also stop at `claude_parallel` |
 
 `testcrews` prints the tasks past the cap, with the command that starts them.
+
+`claude_parallel` (default 3) is a second cap, for Claude Code sessions only: `run` and `resume` start at most that many Claude Code tasks at once, and `testcrews` at most that many Claude Code test writers.
+It exists because parallel Claude writers (Opus above all) can make the machine crawl; pi and OpenCode tasks do not count against it and fill the remaining `parallel` slots.
+A Claude task that waits for a slot says so once, and starts as soon as another Claude task ends.
+Set it at the top level, or in one workspace, like `parallel`; a value that is not a whole number of 1 or more stops every command.
+A task that only falls back to Claude mid-run, after its pi model failed, is not counted.
 `designcrews` never reads `parallel`: it starts `--max`, else `design_concurrency` in verify.json, else 3 builders, to stay under Figma's per-minute write rate limit.
 A value that is not a whole number of 1 or more stops every command.
 

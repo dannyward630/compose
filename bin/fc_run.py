@@ -125,6 +125,20 @@ def preflight(models):
         sys.exit("preflight failed; nothing was cloned or run. Fix the model id or preset in "
                  f"{fc_config.CONFIG_PATH} (`models`) or the task's `model:`:\n  " + "\n  ".join(bad))
 
+def claude_capped(ready, running_models, free, metas):
+    """The ready task ids to start now: at most `free`, and no more Claude Code tasks than `claude_parallel` allows beside the ones
+    running (`running_models`), whatever `parallel` says. A task past the cap waits for a running one to end, the others go ahead."""
+    live, out = sum(fc_claude.is_claude(m) for m in running_models), []
+    for p in ready:
+        if len(out) >= free:
+            break
+        if fc_claude.is_claude(metas[p]["model"]):
+            if live >= fc_config.CLAUDE_PARALLEL:
+                continue
+            live += 1
+        out.append(p)
+    return out
+
 def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
@@ -147,7 +161,7 @@ def run_tasks(repo, proj, tasks, a):
     metas = {m["id"]: m for m in tasks}
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
-    results, pending, failed_ids, halt, reflecting = [], dict(deps), set(), None, []
+    results, pending, failed_ids, halt, reflecting, capped = [], dict(deps), set(), None, [], set()
     waits = fc_tasks.waiting(tasks)  # an unfinished blocker outside the feature's tasks holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
@@ -155,7 +169,13 @@ def run_tasks(repo, proj, tasks, a):
         while pending or running:
             hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
-            for p in ready[:a.parallel - len(running)]:  # only into free slots: a task queued inside the pool is out of a hold's reach
+            free = a.parallel - len(running)
+            starts = claude_capped(ready, [metas[q]["model"] for q in running.values()], free, metas)  # only into free slots: a task queued inside the pool is out of a hold's reach
+            for p in ready:
+                if free > len(starts) and p not in starts and p not in capped:
+                    capped.add(p)
+                    fc_core.say(f"{p} waits   {fc_config.CLAUDE_PARALLEL} Claude tasks already run (claude_parallel in {fc_config.CONFIG_PATH})")
+            for p in starts:
                 del pending[p]
                 running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:

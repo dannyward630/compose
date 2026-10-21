@@ -238,8 +238,9 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
-    The command runs under one of the machine's slots (fc_proc.slot) and its group is in fc_proc.RUNNING, so a stop ends it."""
-    with fc_proc.slot(fc_core.say) as held:
+    The command runs under one of the machine's slots (fc_proc.slot; a scoped run takes a quick one, so it never waits on a suite)
+    and its group is in fc_proc.RUNNING, so a stop ends it."""
+    with fc_proc.slot(fc_core.say, fc_proc.scoped(cmd)) as held:
         env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
         before = fc_core.home_state()
         p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -352,6 +353,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "Read the test file, edit, and end your turn.\n"
               "The test contains cases beyond the examples listed here, so implement the described behavior, not the examples. "
               "Read only the test file and the files named above; do not explore other docs or directories. "
+              "When the test pins a line width, measure with `wc -L <file>` (longest line) or `awk '{print length}' <file>` instead of counting. "
               "Make the smallest, simplest change that passes: no defensive checks, flags, "
               "hardening, helpers, or comments the task does not ask for. Do not explain, just edit.\n"
               f"Hard limits: the whole change must stay under {fc_config.MAX_DIFF_LINES} changed lines (added plus deleted), you must not "

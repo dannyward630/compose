@@ -518,7 +518,7 @@ class Workspaces(unittest.TestCase):
                   mock.patch.object(fc.fc_config, "ENV_FILE", root / ".env"),
                   mock.patch.dict(os.environ, {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}, clear=True),  # the real environment may hold real keys
                   mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
-                  mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None),
+                  mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 3),
                   mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER),
                   mock.patch.object(fc.fc_config, "WORKSPACE", fc.fc_config.WORKSPACE), mock.patch.object(fc.fc_config, "CREW_MODELS", fc.fc_config.CREW_MODELS),
                   mock.patch.object(fc.fc_config, "CREW_EFFORT", fc.fc_config.CREW_EFFORT), mock.patch.object(fc.fc_config, "CREW_FALLBACK", fc.fc_config.CREW_FALLBACK)):
@@ -566,6 +566,22 @@ class Workspaces(unittest.TestCase):
         for bad in (0, "many", 2.5, True):
             self.path.write_text(json.dumps({**cfg, "workspace": "default", "parallel": bad}))
             with self.assertRaisesRegex(SystemExit, "parallel must be a whole number"):
+                fc.fc_config.apply_config()
+
+    def test_claude_parallel_defaults_to_three_and_a_workspace_overrides_it(self):
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.CLAUDE_PARALLEL, 3)
+        cfg = fc.fc_config.read_config()
+        cfg["claude_parallel"], cfg["workspaces"]["personal"]["claude_parallel"] = 2, 1
+        self.path.write_text(json.dumps(cfg))
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.CLAUDE_PARALLEL, 2)
+        ws("personal")
+        fc.fc_config.apply_config()
+        self.assertEqual(fc.fc_config.CLAUDE_PARALLEL, 1)
+        for bad in (0, "many", 2.5, True):
+            self.path.write_text(json.dumps({**cfg, "workspace": "default", "claude_parallel": bad}))
+            with self.assertRaisesRegex(SystemExit, "claude_parallel must be a whole number"):
                 fc.fc_config.apply_config()
 
     def test_add_key_remove_and_listing_use_auth_json_and_never_print_a_key(self):

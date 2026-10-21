@@ -914,5 +914,47 @@ class BranchNames(unittest.TestCase):
         self.assertNotIn("fast/hw/003", self.git("branch", "--list"))
 
 
+class ClaudeCap(unittest.TestCase):
+    """`claude_parallel` caps the Claude Code tasks `run` has at once, beside the pi ones, whatever `parallel` is."""
+
+    def setUp(self):
+        self.proj = project()
+        with_tasks(self.proj, [{**task(t), "model": m} for t, m in (("001", "claude:claude-opus-5-5"), ("002", "claude"), ("003", "claude:claude-opus-5-5"),
+                                                                     ("004", "pi:x/y"), ("005", "claude:claude-opus-5-5"), ("006", "pi:x/y"))])
+        self.live, self.peak, self.lock = set(), {"claude": 0, "all": 0}, threading.Lock()
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_linear, "linear_note", lambda meta, body: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def during(self, tid):
+        with self.lock:
+            self.live.add(tid)
+            self.peak["all"] = max(self.peak["all"], len(self.live))
+            self.peak["claude"] = max(self.peak["claude"], len([t for t in self.live if t in ("001", "002", "003", "005")]))
+        time.sleep(0.3)
+        with self.lock:
+            self.live.discard(tid)
+
+    def test_no_more_claude_tasks_run_at_once_than_the_cap_while_pi_tasks_fill_the_other_slots(self):
+        with mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 2):
+            calls, _, _ = run_all(self.proj, during=self.during, parallel=6)
+        self.assertEqual(sorted(calls), ["001", "002", "003", "004", "005", "006"])
+        self.assertEqual(self.peak["claude"], 2)
+        self.assertGreaterEqual(self.peak["all"], 4)  # the pi tasks did not wait for the Claude ones
+
+    def test_a_cap_of_one_runs_the_claude_tasks_one_after_another(self):
+        with mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 1):
+            calls, _, _ = run_all(self.proj, during=self.during, parallel=6)
+        self.assertEqual((len(calls), self.peak["claude"]), (6, 1))
+
+    def test_claude_capped_counts_the_running_ones_and_keeps_the_order(self):
+        metas = {t: {"model": m} for t, m in (("a", "claude"), ("b", "pi:x/y"), ("c", "claude:z"), ("d", "claude"))}
+        with mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 2):
+            self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c", "d"], [], 4, metas), ["a", "b", "c"])
+            self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c", "d"], ["claude"], 4, metas), ["a", "b"])
+            self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c", "d"], ["pi:x/y", "claude", "claude"], 3, metas), ["b"])
+            self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c"], [], 1, metas), ["a"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

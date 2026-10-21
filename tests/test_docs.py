@@ -108,6 +108,14 @@ class HerdrAndWorkspacesDocs(unittest.TestCase):
         self.assertIn("Groundwork and test-writing teammates use `groundwork`.", text)
         self.assertIn("`models.crew` picks each teammate's model by role, then `default`.", text)
 
+    def test_claude_parallel_is_documented_as_a_second_cap_for_claude_sessions(self):
+        text = read("docs/workspaces.md")
+        part = self.section("docs/workspaces.md", "Parallel")
+        self.assertIn('"claude_parallel": 3', text)
+        self.assertIn("`claude_parallel` (default 3)", part)
+        for command in ("run", "resume", "testcrews"):
+            self.assertRegex(part, rf"\| `{command}` \|[^\n]*`claude_parallel`")
+
     def test_pages_stay_plain_and_one_sentence_per_line(self):
         for rel, title in (("docs/herdr.md", "Roles"), ("docs/workspaces.md", "Crew models")):
             text = read(rel)
@@ -670,10 +678,10 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
-        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so |", reqs)
+        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for scoped ones (a `-k`/`-run`/`--grep` filter, one test file or module), in lanes apart from the suites (default 2) |", reqs)
         timed = [l for l in cli if l.startswith("| `timed <seconds> -- <command>` |")]
         self.assertEqual(len(timed), 1, "one timed row")
-        for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "SIGTERM"):
+        for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "COMPOSE_QUICK_SLOTS", "SIGTERM"):
             self.assertIn(part, timed[0])
         # Only the tool word changes: the neighbouring env row stays, and the old graft env row is gone.
         self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)

@@ -72,5 +72,43 @@ class Proc(unittest.TestCase):
         fc.fc_proc.kill_group(p.pid)
 
 
+class Slots(unittest.TestCase):
+    """fc_proc.slot lanes: a scoped run never queues behind a suite."""
+
+    def test_scoped_tells_a_slice_of_the_tests_from_a_suite(self):
+        yes = ("pytest -k foo", "go test ./... -run TestX", "npx vitest src/a.test.ts", "python3 -m unittest tests.test_proc", "pytest tests/test_a.py::T::t",
+               "python3 -m unittest discover -s tests -p 'test_x.py'", "cd app && npx jest --testNamePattern=foo", "pytest -k a | tail", "npm test -- -t foo")
+        no = ("python3 -m unittest discover -s tests", "python3 -m unittest discover -s tests -p \"test_*.py\"", "go test ./...", "npm test", "make test", "",
+              "pytest -k a; pytest", "cd app")
+        for c in yes: self.assertTrue(fc.fc_proc.scoped(c), c)
+        for c in no: self.assertFalse(fc.fc_proc.scoped(c), c)
+
+    def test_a_quick_run_gets_a_slot_while_every_suite_slot_is_held_and_waits_only_on_quick_runs(self):
+        env = {"COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
+        said = []
+        with mock.patch.dict(os.environ, env), mock.patch.object(fc.fc_proc, "SLOT_SAY_AFTER", 0.2):
+            os.environ.pop("COMPOSE_TEST_SLOT", None)
+            with fc.fc_proc.slot() as full:
+                t0 = time.time()
+                with fc.fc_proc.slot(said.append, True) as quick:
+                    self.assertLess(time.time() - t0, 1)
+                    self.assertEqual((full, quick), ("0", "q0"))
+                    t1 = time.time()
+                    ready = threading.Event()
+                    def another():
+                        os.environ.pop("COMPOSE_TEST_SLOT", None)
+                        with fc.fc_proc.slot(said.append, True) as n: ready.set(); said.append(n)
+                    th = threading.Thread(target=another); th.start()
+                    time.sleep(0.6); self.assertFalse(ready.is_set())  # a second quick run waits on the first
+                th.join(timeout=5); self.assertTrue(ready.is_set())
+        self.assertTrue(any("quick-run slot" in x for x in said), said)
+        self.assertEqual(sorted(x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()), ["0", "q0"])
+
+    def test_a_process_already_under_a_slot_takes_none_in_either_lane(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOT": "q1", "COMPOSE_QUICK_SLOTS": "1"}):
+            with fc.fc_proc.slot(None, True) as a, fc.fc_proc.slot(None, True) as b, fc.fc_proc.slot() as c:
+                self.assertEqual((a, b, c), ("q1", "q1", "q1"))
+
+
 if __name__ == "__main__":
     unittest.main()

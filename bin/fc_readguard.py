@@ -38,16 +38,63 @@ def command(guard):
     return "python3 -I {} {}".format(shlex.quote(os.path.realpath(__file__)), shlex.quote(str(guard)))
 
 
+AWK_WORDS = {"length", "print", "printf", "NR", "NF", "if", "else", "END", "BEGIN", "FILENAME"}  # a name of one or two letters is a variable
+
+
+def awk_program_ok(prog):
+    """Whether an awk program only measures lines: no pipe, system, getline, close, or other function, and no redirect (a `>` outside
+    parentheses inside an action writes a file; in a pattern, or in an `if (...)`, it compares)."""
+    bare, paren, brace = re.sub(r'"[^"\\]*"', '""', prog), 0, 0
+    if not re.fullmatch(r'[\w\s$(){};,<>=!+\-*/%".]*', bare):
+        return False
+    if any(w not in AWK_WORDS and len(w) > 2 for w in re.findall(r"[A-Za-z_]\w*", bare)):
+        return False
+    for c in bare:
+        paren += (c == "(") - (c == ")")
+        brace += (c == "{") - (c == "}")
+        if c == ">" and brace > 0 and paren <= 0:
+            return False
+    return paren == 0 and brace == 0
+
+
+def measure(cmd, root, allow):
+    """Whether `cmd` is one `wc` (flags among -l -L -c -m -w) or `awk '<measuring program>'` over plain paths that all are in `allow`:
+    how long a line of the task's own file is, which a model cannot count by eye. No pipe, redirect, substitution, glob or second command."""
+    if "`" in cmd or "$(" in cmd or "${" in cmd or "\n" in cmd:
+        return False
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        words = list(lex)
+    except ValueError:
+        return False
+    if len(words) < 2 or words[0] not in ("wc", "awk") or any(re.fullmatch(r"[;&|<>()]+", w) for w in words):
+        return False
+    if words[0] == "wc":
+        flags = [w for w in words[1:] if w.startswith("-")]
+        files = words[1 + len(flags):]
+        if not all(re.fullmatch(r"-[lLcmw]+", f) for f in flags) or words[1:1 + len(flags)] != flags:
+            return False
+    else:
+        if not awk_program_ok(words[1]):
+            return False
+        files = words[2:]
+    return bool(files) and all(not re.search(r"[*?\[\]{}~$]|^-", f) and os.path.realpath(os.path.join(root, f)) in allow for f in files)
+
+
 def refusal(tool, args, guard):
     """None when the call is allowed, else the reply text for the model. `guard` is the loaded guard dict."""
     why = ("Blocked: you may read only the files the context pack names (or a directory directly holding one), and in bash only "
-           "`trail ask \"<question>\"` or `trail callers <symbol>`. For anything else, run trail ask \"<question>\".")
+           "`trail ask \"<question>\"` or `trail callers <symbol>`, plus `wc -L <file>` or `awk '{print length}' <file>` on those files to measure a line. "
+           "For anything else, run trail ask \"<question>\".")
     tool = (tool or "").lower()
     root, allow = guard["root"], set(guard["allow"])
     if tool == "bash":
         cmd = (args.get("command") or "").strip()
         if (cmd in ("trail ask", "trail callers") or cmd.startswith(("trail ask ", "trail callers "))) \
                 and not any(x in cmd for x in (";", "&", "|", "`", "$(", "<", ">", "\n")):
+            return None
+        if measure(cmd, root, allow):
             return None
         return why
     p = args.get("file_path") or args.get("path")
