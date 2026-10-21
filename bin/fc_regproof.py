@@ -74,4 +74,13 @@ def prove(repo, proj, meta, result, commit, command):
 
 def record_proof(proj, meta, proof):
     """Save a proof's red and final rows on the task's ledger; add_row's answer."""
-    raise NotImplementedError("record_proof")
+    import fc_ledger
+    tid, c = meta["id"], proof["commit"][:12]
+    rid, crit = fc_ledger.run_id(proj, tid), fc_ledger.criterion_ids(meta)
+    base_word = {"fail_expected": "fails", "pass": "passes", "error": "errors"}[proof["base"][0]]
+    red = fc_ledger.event(rid, proof["base_sha"], [tid], crit, "red", "run", proof["base"][0], proof["base"][1],
+                          f"regression test {c} {base_word} on the base")
+    result = "pass" if proof["tip_exit"] == 0 else "fail"
+    final = fc_ledger.event(rid, proof["tip_sha"], [tid], crit, "final", "run", result, None,
+                            f"regression test {c} {'passes' if result == 'pass' else 'fails'} on the fix")
+    return fc_ledger.add_row(meta.get("linear"), [red, final])
