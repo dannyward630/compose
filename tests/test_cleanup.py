@@ -134,6 +134,33 @@ class TestCrewWorktrees(unittest.TestCase):
             fc.fc_briefs.collect_tests(self.proj)
         self.assertEqual(started, ["tests-001", "tests-003"])
 
+    def capped_writers(self, started, cap=1):
+        (self.proj / "results" / "contract.md").write_text("c")
+        crews = (mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)),
+                 mock.patch.object(fc.fc_config, "PARALLEL", cap), mock.patch("sys.stdout", io.StringIO()))
+        for c in crews: c.start(); self.addCleanup(c.stop)
+        ns = SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None)
+        fc.fc_briefs.cmd_testcrews(ns)
+
+    def test_a_writer_queued_past_the_cap_still_starts_before_a_later_writer_of_its_file(self):
+        self.add_task("003", "b_test.go")  # shares b_test.go with 002, which the cap of 1 queues behind 001
+        started = []
+        self.capped_writers(started)
+        self.assertEqual(started, ["tests-001"])
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual(started, ["tests-001", "tests-002"])  # 003 waits for 002, not the other way round
+
+    def test_collect_never_starts_writers_past_the_cap(self):
+        self.add_task("003", "c_test.go")
+        started = []
+        self.capped_writers(started)
+        fc.fc_briefs.collect_tests(self.proj)  # 001 is still writing: its branch is open, so the cap of 1 is full
+        self.assertEqual(started, ["tests-001"])
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual(started, ["tests-001", "tests-002"])
+
     def test_writers_of_a_protected_file_that_already_exists_start_together(self):
         (self.repo / "a_test.go").write_text("pinned\n"); self.run("add", "a_test.go"); self.run("commit", "-qm", "stubs")  # groundwork wrote it, no writer edits it
         self.add_task("003", "c_test.go a_test.go", after="001", test="go test ./c_test.go")  # its test runs c_test.go: a_test.go only pins names

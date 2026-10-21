@@ -409,7 +409,7 @@ def cmd_testcrews(a):
     key, chain = fc_crew.crew_chain("tests", model)
     if not getattr(a, "parallel", None) and (key is None or fc_claude.is_claude(chain[0][0])):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is, unless --parallel says otherwise
         cap = min(cap or fc_config.CLAUDE_PARALLEL, fc_config.CLAUDE_PARALLEL)
-    metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
+    metas, queued = cap_split(proj, tasks, metas, cap)
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
         spare = sum(k.startswith("spare-") for k in held)  # slots a collect kept for these writers
@@ -417,7 +417,8 @@ def cmd_testcrews(a):
         if short:
             sys.exit(f"testcrews: {short}")
     asked = only or {m["id"] for m in tasks}
-    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget, "redo": redo} for t in blocked}})
+    how = {"contract": str(contract_file), "budget": budget, "redo": redo}
+    waiting_writers(proj, {**{t: None for t in asked}, **{t: how for t in blocked}, **{m["id"]: how for m in queued}})  # a queued writer counts as an earlier one
     for tid, by in blocked.items():
         print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
     if not metas:
@@ -439,7 +440,16 @@ def cmd_testcrews(a):
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} test writer(s) queued past the cap of {cap} (`parallel`, and `claude_parallel` for Claude writers, in {fc_config.CONFIG_PATH}): {ids}\n"
-              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}{again}")
+              f"--collect starts them, in task order, as earlier ones are collected; or start them yourself: compose testcrews --project {proj.name} --only {ids}{again}")
+
+def cap_split(proj, tasks, metas, cap):
+    """`metas` split into the writers to start now and those queued past `cap`. A writer whose branch is open is still writing
+    or not collected yet, and holds a slot: the cap counts those too, so --collect never runs more than `cap` at once."""
+    if not cap:
+        return metas, []
+    ids = {m["id"] for m in metas}
+    room = max(cap - sum(test_open(proj, o["id"]) for o in tasks if o["id"] not in ids), 0)
+    return metas[:room], metas[room:]
 
 def test_branch(proj, tid):
     return fc_worktree.task_prefix(fc_herdr.project_worktree(proj), proj) + f"tests-{tid}"

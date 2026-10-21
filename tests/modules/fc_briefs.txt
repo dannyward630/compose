@@ -13,6 +13,7 @@ cmd_toolsmith
 TEST_BUDGET
 test_brief
 cmd_testcrews
+cap_split
 test_branch
 test_open
 test_collected
