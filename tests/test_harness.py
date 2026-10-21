@@ -596,19 +596,25 @@ class CodexArgv(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
         self.tmp, self.results = Path(d.name), Path(d.name, "results")
-        self.cwd, self.work = (self.tmp / n for n in ("cwd", "work"))
-        for r in (self.cwd, self.work): r.mkdir(); subprocess.run(["git", "init", "-q", str(r)], check=True)
-        self.gd, self.wd = (str(fc_worktree.common_dir(r)) for r in (self.cwd, self.work))
+        git = lambda *a, cwd: subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True, text=True).stdout.strip()
+        def tree(name):  # a worktree of its own repo, with the dirs it needs: the shared one and its own
+            main, wt = self.tmp / f"{name}-main", self.tmp / name
+            main.mkdir(); git("init", "-q", cwd=main); git("commit", "-q", "--allow-empty", "-m", "i", cwd=main); git("worktree", "add", "-q", "-b", name, str(wt), cwd=main)
+            return wt, [str(Path(git(*a, cwd=wt)).resolve()) for a in (("rev-parse", "--path-format=absolute", "--git-common-dir"), ("rev-parse", "--absolute-git-dir"))]
+        (self.cwd, self.dirs), (self.work, self.wdirs) = tree("cwd"), tree("work")
+        self.clone = self.tmp / "clone"; self.clone.mkdir(); git("init", "-q", cwd=self.clone)
 
     def argv(self, model="codex:gpt-6.1-sol", effort="high", prompt="p", cwd=None, work=None):
         return [str(x) for x in fc_harness.crew_argv(model, effort, prompt, "/s/SKILL.md", cwd or self.cwd, self.results, work)]
+
+    def adds(self, argv): return [v for f, v in zip(argv, argv[1:]) if f == "--add-dir"]
 
     def test_exact_list(self):
         trust = "projects={%s={trust_level=\"trusted\"}}" % json.dumps(os.path.realpath(self.cwd))
         text = json.dumps("p\n\nThe compose skill is the file /s/SKILL.md.")
         self.assertEqual(self.argv(), ["-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"', "-s", "workspace-write", "-a", "never",
                                        "-c", "sandbox_workspace_write.network_access=true", "-c", trust, "-c", "developer_instructions=" + text,
-                                       "--add-dir", str(self.results), "--add-dir", self.gd])
+                                       "--add-dir", str(self.results), "--add-dir", self.dirs[0], "--add-dir", self.dirs[1]])
 
     def test_bare_codex_and_no_effort(self):
         for model in ("codex", "codex:"):
@@ -618,10 +624,11 @@ class CodexArgv(unittest.TestCase):
             self.assertEqual(argv[:2], ["-s", "workspace-write"])
 
     def test_work_goes_last_and_repeats_or_missing_repos_are_left_out(self):
-        self.assertEqual(self.argv(work=self.work)[-4:], ["--add-dir", str(self.work), "--add-dir", self.wd])
-        self.assertEqual(self.argv(work=self.cwd)[-4:], ["--add-dir", self.gd, "--add-dir", str(self.cwd)])  # its git dir is already there
+        self.assertEqual(self.adds(self.argv(work=self.work)), [str(self.results), *self.dirs, str(self.work), *self.wdirs])
+        self.assertEqual(self.adds(self.argv(work=self.cwd)), [str(self.results), *self.dirs, str(self.cwd)])  # its git dirs are already there
+        self.assertEqual(self.adds(self.argv(cwd=self.clone)), [str(self.results), os.path.realpath(self.clone / ".git")])  # one git dir, not two
         outside = self.tmp / "plain"; outside.mkdir()
-        self.assertEqual(self.argv(cwd=outside)[-2:], ["--add-dir", str(self.results)])  # no git dir to add
+        self.assertEqual(self.adds(self.argv(cwd=outside)), [str(self.results)])  # no git dir to add
 
     def test_values_parse_as_toml_through_a_symlink(self):
         import tomllib
