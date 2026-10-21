@@ -6,7 +6,7 @@ import fc_cost, fc_core, fc_tasks, fc_worktree, fc_watch
 # ---------- `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
 YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say: "
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
-              "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
+              "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
 def yolo_digest(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""

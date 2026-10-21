@@ -83,7 +83,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
                             ("setup", fc_setup.cmd_setup, "install and configure everything compose needs, one question at a time on a terminal; --yes takes every default and never prompts"),
-                            ("update", fc_update.cmd_update, "pull this checkout --ff-only, relink the links compose owns, run doctor"),
+                            ("update", fc_update.cmd_update, "pull this checkout --ff-only (rebasing commits only it has), relink the links compose owns, run doctor; refused while a run or verify is live"),
                             ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
@@ -117,7 +117,7 @@ def main():
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
-                            ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug: scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
+                            ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", fc_frame0.cmd_frame0, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go"),
@@ -249,12 +249,14 @@ def main():
             s.add_argument("state", help="working | needs-user | blocked | done | tool-bug | contradiction")
             s.add_argument("message", nargs="+")
         if name == "tool-bug":
-            s.add_argument("action", choices=("file",))
+            s.add_argument("action", choices=("file", "pr"), help="file: post the report as an issue; pr: push the fix branch and open its pull request")
             ex = s.add_mutually_exclusive_group()
             ex.add_argument("--comment", type=int, help="comment on issue N instead of searching the open issues")
             ex.add_argument("--new", action="store_true", help="open a new issue instead of searching the open issues")
             s.add_argument("--approved", action="store_true", help="post although this machine is not the maintainer's")
-            s.add_argument("--body", required=True, help="file holding the raw report")
+            s.add_argument("--body", help="file: the file holding the raw report")
+            s.add_argument("--worktree", help="pr: your own worktree of the compose repo, on the fix's branch")
+            s.add_argument("--title", help="pr: the PR title, default the branch's first commit subject")
             s.add_argument("--entry", help="the `at` of the tool-bugs.jsonl entry the posted URL is recorded on")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")
@@ -262,8 +264,12 @@ def main():
             g = s.add_mutually_exclusive_group()
             g.add_argument("--linear", action="store_true", help="key: store the workspace's Linear API key (stdin) instead of OpenRouter's")
             g.add_argument("--typesafe", action="store_true", help="key: store the TypeSafe key (stdin); one key serves every workspace")
+        if name == "update":
+            s.add_argument("--force", action="store_true", help="update although a run or verify is live on this machine")
         if name == "clean":
             s.add_argument("--force", action="store_true", help="with --project: clean it although teammates are still working")
+            s.add_argument("--abandon", action="store_true", help="with --project: remove an unmerged project (worktree, branches, herdr space) after listing what goes and what stays; Linear and pushed branches are untouched")
+            s.add_argument("--dry-run", action="store_true", help="with --abandon: list what it would remove and what it keeps, remove nothing")
             s.add_argument("--delete-unmerged", action="store_true", help="also delete task branches not merged into HEAD (layers a reviewer has not merged yet)")
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
@@ -278,9 +284,13 @@ def main():
         a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
     elif extra:
         sub.choices[a.cmd].error(f"unrecognized arguments: {' '.join(extra)}")
+    if a.cmd == "tool-bug" and not (a.body if a.action == "file" else a.worktree):
+        sub.choices[a.cmd].error(f"tool-bug {a.action} needs " + ("--body" if a.action == "file" else "--worktree"))
     detached = os.environ.pop("COMPOSE_DETACHED", None)  # the marker is for this process alone: a compose run by anything it starts must detach on its own
     if a.cmd in DETACHED and not detached:
         return detach(a)
+    if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it
+        fc_update.hold(a.cmd, fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project)).name, a.repo)
     if a.fn not in (fc_config.cmd_workspace, fc_crew.cmd_guard, fc_watch.cmd_rewake, fc_crew.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config(move=not getattr(a, "dry_run", False))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)

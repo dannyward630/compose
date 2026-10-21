@@ -219,6 +219,21 @@ def common_dir(path):
     p = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False) if Path(path).is_dir() else None
     return Path(p.stdout.strip()).resolve() if p and p.returncode == 0 else None
 
+def shared_checkout(path, cli_repo):
+    """Why a toolsmith may not commit or edit in `path`, else None: it is the installed copy (~/.compose/src), a main checkout of the
+    compose repo `cli_repo` belongs to, or a worktree of it on main, master, or no branch. A path outside that repo is none of this."""
+    path = Path(path).resolve()
+    top = fc_core.sh(["git", "rev-parse", "--show-toplevel"], path, check=False).stdout.strip() if path.is_dir() else ""
+    if top and Path(top).resolve() == (Path.home() / ".compose" / "src").resolve():
+        return f"{top} (the installed copy of compose)"
+    theirs = common_dir(path)
+    if not top or theirs is None or theirs != common_dir(cli_repo):
+        return None
+    if Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-dir"], path).stdout.strip()).resolve() == theirs:
+        return f"{top} (a main checkout of the compose repo)"
+    branch = fc_core.sh(["git", "branch", "--show-current"], path).stdout.strip()
+    return f"{top} (on {branch or 'no branch'})" if branch in ("", "main", "master") else None
+
 def repo_worktree(repo, name):
     """(worktree, branch): a new worktree of `repo` on a new branch off its HEAD, under its main checkout's .claude/worktrees
     (a treehouse slot with treehouse), so a new worktree never nests inside a linked one (a project worktree)."""

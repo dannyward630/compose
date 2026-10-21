@@ -137,6 +137,21 @@ class Treehouse(unittest.TestCase):
         for s in ("1 worktree", "0 free", "compose:p:project"):
             self.assertIn(s, msg)
 
+    def test_abandon_hands_the_unmerged_projects_slots_back_without_treehouse_return_force(self):
+        wt, proj = self.init()
+        stack = fc.fc_worktree.stack_worktree(wt, proj, "compose/p")
+        (wt / "b.txt").write_text("b\n")
+        self.git("add", "b.txt", cwd=wt); self.git("commit", "-qm", "Add b", cwd=wt)  # unmerged: a plain clean keeps it
+        kept = subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.repo)], capture_output=True, text=True, env=self.env)
+        self.assertEqual(self.status()[wt.resolve()], "leased", kept.stdout)
+        p = subprocess.run([CLI, "clean", "--abandon", "--project", "p", "--repo", str(self.repo)], capture_output=True, text=True, env=self.env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("returned to the treehouse pool", p.stdout)
+        st = self.status()
+        self.assertEqual((st[wt.resolve()], st[stack.resolve()]), ("available", "available"))
+        self.assertFalse((wt / ".compose").exists()); self.assertEqual(self.git("branch", "--list", "compose/p"), "")
+        self.assertEqual(self.git("branch", "--show-current"), "main")
+
     def test_stack_slot_is_reused_and_clean_hands_every_slot_back(self):
         wt, proj = self.init()
         first = fc.fc_worktree.stack_worktree(wt, proj, "compose/p")

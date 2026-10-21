@@ -338,11 +338,11 @@ def standing_in(wt, proj, force=False):
         why.append(f"{lead} last reported {last.get('state', 'nothing')}")
     return why
 
-def remove_project(main_repo, name, wt, proj, pbranch):
+def remove_project(main_repo, name, wt, proj, pbranch, force=False):
     """Take a merged project away: stop its servers, close its herdr space or tabs, hand its worktree back (to the pool when it is
-    a slot), and delete its branch and its change-of-course refs."""
+    a slot), and delete its branch and its change-of-course refs. `force` closes the tabs of unfinished teammates too."""
     fc_crew.stop_listeners_under(wt)
-    close_space(proj, name)  # while its record is still in the worktree
+    close_space(proj, name, force)  # while its record is still in the worktree
     if fc_worktree.is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
         fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)
         fc_worktree.release_slot(main_repo, wt)
@@ -357,9 +357,9 @@ def remove_project(main_repo, name, wt, proj, pbranch):
     if refs.strip():
         subprocess.run(["git", "update-ref", "--stdin"], cwd=main_repo, input=refs, text=True, capture_output=True)
 
-def close_space(proj, name):
+def close_space(proj, name, force=False):
     """Close what the project holds in herdr: its tabs in a space it shares, or the space of its own.
-    A tab whose crew record's last report is not done stays open, one line saying so; the team lead gets no exception.
+    A tab whose crew record's last report is not done stays open, one line saying so (unless `force`); the team lead gets no exception.
     The engineering manager's pane stops naming the project."""
     fc_herdr.herdr_unname_manager(name)
     space = fc_herdr.herdr_project_space(proj)
@@ -371,7 +371,7 @@ def close_space(proj, name):
         c = crew.get(t["tab_id"])
         if c:
             last = (fc_crew.crew_reports(proj, c["name"]) or [{}])[-1]
-            if last.get("state") != "done":
+            if last.get("state") != "done" and not force:
                 print(f"clean left {c['name']} open (last report: {last.get('state', 'nothing')})")
                 kept.append(t["tab_id"])
                 continue
@@ -498,9 +498,64 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
         remove_project(main_repo, name, wt, proj, pbranch)
     print(line)
 
+def abandon_project(main_repo, name, wt, proj, force=False, dry=False):
+    """Remove an unmerged project the user gave up on. It lists what goes (the worktree with its results and local changes, the
+    task, layer, and project branches, slots, herdr tabs) and what stays (Linear, branches pushed to a remote, PRs, the main checkout),
+    then removes the worktree and the local branches. A live run or this command standing in the worktree stops it; so does live
+    crew or an open team lead, unless `force`."""
+    heads = lambda *pat: fc_core.sh(["git", "for-each-ref", "--format=%(refname:short)", *(f"refs/heads/{p}" for p in pat)], main_repo, check=False).stdout.split()
+    pbranch = fc_core.project_branch(proj)
+    branches = [b for b in dict.fromkeys([*fc_worktree.own_branches(main_repo, proj), *heads(f"{fc_layers.layer_prefix(main_repo, proj)}layer-*"), pbranch]) if heads(b)]
+    pushed = [r for b in branches for r in fc_core.sh(["git", "for-each-ref", "--format=%(refname:short)", f"refs/remotes/*/{b}"], main_repo, check=False).stdout.split()]
+    held = [str(w) for w in [*fc_worktree.slots(proj).values(), *((proj / "worktrees").iterdir() if (proj / "worktrees").exists() else [])]]
+    dirty = len(fc_worktree.dirty_paths(wt)) if wt.exists() else 0
+    base = fc_worktree.review_base(main_repo, fc_core.project_config(proj))
+    ahead = fc_core.sh(["git", "rev-list", "--count", f"{base}..{pbranch}"], main_repo, check=False).stdout.strip() if base else ""
+    link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
+    crew = live_crew(proj)
+    stop = ([f"a run is live (pid {fc_tasks.run_marker(proj).get('pid')}): stop it first"] if fc_tasks.run_alive(proj) else []) \
+        + ([f"live crew ({'; '.join(crew)}); --force overrides"] if crew and not force else []) + standing_in(wt, proj, force=force)
+    print(f"abandon  {name}: removes")
+    for line in (f"worktree {wt} ({'returned to the treehouse pool' if fc_worktree.is_slot(main_repo, wt) else 'removed'}), with its .compose/{name} results and {dirty} uncommitted path(s)",
+                 f"local branches {', '.join(branches)}" + (f" ({ahead} commit(s) on {pbranch} past {base})" if ahead else ""),
+                 *([f"stack and test worktrees {', '.join(held)}"] if held else []), "its herdr tabs, and the space when it is the project's own",
+                 f"change-of-course refs under refs/compose/{name}/"):
+        print(f"  {line}")
+    print("abandon  keeps")
+    for line in ("Linear issues, untouched (cancel them there if the work is dropped)" + (f": feature {link['feature']}" if link.get("feature") else ""),
+                 *([f"branches pushed to a remote stay there: {', '.join(pushed)}"] if pushed else []), "GitHub PRs, and the main checkout with its other worktrees"):
+        print(f"  {line}")
+    if stop:
+        sys.exit(f"abandon  {name}: nothing removed, " + "; ".join(stop))
+    if dry:
+        return print(f"abandon  {name}: --dry-run, nothing removed")
+    for slot in fc_worktree.slots(proj).values():
+        fc_worktree.release_slot(main_repo, slot)
+    fc_worktree.slots(proj, {r: None for r in fc_worktree.slots(proj)})
+    for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:
+        fc_core.sh(["git", "worktree", "remove", "--force", str(w)], main_repo, check=False)
+        shutil.rmtree(w, ignore_errors=True)
+    fc_core.sh(["git", "worktree", "prune"], main_repo, check=False)
+    for b in branches[:-1]:  # the project branch goes with its worktree
+        fc_core.sh(["git", "branch", "-D", b], main_repo, check=False)
+    remove_project(main_repo, name, wt, proj, pbranch, force=True)
+    left = [str(wt)] * (wt.exists() and not fc_worktree.is_slot(main_repo, wt)) + [str(proj)] * proj.exists() + heads(*branches)  # a returned slot stays on disk
+    if left:
+        sys.exit(f"abandon  {name}: could not remove {', '.join(left)}")
+    print(f"abandon  {name}: removed worktree {wt} and {len(branches)} local branch(es)")
+
 def cmd_clean(a):
     main_repo = Path(a.repo).resolve()
     main_repo = fc_core.worktrees(main_repo)[0]
+    if getattr(a, "abandon", False):
+        projects = fc_core.all_projects(main_repo)
+        if a.project not in projects or a.delete_unmerged:
+            sys.exit("clean --abandon names one project and nothing else: `compose clean --abandon --project <slug>`"
+                     + (f" (known: {sorted(projects)})" if a.project not in projects else ""))
+        wt, proj = projects[a.project]
+        if wt == main_repo:
+            sys.exit(f"abandon  {a.project}: it lives in the main checkout {wt}, not in a worktree of its own to remove")
+        return abandon_project(main_repo, a.project, wt, proj, force=a.force, dry=getattr(a, "dry_run", False))
     projects = fc_core.all_projects(main_repo)
     if a.project:
         projects = {a.project: projects[a.project]} if a.project in projects else {}

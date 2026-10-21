@@ -242,7 +242,7 @@ class BriefsNameFiles(unittest.TestCase):
             self.assertNotIn("herdr/SKILL.md", line)
             self.assertNotRegex(line, r"invoke the `?compose`? skill")
         for command in ("compose toolsmith --project <slug> | compose crew start --project <slug> --role toolsmith --work-repo <cli_repo> --brief -",
-                        "compose tool-bug file --project <slug> --body", "--approved", "gh issue close <n> --comment"):
+                        "compose tool-bug file --project <slug> --body", "--approved", "compose tool-bug pr --project <slug> --worktree <path>"):
             self.assertIn(command, block)
         self.assertIn("never edits or commits", block)
         self.assertIn("no `Fixes #n`", block)
@@ -1333,8 +1333,8 @@ class DryRunDocs(unittest.TestCase):
         self.assertEqual(rows, [CLI_HEAD + DRY_SENTENCE + CLI_TAIL])
 
     def test_each_file_names_the_flag_once(self):
-        for rel in ("README.md", "docs/cli.md"):
-            self.assertEqual(read(rel).count("--dry-run"), 1, rel)
+        self.assertEqual(read("README.md").count("--dry-run"), 1)
+        self.assertEqual(sum(l.count("--dry-run") for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")), 1)  # `clean --abandon` has its own
 
 
 FEATURE_HEAD = "- **feature**: if its map is not clear, wayfinder it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "

@@ -307,13 +307,15 @@ CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/
 
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear, the CLI's JSON, and the layers' PR text; code, tests, and docs
-    are teammate work."""
-    if role not in GUARDED_ROLES or tool not in GUARDED_TOOLS or not path:
+    are teammate work. The toolsmith edits in its own worktree of the compose repo, never in a shared checkout of it."""
+    if role not in (*GUARDED_ROLES, "toolsmith") or tool not in GUARDED_TOOLS or not path:
         return None
     p = Path(path).expanduser().resolve()
+    d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
+    if role == "toolsmith":
+        return f"A toolsmith never edits {why}: fix on a branch in your own worktree of the compose repo." if (why := fc_worktree.shared_checkout(d, CLI_REPO)) else None
     if CLI_FILE.search(str(p)):
         return None
-    d = next((x for x in [p.parent, *p.parents] if x.exists()), Path("/"))
     if fc_core.sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
     return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "

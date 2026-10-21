@@ -300,11 +300,13 @@ def cmd_toolsmith(a):
         sys.exit(f"no tool-bug entry for project {proj.name}")
     repo, state = fc_toolbug.REPO, fc_toolbug.gh_status()[0]
     if state == "maintainer":
-        variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch, with a test that
-   fails without the fix and passes with it, and run the full suite, not only your test.
-5. Commit the fix with a plain message and no `Fixes #` in it, then run `gh issue comment <n> --repo {repo}` with your branch
-   and the fix's commit. You never merge or push: the product owner's merge step closes the issue itself with `gh issue close <n> --comment`.
-6. Report `done` with the branch and the issue's URL.
+        variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch in your own worktree of
+   the compose repo, with a test that fails without the fix and passes with it, and run the full suite, not only your test.
+   Never commit on main of any checkout, in ~/.compose/src, or in the project worktree: the tool refuses there.
+5. Commit the fix with a plain message and no `Fixes #` in it, then run
+   `compose tool-bug pr --project {project} --entry "{at}" --worktree <your worktree>`: it pushes your branch and opens the PR,
+   which closes the issue when the product owner merges it. You never merge.
+6. Report `done` with the PR's URL.
 """
     else:
         variant = f"""4. You are not a maintainer on {repo}: you reproduce, diagnose, and file only, so never edit or commit anything; this
