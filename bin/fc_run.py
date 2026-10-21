@@ -198,6 +198,7 @@ def run_tasks(repo, proj, tasks, a):
             except KeyboardInterrupt:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 fc_proc.stop()
+                fc_tasks.mark_interrupted(proj)
                 print(f"\n[{fc_core.now()}] run stopped by Ctrl-C; `compose resume` continues it", file=sys.stderr)
                 os._exit(130)
             for f in finished:
