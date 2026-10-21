@@ -96,6 +96,9 @@ def cmd_run(a):
     missing = [f"{m['id']} {p}" for m in tasks for p in m.get("protected") or [] if not (repo / p).exists()]
     if missing:  # checked here, not in spec-check: the cut is checked before its tests are written
         sys.exit(f"protected tests not on the project branch: {', '.join(missing)}; write them (compose testcrews) or fix `protected:`, then run again")
+    if redo:
+        for m in tasks:
+            fc_ledger.run_id(proj, m["id"], fresh=True)
     run_tasks(repo, proj, tasks, a)
 
 def preflight(models):
@@ -227,7 +230,7 @@ def run_tasks(repo, proj, tasks, a):
                     pending[p] = []
                     continue
                 results.append(r)
-                fc_ledger.record(metas[p].get("linear"), fc_ledger.run_events(proj, repo, metas[p], r))
+                fc_ledger.record_task(repo, proj, metas[p], fc_ledger.run_events(proj, repo, metas[p], r))
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
                     reflecting.append(threading.Thread(target=reflect_task, args=(proj, r)))
                     reflecting[-1].start()
