@@ -202,6 +202,7 @@ def render_status(repo, projects):
                 note = f"{note}  layer {layers[note]}"
             route = "-" if r["depth"] == "-" and r["workflow"] == "-" else f"{r['depth']} {r['workflow']}"
             out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {route:33} {r['attempts']:>3} {r['escalations']:>3} {r['fix_rounds']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
+        out.extend(fc_routecost.summary(rows))
         out.append("")
     return "\n".join(out)
 

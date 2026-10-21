@@ -39,4 +39,12 @@ def counts(result, rounds, tid):
 
 def summary(rows):
     """The status block of cost per workflow and per depth; [] for no rows."""
-    raise NotImplementedError("summary")
+    if not rows:
+        return []
+    out = [f"  {'route cost':34} {'tasks':>5} {'att':>4} {'esc':>4} {'fix':>4} {'cost':>9}"]
+    for kind, values in (("workflow", fc_tasks.WORKFLOWS), ("depth", fc_tasks.DEPTHS)):
+        for value in (*values, "-"):
+            rs = [r for r in rows if r[kind] == value]
+            if rs:
+                out.append(f"  {kind + ' ' + value:34} {len(rs):>5} {sum(r['attempts'] for r in rs):>4} {sum(r['escalations'] for r in rs):>4} {sum(r['fix_rounds'] for r in rs):>4} {'$' + format(sum(r['cost'] for r in rs), '.4f'):>9}")
+    return out
