@@ -1,3 +1,4 @@
+PI_JS
 pi_extension_text
 pi_args
 pi_env
