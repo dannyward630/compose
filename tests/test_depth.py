@@ -139,3 +139,50 @@ class DepthEvents(unittest.TestCase):
 
 class VerifyDepth(unittest.TestCase):
     """verify runs the stages of the stack's deepest task."""
+
+    def verify(self, *tasks):
+        """cmd_verify on a stack of (id, depth, kind) tasks; a None depth has no Route. (said, record_depth calls, verify_rounds cfgs, repo)."""
+        repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        self.cfg = {"checks": ["c1"], "review": True, "jev_acceptance": True}; (proj / "verify.json").write_text(json.dumps(self.cfg))
+        metas = [{"id": i, "title": "t", "files": [], "protected": [], "test": "t" + i, "body": "", "model": "m", "after": "", "linear": "ENG-" + i, "kind": k} for i, d, k in tasks]
+        issues = {"ENG-" + i: {"description": "## Goal\nx\n" + ("" if d is None else f"\n## Route\n\n* workflow: test-first\n* depth: {d}\n* verification requirements: none\n")} for i, d, k in tasks}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": metas, "issues": issues}))
+        calls, said, a = [], [], mock.Mock(repo=str(repo), project="p", skip_e2e=False, skip_review=False, fix=0, review_only=False)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_core, "say", said.append), \
+                mock.patch.object(fc.fc_verify, "verify_root", return_value=(repo, "main", None)), mock.patch.object(fc_depth, "record_depth", side_effect=lambda *x: calls.append(("record", x))), \
+                mock.patch.object(fc.fc_verify, "verify_rounds", side_effect=lambda *x: calls.append(("rounds", x[2]))):
+            fc.fc_verify.cmd_verify(a)
+        return said, [c for c in calls if c[0] == "record"], [c[1] for c in calls if c[0] == "rounds"], repo, calls[0][0]
+
+    def test_fast_prints_its_depth_and_task_and_runs_the_tasks_tests_without_review(self):
+        said, _, rounds, _, _ = self.verify(("061", "FAST", "code"), ("062", "FAST", "code"))
+        self.assertIn("verify depth FAST (deepest task 061)", said)
+        self.assertEqual((rounds[0]["checks"], rounds[0]["review"], rounds[0]["depth"]), (["c1", "t061", "t062"], False, "FAST"))
+
+    def test_record_depth_runs_once_before_the_first_round_with_the_root_and_both_cfgs(self):
+        _, rec, rounds, repo, first = self.verify(("061", "FAST", "code"))
+        self.assertEqual((first, len(rec), len(rounds)), ("record", 1, 1))
+        proj, root, base_cfg, cfg, depth, tid = rec[0][1]
+        self.assertEqual((proj.name, root, base_cfg, depth, tid), ("p", repo, self.cfg, "FAST", "061"))
+        self.assertEqual((cfg["depth"], cfg["review"], cfg["checks"]), ("FAST", False, ["c1", "t061"]))
+
+    def test_standard_with_no_code_task_or_no_route_keeps_the_verify_cfg(self):
+        for tasks in ([("061", "DEEP", "design")], [("061", None, "code")], []):
+            said, _, rounds, _, _ = self.verify(*tasks)
+            self.assertIn("verify depth STANDARD", said)
+            self.assertEqual(({k: rounds[0][k] for k in self.cfg}, rounds[0]["depth"]), (self.cfg, "STANDARD"))
+
+    def stages(self, cfg):
+        """run_stages with the review and Jev calls patched; the Jev acceptance mock."""
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        with mock.patch.object(fc.fc_accept, "jev_acceptance", return_value={"pass": True, "criteria": []}) as jev, mock.patch.object(fc.fc_verify, "review_inputs", return_value=("d", "p", "", [])), \
+                mock.patch.object(fc.fc_verify, "llm_review", return_value={"pass": True, "confirmed": [], "issues": []}) as rv, mock.patch.object(fc.fc_core, "say"):
+            ok, report, _ = fc.fc_verify.run_stages(proj, proj, cfg, type("A", (), {"skip_e2e": True, "skip_review": False}))
+        return jev, rv, report, ok
+
+    def test_fast_leaves_the_jev_acceptance_out_and_other_depths_run_it(self):
+        jev, rv, report, ok = self.stages({"depth": "FAST", "review": False, "jev_acceptance": True})
+        self.assertEqual((jev.call_count, rv.call_count, report["acceptance"], ok), (0, 0, None, True))
+        for depth in ("STANDARD", "DEEP"):
+            jev, rv, report, _ = self.stages({"depth": depth, "jev_acceptance": True})
+            self.assertEqual((jev.call_count, rv.call_count, report["acceptance"] is not None), (1, 1, True))
