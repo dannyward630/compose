@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, os, shutil, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ.update(COMPOSE_NO_TREEHOUSE="1", HERDR_ENV="")
 
@@ -58,3 +58,40 @@ class Signals(unittest.TestCase):
 
     def test_a_branch_with_no_change_has_no_signals(self):
         self.assertEqual(self.signals(FILES, "main"), {"changed": [], "lines": 0, "outside": [], "untouched": FILES})
+
+
+class LayerBase(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.git("init", "-q", "-b", "main"); self.git("commit", "-q", "--allow-empty", "-m", "init")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        # stack, bottom to top: 005, 010, 011, 007 (007 is after 011); 020 has a branch but is no synced task, 030 has no branch
+        tasks = [{"id": t, "after": after} for t, after in (("005", ""), ("007", "011"), ("010", ""), ("011", "010"), ("030", ""))]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        for t in ("005", "007", "010", "011", "020"):
+            self.git("branch", self.branch(t), self.git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", t))
+
+    def git(self, *a):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def branch(self, tid):
+        return fc.fc_worktree.task_branch(self.repo, self.proj, tid)
+
+    def base(self, tid):
+        return fc_reroute.layer_base(self.repo, self.proj, tid, "trunk")
+
+    def test_a_task_gets_the_branch_right_below_it_in_the_stack_order(self):
+        self.assertEqual([self.base(t) for t in ("010", "011", "007")], [self.branch(t) for t in ("005", "010", "011")])
+
+    def test_the_bottom_layer_gets_the_trunk(self):
+        self.assertEqual(self.base("005"), "trunk")
+
+    def test_a_task_outside_the_stack_gets_the_trunk(self):
+        self.assertEqual((self.base("020"), self.base("030")), ("trunk", "trunk"))
+
+    def test_the_results_file_and_its_base_are_not_read(self):
+        (self.proj / "results" / "011.json").write_text(json.dumps({"status": "passed", "base": self.branch("005")}))
+        (self.proj / "results" / "005.json").write_text("not json")
+        self.assertEqual((self.base("011"), self.base("005")), (self.branch("010"), "trunk"))
