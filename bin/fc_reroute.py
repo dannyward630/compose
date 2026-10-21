@@ -123,7 +123,14 @@ def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
     state["pin"] = recorded["workflow"] or "test-first"
     policies, note = fc_policy.read_policies(repo)
     paths = [c["path"] for c in signals["changed"]]
-    return fc_routejev.decide(env, cfg, state, fc_policy.glob_matches(policies, paths), [p for p in policies if not p["globs"]], lambda: fc_routectx.dependency_context(repo, meta))
+    route = fc_routejev.decide(env, cfg, state, fc_policy.glob_matches(policies, paths), [p for p in policies if not p["globs"]], lambda: fc_routectx.dependency_context(repo, meta))
+    route["checks"] = list(dict.fromkeys(recorded["checks"] + route["checks"]))
+    route["note"] = f"{MARK} after {', '.join(triggers)} (run {run_id})"
+    kept = recorded["depth"]
+    if kept in DEPTHS and DEPTHS.index(kept) > DEPTHS.index(route["depth"]):
+        route["depth"] = kept
+        route["note"] += f"; depth {kept} kept from the recorded route"
+    return route
 
 
 def catch_up(repo, proj, tasks, ids, trunk, kinds):
