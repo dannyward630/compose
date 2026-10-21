@@ -3,6 +3,7 @@ description derived from them. fc_ledger writes the rows."""
 import json
 import re
 
+import fc_core
 import fc_linear
 
 BLOCK = re.compile(r"```evidence\n(.*?)\n```", re.S)
@@ -79,7 +80,7 @@ def refresh(issue, select=None):
     """Rewrite the issue description's `## Evidence` section from its rows, or from `select(issue)`, best effort."""
     if not issue or not fc_linear.linear_ready():
         return None
-    import fc_core, fc_plan
+    import fc_plan
     try:
         d = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id description } }", {"id": issue})["issue"]
         new = fc_plan.replace_section(d["description"] or "", "## Evidence", table(select(issue) if select else rows(issue)))
