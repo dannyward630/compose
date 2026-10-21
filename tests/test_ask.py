@@ -92,7 +92,19 @@ class Ask(unittest.TestCase):
         out = self.report(ask)
         self.assertIn("already asked", out)
         self.assertEqual(self.sent(), [ask])
-        self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["/NEB-1/Q1", "/NEB-1/Q2", "/NEB-1/Q3"])
+        self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["shop-wayfinder//NEB-1/Q1", "shop-wayfinder//NEB-1/Q2", "shop-wayfinder//NEB-1/Q3"])
+
+    def test_the_team_leads_forward_of_the_wayfinders_cards_is_asked_once_and_reaches_the_manager(self):
+        ask = "NEB-1: 3 cards Q1-Q3; recommendation accept-all"
+        self.report(ask)
+        wayfinder_line, = fc.fc_crew.crew_reports(self.proj, "shop-wayfinder")
+        out = self.report(ask, who="shop-orchestrator")
+        self.assertNotIn("already asked", out)
+        self.assertIn("already asked", self.report(ask, who="shop-orchestrator"))
+        self.assertIn("already asked", self.report(ask))
+        forward = f"event crew=shop-orchestrator state=needs-user message={ask!r}"
+        wayfinder = f"event crew=shop-wayfinder state=needs-user message={wayfinder_line['message']!r}"
+        self.assertEqual(fc.fc_watch.watch_filter([wayfinder, forward], "shop", ["shop-orchestrator"]), [forward])
 
     def test_one_reminder_is_allowed_then_no_more(self):
         ask = "NEB-1: 2 cards Q1-Q2; recommendation accept-all"
@@ -125,7 +137,7 @@ class Ask(unittest.TestCase):
             self.assertEqual(self.sent(), [])
             self.report("NEB-1: 3 cards Q1-Q3; recommendation a")
         self.assertEqual(len(self.sent()), 1)
-        self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["/NEB-1/Q2"])
+        self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["shop-wayfinder//NEB-1/Q2"])
 
     def test_a_linear_outage_does_not_stop_an_ask(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"), mock.patch.object(fc.fc_linear, "linear_gql", side_effect=OSError("down")):

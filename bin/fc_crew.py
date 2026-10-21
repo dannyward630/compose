@@ -413,7 +413,7 @@ def cmd_report(a):
     message = " ".join(a.message)
     if not crew_record(proj, a.as_):
         crew_reregister(proj, a.as_)
-    if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, message)) is None:
+    if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, a.as_, message)) is None:
         return
     write_report(proj, a.as_, a.state, message)
     if a.state == "tool-bug":

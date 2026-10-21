@@ -42,9 +42,9 @@ def decided_cards(issues, ids):
         out |= {i for i in ids if any(re.match(rf"[\s*_`(\[]*{re.escape(i)}(?!\w)", l) for l in lines)}
     return out
 
-def ask_gate(proj, message):
+def ask_gate(proj, who, message):
     """What `report needs-user` sends: the message (a verified link and the text fallback added, repeats marked), or None when it
-    must not go out. Exits with the reason when a page link is missing, doubled, or does not answer."""
+    must not go out. A card is asked once per reporter: the team lead's forward of the wayfinder's cards is a new ask, its own repeat is not. Exits with the reason when a page link is missing, doubled, or does not answer."""
     urls = list(dict.fromkeys(SESSION_URL.findall(message)))
     if re.search(r"open in Lavish", message, re.I) and not urls:
         sys.exit("not reported: a visual page needs its link in the message. Run `npx -y lavish-axi <file>` and put the `url:` it prints in the line.")
@@ -68,7 +68,7 @@ def ask_gate(proj, message):
         return None
     path = proj / "results" / "asked.json"
     asked = json.loads(path.read_text()) if path.exists() else {}
-    key = lambda i: f"{scope}/{i}"
+    key = lambda i: f"{who}/{scope}/{i}"
     old = [i for i in open_ids if key(i) in asked]
     if old and len(old) == len(open_ids):
         first = asked[key(old[0])]
