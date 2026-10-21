@@ -7,7 +7,7 @@ os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_steprun, fc_steps, fc_worktree
+import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_steprun, fc_steps
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
 
@@ -702,6 +702,7 @@ class CodexArgv(unittest.TestCase):
         self.assertEqual(self.adds(self.argv(work=self.work)), [str(self.results), *self.dirs, str(self.work), *self.wdirs])
         self.assertEqual(self.adds(self.argv(work=self.cwd)), [str(self.results), *self.dirs, str(self.cwd)])  # its git dirs are already there
         self.assertEqual(self.adds(self.argv(cwd=self.clone)), [str(self.results), os.path.realpath(self.clone / ".git")])  # one git dir, not two
+        self.assertEqual(self.adds(self.argv(work=self.tmp / "gone")), [str(self.results), *self.dirs, str(self.tmp / "gone")])  # not a folder: no git dirs asked
         outside = self.tmp / "plain"; outside.mkdir()
         self.assertEqual(self.adds(self.argv(cwd=outside)), [str(self.results)])  # no git dir to add
 
