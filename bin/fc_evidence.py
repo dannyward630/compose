@@ -50,8 +50,31 @@ def task_rows(issue, feature, task_id):
 
 def table(rows):
     """The `## Evidence` section text: the verdict line and the 60 newest rows."""
-    raise NotImplementedError("fc_evidence.table")
+    latest = {}
+    for r in rows:
+        if r["phase"] == "sufficiency":
+            for c in r["criterion_id"]:
+                latest[c] = r
+    verdict = ", ".join(f'{c.split(":")[0]} {latest[c]["result"]}' for c in latest) or "not judged"
+    lines = ["## Evidence", "", "Verdict: " + verdict, "",
+             "| id | at | source | phase | result | fails on base | criteria | detail |", "|---|---|---|---|---|---|---|---|"]
+    for r in rows[::-1][:60]:
+        fob = {True: "yes", False: "no", None: "-"}[r["fails_on_base"]]
+        crits = ", ".join(c.split(":")[0] for c in r["criterion_id"]) or "all"
+        detail = r["detail"].replace("|", "\\|")
+        lines.append(f"| {r['event_id']} | {r['at'][:16].replace('T', ' ')} | {r['source']} | {r['phase']} | {r['result']} | {fob} | {crits} | {detail} |")
+    return "\n".join(lines) + "\n"
 
 def refresh(issue, select=None):
     """Rewrite the issue description's `## Evidence` section from its rows, or from `select(issue)`, best effort."""
-    raise NotImplementedError("fc_evidence.refresh")
+    if not issue or not fc_linear.linear_ready():
+        return None
+    import fc_core, fc_plan
+    try:
+        d = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id description } }", {"id": issue})["issue"]
+        new = fc_plan.replace_section(d["description"] or "", "## Evidence", table(select(issue) if select else rows(issue)))
+        if new != (d["description"] or ""):
+            fc_linear.linear_gql("mutation($id: String!, $d: String!) { issueUpdate(id: $id, input: {description: $d}) { success } }",
+                                 {"id": d["id"], "d": new})
+    except Exception as e:
+        fc_core.say(f"ledger {issue}: Evidence section not refreshed ({str(e)[:200]})")
