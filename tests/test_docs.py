@@ -678,7 +678,7 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
-        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for scoped ones (a `-k`/`-run`/`--grep` filter, one test file or module), in lanes apart from the suites (default 2) |", reqs)
+        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2) |", reqs)
         timed = [l for l in cli if l.startswith("| `timed <seconds> -- <command>` |")]
         self.assertEqual(len(timed), 1, "one timed row")
         for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "COMPOSE_QUICK_SLOTS", "SIGTERM"):
