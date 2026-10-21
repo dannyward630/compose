@@ -1115,3 +1115,34 @@ class CodexHooksRow(unittest.TestCase):
         self.tool(); out = io.StringIO()
         with contextlib.redirect_stdout(out): fc_init.check_deps()
         self.assertIn("MISSING: Codex hooks: ~/.codex/hooks.json lacks compose's guard hook (install: compose setup) - optional\n", out.getvalue())
+
+
+class ReservedNames(unittest.TestCase):
+    apply, exits = HarnessBlock.apply, HarnessBlock.exits
+    URL = {"base_url": "http://localhost:11434/v1"}
+
+    def setUp(self):
+        HarnessBlock.setUp(self)
+        for obj, k, v in ((fc_config, "PROVIDERS", fc_config.PROVIDERS), (fc_harness, "RESERVED", ("codex", "gemini", "grok"))):
+            p = mock.patch.object(obj, k, v); p.start(); self.addCleanup(p.stop)
+
+    def reserved(self, name, names="codex, gemini, grok"):
+        return f"providers.{name} is reserved: {names} name harnesses, not providers"
+
+    def test_a_harness_name_is_refused(self):
+        for name in ("codex", "gemini", "grok"):
+            self.exits({"providers": {name: self.URL}}, self.reserved(name))
+
+    def test_the_names_come_from_the_harness_module(self):
+        with mock.patch.object(fc_harness, "RESERVED", ("codex", "zed")):
+            self.exits({"providers": {"zed": self.URL}}, self.reserved("zed", "codex, zed"))
+            self.apply({"providers": {"gemini": self.URL}})
+        self.assertIn("gemini", fc_config.PROVIDERS)
+
+    def test_reserved_is_checked_before_the_base_url(self):
+        self.exits({"providers": {"codex": {}}}, self.reserved("codex"))
+
+    def test_other_names_load(self):
+        names = ("ollama", "codexx", "my-codex")
+        self.apply({"providers": {n: self.URL for n in names}})
+        self.assertEqual(tuple(fc_config.PROVIDERS), names)
