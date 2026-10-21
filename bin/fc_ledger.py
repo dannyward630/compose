@@ -83,7 +83,27 @@ def record(issue, events):
 
 def run_events(proj, repo, meta, result):
     """The evidence events of one finished task's run result, in order."""
-    raise NotImplementedError("fc_ledger.run_events")
+    if result["status"] == "held":
+        return []
+    sha = lambda ref: fc_core.sh(["git", "rev-parse", "--verify", "-q", ref + "^{commit}"], repo, check=False).stdout.strip()
+    run, ids = run_id(proj, meta["id"]), criterion_ids(meta)
+    ev = lambda s, phase, res, base, detail: event(run, s, [meta["id"]], ids, phase, "run", res, base, detail)
+    if result["status"] == "already_green":
+        return [ev(sha("HEAD"), "red", "pass", False, "test already passes before the change")]
+    out = [ev(sha(result["base"]), "red", "fail_expected", True, "test fails before the change")] if "base" in result else []
+    for e in result.get("log") or []:
+        if "test_exit" in e:
+            tampered = e.get("tampered") or []
+            lines = [ln for ln in (e.get("test_output") or "").splitlines() if ln.strip()]
+            detail = f"attempt {e['attempt']}: test exit {e['test_exit']}" + (f", tampered {', '.join(tampered)}" if tampered else "") + \
+                (f": {lines[-1]}" if lines else "")
+            out.append(ev("", "attempt", "fail" if e["test_exit"] or tampered else "pass", None, detail))
+        elif e.get("error") and not e.get("rate_limited"):
+            out.append(ev("", "attempt", "error", None, f"attempt {e['attempt']}: {e['error']}"))
+    status = result["status"]
+    final = "pass" if status == "passed" else "fail" if status == "failed" or status.startswith("rejected_") else "error"
+    out.append(ev(sha(result["branch"]) if status == "passed" else "", "final", final, None, f"{status} after {result['attempts']} attempts"))
+    return out
 
 def counted(repo, proj, meta, rows):
     """Copies of the rows that count for the task: its run, its revision at the task branch tip, and its current criteria."""
