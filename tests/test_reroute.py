@@ -480,7 +480,7 @@ class AfterRun(unittest.TestCase):
 class RunHook(unittest.TestCase):
     def run_tasks(self, ids=("001", "002"), status=None, hook=None):
         """run_tasks over fake tasks with after_run, triage and payment_halt recorded on one mock; returns (exit code, order, repo, proj, tasks)."""
-        repo = Path(tempfile.mkdtemp()); proj = repo / ".compose" / "p"; proj.mkdir(parents=True)
+        repo = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, repo, True); proj = repo / ".compose" / "p"; proj.mkdir(parents=True)
         tasks = [{"id": t, "title": t, "after": "", "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ids]
         pay = [{"payment_required": {"provider": "glm", "message": "pay"}}]
         run_task = lambda r, p, meta, n: {"id": meta["id"], "title": meta["id"], "status": (status or {}).get(meta["id"], "passed"), "attempts": 1, "seconds": 1.0, "cost": 0.0,
