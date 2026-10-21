@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, unittest
+import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -780,8 +780,9 @@ class HarnessTable(unittest.TestCase):
     def test_the_table_holds_the_codex_row_first_and_two_name_only_entries(self):
         h = fc_harness
         self.assertEqual((h.RESERVED, h.HARNESSES["gemini"], h.HARNESSES["grok"]), (("codex", "gemini", "grok"), {}, {}))
-        self.assertEqual(h.HARNESSES["codex"], {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$", "example": "gpt-6.1-sol",
-                                                "herdr_ready": False, "probe": h._codex_probe, "result": h._codex_result, "argv": h._codex_argv})
+        self.assertEqual({k: v for k, v in h.HARNESSES["codex"].items() if k != "hooks"}, {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$", "example": "gpt-6.1-sol",
+                                                "herdr_ready": False, "probe": h._codex_probe, "result": h._codex_result, "argv": h._codex_argv,
+                                                "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": h._codex_hash})
 
     def test_harness_of_and_model_id_read_only_a_key_that_has_fields(self):
         for m, want in (("codex", ("codex", None)), ("codex:", ("codex", None)), ("codex:gpt-6-sol", ("codex", "gpt-6-sol")), ("codex:a:b", ("codex", "a:b")),
@@ -806,3 +807,49 @@ class HarnessTable(unittest.TestCase):
         os.environ["CODEX_HOME"] = ""; self.assertEqual(fc_harness.skills_dir("codex"), self.home / ".codex/skills")
         os.environ["HOME"] = str(self.home / "moved"); self.assertEqual(fc_harness.skills_dir("codex"), self.home / "moved/.codex/skills")
         os.environ["CODEX_HOME"] = str(self.home / "elsewhere"); self.assertEqual(fc_harness.skills_dir("codex"), self.home / "elsewhere/skills")
+
+
+class HookFields(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+
+    def digest(self, event, matcher, hooks):
+        o = {"event_name": event, "hooks": hooks}
+        if matcher: o["matcher"] = matcher
+        return "sha256:" + hashlib.sha256(json.dumps(o, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def test_the_codex_row_gains_the_hooks_file_trust_file_hash_and_four_hooks(self):
+        row = fc_harness.HARNESSES["codex"]
+        self.assertEqual((row["hooks_file"], row["trust_file"], row["hash"]), ("hooks.json", "config.toml", fc_harness._codex_hash))
+        self.assertEqual(row["hooks"], (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"), ("UserPromptSubmit", None, "skillcheck"), ("SessionStart", "compact", "reenter")))
+
+    def test_hash_is_the_sha256_of_the_sorted_compact_json_with_defaults_filled_in(self):
+        h = fc_harness._codex_hash
+        c = {"type": "command", "command": '"/c/bin/compose" guard'}
+        self.assertEqual(h("PreToolUse", {"matcher": "Bash", "hooks": [{**c, "timeout": 10}]}), self.digest("pre_tool_use", "Bash", [{**c, "timeout": 10, "async": False}]))
+        self.assertEqual(h("UserPromptSubmit", {"hooks": [c]}), self.digest("user_prompt_submit", None, [{**c, "timeout": 600, "async": False}]))
+        full = {**c, "timeout": 5, "async": True, "statusMessage": "checking"}
+        self.assertEqual(h("SessionStart", {"matcher": "compact", "hooks": [full, c]}), self.digest("session_start", "compact", [full, {**c, "timeout": 600, "async": False}]))
+
+    def test_home_dir_prefers_a_non_empty_codex_home_and_reads_the_environment_at_call_time(self):
+        self.assertEqual(fc_harness.home_dir("codex"), self.home / ".codex")
+        os.environ["CODEX_HOME"] = ""; self.assertEqual(fc_harness.home_dir("codex"), self.home / ".codex")
+        os.environ["HOME"] = str(self.home / "moved"); self.assertEqual(fc_harness.home_dir("codex"), self.home / "moved/.codex")
+        os.environ["CODEX_HOME"] = str(self.home / "elsewhere")
+        self.assertEqual((fc_harness.home_dir("codex"), fc_harness.skills_dir("codex")), (self.home / "elsewhere", self.home / "elsewhere/skills"))
+
+    def test_hook_groups_for_codex_are_the_four_groups_under_three_events(self):
+        def g(m, sub, co="/c"):
+            return {**({"matcher": m} if m else {}), "hooks": [{"type": "command", "command": f'"{co}/bin/compose" {sub}', "timeout": 10}]}
+        want = {"PreToolUse": [g("Write|Edit|MultiEdit|NotebookEdit", "guard"), g("Bash", "guard")], "UserPromptSubmit": [g(None, "skillcheck")], "SessionStart": [g("compact", "reenter")]}
+        self.assertEqual(fc_harness.hook_groups("codex", "/c"), want)
+        self.assertEqual(fc_harness.hook_groups("codex", "/a b")["UserPromptSubmit"], [g(None, "skillcheck", "/a b")])
+
+    def test_hook_groups_is_empty_for_a_row_without_hooks_and_follows_any_row_with_them(self):
+        self.assertEqual((fc_harness.hook_groups("grok", "/c"), fc_harness.hook_groups("gemini", "/c")), ({}, {}))
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": {"name": "Other", "hooks": (("Ev", None, "a"), ("Ev", "m", "b"))}, "bare": {"name": "Bare"}}):
+            self.assertEqual(fc_harness.hook_groups("bare", "/c"), {})
+            self.assertEqual(fc_harness.hook_groups("other", "/c"), {"Ev": [{"hooks": [{"type": "command", "command": '"/c/bin/compose" a', "timeout": 10}]},
+                                                                      {"matcher": "m", "hooks": [{"type": "command", "command": '"/c/bin/compose" b', "timeout": 10}]}]})
