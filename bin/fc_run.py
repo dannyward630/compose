@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -102,7 +102,7 @@ def preflight(models):
     """One tiny turn per model a run can call, before any clone: a wrong model id or preset slug stops the run here with the
     provider's message, instead of failing every task (and, for a fallback, only on the first miss). A rate limit proves the
     model resolved, so it passes."""
-    import fc_providers, shutil
+    import shutil
     def probe(model):
         root = Path(tempfile.mkdtemp())
         (root / "p").mkdir()
