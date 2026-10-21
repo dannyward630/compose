@@ -1,5 +1,6 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, sys, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -207,9 +208,6 @@ class CrewPiLocal(unittest.TestCase):
                 self.calls.clear(); tab, start = self.start(model)
                 self.assertFalse([a for a in tab + start if "COMPOSE_PI_MODEL" in a or "pi-providers.js" in a])
         self.assertFalse(self.js.exists())
-
-import socket, threading, urllib.error, urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class ReachHandler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
