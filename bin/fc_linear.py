@@ -233,7 +233,9 @@ def linear_event(proj, meta, event, result=None):
         elif event == "hand_done":
             linear_comment(issue, f"Finished by hand: {result['note']}")
         elif event == "unproven":
-            linear_comment(issue, f"Unproven: branch `{result['branch']}` passes its tests after {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`; its regression test is not proven yet.")
+            last = (result.get("log") or [{}])[-1]
+            why = f" Why: {last['error']}." if "proof" in result and last.get("error") else ""
+            linear_comment(issue, f"Unproven: branch `{result['branch']}` passes its tests after {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`; its regression test is not proven yet.{why}")
         elif event != "dispatched":
             last = (result.get("log") or [{}])[-1]
             tail = (last.get("test_output") or "").strip().splitlines()
