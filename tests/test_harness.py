@@ -401,3 +401,49 @@ class CodexProbe(unittest.TestCase):
                 mock.patch("builtins.print", lambda *a: out.append(" ".join(map(str, a)))):
             fc_models.cmd_models(SimpleNamespace(probe=True))
         self.assertEqual(out, [f"codex:{self.ID}: ok (answered)", "codex:bad: unavailable (m)", "codex: ok (Codex's default model)"])
+
+
+class ClaudeOptional(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co, self.other = tmp / "bin", tmp / "home", tmp / "co", tmp / "other"
+        for d in (self.bin, self.home, self.co / "bin", self.other): d.mkdir(parents=True)
+        for f in ("bin/compose.py", "SKILL.md"): (self.co / f).write_text("")  # a compose checkout
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+
+    def codex(self):
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+
+    def link(self, target):
+        link = self.home / ".codex/skills/compose"
+        link.parent.mkdir(parents=True); link.symlink_to(target)
+
+    def test_claude_only_names_are_steps_rows(self):
+        self.assertEqual(fc_steps.CLAUDE_ONLY, ("claude", "herdr skill", "i-have-adhd skill", "compose skill link"))
+        self.assertLessEqual(set(fc_steps.CLAUDE_ONLY), {r[0] for r in fc_steps.STEPS})
+
+    def test_other_harness_is_codex_only_with_the_binary_and_a_link_to_the_checkout(self):
+        self.assertIsNone(fc_steps.other_harness(self.co))
+        self.link(self.co)
+        self.assertIsNone(fc_steps.other_harness(self.co))  # the link without codex on PATH
+        self.codex()
+        self.assertEqual(fc_steps.other_harness(self.co), "codex")
+
+    def test_other_harness_needs_the_link_to_point_at_the_checkout(self):
+        self.codex()
+        self.assertIsNone(fc_steps.other_harness(self.co))  # codex on PATH, no link
+        self.link(self.other)
+        self.assertIsNone(fc_steps.other_harness(self.co))
+
+    def test_required_drops_only_claude_only_rows_and_only_while_other_is_set(self):
+        for row in fc_steps.STEPS:
+            with self.subTest(row=row[0]):
+                self.assertEqual(fc_steps.required(row, None), row[3] == "required")
+                self.assertEqual(fc_steps.required(row, "Codex"), row[3] == "required" and row[0] not in fc_steps.CLAUDE_ONLY)
+        by = {r[0]: r for r in fc_steps.STEPS}
+        for name in ("git", "herdr", "pi"): self.assertTrue(fc_steps.required(by[name], "Codex"))
+        for name in fc_steps.CLAUDE_ONLY: self.assertEqual((fc_steps.required(by[name], "Codex"), fc_steps.required(by[name], None)), (False, True))
+        for level in ("default", "designer"):
+            row = next(r for r in fc_steps.STEPS if r[3] == level)
+            self.assertEqual((fc_steps.required(row, None), fc_steps.required(row, "Codex")), (False, False))
