@@ -168,7 +168,17 @@ def catch_up(repo, proj, tasks, ids, trunk, kinds):
 
 def after_run(repo, proj, results, tasks, trunk):
     """`run`'s hook: catch up the passed results; a `PaymentRequired` is returned, never raised."""
-    raise NotImplementedError("after_run")
+    ids = [r["id"] for r in results if r["status"] == "passed"]
+    if not ids:
+        return None
+    try:
+        whys = catch_up(repo, proj, tasks, ids, trunk, ("diff",))
+    except fc_models.PaymentRequired as e:
+        return e
+    by_id = {m["id"]: m for m in tasks}
+    for id, why in whys.items():
+        fc_core.say(f"linear {by_id[id]['linear']}: route not recorded ({why})")
+    return None
 
 
 def before_verify(repo, proj, tasks, trunk):
