@@ -105,9 +105,11 @@ def blocker_finished(status, labels=()):
     s = (status or "").lower()
     return s in ("done", *CANCELED) or (s == "in review" and any(l.lower() == "design" for l in labels))
 
-def waiting(tasks):
-    """{task id: {"reason"}} for each task a blocker outside the feature's tasks holds back, as of the last sync."""
-    return {m["id"]: {"reason": "waits on " + ", ".join(m["waits_on"])} for m in tasks if m.get("waits_on")}
+def waiting(tasks, released=()):
+    """{task id: {"reason"}} for each task a blocker outside the feature's tasks holds back, as of the last sync. `released`: blocker
+    ids git shows are in the trunk already (fc_blockers.released), which hold nothing."""
+    out = {m["id"]: [w for w in m.get("waits_on") or [] if w.split()[0] not in released] for m in tasks}
+    return {tid: {"reason": "waits on " + ", ".join(w)} for tid, w in out.items() if w}
 
 def linear_done(meta):
     """Linear says the task is Done: its work is on trunk, whatever this project's own files say."""

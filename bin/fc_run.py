@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -147,6 +147,11 @@ def run_tasks(repo, proj, tasks, a):
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
+    released, still = fc_blockers.released(repo, proj, tasks, a.trunk)  # said first: which outside blockers git lets go, and why the rest hold
+    for b, proof in released.items():
+        fc_core.say(f"unblocked  {b}  {proof}")
+    for b, why in still.items():
+        fc_core.say(f"waits      {b}  {why}")
     if not a.no_stack and fc_worktree.stack_order(repo, proj):
         # Earlier layers must contain everything committed on trunk since they were built (new tests, new task files), or a
         # task stacked on them starts without its own test. Rebase the existing chain onto the current trunk tip first.
@@ -166,7 +171,7 @@ def run_tasks(repo, proj, tasks, a):
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
     results, pending, failed_ids, halt, reflecting, capped = [], dict(deps), set(), None, [], set()
-    waits = fc_tasks.waiting(tasks)  # an unfinished blocker outside the feature's tasks holds its task like a hold
+    waits = fc_tasks.waiting(tasks, released)  # an outside blocker git does not place in the trunk holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}

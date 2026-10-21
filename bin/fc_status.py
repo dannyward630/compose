@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_change, fc_linear
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear
 
 
 def project_head(repo, proj):
@@ -51,7 +51,7 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     deps = [d.strip() for d in str(meta.get("after") or "").split(",") if d.strip()]
     if state == "pending" and deps:
         note = "after " + ", ".join(deps)
-    hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta]).get(tid)
+    hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta], (facts or {}).get("released", ())).get(tid)
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
@@ -97,6 +97,7 @@ def board(repo, proj):
     tasks = fc_tasks.load_tasks(proj)
     trunk_head = project_head(repo, proj)
     facts = branch_facts(repo, proj, trunk_head)
+    facts["released"] = fc_blockers.released(repo, proj, tasks, trunk_head)[0] if trunk_head else {}  # outside blockers whose code the trunk holds
     b = {"trunk": fc_core.current_branch(repo), "trunk_head": trunk_head,
          "rows": [task_state(repo, proj, m, trunk_head, facts) for m in tasks],
          "layers": {x: i + 1 for i, x in enumerate(fc_worktree.stack_order(repo, proj, tasks))}}
