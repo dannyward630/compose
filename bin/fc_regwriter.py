@@ -1,5 +1,8 @@
 """The regression test writer of a FAST task whose fix passed: its branch, brief, start, and ready line."""
 import argparse
+import json
+import re
+import time
 from pathlib import Path
 
 import fc_config, fc_core, fc_crew, fc_herdr, fc_worktree
@@ -43,14 +46,32 @@ def start_writer(repo, proj, meta, result):
     return path
 
 
-READY_RE = None
+READY_RE = re.compile(r"test ready: ([0-9a-f]{7,40}) (.+)")
 
 
 def parse_ready(message):
     """(commit, command) from the first ready line in `message`; None without one."""
-    raise NotImplementedError("parse_ready")
+    found = READY_RE.search(message or "")
+    return (found.group(1), found.group(2).strip()) if found else None
 
 
 def wait_ready(proj, tid, since=0, poll=5):
     """(commit, command) once the writer reports its test ready; None when it ends, blocks, or is gone without one."""
-    raise NotImplementedError("wait_ready")
+    name = fc_herdr.agent_name(proj.name, f"tests-{tid}")
+    while True:
+        reports = fc_crew.crew_reports(proj, name)[since:]
+        for r in reports:
+            if r["state"] in ("working", "done") and parse_ready(r["message"]):
+                return parse_ready(r["message"])
+        if any(r["state"] in ("blocked", "tool-bug", "contradiction", "done") for r in reports):
+            return None
+        path = fc_crew.crew_dir(proj) / f"{name}.json"
+        if not path.exists():
+            return None
+        record = json.loads(path.read_text())
+        if "closed" in record:
+            return None
+        listed = fc_herdr.herdr("agent", "list")
+        if fc_crew.tab_closed(record, listed["agents"] if listed is not None else None):
+            return None
+        time.sleep(poll)
