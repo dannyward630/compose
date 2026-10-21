@@ -1481,3 +1481,47 @@ class PlanOwnership(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManagerProseNamesPostures(unittest.TestCase):
+    AWAY = "**Away: the product owner is away** (`/compose:away [--push] [words]`, `compose away`; modeled on firstmate's away mode)."
+    BIAS = "Bias toward exit: when unsure whether a message is the return, it is."
+    YOLO = [
+        "**Yolo: the engineering manager answers until an explicit off** (`/compose:yolo [--push] [words]`, `compose yolo`).",
+        "Yolo follows every Away rule above, with the `yolo:` prefix, the `(yolo recommendation, unconfirmed, <date>)` tag, and `compose yolo` in place of `compose away`; only the exit differs.",
+        "Only an explicit off ends it: the message `yolo:off` (or `yolo off`), `/compose:yolo off`, or `compose yolo off --project <slug>`; then run `compose yolo off --project <slug>` (every project of an epic), relay the digest, and ask its \"To confirm\" decisions in one ask.",
+        "Every other message is a steer: act on it at once (a change of plans goes to the team lead; an answer to a card goes to the teammate as the product owner's, and the wayfinder rewrites a tagged line as theirs), reply with what changed, and yolo stays on; \"To confirm\" waits for the off.",
+        "`compose away digest --project <slug>` or `compose yolo digest --project <slug>` prints the digest and leaves the posture on.",
+    ]
+    NEVER = [
+        "The never-set still stops and lands in \"Waiting on you\": destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say.",
+        "That covers anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids.",
+    ]
+
+    def setUp(self):
+        self.lines = read("sections/0h.md").splitlines()
+
+    def test_away_paragraph_is_the_old_paragraph_for_away(self):
+        self.assertEqual(self.lines.count(self.AWAY), 1)
+        self.assertEqual(self.lines.count(self.BIAS), 1)
+        start, end = self.lines.index(self.AWAY), self.lines.index(self.YOLO[0])
+        self.assertLess(self.lines.index(self.BIAS), end)
+        away = "\n".join(self.lines[start:end])
+        for want in ["compose away off --project <slug>", "away: <card ids>: accept-all",
+                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>"]:
+            self.assertIn(want, away)
+        for gone in ["compose yolo", "yolo:", "/compose:yolo", "(yolo recommendation"]:
+            self.assertNotIn(gone, away)
+
+    def test_yolo_paragraph_follows_the_away_paragraph_line_by_line(self):
+        i = self.lines.index(self.YOLO[0])
+        self.assertEqual(self.lines[i:i + 5], self.YOLO)
+        self.assertEqual(self.lines.count(self.YOLO[0]), 1)
+        self.assertGreater(i, self.lines.index(self.BIAS))
+        self.assertEqual(self.lines[i - 1], "")
+        self.assertEqual(self.lines[i - 2], self.BIAS)
+
+    def test_never_set_lines_and_no_em_dash(self):
+        for line in self.NEVER:
+            self.assertEqual(self.lines.count(line), 1)
+        self.assertNotIn("—", "\n".join(self.lines))
