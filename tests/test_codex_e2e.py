@@ -89,3 +89,19 @@ class CodexTeammate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(CODEX, "codex is not installed")
+class CodexHooks(SetupE2E, unittest.TestCase):
+    """After `compose setup` in a scratch CODEX_HOME holding only a link to the sign-in, the real codex runs compose's guard hook."""
+
+    def test_the_guard_stops_an_orchestrator_from_creating_a_file_and_lets_crew_do_it(self):
+        scratch = Path(tempfile.mkdtemp()); (scratch / "auth.json").symlink_to(SIGNED_IN / "auth.json")
+        r = self.run_setup("--yes", tools={**{t: RECORD for t in TOOLS}, "codex": RECORD}, CODEX_HOME=str(scratch))
+        self.assertTrue((scratch / "hooks.json").is_file() and (scratch / "config.toml").is_file(), "\n".join(r.lines))
+        for role, made in (("orchestrator", False), ("crew", True)):
+            repo = Path(tempfile.mkdtemp()).resolve(); subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")} | {"HOME": str(r.home), "CODEX_HOME": str(scratch), "COMPOSE_ROLE": role, "PYTHONDONTWRITEBYTECODE": "1"}
+            p = subprocess.run([CODEX, "exec", "--ephemeral", "-s", "workspace-write", "Create a.txt containing a. Do not do anything else."], cwd=repo, env=env,
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
+            self.assertEqual((repo / "a.txt").exists(), made, f"{role}: {p.stdout[-2000:]}{p.stderr[-1000:]}")
