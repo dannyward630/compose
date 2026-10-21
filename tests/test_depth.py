@@ -14,6 +14,40 @@ import fc_depth  # noqa: E402
 
 class StackDepth(unittest.TestCase):
     """The stack's depth is its deepest code task's route depth."""
+    def stack(self, *tasks):
+        """Sync cache for (id, description or None, kind) tasks; a None description leaves the issue out."""
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        metas = [{"id": i, "title": "t", "files": [], "protected": [], "test": "true", "body": "", "model": "m", "after": "", "linear": "ENG-" + i, "kind": k} for i, d, k in tasks]
+        issues = {"ENG-" + i: {"description": d} for i, d, k in tasks if d is not None}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": metas, "issues": issues}))
+        return proj, metas
+
+    def depth(self, *routes):
+        """stack_depth for tasks 061, 062, ... whose route depths are `routes`; "-" is no Route section, None no issue."""
+        tasks = [("%03d" % (61 + n), None if r is None else "## Goal\nx\n" if r == "-" else f"## Goal\nx\n\n## Route\n\n* workflow: test-first\n* depth: {r}\n", "code") for n, r in enumerate(routes)]
+        proj, metas = self.stack(*tasks)
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("no Linear call")):
+            return fc_depth.stack_depth(proj, metas)
+
+    def test_the_deepest_depth_and_the_first_task_with_it(self):
+        self.assertEqual(self.depth("FAST", "DEEP", "DEEP"), ("DEEP", "062"))
+        self.assertEqual(self.depth("DEEP", "STANDARD", "FAST"), ("DEEP", "061"))
+        self.assertEqual(self.depth("FAST", "FAST"), ("FAST", "061"))
+
+    def test_no_route_section_no_description_or_no_issue_counts_as_standard(self):
+        self.assertEqual(self.depth("FAST", "-", "FAST"), ("STANDARD", "062"))
+        self.assertEqual(self.depth("FAST", None), ("STANDARD", "062"))
+        self.assertEqual(self.depth("FAST", "DEEP", "-"), ("DEEP", "062"))
+
+    def test_a_depth_outside_the_known_depths_counts_as_standard(self):
+        self.assertEqual(self.depth("FAST", "DEEPEST"), ("STANDARD", "062"))
+        self.assertEqual(self.depth("FAST", "fast"), ("STANDARD", "062"))
+
+    def test_design_tasks_are_ignored_and_no_code_task_is_standard_with_no_id(self):
+        proj, metas = self.stack(("061", "## Route\n\n* depth: DEEP\n", "design"), ("062", "## Route\n\n* depth: FAST\n", "code"))
+        self.assertEqual(fc_depth.stack_depth(proj, metas), ("FAST", "062"))
+        self.assertEqual(fc_depth.stack_depth(proj, metas[:1]), ("STANDARD", None))
+        self.assertEqual(fc_depth.stack_depth(proj, []), ("STANDARD", None))
 
 
 class DepthConfig(unittest.TestCase):
