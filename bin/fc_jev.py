@@ -196,6 +196,7 @@ def run_held(cmd, limit, env, then):
                 fc_proc.kill_group(p.pid)
             for t in readers:
                 t.join()
+            p.stdout.close(); p.stderr.close()
             fc_proc.RUNNING.discard(p.pid)
             fc_core.flag_home(before, f"`{cmd}`", sid=p.pid)
         return subprocess.CompletedProcess(cmd, 124 if killed else p.wait(), fc_core.scrub("".join(out)), fc_core.scrub("".join(err))), checked
