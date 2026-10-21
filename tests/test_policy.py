@@ -1,5 +1,6 @@
 import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, os, sys, unittest
+from unittest import mock
 from pathlib import Path
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
@@ -8,7 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_policy  # noqa: E402
+import fc_config, fc_linear, fc_linear_cmd, fc_policy  # noqa: E402
 
 DOC = """# Verification policies
 Intro text.
@@ -49,6 +50,61 @@ class Parse(unittest.TestCase):
         plain = {"name": "P", "statement": "", "globs": [], "checks": ["c"]}
         files = ["y/1.py", "x/2.py", "x/README.md"]
         self.assertEqual(fc_policy.glob_matches([a, plain, b], files), [a, b])
+
+
+PROJECT = {"id": "P1", "name": "Proj", "url": "u", "team": {"id": "T1", "name": "Team", "key": "NEB"}}
+TITLE = "Verification policies"
+
+
+class Read(unittest.TestCase):
+    def read(self, pages, project=(PROJECT,), fail_get=()):
+        """read_policies with linear_project giving `project` in turn and linear_gql serving `pages` of (id, title) documents,
+        each get raising the next of `fail_get` before answering with DOC."""
+        fails = list(fail_get)
+        def gql(query, variables):
+            if "documents(first: 100, after: $after)" in query and "nodes { id title updatedAt }" in query:
+                self.assertEqual(variables["id"], "P1")
+                i = int(variables["after"] or 0)
+                return {"project": {"documents": {"pageInfo": {"hasNextPage": i + 1 < len(pages), "endCursor": str(i + 1)},
+                                                  "nodes": [{"id": d, "title": t, "updatedAt": "2026-10-21T00:00:00Z"} for d, t in pages[i]]}}}
+            self.assertIn("document(id: $id) { title content url }", query)
+            if fails:
+                raise fails.pop(0)
+            return {"document": {"title": TITLE, "content": DOC, "url": "u"}}
+        with mock.patch.object(fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_linear, "linear_gql", side_effect=gql) as self.gql, \
+                mock.patch.object(fc_linear_cmd, "linear_project", side_effect=list(project)) as self.project:
+            return fc_policy.read_policies("/repo")
+
+    def test_no_key_makes_no_call(self):
+        with mock.patch.object(fc_config, "LINEAR_KEY", ""), mock.patch.object(fc_linear, "linear_gql") as gql, \
+                mock.patch.object(fc_linear_cmd, "linear_project") as project:
+            self.assertEqual(fc_policy.read_policies("/repo"), ([], "policies unavailable: no Linear key"))
+        gql.assert_not_called()
+        project.assert_not_called()
+
+    def test_no_document_and_holdout_exact_title(self):
+        self.assertEqual(self.read([[("D1", "Verification policies (old)"), ("D2", "verification policies")]]), ([], "no Verification policies document"))
+
+    def test_one_document_parsed_holdout_on_a_later_page(self):
+        self.assertEqual(self.read([[("D7", "Other")], [("D1", TITLE)]]), ([AUTH, MIGRATIONS], ""))
+        self.assertEqual(self.gql.call_args.args[1], {"id": "D1"})
+        self.project.assert_called_once_with("/repo")
+
+    def test_duplicates_raise_naming_every_id_across_pages_without_retry(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.read([[("D1", TITLE), ("D2", "Other")], [("D3", TITLE)]])
+        self.assertEqual(str(e.exception), "2 documents titled Verification policies: D1, D3")
+        self.assertEqual(self.project.call_count, 1)
+
+    def test_system_exit_is_retried_once_then_succeeds(self):
+        self.assertEqual(self.read([[("D1", TITLE)]], project=(SystemExit("no .compose/linear.json in /repo"), PROJECT)), ([AUTH, MIGRATIONS], ""))
+        self.assertEqual(self.project.call_count, 2)
+
+    def test_second_failure_raises_unreadable_holdout_retry_from_the_start(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.read([[("D1", TITLE)]], project=(PROJECT, SystemExit("Linear has no project x")), fail_get=(ValueError("timed out"),))
+        self.assertEqual(str(e.exception), "policies unreadable: Linear has no project x")
+        self.assertEqual(self.project.call_count, 2)
 
 
 if __name__ == "__main__":
