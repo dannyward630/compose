@@ -124,7 +124,25 @@ def sufficiency_needs(answer):
 
 def sufficiency_events(meta, rows, answers, threshold, run_id, commit_sha):
     """One sufficiency event per criterion, citing the events Jev ties to it, never proven past a deterministic fail."""
-    raise NotImplementedError("fc_accept.sufficiency_events")
+    import hashlib, json
+    events = []
+    for n, (c, t) in enumerate(zip(fc_ledger.criterion_ids(meta), fc_tasks.parse_criteria(meta["body"])), 1):
+        applies = [r for r in rows if not r["criterion_id"] or c in r["criterion_id"]]
+        cites = [r["event_id"] for r in applies if (answers.get(f"e{n}_{r['event_id']}") or {}).get("noul", 0) >= threshold]
+        result = (answers.get(f"v{n}") or {}).get("choice")
+        if result not in VERDICTS:
+            result = "unproven"
+        fails = [r for r in applies if r["result"] == "fail" and r["phase"] in DETERMINISTIC]
+        if result == "proven" and fails:
+            result = "unproven"
+            cites += [r["event_id"] for r in fails if r["event_id"] not in cites]
+        if result == "proven" and not any(r["result"] != "error" for r in applies if r["event_id"] in cites):
+            result = "unproven"
+        d = fc_ledger.event(run_id, commit_sha, [meta["id"]], [c], "sufficiency", "verify", result, None, t)
+        d["cites"], d["needs"] = cites, sufficiency_needs(answers.get(f"n{n}"))
+        d["event_id"] = hashlib.sha256(json.dumps({k: v for k, v in d.items() if k != "event_id"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
+        events.append(d)
+    return events
 
 def jev_sufficiency(cfg, proj, repo):
     """Jev judges each task's criteria from its counted evidence; the events are recorded on the task issue and returned."""
