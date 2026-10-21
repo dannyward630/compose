@@ -505,7 +505,7 @@ class RedoRunId(unittest.TestCase):
                 mock.patch.object(fc_ledger, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
                 mock.patch.object(fc_ledger, "record_task") as record_task, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.fc_run.run_tasks(self.repo, self.proj, [t1, t3], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
-        self.assertEqual(sorted(c.args for c in record_task.call_args_list), [(self.repo, self.proj, t1, ["001", "passed"]), (self.repo, self.proj, t3, ["003", "passed"])])
+        self.assertEqual(sorted((c.args for c in record_task.call_args_list), key=lambda a: a[2]["id"]), [(self.repo, self.proj, t1, ["001", "passed"]), (self.repo, self.proj, t3, ["003", "passed"])])
 
 
 class DoneUnsaved(unittest.TestCase):
