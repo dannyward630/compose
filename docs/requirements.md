@@ -105,10 +105,22 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |
 | `~/.config/herdr/config.toml` | herdr's config: copied from `bin/herdr.toml` when absent, else only the two notification lines are set |
 
+## Read only when present
+
+These need no install.
+`compose` uses them when they exist, and never fails when they do not.
+
+| Tool | Used for |
+|---|---|
+| `caffeinate` (macOS) | keeps the Mac awake while a run, resume, verify, watch, or live teammate works (`caffeinate -dims -w <pid>`) |
+| `pmset` (macOS) | `doctor` and the start of a run warn when the Mac is on battery, because closing the lid sleeps it |
+| docker | `doctor` and the start of a run warn about a container that keeps restarting, only when docker is installed and running |
+
 ## Environment variables
 
 | Variable | Effect |
 |---|---|
+| `COMPOSE_NO_PREFLIGHT=1` | `doctor` and the start of `run`, `resume`, and `verify` skip the key calls, the gh login check, and the machine warnings (offline work); the uncommitted-changes check stays |
 | `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING`, unless a compose outside it made that change (another session's `compose workspace`, say; compose journals each write it makes there in `~/.compose/home-writes.jsonl`) or it is in the CLI checkout |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
 | `COMPOSE_NO_TRAIL=1` | skip trail |

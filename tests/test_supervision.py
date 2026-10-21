@@ -159,9 +159,10 @@ class WatchTimeout(unittest.TestCase):
         a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.01, interval=0.01, stall=10_000)
         out = []
         with mock.patch.object(fc.fc_core, "project_dir", return_value=Path(tempfile.mkdtemp()) / "hw"), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), \
-                mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch("builtins.print", out.append):
+                mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap), mock.patch.object(fc.fc_proc, "keep_awake") as awake, mock.patch("builtins.print", out.append):
             with self.assertRaises(SystemExit) as e:
                 fc.fc_watch.cmd_watch(a)
+        awake.assert_called_once_with()  # a sleeping Mac sleeps the team the watch waits on
         self.assertEqual(e.exception.code, 2)
         self.assertIn("event timeout", out[-1])
         self.assertIn("pending tasks 1, teammates working hw-tests-001, run not live, verify not run", out[-1])

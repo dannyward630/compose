@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status, fc_briefs
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_status, fc_briefs
 
 
 YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
@@ -284,6 +284,7 @@ def cmd_watch(a, rewake=False):
     if not lock:
         return
     with lock:  # held until this watch returns or exits
+        fc_proc.keep_awake()  # a sleeping Mac sleeps the team it watches
         before = watch_mem(proj, key).get("base") or watch_snapshot(repo, proj)
         emit = (lambda s: print(s, file=sys.stderr)) if rewake else print
         parent = os.getppid()

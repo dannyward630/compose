@@ -126,17 +126,20 @@ class Crew(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}
             if args[:2] == ("agent", "get"):
                 return {"agent": {"agent_status": "working"}}
+            if args[:2] == ("pane", "process-info"):  # claude, in front of its shell
+                return {"process_info": {"shell_pid": 10, "foreground_process_group_id": 4242, "foreground_processes": [{"pid": 10}, {"pid": 4242}]}}
             return {}
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register") as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch("builtins.print"):
+                mock.patch.object(fc.fc_proc, "keep_awake") as awake, mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
+        awake.assert_called_once_with(4242)  # the Mac stays awake for as long as the teammate's session lives
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("pane", "rename"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
-                                 ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get")])
+                                 ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get"), ("pane", "process-info")])
         self.assertEqual(calls[2], ("pane", "rename", "w9:p7", "Payment provider"))  # the pane carries its tab's label
         self.assertIn("COMPOSE_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
         self.assertIn("COMPOSE_PROJECT=shop", calls[1])  # the Stop hook's watch finds its project from the tab

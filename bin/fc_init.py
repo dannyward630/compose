@@ -1,6 +1,6 @@
-import json, os, re, shutil, subprocess, sys
+import json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
-import fc_auth, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
+import fc_auth, fc_checks, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
 
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
@@ -116,19 +116,100 @@ def herdr_toast_warning():
             + '): set [ui.toast] delivery = "off" and [ui.sound] enabled = false in ~/.config/herdr/config.toml; '
             "compose sends the engineering manager's alert itself")
 
+def key_problems():
+    """(problems, warnings) for the workspace's OpenRouter and Linear keys, found with a call that costs nothing: OpenRouter's
+    key-info endpoint and Linear's `viewer` query. A key its service turns away (or an OpenRouter key whose credit is used up)
+    is a problem with its fix; a key that is not set is the setup row's business, and a service that does not answer is a
+    warning, never a verdict. COMPOSE_NO_PREFLIGHT=1 makes no call (offline work)."""
+    if os.environ.get("COMPOSE_NO_PREFLIGHT"):
+        return [], []
+    def ask(req):
+        """(HTTP status or None, parsed JSON or {}) of one request; None when nothing answered."""
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            e.close()
+            return e.code, {}
+        except (OSError, ValueError):  # no network, a timeout, a body that is not JSON
+            return None, {}
+    swap = lambda where, flag="": f"get a new key at {where}, then: pbpaste | compose workspace key {fc_config.WORKSPACE}{flag}"
+    checks = []
+    if fc_config.OPENROUTER_KEY:
+        checks.append(("OpenRouter", urllib.request.Request("https://openrouter.ai/api/v1/auth/key", headers={"Authorization": "Bearer " + fc_config.OPENROUTER_KEY}),
+                       swap("openrouter.ai/keys")))
+    if fc_config.LINEAR_KEY:
+        checks.append(("Linear", urllib.request.Request("https://api.linear.app/graphql", data=b'{"query": "{ viewer { id } }"}',
+                       headers={"Content-Type": "application/json", "Authorization": fc_config.LINEAR_KEY}),
+                       swap("linear.app/settings/api", " --linear")))
+    problems, warnings = [], []
+    for name, req, fix in checks:
+        status, out = ask(req)
+        left = ((out.get("data") or {}).get("limit_remaining") if isinstance(out, dict) else None) if name == "OpenRouter" else None
+        if status in (400, 401, 403):
+            problems.append(f"the {name} key is rejected (HTTP {status}): {fix}")
+        elif status == 200 and left is not None and left <= 0:
+            problems.append(f"the {name} key has no credit left: raise its limit or add credit at openrouter.ai/settings/credits")
+        elif status != 200:
+            warnings.append(f"WARNING: could not check the {name} key ({'no answer' if status is None else 'HTTP ' + str(status)}): the work may stop later if it is bad")
+    return problems, warnings
+
+def start_problems(repo, tree=True, hint="commit or discard them"):
+    """(problems, warnings) to settle before long work starts, all at once so they are fixed in one pass: a work tree with changes
+    of the user's (fc_worktree.dirty_paths ignores compose's and the tools' own files), a key its service rejects (key_problems),
+    and the machine warnings (fc_checks.machine_warnings). `tree=False` skips the tree, for verify, which tolerates it.
+    A problem is a line with its fix; a warning starts with WARNING. COMPOSE_NO_PREFLIGHT=1 drops everything but the tree."""
+    problems, warnings = key_problems()
+    if not os.environ.get("COMPOSE_NO_PREFLIGHT"):
+        warnings += fc_checks.machine_warnings()
+    if tree and (dirty := fc_worktree.dirty_paths(repo)):
+        shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
+        problems.insert(0, f"repo has uncommitted changes ({shown}); {hint}")
+    return problems, warnings
+
+def start_checks(repo, stack=True, tree=True, hint="commit or discard them"):
+    """The start of run, resume and verify: print the warnings and stop with every problem at once (nothing is cloned or run
+    yet), so the work never stops later to ask. With `stack` (the work will be submitted as a gh stack), a gh that is not
+    logged in is one more problem; COMPOSE_NO_PREFLIGHT=1 skips that with the calls and machine checks."""
+    problems, warnings = start_problems(repo, tree, hint)
+    if stack and not os.environ.get("COMPOSE_NO_PREFLIGHT") and shutil.which("gh") and not fc_checks.gh_authed():
+        problems.append("gh is not logged in, so the stack cannot be submitted: gh auth login (or run with --no-stack)")
+    for w in warnings:
+        fc_core.say(w)
+    if problems:
+        sys.exit("preflight stopped, nothing was cloned or run. Fix " + ("this" if len(problems) == 1 else f"all {len(problems)} of these")
+                 + ", then run again:\n  " + "\n  ".join(problems))
+
 def cmd_doctor(a):
     """Check every tool and skill file compose depends on; print every line first, then exit 1 when a required one is missing.
     Warns, never stops, when a key still sits in config.json or .env: it differs from the key auth.json holds, so it was left
-    there - remove the one you do not want. herdr's loud toasts or sounds are one optional row of check_deps, fixed by `compose setup`."""
+    there - remove the one you do not want. herdr's loud toasts or sounds are one optional row of check_deps, fixed by `compose setup`.
+    Then the preflight run and verify repeat at their start (start_problems): a `PROBLEM:` line with its fix for each key its
+    service rejects and, in the work tree of --project, for changes of the user's that run refuses;
+    WARNING lines for a Mac on battery, a loaded machine and docker containers in a crash loop. A problem exits 1 as well."""
     bad = check_deps()
     if shutil.which("gh") and fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode != 0:
         print("WARNING: gh is not logged in: compose bug reports are saved, not filed on GitHub (run: gh auth login)")
     for name, path in fc_auth.old_keys(fc_config.CONFIG_PATH, fc_config.ENV_FILE):
         print(f"WARNING: {name} in {fc_core.tilde(path)} differs from the key auth.json holds, so it was kept: remove the one you do not want")
+    wt, missing = None, []
+    if getattr(a, "project", None):  # the tree is the named project's; without one (and under `update`) there is none to check
+        pick = fc_core.all_projects(Path(a.repo).resolve()).get(a.project)
+        wt = pick[0] if pick else None
+        missing = [] if pick else [f"no project {a.project!r} in {Path(a.repo).resolve()}: check the name with `compose projects`"]
+    problems, warnings = start_problems(wt or Path.cwd(), tree=wt is not None)
+    problems += missing
+    for line in warnings:
+        print(line)
+    for line in problems:
+        print("PROBLEM: " + line)
     if bad:
         modes = {row[0]: row[5] for row in fc_steps.STEPS}  # setup fixes every mode but manual
         print(f"{len(bad)} required step{'s' if len(bad) > 1 else ''} missing"
               + (": run compose setup" if any(modes.get(n) != "manual" for n in bad) else ""))
+        sys.exit(1)
+    if problems:
+        print(f"{len(problems)} problem{'s' if len(problems) > 1 else ''} to fix before work starts")
         sys.exit(1)
     print("every step compose needs is ready")
 

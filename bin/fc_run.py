@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_verify
+import fc_core, fc_config, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -54,18 +54,17 @@ def cmd_triage(a):
 
 RUN_PARALLEL = 3  # tasks at once when neither --parallel nor the config's `parallel` says
 
-def require_committed(repo):
-    """Every task clone starts from the project branch's last commit, so its tests must be committed: stop on anything dirty,
-    naming it. The agent wiring a session hook rewrites is left out (fc_worktree.dirty_paths)."""
-    dirty = fc_worktree.dirty_paths(repo)
-    if dirty:
-        shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
-        sys.exit(f"repo has uncommitted changes ({shown}); commit the tests first so worktrees include them")
+def require_committed(repo, stack=True):
+    """The preflight of a run (fc_init.start_checks), every problem at once before anything is cloned. Every task clone starts
+    from the project branch's last commit, so its tests must be committed: it stops on anything dirty, naming it (the agent wiring
+    a session hook rewrites and the tools' own directories are left out: fc_worktree.dirty_paths), on a key its service rejects,
+    and with `stack` on a gh that is not logged in. A Mac on battery, a loaded machine or a crash-looping container only warns."""
+    fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them")
 
 def cmd_run(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
-    require_committed(repo)
+    require_committed(repo, not a.no_stack)
     tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
@@ -126,6 +125,7 @@ def preflight(models):
                  f"{fc_config.CONFIG_PATH} (`models`) or the task's `model:`:\n  " + "\n  ".join(bad))
 
 def run_tasks(repo, proj, tasks, a):
+    fc_proc.keep_awake()  # a run lasts hours; a sleeping Mac stops every agent and fails every check that waits on a timeout
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
@@ -141,7 +141,7 @@ def run_tasks(repo, proj, tasks, a):
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}}, indent=2))
-    fc_core.say(f"run start  project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
+    fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
     metas = {m["id"]: m for m in tasks}
@@ -261,7 +261,7 @@ def cmd_resume(a):
     fc_core.say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
     ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
     if state["command"] == "run":
-        require_committed(repo)
+        require_committed(repo, not getattr(ns, "no_stack", False))
         tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not fc_tasks.task_finished(proj, m)]
         if not tasks:
             path.unlink(missing_ok=True)

@@ -223,6 +223,18 @@ class RunDirtyCheck(unittest.TestCase):
         self.go("run"); self.go("resume")
         self.assertEqual(self.ran, [["001"], ["001"]])
 
+    def test_the_tools_own_leftovers_do_not_block_run_or_resume(self):
+        """What graft and trail leave behind (a graph folder, wiring in a repo that had none, a stray .ignore) is not the user's change."""
+        for rel in ("graft/map.json", ".trail/cache/x.json", ".compose/q/notes.md", ".ignore"):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text("{}\n")
+        (self.repo / ".claude" / "settings.local.json").write_text("{}\n")
+        self.go("run"); self.go("resume")
+        self.assertEqual(self.ran, [["001"], ["001"]])
+        self.assertEqual(fc.fc_worktree.dirty_paths(self.repo), [])
+        (self.repo / "sub").mkdir(); (self.repo / "sub" / "graft").write_text("x\n")
+        self.assertEqual(fc.fc_worktree.dirty_paths(self.repo), ["sub/graft"])  # only the tools' own folders at the root
+
     def test_run_and_resume_name_the_dirty_files_they_refuse_on(self):
         (self.repo / ".claude" / "settings.json").write_text("{}\n")
         subprocess.run(["git", "mv", "a.txt", "b.txt"], cwd=self.repo, check=True)  # a rename lists only its new path
