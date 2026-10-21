@@ -279,7 +279,8 @@ def cmd_crew(a):
     space = fc_herdr.herdr_space(proj)
     role = a.role if a.role in fc_hooks.GUARDED_ROLES else "planner" if a.role.startswith("planner-") else "crew"  # `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code
     tab = fc_herdr.herdr_tab(space, fc_herdr.tab_label(proj, title), cwd, "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
-                             *[x for k, v in (fc_providers.pi_env(fc_models.pi_id(model)) if model.startswith("pi:") else {}).items() for x in ("--env", f"{k}={v}")], check=True)
+                             *[x for k, v in (fc_providers.pi_env(fc_models.pi_id(model)) if model.startswith("pi:") else {}).items() for x in ("--env", f"{k}={v}")],
+                             *(["--env", f"COMPOSE_HARNESS={fc_config.HARNESS}"] if fc_config.HARNESS else []), check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role

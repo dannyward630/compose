@@ -366,7 +366,7 @@ def main():
     if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it
         fc_update.hold(a.cmd, fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project)).name, a.repo)
     if a.fn not in (fc_config.cmd_workspace, fc_hooks.cmd_guard, fc_watch.cmd_rewake, fc_hooks.cmd_skillcheck):  # the hooks run in every session: no config, no output
-        ws = fc_config.apply_config(move=not getattr(a, "dry_run", False))  # "default" when no workspace is chosen
+        ws = fc_config.apply_config(move=not getattr(a, "dry_run", False), harness=getattr(a, "harness", None))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
         if a.cmd in ("run", "verify", "review", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")
