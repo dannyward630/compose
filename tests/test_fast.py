@@ -179,3 +179,31 @@ class UnprovenRun(unittest.TestCase):
 
 class UnprovenWhy(unittest.TestCase):
     """The unproven comment says why the regression test is not proof once the proof has run."""
+    RESULT = {"status": "unproven", "branch": "fast/p/001", "attempts": 2, "cost": 0.0123, "model": "pi:x/glm", "log": []}
+    LINE = "Unproven: branch `fast/p/001` passes its tests after 2 attempt(s), $0.0123, model `pi:x/glm`; its regression test is not proven yet."
+
+    def event(self, event, result):
+        """Sends `event` for task ENG-3 and returns (the moves, the comments) as lists of args after the issue."""
+        with mock.patch.object(fc.fc_linear, "linear_ready", return_value=True), mock.patch.object(fc.fc_linear, "linear_issue", return_value={"identifier": "ENG-3"}), \
+             mock.patch.object(fc.fc_linear, "linear_move") as move, mock.patch.object(fc.fc_linear, "linear_comment") as comment, mock.patch.object(fc.fc_linear, "linear_roll_up"):
+            fc.fc_linear.linear_event(Path("proj"), {"id": "001", "linear": "ENG-3"}, event, result)
+        return [c.args[1:] for c in move.call_args_list], [c.args[1:] for c in comment.call_args_list]
+
+    def test_the_comment_ends_with_why_and_the_last_log_errors_text_as_written_once_a_proof_ran_and_the_task_stays_in_progress(self):
+        why = "the regression test passes on the base, so it proves nothing"
+        move, comment = self.event("unproven", dict(self.RESULT, proof={"proven": False}, log=[{"error": "older"}, {"error": why}]))
+        self.assertEqual((move, comment), ([("In Progress",)], [(f"{self.LINE} Why: {why}.",)]))
+        long = "x" * 600 + "\nsecond line"
+        self.assertEqual(self.event("unproven", dict(self.RESULT, proof={}, log=[{"error": long}]))[1], [(f"{self.LINE} Why: {long}.",)])
+
+    def test_without_a_proof_key_the_comment_is_the_existing_line_even_when_the_log_has_an_error(self):
+        for log in ([], [{"error": "boom"}]):
+            with self.subTest(log=log):
+                move, comment = self.event("unproven", dict(self.RESULT, log=log))
+                self.assertEqual((move, comment), ([("In Progress",)], [(self.LINE,)]))
+
+    def test_passed_and_failed_comments_ignore_a_proof_key(self):
+        passed = self.event("passed", dict(self.RESULT, status="passed", proof={}, log=[{"error": "e"}]))
+        self.assertEqual(passed, ([("In Review",)], [("Passed: branch `fast/p/001`, 2 attempt(s), $0.0123, model `pi:x/glm`.",)]))
+        failed = self.event("failed", dict(self.RESULT, status="failed", proof={}, log=[{"error": "boom"}]))
+        self.assertEqual(failed, ([("In Progress",)], [("failed after 2 attempt(s) ($0.0123, model `pi:x/glm`): boom",)]))
