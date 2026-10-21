@@ -51,5 +51,6 @@ class SufficiencyVerify(unittest.TestCase):
                 with self.subTest(ok=ok, acceptance_gate=gate):
                     got = [self.run_round(ok, {"acceptance_gate": gate}, events=ev)[:3] for ev in (EVENTS, [])]
                     (code, rounds, final), (code2, rounds2, final2) = got
+                    self.assertEqual((rounds[0]["sufficiency"], rounds2[0]["sufficiency"]), (EVENTS, []))
                     self.assertEqual((code, final["passed"], len(rounds)), (0 if ok else 1, ok, 1))
                     self.assertEqual((code2, final2["passed"], len(rounds2)), (code, ok, 1))
