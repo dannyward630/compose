@@ -1,6 +1,7 @@
 import hermetic  # first: no test sees the real home
-import hashlib, importlib.machinery, importlib.util, json, os, unittest
+import hashlib, importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 import sys
 os.environ["HERDR_ENV"] = ""
 
@@ -8,7 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_accept  # noqa: E402
+import fc_accept, fc_ledger, fc_evidence  # noqa: E402
 
 VERDICTS = ("proven", "unproven", "contradicted")
 NEEDS = ("test", "prove", "check", "e2e", "review", "acceptance", "manual", "none")
@@ -105,3 +106,53 @@ class SufficiencyEvents(unittest.TestCase):
         e1, e2 = self.judge(rows, {"v1": {"choice": "proven"}, "e1_x1": {"noul": 1}, "e1_p1": {"noul": 1}, "v2": {"choice": "proven"}, "e2_x1": {"noul": 1}})
         self.assertEqual((e1["result"], e2["result"], e2["cites"]), ("proven", "unproven", ["x1"]))
         self.assertEqual(self.judge([], {"v1": {"choice": "proven"}, "v2": {"choice": "contradicted"}})[0]["result"], "unproven")
+
+
+TASK = {"title": "t", "linear": "ENG-4", "kind": "code", "body": "## Acceptance criteria\n* alpha\n* beta\n"}
+
+
+class SufficiencyAsk(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"; (self.proj / "results").mkdir(parents=True)
+        self.repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "a"); self.sha = git("rev-parse", "HEAD")
+        self.said, self.asks = [], []
+        answer = lambda name, q: {"choice": "proven", "probabilities": {"proven": 1}} if q["type"] == "choice" else {"noul": 1}
+        def ask(env, cfg, state, questions, label):
+            self.asks.append((state, list(questions), label))
+            return {"model": "m", "answers": {n: answer(n, q) for n, q in questions.items()}}
+        self.rows = [{"event_id": f"r{i}", "criterion_id": [], "phase": "review", "result": "pass"} for i in range(35)]
+        self.rows[3:3] = [{"event_id": "s1", "criterion_id": [], "phase": "sufficiency", "result": "proven"}, {"event_id": "c1", "criterion_id": [], "phase": "cost", "result": "pass"}]
+        for mod, name, kw in ((fc.fc_config, "ENV_FILE", {"new": self.proj / "none.env"}), (fc.fc_models, "jev_ask", {"side_effect": ask}), (fc_evidence, "task_rows", {"return_value": self.rows}),
+                              (fc_ledger, "counted", {"side_effect": lambda *a: a[-1]}), (fc_ledger, "record_task", {"return_value": True}), (fc_ledger, "run_id", {"return_value": "r1"}),
+                              (fc.fc_core, "say", {"new": self.said.append})):
+            p = mock.patch.object(mod, name, **kw); setattr(self, name, p.start()); self.addCleanup(p.stop)
+
+    def tasks(self, *metas):
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": f"03{n}", **m} for n, m in enumerate(metas, 1)]}))
+
+    def test_judges_counted_rows_newest_30_in_batches_and_records(self):
+        self.tasks(TASK); (self.proj / "linear.json").write_text('{"feature": "ENG-9"}')
+        events = fc_accept.jev_sufficiency({}, self.proj, self.repo)
+        shown = [r for r in self.rows if r["phase"] not in ("sufficiency", "cost")][-30:]
+        self.task_rows.assert_called_once_with("ENG-4", "ENG-9", "031")
+        self.assertEqual([len(qs) for _, qs, _ in self.asks], [40, 24])
+        self.assertTrue(all(label == "Jev sufficiency" and state is self.asks[0][0] for state, _, label in self.asks))
+        self.assertEqual(self.asks[0][0], {"task": "t", "criteria": ["alpha", "beta"], "events": shown})
+        self.assertEqual([e["result"] for e in events], ["proven", "proven"])
+        self.assertEqual({e["commit_sha"] for e in events}, {self.sha})
+        self.assertEqual((self.record_task.call_args.args[2]["id"], self.record_task.call_args.args[-1]), ("031", events))
+        self.assertEqual(self.said, ["jev    sufficiency 031: 2 proven, 0 unproven, 0 contradicted"])
+
+    def test_no_criteria_or_no_issue_asks_nothing(self):
+        self.tasks({**TASK, "body": "## Goal\nx\n"}, {**TASK, "linear": None}, {**TASK, "kind": "design"})
+        self.assertEqual(fc_accept.jev_sufficiency({}, self.proj, self.repo), [])
+        self.assertEqual((self.asks, self.record_task.call_count, self.said), ([], 0, []))
+
+    def test_a_failing_task_is_not_judged_and_the_next_still_is(self):
+        self.tasks(TASK, TASK); err = "boom " + "x" * 300
+        self.task_rows.side_effect = [RuntimeError(err), self.rows]
+        events = fc_accept.jev_sufficiency({}, self.proj, self.repo)
+        self.assertEqual(self.said, [f"jev    sufficiency 031: not judged ({err[:200]})", "jev    sufficiency 032: 2 proven, 0 unproven, 0 contradicted"])
+        self.assertEqual(([e["task_ids"] for e in events], self.record_task.call_count), ([["032"], ["032"]], 1))
