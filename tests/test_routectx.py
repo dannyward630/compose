@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, sys, tempfile, unittest
+import hashlib, importlib.machinery, importlib.util, json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
@@ -107,3 +107,57 @@ class Dependencies(unittest.TestCase):
                                 ({"callers Bee": "Traceback (most recent call last):"}, None, "trail gave unreadable output"),
                                 ({"skeleton bin/b.py": {"entries": [{"name": "Bee"}]}}, None, "trail gave unreadable output")]:
             self.assertEqual(self.deps(over, path=path), {"unavailable": why}, (over, why))
+
+
+def sha16(blob_list, body="## Goal\nGrüße", files=("a.py", "src/b.py", "new.py"), policies=()):
+    text = json.dumps([body, list(files), blob_list, list(policies)], sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+class ContextHash(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.git("init", "-q", "-b", "main")
+        (self.repo / "src").mkdir()
+        self.commit({"a.py": "a\n", "src/b.py": "b\n"})
+        self.meta = {"id": "001", "title": "T", "body": "## Goal\nGrüße", "files": ["a.py", "src/b.py", "new.py"], "route": "test-first"}
+        self.pols = [{"name": "Gate", "statement": "s", "globs": ["a.py"], "checks": ["c"]}]
+
+    def git(self, *args):
+        run = subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", *args], capture_output=True, text=True, check=True)
+        return run.stdout.strip()
+
+    def commit(self, files):
+        for path, text in files.items(): (self.repo / path).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "c")
+
+    def h(self, meta=None, pols=None):
+        return fc_routectx.context_hash(self.repo, meta or self.meta, self.pols if pols is None else pols)
+
+    def test_hash_is_the_sha256_prefix(self):
+        (self.repo / "new.py").write_text("n\n")
+        self.git("add", "new.py")  # staged, still missing at HEAD
+        blobs = [self.git("rev-parse", "HEAD:a.py"), self.git("rev-parse", "HEAD:src/b.py"), "-"]
+        self.assertEqual(self.h(), sha16(blobs, policies=self.pols))
+        self.assertEqual(self.h(), self.h())
+
+    def test_changes_with_each_input(self):
+        base = self.h()
+        self.assertEqual(self.h({**self.meta, "id": "002", "title": "U", "route": None}), base)  # only body and files count
+        changed = [self.h({**self.meta, "body": "## Goal\nother"}), self.h({**self.meta, "files": ["a.py", "src/b.py"]}),
+                   self.h({**self.meta, "files": ["src/b.py", "a.py", "new.py"]}), self.h(pols=[]), self.h(pols=[{**self.pols[0], "checks": ["d"]}])]
+        (self.repo / "a.py").write_text("edited\n")
+        (self.repo / "new.py").write_text("n\n")
+        self.assertEqual(self.h(), base)  # uncommitted edits are not HEAD
+        self.commit({})
+        changed.append(self.h())
+        self.commit({"new.py": "n\n", "a.py": "a\n"})  # only new.py differs from base now
+        changed.append(self.h())
+        self.assertNotIn(base, changed)
+
+    def test_no_commit_yet(self):
+        repo = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        (repo / "a.py").write_text("a\n")
+        self.assertEqual(fc_routectx.context_hash(repo, {"id": "001", "body": "b", "files": ["a.py"]}, []), sha16(["-"], "b", ["a.py"]))
