@@ -195,5 +195,53 @@ class ReadyList(unittest.TestCase):
         self.line.assert_not_called()
 
 
+class RouteColumns(unittest.TestCase):
+    """`status` shows each task's route, its fallback switches and the verify rounds that fixed it, aligned under the header."""
+
+    HEADER = "  id   title                                  state            route                             att esc fix     time     cost  model          note"
+    FALL = {"fallback": {"from": "a", "to": "b", "why": "x"}}
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init"), ("checkout", "-q", "-b", "compose/p")):
+            subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+
+    def write(self, name, data):
+        (self.proj / "results" / name).write_text(json.dumps(data))
+
+    def table(self):
+        """{task id: (route, att, esc, fix, cost)}, each cell cut at the header's own column."""
+        lines = fc.fc_status.render_status(self.repo, [self.proj]).splitlines()
+        self.assertIn(self.HEADER, lines)
+        h, rows = self.HEADER, lines[lines.index(self.HEADER) + 1:]
+        cut = lambda l, a, b: l[h.index(a):h.index(a) + b].strip()
+        return {l[2:6].strip(): (l[h.index("route"):h.index("att")].strip(), cut(l, "att", 3), cut(l, "esc", 3), cut(l, "fix", 3), l[h.index("cost") - 4:h.index("cost") + 4].strip())
+                for l in rows[:rows.index("")]}
+
+    def test_each_row_shows_its_route_escalations_and_fix_rounds_under_the_header(self):
+        route = lambda body: {"description": "## Route\n\n" + body}
+        self.write("tasks.json", {"feature": {}, "tasks": [
+            {"id": "001", "title": "routed", "linear": "XX-1"}, {"id": "002", "title": "unrouted"},
+            {"id": "003", "title": "a title that is far longer than the thirty-eight characters it gets", "linear": "XX-3"},
+            {"id": "004", "title": "partly routed", "linear": "XX-4"}],
+            "issues": {"XX-1": route("* workflow: test-first\n* depth: FAST\n"), "XX-3": route("* workflow: fix-then-regression-test\n* depth: STANDARD\n"),
+                       "XX-4": route("* depth: DEEP\n")}})
+        self.write("001.json", {"status": "passed", "attempts": 3, "cost": 0.42, "log": [{"attempt": 1}, self.FALL, {"attempt": 2}, self.FALL]})
+        self.write("003.json", {"status": "passed", "log": [{"attempt": 1}]})
+        self.write("verify.json", {"rounds": [{"fix_tasks": ["001", "002"]}, {"fix_tasks": ["001"]}, {}, {"fix_tasks": ["003"]}]})
+        self.assertEqual(self.table(), {"001": ("FAST test-first", "3", "2", "2", "$0.4200"), "002": ("-", "0", "0", "1", "$0.0000"),
+                                        "003": ("STANDARD fix-then-regression-test", "0", "0", "1", "$0.0000"), "004": ("DEEP -", "0", "0", "0", "$0.0000")})
+
+    def test_status_needs_no_verify_json_and_no_sync_cache_and_reads_no_linear(self):
+        self.write("tasks.json", {"feature": {}, "tasks": [{"id": "001", "title": "t", "linear": "XX-1"}]})
+        self.write("001.json", {"status": "passed", "attempts": 1, "log": [self.FALL]})
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("status read Linear")):
+            self.assertEqual(self.table(), {"001": ("-", "1", "1", "0", "$0.0000")})
+
+
 if __name__ == "__main__":
     unittest.main()
