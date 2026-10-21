@@ -1,4 +1,5 @@
 POLICY_DOC
 parse_policies
 glob_matches
+_Duplicate
 read_policies
