@@ -39,11 +39,11 @@ def run_events(proj, repo, meta, result):
     """The evidence events of one finished task's run result, in order."""
     raise NotImplementedError("fc_ledger.run_events")
 
-def counted(repo, proj, meta, ref, rows):
-    """Copies of the rows that count for the task: its run, its revision at `ref`, and its current criteria."""
+def counted(repo, proj, meta, rows):
+    """Copies of the rows that count for the task: its run, its revision at the task branch tip, and its current criteria."""
     raise NotImplementedError("fc_ledger.counted")
 
-def record_task(repo, proj, meta, ref, events):
+def record_task(repo, proj, meta, events):
     """`record` for a task issue: write the events, then refresh its `## Evidence` section from the rows that count."""
     raise NotImplementedError("fc_ledger.record_task")
 
