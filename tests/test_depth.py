@@ -40,7 +40,7 @@ class DepthEvents(unittest.TestCase):
     def expect(self, got, stages, sha=SHA, depth="FAST"):
         self.assertEqual(len(got), len(stages))
         for e, stage in zip(got, stages):
-            self.assertEqual(e, self.ledger.event("", sha, [], [], e["phase"], "verify", "skipped", None, f"{stage} skipped at depth {depth} (deepest task 061)"))
+            self.assertEqual(e, self.ledger.event("", sha, [], [], stage.split()[0], "verify", "skipped", None, f"{stage} skipped at depth {depth} (deepest task 061)"))
 
     def test_fast_skips_review_acceptance_and_the_left_out_e2e_cases_in_order(self):
         self.expect(self.events(CFG, {"review": False, "e2e": [{"name": "b"}]}), ["review", "acceptance", "e2e a", "e2e c"])
