@@ -384,16 +384,17 @@ class SetupLocal(unittest.TestCase):
         self.assertTrue(set(fc_defaults.PRESET_STEPS) <= set(lines)); self.up.assert_not_called()
         self.assertEqual(fc_defaults.probe_implementer({"models": {"implementer": self.OR}}), (False, ["no preset", *fc_defaults.PRESET_STEPS]))
 
-class ProviderKeys(unittest.TestCase):
+class ProviderKeyCommand(unittest.TestCase):
     def setUp(self):
         self.env = {**os.environ, **hermetic.temp_home()}; self.cfg = Path(self.env["COMPOSE_CONFIG"]); self.cfg.parent.mkdir(parents=True, exist_ok=True)
-    def ws(self, *args, key="sk-local\n", top=True, own=False):
-        self.cfg.write_text(json.dumps({"providers": {"fakelocal": FAKE} if top else {}, "workspaces": {"w": {"providers": {"fakelocal": FAKE} if own else {}}}}))
+    def ws(self, *args, key="sk-local\n", top=True, own=False, elsewhere=False):
+        self.cfg.write_text(json.dumps({"providers": {"fakelocal": FAKE} if top else {}, "workspaces": {"w": {"providers": {"fakelocal": FAKE} if own else {}}, "x": {"providers": {"fakelocal": FAKE} if elsewhere else {}}}}))
         return subprocess.run([sys.executable, _spec.origin, "workspace", "key", "w", *args], input=key, capture_output=True, text=True, env=self.env)
+    def auth(self): return json.loads((self.cfg.parent / "auth.json").read_text())["workspaces"]["w"]
     def test_key_command_stores_the_key_in_auth_json_only(self):
         for kw in ({}, {"top": False, "own": True}):  # declared at the top level, or in the workspace's own providers
             r = self.ws("--provider", "fakelocal", **kw); self.assertEqual((r.returncode, r.stdout.splitlines()[:1]), (0, ["w: provider fakelocal key set"]), r.stderr)
-            self.assertEqual(json.loads((self.cfg.parent / "auth.json").read_text())["workspaces"]["w"]["provider:fakelocal"], "sk-local")
+            self.assertEqual(self.auth()["provider:fakelocal"], "sk-local")
             self.assertNotIn("sk-local", self.cfg.read_text())
     def test_undeclared_provider_and_empty_key_exit_with_their_lines(self):
         r = self.ws("--provider", "ghost", top=False); self.assertEqual(r.returncode, 1)
@@ -401,8 +402,18 @@ class ProviderKeys(unittest.TestCase):
         r = self.ws("--provider", "fakelocal", key=""); self.assertEqual(r.returncode, 1)
         self.assertIn("no key read; copy it, then: pbpaste | compose workspace key w --provider fakelocal", r.stderr)
         self.assertFalse((self.cfg.parent / "auth.json").exists())
-    def test_provider_with_linear_is_an_argparse_error(self):
-        r = self.ws("--provider", "fakelocal", "--linear"); self.assertEqual(r.returncode, 2); self.assertIn("not allowed with", r.stderr)
+    def test_a_provider_declared_only_in_another_workspace_is_undeclared(self):
+        r = self.ws("--provider", "fakelocal", top=False, elsewhere=True); self.assertEqual(r.returncode, 1); self.assertIn("no provider 'fakelocal' in", r.stderr)
+        self.assertFalse((self.cfg.parent / "auth.json").exists())
+    def test_provider_with_linear_or_typesafe_is_an_argparse_error(self):
+        for flag in ("--linear", "--typesafe"):
+            r = self.ws("--provider", "fakelocal", flag); self.assertEqual(r.returncode, 2); self.assertIn("not allowed with", r.stderr)
+    def test_without_provider_the_key_command_sets_openrouter_and_keeps_the_provider_key(self):
+        self.ws("--provider", "fakelocal"); r = self.ws(key="sk-or\n")
+        self.assertEqual((r.returncode, r.stdout.splitlines()[:1]), (0, ["w: OpenRouter key set"]), r.stderr)
+        self.assertEqual(self.auth(), {"openrouter": "sk-or", "provider:fakelocal": "sk-local"})
+
+class ProviderKeys(unittest.TestCase):
     def test_apply_config_exports_the_active_workspaces_key_else_defaults_and_clean_env_drops_it(self):
         c, d = fc.fc_config, Path(tempfile.mkdtemp())
         for p in (mock.patch.object(c, "CONFIG_PATH", d / "config.json"), mock.patch.object(c, "AUTH_PATH", d / "auth.json"), mock.patch.object(c, "ENV_FILE", d / ".env"),
