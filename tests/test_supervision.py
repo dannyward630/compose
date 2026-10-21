@@ -601,7 +601,7 @@ class Timed(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
         script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")
         env = {**os.environ, "COMPOSE_TEST_SLOTS": "1"}
-        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold]
+        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold, "pytest"]
         a = sp.Popen(cmd("a", "3"), env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         time.sleep(0.5)
         b = sp.run(cmd("b", "0"), env=env, capture_output=True, text=True)
@@ -617,7 +617,7 @@ class Timed(unittest.TestCase):
         import subprocess as sp, time
         compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
         env = {**os.environ, "COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
-        suite = sp.Popen([compose, "timed", "30", "--", "sleep", "4"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        suite = sp.Popen([compose, "timed", "30", "--", "sh", "-c", "sleep 4", "pytest"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
         time.sleep(0.7)
         t0 = time.time()
         quick = sp.run([compose, "timed", "30", "--", "sh", "-c", "echo quick-ok # -k filter"], env=env, capture_output=True, text=True)

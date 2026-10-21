@@ -218,9 +218,9 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
-    The command runs under one of the machine's slots (fc_proc.slot; a scoped run takes a quick one, so it never waits on a suite)
+    The command runs under one of the machine's slots (fc_proc.slot; only a whole suite takes a suite slot, so any other command never waits on one)
     and its group is in fc_proc.RUNNING, so a stop ends it."""
-    with fc_proc.slot(fc_core.say, fc_proc.scoped(cmd)) as held:
+    with fc_proc.slot(fc_core.say, not fc_proc.suite(cmd)) as held:
         env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
         before = fc_core.home_state()
         p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
