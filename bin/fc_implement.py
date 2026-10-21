@@ -34,7 +34,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         guard = fc_readguard.guard_file(cwd)
         env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()}
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config(),
+               "PI_CODING_AGENT_DIR": fc_models.pi_agent_dir(cwd)}
         if guard.exists():
             env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
         pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))

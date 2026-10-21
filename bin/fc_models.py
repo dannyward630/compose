@@ -82,6 +82,23 @@ def pi_error(m):
         err += f" (preset '{meta.get('presetSlug')}' not found in workspace '{fc_config.WORKSPACE}')"
     return err
 
+PI_AGENT_DIR = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent")  # read once, at import
+PI_COMPACTION = {"enabled": True, "reserveTokens": 16384, "keepRecentTokens": 20000}  # pi's own defaults
+
+def pi_agent_dir(cwd):
+    """The agent directory a task's pi runs with, beside the task clone as <clone>.pi-agent: the user's models.json and auth.json
+    by link, and a settings.json of its own that pins pi's default compaction. pi merges nothing from the user's global
+    settings then: a large compaction.reserveTokens there (meant for a small local model) made GLM's turns compact every few
+    tool calls until the 180 s limit."""
+    adir = Path(cwd).parent / (Path(cwd).name + ".pi-agent")
+    adir.mkdir(exist_ok=True)
+    for name in ("models.json", "auth.json"):
+        (adir / name).unlink(missing_ok=True)
+        if (PI_AGENT_DIR / name).exists():
+            (adir / name).symlink_to(PI_AGENT_DIR / name)
+    (adir / "settings.json").write_text(json.dumps({"compaction": PI_COMPACTION}))
+    return str(adir)
+
 def pi_turn(cwd, model, prompt, session=None, timeout=None):
     timeout = timeout or TURN_TIMEOUT
     """One turn through pi (github.com/earendil-works/pi), the lean harness: ~1K tokens of fixed context per turn against
@@ -92,6 +109,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     import uuid
     sid = session or str(uuid.uuid4())  # --session-id must be a UUID
     env = fc_core.clean_env()  # no secret but the key pi bills to: pi's tools, the task's test among them, inherit its env
+    env["PI_CODING_AGENT_DIR"] = pi_agent_dir(cwd)
     if "OPENROUTER_API_KEY" in os.environ:  # pi's custom providers read the key from env
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     guard = fc_readguard.guard_file(cwd)  # the extension asks the guard before each tool call
