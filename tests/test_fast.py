@@ -106,6 +106,34 @@ class FastAttempts(unittest.TestCase):
 
 class UnprovenLinear(unittest.TestCase):
     """An unproven task stays In Progress on Linear with its comment, and watch wakes on unproven and broken_base."""
+    RESULT = {"status": "unproven", "branch": "fast/p/001", "attempts": 2, "cost": 0.0123, "model": "pi:x/glm", "log": []}
+
+    def event(self, event, result=None, parent="ENG-9"):
+        """Sends `event` for task ENG-3 and returns the calls to (move, comment, roll_up) as lists of args."""
+        issue = {"identifier": "ENG-3", "parent": {"identifier": parent} if parent else None}
+        with mock.patch.object(fc.fc_linear, "linear_ready", return_value=True), mock.patch.object(fc.fc_linear, "linear_issue", return_value=issue), \
+             mock.patch.object(fc.fc_linear, "linear_move") as move, mock.patch.object(fc.fc_linear, "linear_comment") as comment, mock.patch.object(fc.fc_linear, "linear_roll_up") as roll:
+            fc.fc_linear.linear_event(Path("proj"), {"id": "001", "linear": "ENG-3"}, event, result)
+        self.moved = [c.kwargs for c in roll.call_args_list]
+        return [[c.args[1:] for c in m.call_args_list] for m in (move, comment, roll)]
+
+    def test_unproven_keeps_the_task_in_progress_with_its_one_line_comment_and_rolls_up_its_parent_as_in_progress(self):
+        move, comment, roll = self.event("unproven", self.RESULT)
+        self.assertEqual(move, [("In Progress",)])
+        self.assertEqual(comment, [("Unproven: branch `fast/p/001` passes its tests after 2 attempt(s), $0.0123, model `pi:x/glm`; its regression test is not proven yet.",)])
+        self.assertEqual(roll, [("ENG-9",)])
+        self.assertEqual(self.moved, [{"moved": {"ENG-3": "In Progress"}}])
+        self.assertEqual(self.event("unproven", self.RESULT, parent=None)[2], [])
+
+    def test_passed_hand_done_and_failed_behave_as_before(self):
+        passed = dict(self.RESULT, status="passed")
+        self.assertEqual(self.event("passed", passed)[:2], [[("In Review",)], [("Passed: branch `fast/p/001`, 2 attempt(s), $0.0123, model `pi:x/glm`.",)]])
+        self.assertEqual(self.event("hand_done", {"note": "n"})[:2], [[("In Review",)], [("Finished by hand: n",)]])
+        failed = dict(self.RESULT, status="failed", log=[{"error": "boom"}])
+        self.assertEqual(self.event("failed", failed)[:2], [[("In Progress",)], [("failed after 2 attempt(s) ($0.0123, model `pi:x/glm`): boom",)]])
+
+    def test_watch_wakes_on_unproven_and_broken_base_and_keeps_its_other_final_states(self):
+        self.assertTrue({"unproven", "broken_base", "passed", "failed", "hand_done"} <= set(fc.fc_watch.FINAL_STATES))
 
 
 class UnprovenRun(unittest.TestCase):
