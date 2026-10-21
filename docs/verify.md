@@ -40,6 +40,8 @@ One that names no branch (a project made before init recorded it holds `main`, a
 2. **review** makes one fast-model review per perspective.
    Each high or medium finding then gets a confirmation call that must quote the wrong line and say how it must read.
    A quote that is not in the code, or a line that must read as it already does, drops the finding, and only confirmed highs fail.
+   The reply is read from the first object that holds the verdict, whatever prose or fence surrounds it, and asked once more when it has none.
+   A claim whose reply is still unusable is shown as `unjudged` and dropped, and it does not fail the stage.
 3. **jev** asks one MET / NOT_MET / UNCLEAR question per acceptance criterion.
    Failures above the threshold become findings.
 4. **e2e** has jev drive a real browser to each case's goal.
@@ -132,8 +134,12 @@ A jev run that does not reach its goal ends `blocked` (or `error`, for a crash) 
 The `e2e` line then names jev's stop reason, and the next lines show the page it stopped on and its last steps.
 `results/verify.json` keeps every step of the run, and `results/e2e/<n>-<case>/` keeps a screenshot of each step of a case that did not pass.
 
+A failing check keeps its whole output in `results/checks/` (named on its `check` line and as `output_file` in `results/verify.json`, whose `output` is only the last 3000 characters).
+The reflect and every fix round read the check's failing tests (unittest's `FAIL:` and `ERROR:` lines), then the end of the output, then that path.
+
 When the harness itself fails, for example a jev or browser crash, a missing tool, or a port in use, verify reports `TOOL ERROR` and retries once.
 It never sends that failure to a fix round.
+A review whose confirmation call fails, with no confirmed high, is the same: the `review` line says `TOOL ERROR` and names the error, and `FAIL` stays for a confirmed high.
 
 A case with a `driver` command runs the project's own browser driver instead of jev.
 That driver still gets the stage's browser in `BU_CDP_URL`.

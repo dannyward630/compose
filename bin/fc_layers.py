@@ -15,26 +15,33 @@ def layer_prefix(repo, proj):
         return cfg["layer_prefix"]
     return fc_worktree.task_prefix(repo, proj)
 
+def layer_branches(repo, proj):
+    """The project's layer branches, bottom first. Only `<prefix>layer-<digits>` is a layer: a backup such as `layer-01-prerebase` is not."""
+    prefix = layer_prefix(repo, proj)
+    refs = fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo, check=False).stdout.split()
+    return sorted((r for r in refs if re.fullmatch(rf"{re.escape(prefix)}layer-\d+", r)), key=lambda r: int(r.rsplit("layer-", 1)[1]))
 
 COMPOSE_COMMANDS = "verify|run|stack|resume|status|clean|sync|init|done|watch|crew|change|linear|report|reword|land|doctor|setup|update|cli|skill|project|tasks?|waves?"
 PROCESS_RE = re.compile(
     rf"(?<![\w./-])compose(?=\s+(?:{COMPOSE_COMMANDS})\b)|\bby compose\b|(?<![\w./-])compose['’]s\b|`compose`"
     r"|\bwaves?\b(?=\s*[-#]?\d)|\b(?:this|next|last|first|second|third|each|every|previous) wave\b"
-    r"|\btasks?[ -]?#?\d{2,3}\b|\bteammates?\b|\bimplementers?\b|\bteam lead\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
+    r"|\btasks?[ -]?#?\d{2,3}\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
     r"|\b(?:fix|verify|review) rounds?\b|^co-authored-by:", re.I | re.M)
+ROLE_RE = re.compile(r"\bteammates?\b|\bimplementers?\b|\bteam lead\b", re.I)  # narration in a body ("done by the implementer"), plain nouns in a task title
 
 def typed_subject(subject, conv):
     """Whether a subject starts with one of the convention's types (`feat:`, `fix(api):`, `feat!:`); True when there is no convention."""
     return not conv or bool(re.match(r"(?:%s)(?:\([^)]*\))?!?: \S" % "|".join(map(re.escape, conv["types"])), subject))
 
-def message_problem(message, conv=None):
+def message_problem(message, conv=None, title=False):
     """Why a commit message breaks the commit rules, or "" when it keeps them: it names the process (compose and its commands,
     waves, task ids, teammates, implementers, the team lead, Linear issues, verify or fix rounds, a co-author trailer), or the
-    repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types."""
+    repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types. A task
+    title (`title=True`) may use the role words (implementer, teammate, team lead): in a title they name a part of the code."""
     subject = (message or "").strip().split("\n")[0]
     if not subject:
         return "the message is empty"
-    if (hit := PROCESS_RE.search(message)):
+    if (hit := PROCESS_RE.search(message) or (not title and ROLE_RE.search(message))):
         return f"it mentions the process (`{hit.group(0).strip()}`); a commit describes the change itself, in plain words"
     if re.match(r"\s*\d{3}[:.\s-]", subject):
         return "it starts with a task id; a commit describes the change itself, in plain words"
@@ -58,12 +65,12 @@ def scrub_message(message, files, conv=None):
     first, *rest = message.strip().split("\n")
     subject = re.sub(r"^\s*(?:tasks?[ -]?#?)?\d{3}[:.\s-]*", "", first).strip()
     kind = commit_kind(files, subject)
-    if not subject or PROCESS_RE.search(subject):
+    if not subject or PROCESS_RE.search(subject) or ROLE_RE.search(subject):
         names = ", ".join(Path(f).name for f in files[:3]) or "files"
         subject = f"Add tests in {names}" if kind == "test" else f"Update {names}"
     if not typed_subject(subject, conv):
         subject = fc_core.typed(subject, kind, conv)
-    return "\n".join([subject, *(l for l in rest if not PROCESS_RE.search(l))]).rstrip()
+    return "\n".join([subject, *(l for l in rest if not PROCESS_RE.search(l) and not ROLE_RE.search(l))]).rstrip()
 
 def commit_message(meta, conv=None):
     """A task's commit says what changed, in the task title's words: no tool name, task id, or process (a title that names the
@@ -71,7 +78,7 @@ def commit_message(meta, conv=None):
     files only, else fix for a "Fix ..." title, else feat."""
     title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
     files = meta.get("files") or []
-    msg = title if title and not message_problem(title) else "Update " + ", ".join(files or ["files"])
+    msg = title if title and not message_problem(title, title=True) else "Update " + ", ".join(files or ["files"])
     return fc_core.typed(msg, commit_kind(files, title), conv)
 
 
@@ -97,14 +104,15 @@ def chain_order(repo, proj):
 
 STACK_STOP = ""  # why the last linearize stopped short, with the commands that resolve it; empty when the chain is whole
 
-def linearize(repo, proj, trunk, wt):
+def linearize(repo, proj, trunk, wt, through=()):
     with fc_worktree.STACK_LOCK:
-        return _linearize(repo, proj, trunk, wt)
+        return _linearize(repo, proj, trunk, wt, through)
 
-def _linearize(repo, proj, trunk, wt):
+def _linearize(repo, proj, trunk, wt, through=()):
     """Rebase the project's unmerged task branches into one chain on the current trunk tip, layer on layer, inside the CLI's
     worktree. Returns the branches that now form a clean chain; a conflict stops the chain there and is reported, and STACK_STOP
-    says where: a caller that acts on the stack top (verify, top, the stack) refuses the partial chain then."""
+    says where: a caller that acts on the stack top (verify, top, the stack) refuses the partial chain then. With `through`, the
+    chain stops once the last of those branches is placed: the layers above stay as they are, carrying what they were built on."""
     global STACK_STOP
     STACK_STOP = ""
     chain = chain_order(repo, proj)
@@ -113,6 +121,7 @@ def _linearize(repo, proj, trunk, wt):
     prefix = fc_worktree.task_prefix(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
+    waiting = set(through)
     for b in chain:
         # A replaced layer's old commits are dropped even while it is not back in the chain (still running, failed, or moved
         # above b by a re-plan): b may already sit on prev and carry them.
@@ -122,12 +131,13 @@ def _linearize(repo, proj, trunk, wt):
             # chained as it was but now below a new one, or the trunk itself when it was rewritten (rebased onto a moved main).
             # Replay only b's own commits: start above the deepest tip it was built on whose work the chain already holds, or
             # that is being rebuilt: one recorded in this pass (a replaced layer, or a layer rebased just now), a chained layer
-            # as it is now, or one in the reflog of the layer below (fork-point), which holds a rewrite made before this pass,
+            # as it is now, or one in the reflog of a layer below (fork-point), which holds a rewrite made before this pass,
             # by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase.
             old = [(t, "the old base recorded in this pass") for rb, t in tips if (rb in linear or t in stale) and contains(t, b)]
             old += [(x, f"{x}, the chained layer it sits on") for x in linear if contains(x, b)]
-            fork = fc_core.sh(["git", "merge-base", "--fork-point", prev, b], repo, check=False).stdout.strip()
-            old += [(fork, f"the old base from the reflog of {prev}")] if fork else []
+            for x in dict.fromkeys([prev, *linear]):  # b may sit on the old tip of any layer below, not only the one it is going onto
+                fork = fc_core.sh(["git", "merge-base", "--fork-point", x, b], repo, check=False).stdout.strip()
+                old += [(fork, f"the old base from the reflog of {x}")] if fork else []
             upstream, source = max(old, key=lambda o: int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{o[0]}"], repo).stdout)) if old else ("", "")
             if not upstream:
                 upstream = fc_core.sh(["git", "merge-base", "--fork-point", trunk, b], repo, check=False).stdout.strip()
@@ -147,6 +157,9 @@ def _linearize(repo, proj, trunk, wt):
                 break
         linear.append(b)
         prev = b
+        waiting.discard(b)
+        if through and not waiting:
+            break
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     for rb, t in replaced:  # an old tip no layer carries any more is done with
         if not any(contains(t, b) for b in chain):
@@ -378,7 +391,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
             return None
     for l, tip in zip(layers, tips):
         fc_core.sh(["git", "branch", "-f", l["branch"], tip], repo)
-    for old in fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo).stdout.split():
+    for old in layer_branches(repo, proj):
         if old not in {l["branch"] for l in layers}:
             fc_core.sh(["git", "branch", "-D", old], repo, check=False)
     return layers

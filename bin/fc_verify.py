@@ -86,6 +86,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
                 i["confirmed"], i["evidence"] = False, "the line as it must read is the line as it is: " + wrong[:300]
         except fc_models.PaymentRequired:
             raise
+        except fc_models.BadReply:  # the claim went unjudged: the model's reply is not the code's defect, and it must not fail verify
+            i["confirmed"], i["evidence"], i["unjudged"] = False, "confirm unparseable, not judged", True
         except Exception as e:  # noqa: BLE001
             i["confirmed"], i["evidence"], i["judge_error"] = False, str(e), True
         return i
@@ -232,6 +234,21 @@ def fix_tests(tasks, files):
         return None
     return list(dict.fromkeys(t["test"] for t in cover))
 
+def save_output(results, cmd, started, text):
+    """A check's whole output, in results/checks/ under a name from the start time and the command; returns its path."""
+    folder = Path(results) / "checks"
+    folder.mkdir(parents=True, exist_ok=True)
+    f = folder / f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(started))}-{re.sub(r'[^A-Za-z0-9]+', '-', cmd).strip('-')[:40]}.log"
+    f.write_text(text)
+    return str(f)
+
+def failure_summary(full, tail, path, cap=6000):
+    """What a reflect or fix round reads of a failed check: every failing test (unittest's FAIL:/ERROR: header lines, up to `cap`
+    characters), then the output's tail, then where the whole output is."""
+    ids = "\n".join(re.findall(r"^(?:FAIL|ERROR): .+$", full, re.M))
+    ids = ids if len(ids) <= cap else ids[:cap].rsplit("\n", 1)[0] + "\n(more failing tests in the full output)"
+    return (f"Failing tests:\n{ids}\n\n" if ids else "") + f"End of the output:\n{tail}\n\nThe whole output is in {path}"
+
 def run_stages(repo, proj, cfg, a, tests=None):
     """One pass: checks (cheap, exact), then e2e in parallel with review and acceptance. With `tests` (a fix round's
     `fix_tests`) the first stage runs only those, and the full checks run once at the end, only when every stage passed.
@@ -248,18 +265,24 @@ def run_stages(repo, proj, cfg, a, tests=None):
         for c in cmds:
             t1, clk = time.time(), fc_proc.clock()
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-            out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+            full = fc_core.scrub(p.stdout + p.stderr)
+            out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
             nap = fc_proc.slept(clk) if p.returncode else 0  # a check the machine slept through fails on the sleep: its network and its clocks stopped with it
             if p.returncode and (nap or fc_jev.tool_error(out)):
                 fc_core.say(f"check  {fc_proc.slept_text(nap) + '; run again' if nap else 'tool error; retrying once'}  {c}")
                 p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
-                out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
+                full = fc_core.scrub(p.stdout + p.stderr)
+                out = full[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
             awake = time.time() - t1 - fc_proc.slept(clk)  # the time the check ran, not the time the lid was closed
-            into.append({"cmd": c, "exit": p.returncode, "seconds": round(awake, 1), "output": out, "tool_error": tool})
-            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(awake):>8}  {c}")
+            record = {"cmd": c, "exit": p.returncode, "seconds": round(awake, 1), "output": out, "tool_error": tool}
+            if p.returncode:  # the cut hides most of a long suite's failures: the whole output stays in a file
+                record["output_file"] = save_output(proj / "results", c, t1, full)
+            into.append(record)
+            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(awake):>8}  {c}"
+                        + (f"\n           full output {record['output_file']}" if p.returncode else ""))
             if p.returncode and not tool:
-                findings.append(f"Command failed: {c}\n{out}")
+                findings.append(f"Command failed: {c}\n{failure_summary(full, out, record['output_file'])}")
         passed = all(c["exit"] == 0 for c in into)
         fc_herdr.herdr_stage(panes, "checks", "idle" if passed else "blocked", "ok" if passed else "FAIL")
         return passed
@@ -284,10 +307,13 @@ def run_stages(repo, proj, cfg, a, tests=None):
         report["review"] = rv
         ok &= rv["pass"]  # review always gates; the jev acceptance stage below is advisory unless asked to gate
         fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
-        fc_core.say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
+        verdict = "ok  " if rv["pass"] else "FAIL" if any(i["severity"] == "high" for i in rv["confirmed"]) else "TOOL ERROR"  # no confirmed high: only a confirm call failed
+        fc_core.say(f"review {verdict} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
                     + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
+        if rv.get("error"):
+            print(f"           {rv['error']}")
         for i in rv["issues"]:
-            mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
+            mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "unjudged " if i.get("unjudged") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
         for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
@@ -354,7 +380,9 @@ def verify_root(repo, proj, cfg):
 def at_root(value, olds, root):
     """`value` with every absolute path under one of `olds` (the project worktree, the main checkout) moved under `root`, in
     every string, inside dicts and lists too. One pass, longest prefix first, each matched as a whole path: a path already
-    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x."""
+    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x.
+    A project's `.compose/` is git-ignored: a path in it moves only when it exists under `root` (the link stack_worktree makes),
+    else it stays where the file is, so an e2e driver kept in the project worktree is still found."""
     olds = sorted({str(o) for o in olds} - {str(root)}, key=len, reverse=True)
     if not olds:
         return value
@@ -363,7 +391,10 @@ def at_root(value, olds, root):
         return {k: at_root(v, olds, root) for k, v in value.items()}
     if isinstance(value, list):
         return [at_root(v, olds, root) for v in value]
-    return path.sub(lambda _: str(root), value) if isinstance(value, str) else value
+    def moved(m):
+        tail = re.match(r"/\.compose(?:/[^\s\"'`;:&|()<>,=]*)?", m.string[m.end():])
+        return m.group(0) if tail and not Path(str(root) + tail.group(0)).exists() else str(root)
+    return path.sub(moved, value) if isinstance(value, str) else value
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()

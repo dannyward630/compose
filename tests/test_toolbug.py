@@ -152,6 +152,26 @@ sys.exit(code)
                 self.assertEqual(fc.fc_toolbug.record_issue(project, "https://other/9", at), want)
                 self.assertEqual(self.log.read_text(), recorded)
 
+    def test_find_entry_matches_across_projects_and_within_two_seconds_and_refuses_several(self):
+        def entry(project, at): return json.dumps({"at": at, "project": project, "message": "m"}) + "\n"
+        find, at = fc.fc_toolbug.find_entry, "2026-10-21 19:26:41"
+        self.assertEqual(find("shop", at), ("shop", at, None))  # no log at all: nothing matches
+        self.log.parent.mkdir(parents=True)
+        self.log.write_text(entry("shop", at) + entry("evidence", "2026-10-21 19:30:00") + entry("blog", "2026-10-21 19:40:00") + entry("cafe", "2026-10-21 19:40:00"))
+        self.assertEqual(find("shop", at), ("shop", at, None))
+        got = find("toolsmith", "2026-10-21 19:30:00")  # another project's entry at that exact time
+        self.assertEqual(got[:2], ("evidence", "2026-10-21 19:30:00")); self.assertIn("evidence", got[2])
+        for shown in ("2026-10-21 19:30:02", "2026-10-21 19:29:58", "2026-10-21 19:30:01"):  # watch can be off by a second
+            self.assertEqual(find("toolsmith", shown)[:2], ("evidence", "2026-10-21 19:30:00"), shown)
+        self.assertEqual(find("toolsmith", "2026-10-21 19:30:03"), ("toolsmith", "2026-10-21 19:30:03", None))
+        for shown in ("2026-10-21 19:40:00", "2026-10-21 19:40:01"):  # two projects at one time: list both, pick none
+            with self.assertRaises(ValueError) as cm: find("toolsmith", shown)
+            self.assertIn("blog at 2026-10-21 19:40:00", str(cm.exception)); self.assertIn("cafe at 2026-10-21 19:40:00", str(cm.exception))
+        self.log.write_text(entry("a", "2026-10-21 19:50:00") + entry("a", "2026-10-21 19:50:00") + entry("b", "2026-10-21 19:50:02"))
+        with self.assertRaises(ValueError): find("c", "2026-10-21 19:50:01")
+        self.assertEqual(find("a", "2026-10-21 19:50:00")[:2], ("a", "2026-10-21 19:50:00"))
+        self.assertEqual(find("c", "not a time"), ("c", "not a time", None))
+
 
 class FileCommand(unittest.TestCase):
     """cmd_tool_bug: post on the maintainer's machine or with --approved, else save a draft; search before every create."""
@@ -229,6 +249,22 @@ class FileCommand(unittest.TestCase):
                 self.assertIn("not recorded", out.splitlines()[1]); self.assertIn(why, out.splitlines()[1])
                 if entry is None: self.m["record_issue"].assert_not_called()
                 else: self.m["record_issue"].assert_called_once_with("shop", self.URL, entry)
+
+    def test_the_url_lands_on_another_projects_entry_a_second_off_and_ambiguity_posts_nothing(self):
+        log = self.home / ".compose" / "tool-bugs.jsonl"; log.parent.mkdir(parents=True)
+        log.write_text('{"at":"2026-10-21 19:26:40","project":"evidence","message":"m"}\n{"at":"2026-10-21 19:26:42","project":"other","message":"n"}\n')
+        for n, v in dict(gh_status=("maintainer", "alice9"), open_matches=[], post=self.URL).items():
+            p = mock.patch.object(fc.fc_toolbug, n, return_value=v); p.start(); self.addCleanup(p.stop)
+        (self.home / "b.md").write_text(self.RAW)
+        a = lambda at: SimpleNamespace(repo=".", project="toolsmith", action="file", body=str(self.home / "b.md"), comment=None, new=False, approved=False, entry=at)
+        with mock.patch("sys.stdout", io.StringIO()) as out, self.assertRaises(SystemExit) as cm:
+            fc.fc_toolbug.cmd_tool_bug(a("2026-10-21 19:26:41"))  # evidence and other are a second away each
+        self.assertIn("other at 2026-10-21 19:26:42", cm.exception.code); self.assertNotIn(self.URL, out.getvalue())
+        log.write_text('{"at":"2026-10-21 19:26:41","project":"evidence","message":"m"}\n')
+        with mock.patch("sys.stdout", io.StringIO()) as out:
+            fc.fc_toolbug.cmd_tool_bug(a("2026-10-21 19:26:42"))
+        self.assertEqual(out.getvalue().splitlines()[0], self.URL); self.assertNotIn("not recorded", out.getvalue()); self.assertIn("evidence at 2026-10-21 19:26:41", out.getvalue())
+        self.assertEqual(json.loads(log.read_text())["issue"], self.URL)
 
     def test_a_failed_post_saves_the_draft_and_exits_1(self):
         status, out = self.run_cmd("maintainer", url=None)
@@ -342,6 +378,18 @@ class OwnWorktree(unittest.TestCase):
         self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.remote, "rev-parse", "main"))  # main moved nowhere
         status, out = self.pr(title="Better title"); self.assertEqual(status, 0)
         self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR); self.assertEqual(self.gh_calls[-1][self.gh_calls[-1].index("--title") + 1], "Better title")
+
+    def test_pr_records_on_another_projects_entry_a_second_off_and_refuses_several_before_pushing(self):
+        self.commit(self.wt, "fix.py"); self.gh()
+        other = {"at": "2026-10-17 15:30:02", "project": "blog", "message": "x"}
+        self.log.write_text(self.log.read_text() + json.dumps(other) + "\n")
+        status, out = self.pr(project="toolsmith", entry="2026-10-17 15:30:01")  # shop and blog are a second away each
+        self.assertEqual(status, 1); self.assertIn("shop at 2026-10-17 15:30:00", out); self.assertIn("blog at 2026-10-17 15:30:02", out)
+        self.assertEqual(self.gh_calls, []); self.assertEqual(self.git(self.remote, "branch", "--list"), "* main\n")
+        self.log.write_text(json.dumps({"at": "2026-10-17 15:30:00", "project": "evidence", "message": "m"}) + "\n")
+        status, out = self.pr(project="toolsmith", entry="2026-10-17 15:30:01"); self.assertEqual(status, 0)
+        self.assertEqual(out.splitlines()[0], self.PR); self.assertIn("evidence at 2026-10-17 15:30:00", out); self.assertNotIn("not recorded", out)
+        self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR)
 
     def test_pr_refuses_what_a_toolsmith_may_not_do_and_pushes_nothing(self):
         self.commit(self.wt, "fix.py"); self.gh()

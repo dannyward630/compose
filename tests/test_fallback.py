@@ -18,7 +18,7 @@ PRIMARY, BACKUP = "pi:p/primary", "pi:b/backup"
 
 
 class Fallback(unittest.TestCase):
-    def run_once(self, first, reset_files=False, after=2, edit=None):
+    def run_once(self, first, reset_files=False, after=2, edit=None, impl=None):
         """The primary model behaves as `first` ("error", "miss", or "rate"); the fallback writes the answer. Returns (result, models called);
         the prompts land in self.prompts."""
         root = Path(tempfile.mkdtemp())
@@ -31,7 +31,7 @@ class Fallback(unittest.TestCase):
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         calls, self.prompts = [], []
-        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+        def run_impl(cwd, model, prompt, session=None, task=None, timeout=None):
             calls.append(model); self.prompts.append(prompt)
             if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
@@ -41,7 +41,7 @@ class Fallback(unittest.TestCase):
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl or run_impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.object(fc.fc_config, "FALLBACK_AFTER", after), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
@@ -141,6 +141,17 @@ class Fallback(unittest.TestCase):
         self.assertEqual((r["status"], calls, r["attempts"]), ("passed", [PRIMARY, BACKUP], 1))  # the cut-short turn cost no attempt
         self.assertIn("A previous attempt left edits in the files and did not pass", self.prompts[1])
         self.assertIn("grep -q yes a.txt", self.prompts[1].split("did not pass")[1])
+
+    def test_a_timed_out_turn_that_left_a_passing_edit_keeps_the_usage_it_spent(self):
+        spent = {"cost": 0.5, "tokens_in": 100, "tokens_out": 20}
+        def timed_out(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            e = subprocess.TimeoutExpired("herdr agent prompt", 180)
+            e.tools, e.usage = 4, spent
+            raise e
+        r, _ = self.run_once("timeout", impl=timed_out)
+        timeout, cut = r["log"]
+        self.assertEqual((r["status"], timeout["tool_calls"], timeout["usage"], cut["cut_short"], r["cost"]), ("passed", 4, spent, True, 0.5))
 
     def test_implementer_is_told_not_to_run_the_test(self):
         self.run_once("miss")
@@ -443,6 +454,29 @@ class FixScope(unittest.TestCase):
             self.assertEqual(asked, [1500, 1500])
             self.assertIn(found, rv["issues"][0]["note"])
 
+    def test_a_confirm_reply_with_prose_or_a_fence_around_the_object_is_read(self):
+        confirm = json.dumps({"requirement": "r", "wrong_line": "return a - b", "fixed_line": "return a + b", "confirmed": True})
+        found = json.dumps({"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]})
+        for reply in (f"The claim says `x = {{}}`, so:\n```json\n{confirm}\n```\nThat is my verdict.", f"Verdict: {confirm} (truncated notes", confirm):
+            replies = [found, reply]
+            def http(req, provider, timeout=90, replies=replies):
+                return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+            self.assertEqual(([i["evidence"] for i in rv["confirmed"]], rv["pass"]), (["return a - b"], False), reply)
+
+    def test_a_confirm_reply_that_stays_unparseable_is_not_judged_and_does_not_fail_verify(self):
+        found = json.dumps({"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]})
+        for bad in ('{"requirement": "r", "wrong_line": "return a - b", "fixed_', '{"requirement": "r"}', "no verdict here"):
+            replies = [found, bad, bad]  # the first ask and the strict re-ask
+            def http(req, provider, timeout=90, replies=replies):
+                return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+            i = rv["issues"][0]
+            self.assertEqual((replies, i["confirmed"], i["evidence"], i.get("judge_error"), rv["pass"], "error" in rv),
+                             ([], False, "confirm unparseable, not judged", None, True, False), bad)
+
     def test_review_confirms_only_a_quoted_wrong_line_the_fix_changes(self):
         def review(reply, finding=None, code="build: {\n  fileName: 'x.js',\n}", perspective="spec", cfg=None, users=None):
             def fj(env, system, user, **kw):
@@ -496,6 +530,22 @@ class FixScope(unittest.TestCase):
         self.assertIn("Evidence: return a - b\nMust read: return a + b", findings)
         self.assertNotIn("Avoid", out.getvalue() + findings)
         self.assertNotIn("Analysis", out.getvalue() + findings)
+
+    def test_review_whose_only_failure_is_a_confirm_call_error_reports_a_tool_error_and_hands_no_fixer_a_finding(self):
+        def fj(env, system, user, **kw):
+            if "strict code reviewer" in system:
+                return {"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]}
+            raise RuntimeError("HTTP 500 from the judge")
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}), \
+                mock.patch.object(fc.fc_verify, "review_inputs", return_value=("return a - b", "plan", "", [])), redirect_stdout(out):
+            ok, report, findings = fc.fc_verify.run_stages(proj, proj, {"perspectives": ["correctness"], "jev_acceptance": False},
+                                                           type("A", (), {"skip_e2e": True, "skip_review": False}))
+        self.assertEqual((ok, findings), (False, ""))
+        self.assertRegex(out.getvalue(), r"review TOOL ERROR .*0 confirmed of 1 raised\n")
+        self.assertIn("1 confirm call(s) failed: HTTP 500 from the judge", out.getvalue())
+        self.assertIn("judge err [high/correctness] a.py:2: n\n", out.getvalue())
 
     def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
         code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})
@@ -927,6 +977,12 @@ class HerdrPiTurn(unittest.TestCase):
         self.assertEqual((text, first[2:4], again[2:4], self.sent("pane", "close")), ("done", ("shop-028", "hi"), ("shop-028", "hi"), []))
         self.assertGreaterEqual(t2 - t1, fc.fc_herdr.PROMPT_START_WAIT)
 
+    def test_a_turn_cut_at_the_time_limit_carries_the_usage_it_had_written(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as cm:
+            self.turn(lambda n: self.write(self.USER, self.reply("halfway", stop="toolUse")) or "timeout")
+        self.assertEqual((cm.exception.usage["tokens_in"], cm.exception.usage["tokens_out"]), (10, 2))
+        self.assertEqual(self.sent("pane", "close")[0][0], ("pane", "close", "p1"))
+
     def test_a_turn_that_never_starts_ends_as_a_timeout_after_one_resend(self):
         with self.assertRaises(subprocess.TimeoutExpired):
             self.turn(lambda n: "agent_prompt_stalled")
@@ -1305,3 +1361,43 @@ class DeleteTasks(unittest.TestCase):
         seen = []
         result, repo, _ = self.run_one(self.edit(seen, lambda cwd: (cwd / "b.py").write_text("b\n")), {"files": []})
         self.assertEqual((result["status"], len(seen), self.tree(repo)), ("passed", 1, ["a.txt", "b.py"]))
+
+
+class SiblingStubs(unittest.TestCase):
+    """A task that passes its own test but removes what another task's stub in the same file owns must not pass."""
+    STUBS = "def one():\n    raise NotImplementedError\n\n\ndef two():\n    raise NotImplementedError\n"
+    TESTS = {"tests/test_one.py": "import unittest, m\n\n\nclass One(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(m.one(), 1)\n",
+             "tests/test_names.py": "import unittest, m\n\n\nclass Names(unittest.TestCase):\n    def test_two_is_defined(self):\n        self.assertTrue(hasattr(m, 'two'))\n"}
+
+    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",)):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in {"m.py": self.STUBS, ".gitignore": "__pycache__/\n", **self.TESTS}.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        (proj / "verify.json").write_text(json.dumps({"checks": list(checks)}))
+        task = {"id": "001", "title": "one", "files": ["m.py"], "protected": ["tests/test_one.py"], "model": "pi:p/primary", "after": "", "linear": "ENG-1",
+                "test": "python3 -m unittest discover -s tests -p test_one.py", "body": "## Goal\nMake one() return 1."}
+        prompts, turn = [], iter(answers)
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt); (Path(cwd) / "m.py").write_text(next(turn))
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, 2), prompts
+
+    def test_a_passing_task_that_deleted_a_sibling_stub_is_rejected_and_told_which_test_broke(self):
+        result, prompts = self.run_one(["def one():\n    return 1\n", "def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"])
+        self.assertEqual((result["status"], result["attempts"]), ("passed", 2))
+        self.assertEqual(result["log"][0]["test_exit"], 0)
+        self.assertIn("test_two_is_defined", " ".join(result["log"][0]["broke"]))
+        self.assertIn("test_two_is_defined", prompts[1])
+
+    def test_a_task_that_ends_with_a_sibling_stub_gone_does_not_pass(self):
+        result, _ = self.run_one(["def one():\n    return 1\n"] * 2)
+        self.assertEqual(result["status"], "rejected_regression")
+
+    def test_a_check_that_was_red_before_the_task_is_not_blamed_on_it(self):
+        result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("python3 -m unittest discover -s tests -p test_one.py && false",))
+        self.assertEqual(result["status"], "passed")

@@ -2,6 +2,8 @@ GUARDED_TOOLS
 GUARDED_ROLES
 CLI_FILE
 guard_decision
+toplevel
+switch_decision
 cmd_guard
 SKILL_DIR
 SKILL_SEEN

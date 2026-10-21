@@ -22,3 +22,5 @@ CANCELED
 run_marker
 pid_alive
 run_alive
+mark_interrupted
+run_ended

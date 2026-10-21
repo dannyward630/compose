@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -34,7 +34,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         guard = fc_readguard.guard_file(cwd)
         env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()}
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config(), **fc_providers.pi_env(model)}
         if guard.exists():
             env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
         pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
@@ -43,7 +43,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
-                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []),
+                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []), *fc_providers.pi_args(model),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
@@ -58,24 +58,27 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    def read_turn():  # what pi wrote to its session file since the last turn, priced and added to the ledger
+        if not session.get("sfile"):
+            session["sfile"] = (((fc_herdr.herdr("agent", "get", session["name"]) or {}).get("agent") or {}).get("agent_session") or {}).get("value")
+        session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
+        usage["cost"] = fc_providers.cost(model, usage)
+        fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
+        return text, tools, usage, errors
     if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt
         err = fc_herdr.herdr_stalled(session, prompt, t0 + timeout)
     if err == "timeout" or err == "agent_prompt_stalled":
         fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
         fc_herdr.herdr("pane", "close", session["pane"])
-        raise subprocess.TimeoutExpired("herdr agent prompt", timeout)
+        timed_out = subprocess.TimeoutExpired("herdr agent prompt", timeout)
+        _, timed_out.tools, timed_out.usage, _ = read_turn()  # the tokens a cut turn spent were billed all the same
+        raise timed_out
     if err:
         raise RuntimeError(f"herdr agent prompt {session['name']}: {err}")
-    if not session.get("sfile"):
-        got = fc_herdr.herdr("agent", "get", session["name"]) or {}
-        session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
-    session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
+    text, tools, usage, errors = read_turn()
     busy = fc_models.provider_busy(errors, not text and not tools and not usage["tokens_in"])
     if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or 'empty turn with no usage'}")
-    if model in fc_config.PRICES:
-        usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
-    fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     if busy:
         raise fc_models.RateLimited(usage, busy)
     return session, text, tools, usage
@@ -109,29 +112,6 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
             lines.append(l)
     return "\n".join(lines).strip()[:cap]
 
-def branch_budget(wt, base, allowed=None, delete=()):
-    """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
-    All three are hard limits for an implementer: size, no documents, and scope. A file deleted whole counts one line, as
-    does each `delete:` path; files under a `delete:` path count nothing and are never stray."""
-    fc_core.sh(["git", "add", "-A"], wt, check=False)
-    del_paths = {d.rstrip("/") for d in delete}
-    gone = set(fc_core.sh(["git", "diff", "--cached", "--diff-filter=D", "--name-only", base], wt, check=False).stdout.split())
-    lines = len(del_paths)
-    for row in fc_core.sh(["git", "diff", "--cached", "--numstat", base], wt, check=False).stdout.splitlines():
-        a, d, f = row.split("\t", 2)
-        if any(f == p or f.startswith(p + "/") for p in del_paths):
-            continue
-        if f in gone:
-            lines += 1
-        elif not fc_worktree.GENERATED_RE.search(f):  # lockfiles are regenerated, nobody reads them
-            lines += (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
-    changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
-    new_docs = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", "--diff-filter=A", base], wt, check=False).stdout.split()
-                if fc_config.DOC_RE.search(f)]
-    stray = [f for f in changed if allowed is not None and f not in allowed and f not in new_docs
-             and not any(f == p or f.startswith(p + "/") for p in del_paths)]
-    return lines, new_docs, stray
-
 def task_base(repo, proj, meta):
     """The branch a task builds on. A task whose `after:` names unmerged task branches stacks on top of them (they must form one
     chain, so each PR shows only its own layer); otherwise it builds on HEAD like any independent task."""
@@ -146,10 +126,10 @@ def task_base(repo, proj, meta):
             unmerged.append(b)
     if not unmerged:
         return "HEAD", head
-    # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
+    # The project is one stack: linearize through the last dependency only; a layer above may sit on one being rebuilt now
     trunk = fc_core.current_branch(repo)
     with fc_worktree.STACK_LOCK:  # read the base before another task's linearize rewrites it
-        chain = fc_layers.linearize(repo, proj, trunk, fc_worktree.stack_worktree(repo, proj, trunk))
+        chain = fc_layers.linearize(repo, proj, trunk, fc_worktree.stack_worktree(repo, proj, trunk), through=unmerged)
         missing = [b for b in unmerged if b not in chain]
         if missing:
             raise RuntimeError(f"after: {', '.join(missing)} could not be chained: {fc_layers.STACK_STOP or 'rebase conflict'}")
@@ -238,9 +218,9 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
-    The command runs under one of the machine's slots (fc_proc.slot; a scoped run takes a quick one, so it never waits on a suite)
+    The command runs under one of the machine's slots (fc_proc.slot; only a whole suite takes a suite slot, so any other command never waits on one)
     and its group is in fc_proc.RUNNING, so a stop ends it."""
-    with fc_proc.slot(fc_core.say, fc_proc.scoped(cmd)) as held:
+    with fc_proc.slot(fc_core.say, not fc_proc.suite(cmd)) as held:
         env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
         before = fc_core.home_state()
         p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -328,6 +308,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         return result
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
+    checks, limit = fc_core.project_config(proj).get("checks") or [], int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
+    ahead = fc_gate.baseline_state(timed, checks, wt, (fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip(), tuple(delete)), limit)  # what passes before the first turn
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
     section = fc_libapi.section(wt, meta["files"], words)
@@ -441,7 +423,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if not edited():
                 continue
             cut = attempt + 1
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             if fc_proc.STOP.is_set():
                 raise fc_proc.Stopped
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
@@ -449,7 +431,10 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             nap = fc_proc.slept(clk)
             fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}"
                         + (f", and {fc_proc.slept_text(nap)}: it does not count" if nap else "") + "; fresh session")
-            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", **({"slept": round(nap)} if nap else {})})
+            cut_usage = getattr(e, "usage", {"cost": 0.0, "tokens_in": 0, "tokens_out": 0})  # what the cut turn cost is counted here, as for a rate limit
+            cost += cut_usage["cost"]
+            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", "tool_calls": getattr(e, "tools", 0), "usage": cut_usage,
+                        **({"slept": round(nap)} if nap else {})})
             session, prompt, cut = None, original_prompt, attempt
             if nap:
                 attempt -= 1
@@ -487,10 +472,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "contradiction"
             break
         test = run_test(meta, wt)
+        broke = fc_gate.regressions(ahead, fc_gate.check_state(timed, checks, wt, limit)) if ahead and test.returncode == 0 else []  # the task's own test is not the only one that must hold
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
-        lines, new_docs, stray = branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
+        lines, new_docs, stray = fc_gate.branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
         entry = {"attempt": n, **({"cut_short": True} if cut else {}), "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
-                 "test_exit": test.returncode, "tampered": tampered, "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "test_exit": test.returncode, "tampered": tampered, **({"broke": broke} if broke else {}), "lines": lines, "new_docs": new_docs, "stray": stray,
                  "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
@@ -498,7 +484,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         if isinstance(session, dict):
             fc_herdr.herdr_label(session, f"attempt {attempt}/{attempts}", cost)
         over = lines > fc_config.MAX_DIFF_LINES
-        verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray else "fail"
+        verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray and not broke else "fail"
         output, reader = test.stdout + test.stderr, None
         if test.returncode != 0 and not tampered:  # the reader's brief, written before the line so its cost is on it
             (proj / "results").mkdir(parents=True, exist_ok=True)
@@ -512,7 +498,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.say(f"{tid} attempt {n} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
-            + (f"  outside files: {', '.join(stray)}" if stray else ""))
+            + (f"  outside files: {', '.join(stray)}" if stray else "") + (f"  broke: {', '.join(broke)[:160]}" if broke else ""))
         if tampered:
             status = "rejected_tampered"
             break
@@ -536,7 +522,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             problems.append("Revert every change to these files, they are outside this task (another task owns them; the test for "
                             "this task must pass with only the named files changed): " + ", ".join(stray)
                             + f"\nFiles you may change: {', '.join(meta['files'])}")
-        status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else status) if test.returncode == 0 else status
+        if broke:
+            problems.append(fc_gate.advice(broke))
+        status = ("rejected_size" if over else "rejected_docs" if new_docs else "rejected_scope" if stray else "rejected_regression" if broke else status) if test.returncode == 0 else status
         prompt = "\n\n".join(problems) + "\nFix it without editing protected files."
         fresh = original_prompt + "\n\nA previous attempt left edits in the files and did not pass:\n\n" + prompt
         if cut:  # the cut-short turn already counted; its session is gone, so the next one starts from the task and what it left
@@ -593,7 +581,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
 
 CONTRADICTION_RE = re.compile(r"^[ \t>*_`-]*CONTRADICTION[*_`]*:[*_]*[ \t]*(.+?)[`*_ \t]*$", re.M)  # markdown around it too
 
+def says_none(text):
+    """True when a contradiction field only reports there is none: empty, or starting with none, n/a or no contradiction (`none - the brief and the code agreed.`)."""
+    return re.fullmatch(r"(?:none|n/a)(?:\s*[-\u2013\u2014.:;,!].*)?|no contradictions?\b.*|", text.strip(), re.I) is not None
+
 def contradiction(reply):
-    """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back is not one."""
-    found = [x.strip() for x in CONTRADICTION_RE.findall(reply or "") if "<what the brief says>" not in x]
+    """The implementer's last `CONTRADICTION:` line when it found its brief wrong; the prompt's own template echoed back, or a line saying there is none, is not one."""
+    found = [x.strip() for x in CONTRADICTION_RE.findall(reply or "") if "<what the brief says>" not in x and not says_none(x)]
     return found[-1] if found else None

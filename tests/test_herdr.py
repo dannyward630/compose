@@ -383,7 +383,7 @@ class WatchCrash(unittest.TestCase):
         (proj / "results" / "run.json").write_text(json.dumps({"pid": 999999}))
         self.assertFalse(fc.fc_tasks.run_alive(proj))
         before = {"tasks": {}, "agents": {}, "run": True, "verify": None}
-        after = {"tasks": {}, "agents": {}, "run": fc.fc_tasks.run_alive(proj), "crashed": True, "verify": None}
+        after = {"tasks": {}, "agents": {}, "run": fc.fc_tasks.run_alive(proj), "ended": fc.fc_tasks.run_ended(proj), "verify": None}
         ev = fc.fc_watch.watch_events(before, after)
         self.assertEqual(len(ev), 1); self.assertIn("run=ended", ev[0]); self.assertIn("CRASHED", ev[0])
 

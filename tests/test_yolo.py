@@ -17,7 +17,7 @@ stamp = lambda: time.strftime("%Y-%m-%d %H:%M:%S")
 def snap(tasks=None, crew=None, verify=None, halt=None):
     return {"tasks": {tid: {"state": st, "attempts": 1, "cost": 0.0, "note": "", "linear": "", "title": f"task {tid}"}
                       for tid, st in (tasks or {}).items()},
-            "agents": {}, "crew": crew or {}, "run": False, "crashed": False, "verify": verify, "halt": halt, "run_end": 0, "last": [0, ""]}
+            "agents": {}, "crew": crew or {}, "run": False, "ended": None, "verify": verify, "halt": halt, "run_end": 0, "last": [0, ""]}
 
 
 class Yolo(unittest.TestCase):

@@ -11,11 +11,14 @@ TREEHOUSE_INSTALL
 use_treehouse
 treehouse
 slot_on
+checkout_in_slot
+park_slot
 pool_shortfall
 is_slot
 default_branch
 review_base
 release_slot
+clear_leftovers
 common_dir
 shared_checkout
 repo_worktree

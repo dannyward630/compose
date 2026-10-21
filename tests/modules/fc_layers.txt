@@ -1,7 +1,9 @@
 CONFIG_FILE_RE
 layer_prefix
+layer_branches
 COMPOSE_COMMANDS
 PROCESS_RE
+ROLE_RE
 typed_subject
 message_problem
 commit_kind
