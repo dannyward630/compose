@@ -853,3 +853,53 @@ class HookFields(unittest.TestCase):
             self.assertEqual(fc_harness.hook_groups("bare", "/c"), {})
             self.assertEqual(fc_harness.hook_groups("other", "/c"), {"Ev": [{"hooks": [{"type": "command", "command": '"/c/bin/compose" a', "timeout": 10}]},
                                                                       {"matcher": "m", "hooks": [{"type": "command", "command": '"/c/bin/compose" b', "timeout": 10}]}]})
+
+
+class HooksFile(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home), "CODEX_HOME": str(self.home / "codex")}); p.start(); self.addCleanup(p.stop)
+        (self.home / "codex").mkdir()
+        self.file, self.want = self.home / "codex/hooks.json", self.groups("/c")
+
+    def groups(self, co):
+        def g(m, sub): return {**({"matcher": m} if m else {}), "hooks": [{"type": "command", "command": f'"{co}/bin/compose" {sub}', "timeout": 10}]}
+        return {"PreToolUse": [g("Write|Edit|MultiEdit|NotebookEdit", "guard"), g("Bash", "guard")], "UserPromptSubmit": [g(None, "skillcheck")], "SessionStart": [g("compact", "reenter")]}
+
+    def put(self, doc): self.file.write_text(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def test_a_missing_file_gets_the_four_groups_and_a_second_call_writes_nothing(self):
+        self.assertEqual([str(p) for p in fc_links.write_hooks("codex", "/c")], [str(self.file)])
+        self.assertEqual(json.loads(self.file.read_text()), {"hooks": self.want})
+        self.assertIn('\n  "hooks": {', self.file.read_text())
+        before = self.file.read_bytes()
+        self.assertEqual((fc_links.write_hooks("codex", "/c"), self.file.read_bytes()), ([], before))
+        self.assertEqual([p.name for p in (self.home / "codex").iterdir()], ["hooks.json"])
+
+    def test_herdrs_group_keeps_its_index_and_compose_appends_after_it(self):
+        herdr = {"hooks": [{"type": "command", "command": "herdr hook session-start"}]}
+        self.put({"theme": "dark", "hooks": {"SessionStart": [herdr], "Stop": [herdr]}})
+        self.assertEqual(len(fc_links.write_hooks("codex", "/c")), 1)
+        doc = json.loads(self.file.read_text())
+        self.assertEqual(doc["hooks"], {**self.want, "SessionStart": [herdr, *self.want["SessionStart"]], "Stop": [herdr]})
+        self.assertEqual(doc["theme"], "dark")
+
+    def test_a_compose_group_of_another_checkout_is_replaced_at_its_index_and_an_equal_one_is_kept(self):
+        herdr = {"hooks": [{"type": "command", "command": "herdr hook"}]}
+        old = self.groups("/old")
+        self.put({"hooks": {"UserPromptSubmit": [herdr, old["UserPromptSubmit"][0]], "SessionStart": [self.want["SessionStart"][0], herdr]}})
+        fc_links.write_hooks("codex", "/c")
+        doc = json.loads(self.file.read_text())["hooks"]
+        self.assertEqual(doc["UserPromptSubmit"], [herdr, *self.want["UserPromptSubmit"]])
+        self.assertEqual(doc["SessionStart"], [*self.want["SessionStart"], herdr])
+
+    def test_invalid_json_exits_naming_the_file_and_writes_nothing(self):
+        self.put("{not json")
+        with self.assertRaises(SystemExit) as e: fc_links.write_hooks("codex", "/c")
+        self.assertIn(str(self.file), str(e.exception))
+        self.assertEqual((self.file.read_text(), sorted(p.name for p in (self.home / "codex").iterdir())), ("{not json", ["hooks.json"]))
+
+    def test_a_row_without_hooks_writes_nothing(self):
+        row = {"name": "Other", "home_env": "CODEX_HOME", "home": "~/.codex", "hooks_file": "hooks.json"}
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": row}): self.assertEqual(fc_links.write_hooks("other", "/c"), [])
+        self.assertFalse(self.file.exists())
