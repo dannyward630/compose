@@ -783,3 +783,40 @@ class LedgerCatchUp(unittest.TestCase):
         got, re, tr, lt = self.go(("diff", "failed tests"), rows={"side_effect": rows})
         self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({"002": "Linear: boom"}, ["001", "003"]))
         self.assertEqual(self.go(("failed tests",), fire=RuntimeError("bad rows"), ids=("001",))[0], {"001": "bad rows"})
+
+
+class LedgerRound(unittest.TestCase):
+    ORDER = ("005", "003", "006", "001", "007", "002", "004")  # stack order, not id order
+    BEFORE = {"005": "bogus", "003": "FAST", "006": "DEEP", "001": "STANDARD", "007": "STANDARD", "002": None, "004": "DEEP"}
+    AFTER = {"005": "FAST", "003": "STANDARD", "006": "FAST", "001": "STANDARD", "007": None, "002": "FAST", "004": "DEEP"}
+
+    def round(self, failed=None, ready=True):
+        """after_round over a temp project whose cached issue descriptions turn from BEFORE to AFTER when catch_up runs; returns (value, catch_up, say, stack_order, tasks)."""
+        proj = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, proj, True); (proj / "results").mkdir()
+        tasks = [{"id": t, "linear": f"XX-{t}"} for t in sorted(self.ORDER)]
+        write = lambda d: (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks, "issues": {f"XX-{t}": {"description": v} for t, v in d.items() if v}}))
+        write(self.BEFORE)
+        def catch_up(*args): write(self.AFTER); return failed or {}
+        with mock.patch.object(fc.fc_linear, "linear_ready", return_value=ready), mock.patch.object(fc.fc_worktree, "stack_order", return_value=[f"b-{t}" for t in self.ORDER]) as order, \
+             mock.patch.object(fc.fc_worktree, "task_prefix", return_value="b-"), mock.patch.object(fc_reroute, "catch_up", side_effect=catch_up) as cu, mock.patch.object(fc.fc_core, "say") as say, \
+             mock.patch.object(importlib.import_module("fc_routerec"), "parse_route", side_effect=lambda d: {"depth": d}):
+            got = fc_reroute.after_round("repo", proj, "main")
+        return got, cu, say, order, tasks
+
+    def test_catch_up_is_called_once_with_the_stack_ids_in_order_and_the_ledger_kinds(self):
+        got, cu, say, order, tasks = self.round()
+        self.assertEqual(cu.call_args_list, [mock.call("repo", cu.call_args.args[1], tasks, list(self.ORDER), "main", fc_reroute.LEDGER)])
+
+    def test_the_tasks_whose_depth_rose_are_raised_in_stack_order_and_no_other(self):
+        got, *_ = self.round()
+        self.assertEqual(got, (["005", "003", "002"], {}))  # unknown -> FAST, FAST -> STANDARD, none -> FAST; kept, lowered, dropped and DEEP stay out
+
+    def test_each_route_not_recorded_is_said_with_the_exact_line_and_returned_in_failed(self):
+        failed = {"003": "Linear: down", "001": "policies unreadable: boom"}
+        got, cu, say, *_ = self.round(failed)
+        self.assertEqual((got[1], [c.args[0] for c in say.call_args_list]), (failed, ["verify FAIL  route not recorded for 003: Linear: down", "verify FAIL  route not recorded for 001: policies unreadable: boom"]))
+        self.assertEqual(self.round()[2].call_count, 0)
+
+    def test_without_a_linear_key_it_returns_empty_and_calls_nothing(self):
+        got, cu, say, order, tasks = self.round(ready=False)
+        self.assertEqual((got, cu.call_count, say.call_count, order.call_count), (([], {}), 0, 0, 0))
