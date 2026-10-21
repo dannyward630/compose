@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest, urllib.error
+import importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, time, unittest, urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -308,6 +308,38 @@ class LinearErrors(unittest.TestCase):
     def test_200_replies_behave_as_today(self):
         self.assertEqual(self.gql(b'{"data": {"viewer": {"id": "u1"}}}'), {"viewer": {"id": "u1"}})
         self.assertEqual(self.rejected(b'{"errors": [{"message": "a"}, {"message": "b"}]}'), "a; b")
+
+
+    def test_a_rate_limited_call_waits_as_long_as_linear_says_and_runs_again(self):
+        limited = json.dumps({"errors": [{"message": "Rate limit exceeded", "extensions": {"code": "RATELIMITED"}}]}).encode()
+        reset = str(int(time.time()) + 40)
+        cases = (({"Retry-After": "7"}, 7), ({"X-RateLimit-Complexity-Reset": reset}, 40), ({"X-RateLimit-Complexity-Reset": reset + "000"}, 40), ({}, 10))
+        for headers, wait in cases:
+            with self.subTest(headers=headers):
+                ok = mock.MagicMock(); ok.__enter__.return_value = io.BytesIO(b'{"data": {"viewer": {"id": "u1"}}}')
+                err = urllib.error.HTTPError(fc.fc_linear.LINEAR_URL, 400, "Bad Request", headers, io.BytesIO(limited))
+                with mock.patch("urllib.request.urlopen", side_effect=[err, ok]) as call, mock.patch("time.sleep") as nap, \
+                        mock.patch("sys.stderr", io.StringIO()) as said:
+                    self.assertEqual(fc.fc_linear.linear_gql("query { viewer { id } }", {}), {"viewer": {"id": "u1"}})
+                self.assertEqual(call.call_count, 2)
+                self.assertAlmostEqual(nap.call_args.args[0], wait, delta=2)
+                self.assertIn(f"waiting {int(nap.call_args.args[0])}s", said.getvalue())
+
+    def test_a_rate_limit_that_stays_or_names_a_long_wait_fails_with_the_time(self):
+        body = json.dumps({"errors": [{"message": "Rate limit exceeded", "extensions": {"code": "RATELIMITED"}}]}).encode()
+        for headers, tries in (({}, fc.fc_linear.LINEAR_RETRIES + 1), ({"Retry-After": "3000"}, 1)):
+            with self.subTest(headers=headers):
+                errs = [urllib.error.HTTPError(fc.fc_linear.LINEAR_URL, 429, "Too Many Requests", headers, io.BytesIO(body)) for _ in range(tries)]
+                with mock.patch("urllib.request.urlopen", side_effect=errs) as call, mock.patch("time.sleep"), mock.patch("sys.stderr", io.StringIO()):
+                    with self.assertRaises(RuntimeError) as e:
+                        fc.fc_linear.linear_gql("query { viewer { id } }", {})
+                self.assertEqual(call.call_count, tries)
+                self.assertIn("Rate limit exceeded", str(e.exception)); self.assertIn("run it again then", str(e.exception))
+
+    def test_the_sync_query_asks_for_at_most_50_relations_and_20_labels_per_issue(self):
+        fields = fc.fc_linear.LINEAR_TREE_FIELDS
+        self.assertEqual(sorted(re.findall(r"\w+\(first: (\d+)\)", fields)), ["20", "20", "50"])
+        self.assertNotIn("labels { nodes", fields)
 
 
 if __name__ == "__main__":
