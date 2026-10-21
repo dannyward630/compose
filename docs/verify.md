@@ -134,6 +134,7 @@ The `e2e` line then names jev's stop reason, and the next lines show the page it
 
 When the harness itself fails, for example a jev or browser crash, a missing tool, or a port in use, verify reports `TOOL ERROR` and retries once.
 It never sends that failure to a fix round.
+A review whose confirmation call fails, with no confirmed high, is the same: the `review` line says `TOOL ERROR` and names the error, and `FAIL` stays for a confirmed high.
 
 A case with a `driver` command runs the project's own browser driver instead of jev.
 That driver still gets the stage's browser in `BU_CDP_URL`.

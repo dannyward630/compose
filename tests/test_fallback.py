@@ -495,6 +495,22 @@ class FixScope(unittest.TestCase):
         self.assertNotIn("Avoid", out.getvalue() + findings)
         self.assertNotIn("Analysis", out.getvalue() + findings)
 
+    def test_review_whose_only_failure_is_a_confirm_call_error_reports_a_tool_error_and_hands_no_fixer_a_finding(self):
+        def fj(env, system, user, **kw):
+            if "strict code reviewer" in system:
+                return {"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]}
+            raise RuntimeError("HTTP 500 from the judge")
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}), \
+                mock.patch.object(fc.fc_verify, "review_inputs", return_value=("return a - b", "plan", "", [])), redirect_stdout(out):
+            ok, report, findings = fc.fc_verify.run_stages(proj, proj, {"perspectives": ["correctness"], "jev_acceptance": False},
+                                                           type("A", (), {"skip_e2e": True, "skip_review": False}))
+        self.assertEqual((ok, findings), (False, ""))
+        self.assertRegex(out.getvalue(), r"review TOOL ERROR .*0 confirmed of 1 raised\n")
+        self.assertIn("1 confirm call(s) failed: HTTP 500 from the judge", out.getvalue())
+        self.assertIn("judge err [high/correctness] a.py:2: n\n", out.getvalue())
+
     def test_lockfile_or_new_file_rejects_the_round_and_fails(self):
         code, repo, res = self.verify({"a.go": "fixed\n", "yarn.lock": "rewritten\n", "package-lock.json": "{}\n"})
         self.assertEqual((code, res["passed"]), (1, False))

@@ -282,8 +282,11 @@ def run_stages(repo, proj, cfg, a, tests=None):
         report["review"] = rv
         ok &= rv["pass"]  # review always gates; the jev acceptance stage below is advisory unless asked to gate
         fc_herdr.herdr_stage(panes, "review", "idle" if rv["pass"] else "blocked", f"{len(rv['confirmed'])} confirmed")
-        fc_core.say(f"review {'ok  ' if rv['pass'] else 'FAIL'} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
+        verdict = "ok  " if rv["pass"] else "FAIL" if any(i["severity"] == "high" for i in rv["confirmed"]) else "TOOL ERROR"  # no confirmed high: only a confirm call failed
+        fc_core.say(f"review {verdict} {fc_core.fmt(rv['seconds']):>8}  {len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised"
                     + (f", {rv['malformed']} malformed dropped" if rv.get("malformed") else ""))
+        if rv.get("error"):
+            print(f"           {rv['error']}")
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "dropped  "
             print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
