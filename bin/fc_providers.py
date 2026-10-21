@@ -2,6 +2,7 @@
 the reach check and doctor rows, OpenCode's provider, and the price of a turn."""
 from __future__ import annotations  # the X | None annotations on /usr/bin/python3 3.9
 import json
+import os
 import fc_config
 import fc_core
 
@@ -20,7 +21,7 @@ export default function (pi) {
 
 def pi_extension_text() -> str:
     """The text of ~/.compose/pi-providers.js, rendered from fc_config.PROVIDERS."""
-    rows = [{"apiKeyEnv": None, "baseUrl": p["base_url"], "models": p.get("models", []), "name": n} for n, p in sorted(fc_config.PROVIDERS.items())]
+    rows = [{"apiKeyEnv": fc_config.provider_env(n) if fc_config.provider_env(n) in os.environ else None, "baseUrl": p["base_url"], "models": p.get("models", []), "name": n} for n, p in sorted(fc_config.PROVIDERS.items())]
     return PI_JS.replace("<json>", json.dumps(rows, sort_keys=True))
 
 def pi_args(model) -> list[str]:
@@ -36,7 +37,10 @@ def pi_args(model) -> list[str]:
 def pi_env(model) -> dict:
     """{"COMPOSE_PI_MODEL": "<name>/<id>"} for a local model, else {}."""
     hit = fc_config.provider_of(model)
-    return {"COMPOSE_PI_MODEL": f"{hit[0]}/{hit[1]}"} if hit else {}
+    if not hit:
+        return {}
+    env = fc_config.provider_env(hit[0])
+    return {"COMPOSE_PI_MODEL": f"{hit[0]}/{hit[1]}", **({env: os.environ[env]} if env in os.environ else {})}
 
 def cost(model, usage) -> float | None:
     """The turn's price: the PRICES price, else 0.0 for a local model, else usage["cost"]."""
@@ -52,7 +56,9 @@ def reach(name) -> tuple[bool, str]:
     import urllib.request
     base_url = fc_config.PROVIDERS[name]["base_url"]
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=5) as r:
+        env = fc_config.provider_env(name)
+        req = urllib.request.Request(base_url.rstrip("/") + "/models", headers={"Authorization": f"Bearer {os.environ[env]}"} if env in os.environ else {})
+        with urllib.request.urlopen(req, timeout=5) as r:
             return True, f"HTTP {r.status}"
     except urllib.error.HTTPError as e:
         e.close()
