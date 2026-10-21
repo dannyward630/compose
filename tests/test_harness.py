@@ -1027,3 +1027,63 @@ class CodexGuard(unittest.TestCase):
         for p in ("$compose-yolo", "$compose", "$compose ship it"):
             self.assertTrue(seen(p), p)
             (fc.fc_hooks.SKILL_SEEN / "s.json").unlink()
+
+
+class CodexHooksRow(unittest.TestCase):
+    NAME = "Codex hooks"
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co = tmp / "bin", tmp / "home", tmp / "co"
+        for d in (self.bin, self.home, self.co): d.mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        self.file, self.trust = self.home / ".codex/hooks.json", self.home / ".codex/config.toml"
+        names = [r[0] for r in fc_steps.STEPS]
+        self.row = fc_steps.STEPS[names.index(self.NAME)]
+        self.assertEqual(names[names.index(self.NAME) - 1], "Codex commands")
+
+    def tool(self, name="codex"): (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(stat.S_IRWXU)
+    def run_row(self, row=None, dry=False): return fc_steprun.run_step(row or self.row, self.co, True, False, False, dry=dry)
+    def records(self): return tomllib.loads(self.trust.read_text())["hooks"]["state"]
+
+    def test_the_row_is_a_default_write_row_and_only_codex_has_one(self):
+        self.assertEqual(self.row[2:], ("compose setup", "default", False, "write"))
+        self.assertEqual([r[0] for r in fc_steps.STEPS if "hooks" in r[0]], [self.NAME])
+        self.assertEqual(set(fc_steprun.WRITERS), set(fc_steprun.PREVIEWS))
+
+    def test_without_codex_the_check_passes_and_run_step_does_nothing(self):
+        self.assertEqual(fc_steps.check(self.row, self.co), (True, ""))
+        self.assertEqual(self.run_row(), ("ok", ""))
+
+    def test_run_step_writes_the_hooks_file_and_four_records_then_finds_it_ok(self):
+        self.tool(); self.assertFalse(fc_steps.check(self.row, self.co)[0])
+        self.assertEqual(self.run_row(), ("done", "~/.codex/hooks.json; ~/.codex/config.toml"))
+        self.assertEqual(sorted(json.loads(self.file.read_text())["hooks"]), ["PreToolUse", "SessionStart", "UserPromptSubmit"])
+        self.assertEqual(len(self.records()), 4)
+        self.assertEqual((fc_steps.check(self.row, self.co), self.run_row()), ((True, ""), ("ok", "")))
+
+    def test_a_hooks_file_without_records_only_gets_the_records(self):
+        self.tool(); fc_links.write_hooks("codex", self.co)
+        self.assertEqual(self.run_row(), ("done", "~/.codex/config.toml"))
+        self.assertTrue(fc_steps.check(self.row, self.co)[0])
+
+    def test_dry_run_previews_and_writes_nothing(self):
+        self.tool()
+        self.assertEqual(self.run_row(dry=True), ("would", "would write ~/.codex/hooks.json and trust compose's hooks in ~/.codex/config.toml"))
+        self.assertFalse((self.home / ".codex").exists())
+
+    def test_every_harness_row_with_hooks_gets_its_own_hooks_row_after_its_commands_row(self):
+        self.tool("other"); self.addCleanup(lambda: [importlib.reload(m) for m in (fc_steps, fc_steprun)])
+        p = mock.patch.dict(fc_harness.HARNESSES, {"other": {**fc_harness.HARNESSES["codex"], "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}})
+        p.start(); self.addCleanup(p.stop)
+        for m in (fc_steps, fc_steprun): importlib.reload(m)
+        names = [r[0] for r in fc_steps.STEPS]; i = names.index("Other hooks")
+        self.assertEqual(names[i - 1], "Other commands")
+        self.assertEqual(self.run_row(fc_steps.STEPS[i])[0], "done")
+        self.assertTrue((self.home / ".other/hooks.json").exists() and (self.home / ".other/config.toml").exists())
+        self.assertFalse((self.home / ".codex").exists())
+
+    def test_doctor_lists_the_missing_hooks_file_as_optional(self):
+        self.tool(); out = io.StringIO()
+        with contextlib.redirect_stdout(out): fc_init.check_deps()
+        self.assertIn("MISSING: Codex hooks: ~/.codex/hooks.json lacks compose's guard hook (install: compose setup) - optional\n", out.getvalue())
