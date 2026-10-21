@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, io, os, stat, sys, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, stat, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -7,6 +7,8 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_steprun, fc_steps
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
+fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
 
 
 class CodexSkillLink(unittest.TestCase):
@@ -286,3 +288,51 @@ class HarnessBlock(unittest.TestCase):
     def test_a_harness_argument_without_a_block_exits(self):
         self.exits(self.CFG, 'no "harnesses.gemini" block', harness="gemini")
 
+
+class HarnessPassDown(unittest.TestCase):
+    BLOCK = lambda m, t: {"models": {"crew": {"default": m, "tests": t}}}
+    CFG = {"models": {"crew": {"default": "claude:top", "tests": "claude:toptests"}},
+           "harnesses": {"codex": BLOCK("claude:cdx", "claude:cdxtests"), "gemini": BLOCK("claude:gem", "claude:gemtests")}}
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; self.proj.mkdir(parents=True)
+        for k in ("HARNESS", "DEFAULT_MODEL", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK", "WORKSPACE"):
+            p = mock.patch.object(fc_config, k, getattr(fc_config, k)); p.start(); self.addCleanup(p.stop)
+
+    def start(self, *flags, cfg=CFG, **env):
+        """(calls herdr got, the tab's env, the model the teammate record names) for `crew start --role tests-001`."""
+        fc_config.write_config(cfg); calls = []
+        def herdr(*args, **kw):
+            calls.append(args)
+            return {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
+        with mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), mock.patch.object(sys, "argv", ["compose", "crew", "start", "--role", "tests-001", "--brief", "Write the test.", *flags]), \
+                mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
+                mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(time, "sleep"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
+            for k in ("COMPOSE_HARNESS", "CLAUDECODE"): os.environ.pop(k, None)
+            os.environ.update(env)
+            try: fc.main()
+            except SystemExit as e: self.exit = e
+        tab = next((c for c in calls if c[:2] == ("tab", "create")), ())
+        rec = next(fc.fc_crew.crew_dir(self.proj).glob("*.json"), None)
+        return calls, [tab[i + 1] for i, v in enumerate(tab) if v == "--env"], rec and json.loads(rec.read_text())["model"]
+
+    def test_the_flag_names_the_block_for_the_tab_and_the_model(self):
+        _, envs, model = self.start("--harness", "codex")
+        self.assertIn("COMPOSE_HARNESS=codex", envs)
+        self.assertEqual(model, "claude:cdxtests")  # the role's own entry in the block, not just its default
+
+    def test_the_env_does_the_same_and_the_flag_wins(self):
+        _, envs, model = self.start(COMPOSE_HARNESS="codex")
+        self.assertEqual((("COMPOSE_HARNESS=codex" in envs), model), (True, "claude:cdxtests"))
+        _, envs, model = self.start("--harness", "codex", COMPOSE_HARNESS="gemini")
+        self.assertEqual((("COMPOSE_HARNESS=codex" in envs), ("COMPOSE_HARNESS=gemini" in envs), model), (True, False, "claude:cdxtests"))
+
+    def test_no_flag_and_no_env_leaves_the_tab_and_the_model_as_today(self):
+        _, envs, model = self.start()
+        self.assertEqual(([e for e in envs if e.startswith("COMPOSE_HARNESS")], model), ([], "claude:toptests"))
+
+    def test_a_flag_without_its_block_exits_before_any_herdr_call(self):
+        calls, _, _ = self.start("--harness", "codex", cfg={k: v for k, v in self.CFG.items() if k != "harnesses"})
+        self.assertEqual((calls, hasattr(self, "exit")), ([], True))
