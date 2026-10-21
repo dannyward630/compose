@@ -62,12 +62,12 @@ class CodexFence(unittest.TestCase):
 
     def test_runs_unittest_with_its_caches(self):
         (self.wt / "t.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test_a(self): open('ran', 'w').write('1')\n")
-        p = self.codex("Run: python3 -m unittest t", self.wt)
+        p = self.codex(f"Run: {sys.executable} -m unittest t", self.wt)
         self.assertEqual(((self.wt / "ran").is_file(), (self.wt / "__pycache__").is_dir()), (True, True), p.stdout[-3000:])
 
     @unittest.skipUnless(linear_key(), "no Linear key")
     def test_linear_get(self):
-        p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515", self.repo, COMPOSE_CONFIG=str(hermetic.REAL / "config.json"))
+        p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515 --any-project", self.repo, COMPOSE_CONFIG=str(hermetic.REAL / "config.json"))
         self.assertIn("NEB-1515", p.stdout.split("\ncodex\n")[-1], p.stdout[-3000:])
 
 
