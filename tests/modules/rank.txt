@@ -7,6 +7,7 @@ fc_providers
 fc_tasks
 fc_plan
 fc_linear
+fc_ledger
 fc_linear_cmd
 fc_readguard
 fc_claude
