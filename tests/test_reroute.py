@@ -753,7 +753,7 @@ class LedgerCatchUp(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set(fired)), \
                 mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(fc_reroute, "diff_signals", return_value={"outside": ["x"]}), \
                 mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(ev, "task_rows", **rows or {"return_value": ["row"]}) as tr, \
-                mock.patch.object(fc_reroute, "ledger_triggers", side_effect=lambda repo, proj, meta, rs: list(fire)) as lt:
+                mock.patch.object(fc_reroute, "ledger_triggers", side_effect=fire if isinstance(fire, Exception) else lambda repo, proj, meta, rs: list(fire)) as lt:
             return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re, tr, lt
 
     def test_the_asked_ledger_triggers_the_rows_fire_join_diff_and_scope_in_one_reassess_in_ledger_order(self):
@@ -782,5 +782,4 @@ class LedgerCatchUp(unittest.TestCase):
             return ["row"]
         got, re, tr, lt = self.go(("diff", "failed tests"), rows={"side_effect": rows})
         self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({"002": "Linear: boom"}, ["001", "003"]))
-        with mock.patch.object(fc_reroute, "ledger_triggers", side_effect=RuntimeError("bad rows")):
-            self.assertEqual(self.go(("failed tests",), ids=("001",))[0], {"001": "bad rows"})
+        self.assertEqual(self.go(("failed tests",), fire=RuntimeError("bad rows"), ids=("001",))[0], {"001": "bad rows"})
