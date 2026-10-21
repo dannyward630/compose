@@ -240,3 +240,58 @@ class VerifyShared(unittest.TestCase):
                 mock.patch.object(fc_ledger, "verify_record") as vr, mock.patch.object(fc.fc_core, "say"), self.assertRaises(SystemExit):
             fc.fc_verify.verify_rounds(self.repo, self.proj, {"review_base": "main"}, SimpleNamespace(fix=0), [], 0)
         self.assertEqual([c.args for c in vr.call_args_list], [(self.proj, self.repo, report)])
+
+
+class VerifyTasks(unittest.TestCase):
+    T1 = "python3 -m unittest x"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        self.repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "one")
+        self.sha = git("rev-parse", "HEAD")
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        body = lambda *c: "## Goal\ng\n\n## Acceptance criteria\n" + "".join(f"* {x}\n" for x in c)
+        self.tasks = [{"id": "021", "linear": "ENG-4", "test": self.T1, "body": body("a", "b", "c", "d", "e")}, {"id": "022", "linear": "ENG-5", "test": "t2", "body": body("x")},
+                      {"id": "023", "linear": "ENG-6", "test": "t3", "body": body("y"), "kind": "design"}, {"id": "024", "linear": "ENG-7", "test": "t4", "body": body("z")}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": self.tasks}))
+
+    def record(self, scoped=(), acceptance=None, saved=lambda issue, events: True):
+        report = {"checks": [], "e2e": [], "review": None, "scoped": list(scoped), "acceptance": acceptance}
+        with mock.patch.object(fc_ledger, "record", side_effect=saved) as record:
+            ok = fc_ledger.verify_record(self.proj, self.repo, report)
+        return ok, [c.args for c in record.call_args_list]
+
+    def ev(self, t, ids, phase, result, detail):
+        return fc_ledger.event(fc_ledger.run_id(self.proj, t["id"]), self.sha, [t["id"]], ids, phase, "verify", result, None, detail)
+
+    def test_each_code_task_gets_scoped_then_acceptance_events_even_when_empty(self):
+        t1, t2 = self.tasks[:2]
+        ids, x = fc_ledger.criterion_ids(t1), fc_ledger.criterion_ids(t2)
+        e = lambda **kw: {"tool_error": False, "output": "", **kw}
+        row = lambda t, c, choice, **kw: {"task": t, "criterion": c, "choice": choice, "p_met": 0.9, "p_not_met": 0.1, **kw}
+        rows = [row("021", "b", "NOT_MET", confirmed=True), row("021", "a", "MET"), row("021", "c", "NOT_MET"), row("021", "d", "NOT_MET", judge_error="no answer"),
+                row("021", "e", None, p_met=None, p_not_met=None), row("022", "x", "MET")]
+        scoped = [e(cmd=self.T1, exit=1), e(cmd="other", exit=0), e(cmd=self.T1, exit=0, output="JEV_GAVE_UP"), e(cmd=self.T1, exit=0)]
+        _, calls = self.record(scoped, {"criteria": rows})
+        miss = "NOT_MET: p_met 0.9, p_not_met 0.1"
+        self.assertEqual([c for c in calls if c[0] != "ENG-1"], [
+            ("ENG-4", [self.ev(t1, ids, "scoped", r, f"{self.T1}: exit {n}") for r, n in (("fail", 1), ("error", 0), ("pass", 0))]),
+            ("ENG-4", [self.ev(t1, [ids[1]], "acceptance", "fail", miss), self.ev(t1, [ids[0]], "acceptance", "pass", "MET: p_met 0.9, p_not_met 0.1"),
+                       self.ev(t1, [ids[2]], "acceptance", "unclear", miss), self.ev(t1, [ids[3]], "acceptance", "error", miss),
+                       self.ev(t1, [ids[4]], "acceptance", "error", "None: p_met None, p_not_met None")]),
+            ("ENG-5", []), ("ENG-5", [self.ev(t2, x, "acceptance", "pass", "MET: p_met 0.9, p_not_met 0.1")]), ("ENG-7", []), ("ENG-7", [])])
+
+    def test_acceptance_that_did_not_judge_is_one_feature_event(self):
+        for acceptance, result, detail in ((None, "skipped", "acceptance did not run"), ({"error": "boom"}, "error", "boom"), ({"criteria": [], "note": "no criteria"}, "skipped", "no criteria")):
+            ok, calls = self.record(acceptance=acceptance)
+            events = [e for issue, es in calls if issue == "ENG-1" for e in es if e["phase"] == "acceptance"]
+            self.assertEqual(events, [fc_ledger.event("", self.sha, [], [], "acceptance", "verify", result, None, detail)], acceptance)
+            self.assertEqual((ok, len([c for c in calls if c[0] != "ENG-1"])), (True, 6))
+
+    def test_false_when_a_task_record_fails(self):
+        ok, _ = self.record(saved=lambda issue, events: issue != "ENG-5")
+        self.assertFalse(ok)
