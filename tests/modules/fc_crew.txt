@@ -8,6 +8,7 @@ scratch_dir
 listeners_under
 stop_listeners_under
 TRUST_PROMPT
+LINEAR_RULE
 crew_preamble
 crew_pick
 crew_chain

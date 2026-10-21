@@ -34,7 +34,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         guard = fc_readguard.guard_file(cwd)
         env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config(), **fc_providers.pi_env(model)}
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config(),
+               "PI_CODING_AGENT_DIR": fc_models.pi_agent_dir(cwd), **fc_providers.pi_env(model)}
         if guard.exists():
             env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
         pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
@@ -346,7 +347,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
     original_prompt = prompt
     # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
-    spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e})
+    spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
     def progress(state):  # `compose status --watch` reads this while the task runs
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
@@ -393,7 +394,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         if fc_proc.STOP.is_set():
             raise fc_proc.Stopped
         attempt += 1
-        t0 = time.time()
+        t0, clk = time.time(), fc_proc.clock()
         ref_before = fc_readguard.refused(wt)
         cut = None  # the number of a turn cut short whose edits the test and verdict below judge
         try:
@@ -427,15 +428,21 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if fc_proc.STOP.is_set():
                 raise fc_proc.Stopped
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
-            fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}; fresh session")
+            # A turn the machine slept in is no hang: it costs no attempt and no step toward the fallback (the awake clock timed it out).
+            nap = fc_proc.slept(clk)
+            fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}"
+                        + (f", and {fc_proc.slept_text(nap)}: it does not count" if nap else "") + "; fresh session")
             cut_usage = getattr(e, "usage", {"cost": 0.0, "tokens_in": 0, "tokens_out": 0})  # what the cut turn cost is counted here, as for a rate limit
             cost += cut_usage["cost"]
-            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", "tool_calls": getattr(e, "tools", 0), "usage": cut_usage})
-            session, prompt = None, original_prompt
-            failed("timed out", original_prompt)
+            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", "tool_calls": getattr(e, "tools", 0), "usage": cut_usage,
+                        **({"slept": round(nap)} if nap else {})})
+            session, prompt, cut = None, original_prompt, attempt
+            if nap:
+                attempt -= 1
+            else:
+                failed("timed out", original_prompt)
             if not edited():
                 continue
-            cut = attempt
         except fc_models.PaymentRequired as e:
             fc_core.say(f"{tid} HALT    payment required at {e.provider}: {e.message[:120]}")
             log.append({"attempt": attempt, "payment_required": {"provider": e.provider, "message": e.message}})

@@ -92,6 +92,7 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
    `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground with the Bash call's timeout set to 180000 ms, and
    when a round ends with nothing run it again at once (a killed poll loses nothing: queued answers wait), so a forwarded text
    answer reaches you within three minutes. Never background it, never `end` it or `--reopen` a session the product owner ended.
+   Never loop or poll `compose linear` while you wait (the shared hourly Linear budget): read the issue once, and the herdr prompt brings the answer.
    Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside `prompt`), not as a data field.
    As soon as answers arrive, by poll or by text, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply
    "<card ids> received"`; the product owner sees their answers landed. If a poll returns `browser_disconnected`, the window
@@ -249,6 +250,7 @@ The screen that raised it: {reflect}
    180000 ms, run again at once when a round ends with nothing) so a text answer reaches you within three minutes; acknowledge
    answers on the page with `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`; on `browser_disconnected` run
    `npx -y lavish-axi {page}` once for its `url:` and report once `needs-user "reminder: change {cid}: ..."` with it, then poll again.
+   Never loop or poll `compose linear` while you wait (the shared hourly Linear budget): read the issue once, and the herdr prompt brings the answer.
    Never `end` or `--reopen` a session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after
    "Context data:" inside `prompt`), not as a data field.
 5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write. A line that changes is struck through

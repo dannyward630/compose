@@ -6,7 +6,7 @@ os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_pi as pi  # noqa: E402
+import fc_models, fc_pi as pi  # noqa: E402
 
 MODEL = "z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"
 
@@ -50,10 +50,13 @@ class PiChecks(unittest.TestCase):
         self.assertEqual(o(self.dir / "missing.json"), [])
 
     def test_paths_follow_agent_dir(self):
-        def fresh():  # a new copy of the module, outside sys.modules, so no other test file's imports matter
-            spec = importlib.util.spec_from_file_location("fc_pi", pi.__file__)
+        def load(name, file):
+            spec = importlib.util.spec_from_file_location(name, file)
             m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
             return m
+        def fresh():  # a new copy of the module and of fc_models, which holds the agent dir, so no other test file's imports matter
+            with mock.patch.dict(sys.modules, {"fc_models": load("fc_models", fc_models.__file__)}):
+                return load("fc_pi", pi.__file__)
         with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(self.dir)}):
             m = fresh()
         self.assertEqual((m.PI_MODELS, m.PI_AUTH), (self.dir / "models.json", self.dir / "auth.json"))

@@ -9,6 +9,10 @@ on_termination
 restore_sigint
 AWAKE
 keep_awake
+SLEPT_MIN
+clock
+slept
+slept_text
 SLOTS
 QUICK_SLOTS
 SLOT_SAY_AFTER
