@@ -1,0 +1,16 @@
+SIMPLICITY_BAR
+PERSPECTIVES
+well_formed
+llm_review
+verify_failed
+review_inputs
+e2e_stage
+fix_tests
+run_stages
+verify_root
+at_root
+cmd_verify
+fix_strays
+fix_message
+changed_files
+verify_rounds

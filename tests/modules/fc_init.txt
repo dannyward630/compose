@@ -1,0 +1,16 @@
+TRAIL_INIT
+existing_repo
+setup_trail
+cmd_trail
+TRAIL_INSTALL
+check_deps
+herdr_toml
+herdr_loud
+herdr_toast_warning
+key_problems
+start_problems
+start_checks
+cmd_doctor
+created_from
+move_onto
+cmd_init

@@ -1,0 +1,4 @@
+YOLO_NEVER
+YOLO_TAG
+yolo_digest
+cmd_yolo

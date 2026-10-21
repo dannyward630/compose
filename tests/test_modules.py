@@ -13,66 +13,22 @@ os.environ["HERDR_ENV"] = ""
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 
-RANK = ("fc_core", "fc_prompt", "fc_proc", "fc_auth", "fc_config", "fc_tasks", "fc_plan", "fc_linear", "fc_linear_cmd", "fc_readguard", "fc_claude", "fc_models", "fc_herdr", "fc_worktree", "fc_checks", "fc_pi", "fc_keys", "fc_steps", "fc_layers", "fc_stack", "fc_change", "fc_frame0", "fc_f0pages", "fc_ask", "fc_hooks", "fc_crew", "fc_toolbug", "fc_init", "fc_clean", "fc_herdrconf", "fc_links", "fc_defaults", "fc_steprun", "fc_finish", "fc_setup", "fc_update", "fc_figmaplan", "fc_figma", "fc_briefs", "fc_libapi", "fc_implement", "fc_jev", "fc_accept", "fc_verify", "fc_ship", "fc_prove", "fc_run", "fc_status", "fc_spec", "fc_watch", "fc_yolo", "fc_bench")
-MODULES = {
-    "fc_core": ("now", "fmt", "say", "Ledger", "LEDGER", "sh", "worktrees", "repo_link", "project_config", "project_branch", "commit_convention", "COMMIT_TYPES", "typed", "commit_rule", "all_projects", "project_dir", "atomic_write", "SECRET_VARS", "SECRET_VALUES", "REDACTED", "clean_env", "SCRATCH_CONFIGS", "HOME_WRITES", "HOME_WRITES_MAX", "HOME_WRITES_SLACK", "HOME_HASH_MAX", "CLI_OWN", "CLI_CHECKOUT", "SCRATCH_PREFIX", "scratch_config", "is_scratch", "remove_scratch", "checkout_entries", "entry_state", "home_state", "note_home_write", "home_writes_outside", "flag_home", "scrub", "Scrubbed", "digests", "figma_key", "current_branch", "load_env", "free_port", "port_listening", "report_time", "session_id", "project_after", "tilde"),
-    "fc_prompt": ("FRAMES", "paint", "intro", "bars", "note", "step", "outro", "select", "confirm", "password", "spin"),
-    "fc_proc": ("STOP", "Stopped", "HOOKS", "RUNNING", "run", "kill_group", "stop", "on_termination", "AWAKE", "keep_awake", "SLOTS", "QUICK_SLOTS", "SLOT_SAY_AFTER", "SCOPED_RE", "scoped", "slot"),
-    "fc_auth": ("read_auth", "write_auth", "workspace_key", "set_key", "old_keys", "move_keys"),
-    "fc_config": ("DEFAULT_MODEL", "FALLBACK_MODEL", "FALLBACK_AFTER", "TEST_READER", "JEV_DIR", "PRICES", "CONFIG_PATH", "ENV_FILE", "AUTH_PATH", "OPENROUTER_KEY", "MAX_DIFF_LINES", "DOC_RE", "DEP_DIRS", "EXPR_L36", "EXPR_L37", "CREW_MODELS", "PARALLEL", "CLAUDE_PARALLEL", "LINEAR_KEY", "WORKSPACE", "CREW_EFFORT", "CREW_FALLBACK", "PLANNING_ROLES", "CREW_DEFAULTS", "PROBE_CACHE", "read_config", "write_config", "settings", "apply_config", "needs_linear_key", "typesafe_key", "openrouter_key", "key_file", "WORKSPACE_ACTIONS", "read_key", "cmd_workspace"),
-    "fc_tasks": ("TASK_BLOCK", "SYNC_SHAPE", "task_from_issue", "hand_task", "sync_tasks", "linear_cache", "load_tasks", "blocker_finished", "waiting", "linear_done", "code_tasks", "FINISHED", "task_finished", "parse_criteria", "criteria_from_tasks", "_hold_warned", "held", "held_behind", "yolo_state", "yolo_by", "CANCELED", "run_marker", "pid_alive", "run_alive"),
-    "fc_plan": ("heading_level", "headings", "section_span", "section_hash", "section_hashes", "replace_section", "PLAN_SECTIONS", "PLAN_NEXT", "plan_skeleton", "with_plan_link", "start_today", "lanes_text", "waves_text", "critical_path_text", "plan_sections"),
-    "fc_linear": ("LINEAR_TREE_FIELDS", "LINEAR_FEATURE", "LINEAR_CHILDREN", "linear_children", "linear_sync_payload", "LINEAR_URL", "LINEAR_ISSUE", "_linear_warned", "linear_gql", "linear_issue", "linear_move", "linear_comment", "linear_ready", "linear_note", "LINEAR_BLOCKERS", "linear_blocked_by", "linear_restore", "rollup_state", "linear_roll_up", "linear_event", "linear_merged", "linear_reconcile", "ready_ids", "LINEAR_READY_TREE", "linear_mark_ready", "LINEAR_PLAN_TREE", "linear_plan", "ready_line", "cmd_ready", "refresh_ready", "linear_feature_after", "cmd_sync"),
-    "fc_linear_cmd": ("issue_line", "read_body", "linear_project", "in_scope", "state_and_labels", "PRIORITIES", "priority", "print_body", "writes_body", "new_body", "verb_project", "verb_get", "verb_list", "verb_create", "verb_update", "verb_comment", "verb_labels", "verb_doc", "cmd_linear"),
-    "fc_readguard": ("PI_EXT", "OC_PLUGIN", "guard_file", "pack_paths", "write_guard", "command", "AWK_WORDS", "awk_program_ok", "measure", "refusal", "refused", "cli"),
-    "fc_claude": ("is_claude", "claude_id", "headless_env", "AUTOCOMPACT_WINDOW", "NO_ATTRIBUTION", "crew_settings", "REPO_INSTRUCTIONS", "repo_instructions", "claude_once", "claude_trusted", "untrusted"),
-    "fc_models": ("opencode", "RATE_LIMIT_MARK", "pi_error", "pi_turn", "fallback_for", "PaymentRequired", "PAY_RE", "TOP_UP", "payment_check", "http_json", "RateLimited", "provider_busy", "parse_pi_session", "pi_turn_state", "_PROBED", "pi_id", "probe_command", "probe_result", "model_available", "TRANSIENT", "probe_once", "probe_clear", "cmd_models", "TEST_TIMEOUT", "TURN_TIMEOUT", "payment_halt", "lenient_json", "fast_env", "fast_json", "CUT_RETRY", "fast_json_whole", "EmptyReply", "CutOff", "BadReply", "fast_object", "ConfirmError", "confirm_call", "jev_ask", "reask_criterion"),
-    "fc_herdr": ("HERDR_SPACES", "PI_HERDR_EXT", "herdr_env", "PANE_MAKERS", "herdr_argv", "herdr", "herdr_error", "herdr_text", "herdr_ready", "herdr_dialog", "herdr_await_start", "herdr_start_crew", "pane_processes", "pane_launching", "pane_kill", "agent_name", "agent_id", "agent_ref", "herdr_main_repo", "herdr_find_space", "project_worktree", "live_agents", "space_record", "tab_label", "MANAGER", "manager_projects", "herdr_name_manager", "herdr_unname_manager", "herdr_manager_record", "herdr_manager_live", "herdr_manager_claim", "herdr_tab", "herdr_project_space", "herdr_project_tabs", "herdr_repo_space", "herdr_space", "herdr_tabs", "herdr_status_tab", "herdr_label", "IMPLEMENTERS_TAB", "herdr_implementer_pane", "herdr_agent_start", "PROMPT_START_WAIT", "herdr_stalled", "herdr_verify_panes", "herdr_stage", "herdr_space_is", "herdr_attach"),
-    "fc_worktree": ("task_prefix", "rename_legacy_branches", "task_branch", "own_branches", "replace_branch", "replaced_tips", "task_branches", "layer_order", "stack_order", "TREEHOUSE_INSTALL", "use_treehouse", "treehouse", "slot_on", "pool_shortfall", "is_slot", "default_branch", "review_base", "release_slot", "common_dir", "shared_checkout", "repo_worktree", "slots", "stack_worktree", "exclude_paths", "TOOL_DIRS", "WIRING", "dirty_paths", "graph_dir", "ignore_tool_files", "dep_dirs", "stamp_trail_wiring", "ready_checkout", "names_lockfile", "adopt_installs", "STACK_LOCK", "GENERATED_RE", "LOCKFILE_RE", "LOCKFILES"),
-    "fc_checks": ("owned_links", "link_state", "local_bin_on_path", "gh_authed", "rerere_set", "jev_synced", "chromium_installed", "LOAD_FACTOR", "CRASH_RESTARTS", "CRASH_WINDOW", "on_battery", "busiest_process", "restarting_containers", "machine_warnings"),
-    "fc_pi": ("PI_MODELS", "PROVIDER", "TEXT_MODEL_DEFAULTS", "PI_AUTH", "has_glm", "provider_lacks", "provider_declared", "text_model_set", "pi_auth_overrides", "_read_provider", "declare_provider", "preview_provider", "write_text_model"),
-    "fc_keys": ("key_status", "save_key", "skipped_line", "KEYS", "ask_keys"),
-    "fc_steps": ("FRAMELINK_ENV", "FRAMELINK_ADD", "HERDR_MIN", "TREEHOUSE_MIN", "FLOORS", "user_mcp_servers", "version_of", "owned_link", "key_ok", "herdr_integration", "check", "STEPS"),
-    "fc_layers": ("CONFIG_FILE_RE", "layer_prefix", "COMPOSE_COMMANDS", "PROCESS_RE", "typed_subject", "message_problem", "commit_kind", "scrub_message", "commit_message", "chain_order", "STACK_STOP", "linearize", "_linearize", "REVIEW_LAYER_LINES", "commit_facts", "group_units", "test_writers", "applies_without", "review_units", "commit_key", "rewords", "layer_message", "cherry_pick_same", "record_layers", "group_by_record", "build_layers", "layer_note"),
-    "fc_stack": ("TITLE_CHARS", "clip", "title_prefix", "layer_title", "WHY_CHARS", "GITHUB_ISSUE_RE", "plain", "title_text", "sentence", "first_sentence", "issue_refs", "linear_url", "story_of", "issue_lines", "layer_why", "layer_body", "pr_names", "ISSUE_LINE_RE", "pr_text", "layer_pr", "stale_pr_files", "gh_pr_text", "write_pr_text", "layer_base", "register_stack"),
-    "fc_change": ("REFLECT_THRESHOLD", "REFLECT_EVIDENCE_CAP", "REFLECT_LOCK", "REFLECT_CHOICES", "REFLECT_RULES", "map_section", "LIST_ITEM", "decision_lines", "changes_dir", "last_change_done", "evidence_cut", "evidence_since", "reflect", "cmd_hold", "CHANGE_SYNC_MAX", "CHANGE_CONTENT", "load_change", "write_change", "change_ids", "open_change", "change_line", "fresh_sync", "begin_change", "change_diff", "issue_label", "change_comment", "change_start", "change_done", "undo_edits", "change_undo", "cmd_change", "cmd_reflect", "reflect_counts", "REFLECT_ON"),
-    "fc_frame0": ("FRAME0_APP", "FRAME0_PORTS", "FRAME0_CLIENT", "FRAME0_WAIT", "frame0_port", "frame0_pid", "frame0_register", "frame0_post", "frame0_client", "frame0_command", "frame0_proxy", "frame0_mcp", "frame0_empty_doc", "frame0_up", "frame0_save", "frame0_down", "FRAME0_FRAMES", "FRAME0_ICONS", "FRAME0_ALIGN", "FRAME0_TOOLS", "frame0_props", "frame0_arrowhead", "frame0_op", "FRAME0_ID_ARGS", "frame0_refs", "frame0_resolve", "frame0_check", "frame0_line", "frame0_draw", "cmd_frame0"),
-    "fc_f0pages": ("FRAME0_BACKUPS", "FRAME0_FLOW", "FRAME0_LIST", "FRAME0_PRINT", "frame0_load", "frame0_shapes", "frame0_pages", "frame0_page_ref", "frame0_links", "frame0_misplaced", "frame0_dangling", "frame0_lint", "frame0_plan_move", "frame0_plan_delete", "frame0_plan_links", "frame0_describe", "frame0_apply_json", "frame0_apply_api", "frame0_backup", "frame0_edit", "frame0_table", "cmd_frame0_pages"),
-    "fc_ask": ("SESSION_URL", "ASK_FALLBACK", "ASK_HEAD", "url_problem", "card_ids", "decided_cards", "ask_gate"),
-    "fc_hooks": ("GUARDED_TOOLS", "GUARDED_ROLES", "CLI_FILE", "guard_decision", "cmd_guard", "SKILL_DIR", "SKILL_SEEN", "SKILL_FILES", "skill_hashes", "skill_changed", "skill_notice", "cmd_skillcheck"),
-    "fc_crew": ("CREW_STATES", "CLI_REPO", "TOOL_BUGS", "crew_dir", "crew_reports", "tab_closed", "scratch_dir", "listeners_under", "stop_listeners_under", "TRUST_PROMPT", "crew_preamble", "crew_pick", "crew_chain", "crew_pick_full", "crew_fallback", "crew_model", "crew_effort", "crew_workdir", "cmd_crew", "write_report", "crew_unstart", "crew_record", "crew_up", "crew_reporting_to", "crew_reregister", "crew_attention", "desktop_notify", "manager_attention", "cmd_report", "log_tool_bug", "close_after_turn", "finish_clean_after_turn", "crew_closed", "TASK_TAB", "VERIFY_TAB", "teardown", "cmd_teardown"),
-    "fc_toolbug": ("REPO", "SECTIONS", "TOKEN_RE", "scrub", "environment", "issue_text", "gh_status", "open_matches", "post", "record_issue", "cmd_tool_bug_pr", "cmd_tool_bug"),
-    "fc_init": ("TRAIL_INIT", "existing_repo", "setup_trail", "cmd_trail", "TRAIL_INSTALL", "check_deps", "herdr_toml", "herdr_loud", "herdr_toast_warning", "key_problems", "start_problems", "start_checks", "cmd_doctor", "created_from", "move_onto", "cmd_init"),
-    "fc_clean": ("merge_evidence", "merged_into", "first_unmatched", "own_commits", "live_crew", "standing_in", "remove_project", "close_space", "clean_project", "abandon_project", "cmd_clean"),
-    "fc_herdrconf": ("QUIET", "apply_herdr_config", "_edited"),
-    "fc_links": ("ensure_link", "relink_owned", "path_line"),
-    "fc_defaults": ("DEFAULT_MODELS", "PRESET_STEPS", "merge_models", "probe_implementer"),
-    "fc_steprun": ("link_writer", "WRITERS", "PREVIEWS", "run_step", "_run_step"),
-    "fc_finish": ("CLAUDE_MISSING", "finish", "_finish"),
-    "fc_setup": ("MODES", "walk_steps", "run_setup", "cmd_setup"),
-    "fc_update": ("live_dir", "hold", "live_work", "local_commits", "listing", "diverged", "rebase_local", "cmd_update"),
-    "fc_figmaplan": ("FIGMA_API", "figma_api", "PLAN_LIMITS", "DESIGN_SYSTEM_MODES", "plan_tier", "limit_value", "figma_caps", "caps_line", "caps_blockers", "BLOCKED_CARD", "design_pages", "count_pages", "PROBE_SCRIPT", "PROBE_STEPS", "PUBLISH_STEP", "PUBLISH_SLACK", "parse_time", "publish_state", "publish_ruling", "capabilities_report"),
-    "fc_figma": ("FIGMA_CONNECTOR", "FRAMELINK_SETUP", "framelink_fetch", "figma_publish", "DESIGNER_BRIEF", "cmd_designer", "DESIGN_CONCURRENCY", "design_brief", "cmd_designcrews", "TREE_CHUNK_CHARS", "hard_split", "split_node", "tree_chunks", "CONFIRM_TREE_CHARS", "TREE_READING", "TREE_CHOICES", "PART_CHOICES", "TREE_RULES", "PART_RULES", "CONFIRM", "CONFIRM_PART", "combine_choices", "confirm_asks", "figma_judge_chunks", "figma_reask", "store_figma", "STYLE_KEYS", "GENERATED_STYLE", "walk", "put", "inline_styles", "sub_id", "renamed", "restore_hidden", "self_contained", "figma_tree", "figma_capabilities", "cmd_figma"),
-    "fc_briefs": ("detect_stacks", "GROUNDWORK_BRIEF", "cmd_groundwork", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF", "EXPLORE_BRIEF", "cmd_explore", "cmd_wayfinder", "cmd_planner", "cmd_toolsmith", "TEST_BUDGET", "test_brief", "cmd_testcrews", "test_branch", "test_open", "waiting_writers", "test_written", "test_blockers", "test_ready", "test_worktree", "collect_tests"),
-    "fc_libapi": ("INSPECT", "python_api", "js_api", "section"),
-    "fc_implement": ("implementer", "herdr_pi", "LEARNING_RE", "BANNERS", "trail_pack", "branch_budget", "task_base", "PRETTIER_EXT", "prettier_opted_in", "format_files", "READER_TIMEOUT", "read_failure", "HANG_HINT", "timed", "run_test", "cmd_timed", "run_task", "CONTRADICTION_RE", "contradiction"),
-    "fc_jev": ("JEV_TIMEOUT", "TOOL_ERROR_RE", "tool_error", "stop_group", "kill_listeners", "harness_daemons", "end_new_daemons", "e2e_ports", "expand_ports", "alive", "reap_orphans", "SETUP_DEADLINE", "await_setup", "case_setup", "driver_e2e", "jev_e2e", "ASSERT_BROKE_RE", "LOAD_FAIL_RE", "LOGIN_PATH_RE", "path_of", "env_failure", "say_case"),
-    "fc_accept": ("JEV_CODE_CAP", "jev_acceptance"),
-    "fc_verify": ("SIMPLICITY_BAR", "PERSPECTIVES", "well_formed", "llm_review", "verify_failed", "review_inputs", "e2e_stage", "fix_tests", "run_stages", "verify_root", "at_root", "cmd_verify", "fix_strays", "fix_message", "changed_files", "verify_rounds"),
-    "fc_ship": ("LAND_POLL", "LAND_SETTLE", "LAND_METHODS", "layer_checks", "cmd_stack", "layer_branches", "layer_commits", "cmd_reword", "gh", "pr_info", "required_checks", "wait", "land_layer", "cmd_land"),
-    "fc_prove": ("OVERRIDE_KEY", "override_keys", "flag_path_lint", "judge_failure", "prove_case", "prove", "verify_config", "cmd_prove", "prototype_cases", "prototype_report", "cmd_prototype"),
-    "fc_run": ("TRIAGE_BAR", "triage", "cmd_triage", "RUN_PARALLEL", "require_committed", "cmd_run", "preflight", "claude_capped", "run_tasks", "reflect_task", "cmd_resume"),
-    "fc_status": ("project_head", "branch_facts", "task_state", "_git_dirs", "git_dirs", "board_stamp", "_board", "board", "FAILED_STATES", "verify_why", "digest", "render_status", "project_summary", "cmd_projects", "cmd_cost", "cmd_status", "cmd_done", "cmd_top"),
-    "fc_spec": ("file_clashes", "cmd_tasks", "run_waves", "spec_check", "cmd_spec_check", "MAX_TASK_FILES", "MAX_TASK_BRIEF", "too_big"),
-    "fc_watch": ("YOLO_HINT", "FINAL_STATES", "AGENTS_INTERVAL", "Agents", "watch_snapshot", "crew_owners", "NET_ERROR", "NET_IDLE", "NET_NUDGE", "STALL_SECONDS", "watch_mem", "watch_save", "watch_lock", "watch_stalls", "watch_events", "owner_lines", "is_info", "URGENT", "yolo_mark", "watch_filter", "WATCH_INTERVAL", "WATCH_SETTLE", "INFO_HOLD", "watch_key", "watch_scope", "cmd_watch", "cmd_rewake", "crew_in_pane", "cmd_reenter"),
-    "fc_yolo": ("YOLO_NEVER", "YOLO_TAG", "yolo_digest", "cmd_yolo"),
-    "fc_bench": ("pct", "cmd_bench"),
-}
+# The registry lives in tests/modules: rank.txt lists the modules lowest first (each imports only those above it), and
+# <module>.txt lists every name the module defines, in order, one per line, so parallel branches touch different lines.
+REGISTRY = Path(__file__).resolve().parent / "modules"
+
+
+def listed(name):
+    return tuple(line for line in (REGISTRY / f"{name}.txt").read_text().splitlines() if line)
+
+
+RANK = listed("rank")
+MODULES = {m: listed(m) for m in RANK}
 HELPERS = {"fc_cost", "fc_mcp", "fc_sessions"}
 SETDEFAULTS = ["os.environ.setdefault('GRAFT_NO_GITIGNORE', '1')", "os.environ.setdefault('GRAFT_NO_IGNORE', '1')"]
 CONFIG_ONLY = ("DEFAULT_MODEL", "FALLBACK_MODEL", "FALLBACK_AFTER", "TEST_READER", "OPENROUTER_KEY", "LINEAR_KEY", "WORKSPACE", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")
 LAUNCHER_SHA = "6da43b058089b473dce7bba234756d8af893868a06c45fa7cc8a0280ae40f676"
-SUBCOMMANDS = "doctor, setup, update, init, run, verify, bench, resume, done, sync, linear, tasks, spec-check, ready, projects, cost, status, watch, top, stack, reword, land, clean, groundwork, explore, trail, wayfinder, planner, testcrews, designer, designcrews, triage, reflect, hold, yolo, change, crew, report, tool-bug, toolsmith, models, frame0, figma, teardown, guard, rewake, reenter, skillcheck, workspace".split(", ")
+SUBCOMMANDS = list(listed("subcommands"))
 
 
 def parse(name):
@@ -157,10 +113,6 @@ class ModuleChecks:
         self.assertEqual(bad_refs(entry), [])
 
 
-class FcCore(ModuleChecks, unittest.TestCase): module = "fc_core"
-class FcPrompt(ModuleChecks, unittest.TestCase): module = "fc_prompt"
-class FcProc(ModuleChecks, unittest.TestCase): module = "fc_proc"
-class FcAuth(ModuleChecks, unittest.TestCase): module = "fc_auth"
 class FcConfig(ModuleChecks, unittest.TestCase):
     module = "fc_config"
 
@@ -169,29 +121,6 @@ class FcConfig(ModuleChecks, unittest.TestCase):
         self.assertEqual(set(expressions(parse("compose.py"))) & set(SETDEFAULTS), set())
 
 
-class FcTasks(ModuleChecks, unittest.TestCase): module = "fc_tasks"
-class FcPlan(ModuleChecks, unittest.TestCase): module = "fc_plan"
-class FcLinear(ModuleChecks, unittest.TestCase): module = "fc_linear"
-class FcLinearCmd(ModuleChecks, unittest.TestCase): module = "fc_linear_cmd"
-class FcReadguard(ModuleChecks, unittest.TestCase): module = "fc_readguard"
-class FcClaude(ModuleChecks, unittest.TestCase): module = "fc_claude"
-class FcModels(ModuleChecks, unittest.TestCase): module = "fc_models"
-class FcHerdr(ModuleChecks, unittest.TestCase): module = "fc_herdr"
-class FcWorktree(ModuleChecks, unittest.TestCase): module = "fc_worktree"
-class FcChecks(ModuleChecks, unittest.TestCase): module = "fc_checks"
-class FcPi(ModuleChecks, unittest.TestCase): module = "fc_pi"
-class FcKeys(ModuleChecks, unittest.TestCase): module = "fc_keys"
-class FcSteps(ModuleChecks, unittest.TestCase): module = "fc_steps"
-class FcLayers(ModuleChecks, unittest.TestCase): module = "fc_layers"
-class FcStack(ModuleChecks, unittest.TestCase): module = "fc_stack"
-class FcChange(ModuleChecks, unittest.TestCase): module = "fc_change"
-class FcFrame0(ModuleChecks, unittest.TestCase): module = "fc_frame0"
-class FcAsk(ModuleChecks, unittest.TestCase): module = "fc_ask"
-class FcF0pages(ModuleChecks, unittest.TestCase): module = "fc_f0pages"
-class FcCrew(ModuleChecks, unittest.TestCase): module = "fc_crew"
-class FcHooks(ModuleChecks, unittest.TestCase): module = "fc_hooks"
-class FcToolbug(ModuleChecks, unittest.TestCase): module = "fc_toolbug"
-class FcClean(ModuleChecks, unittest.TestCase): module = "fc_clean"
 class FcInit(ModuleChecks, unittest.TestCase):
     module = "fc_init"
 
@@ -207,29 +136,6 @@ class FcInit(ModuleChecks, unittest.TestCase):
         pd.assert_called_once_with(a)
         pw.assert_called_once_with(Path("/p"))
         st.assert_called_once_with(Path("/wt"))
-class FcHerdrconf(ModuleChecks, unittest.TestCase): module = "fc_herdrconf"
-class FcLinks(ModuleChecks, unittest.TestCase): module = "fc_links"
-class FcDefaults(ModuleChecks, unittest.TestCase): module = "fc_defaults"
-class FcSteprun(ModuleChecks, unittest.TestCase): module = "fc_steprun"
-class FcFinish(ModuleChecks, unittest.TestCase): module = "fc_finish"
-class FcSetup(ModuleChecks, unittest.TestCase): module = "fc_setup"
-class FcUpdate(ModuleChecks, unittest.TestCase): module = "fc_update"
-class FcFigmaplan(ModuleChecks, unittest.TestCase): module = "fc_figmaplan"
-class FcFigma(ModuleChecks, unittest.TestCase): module = "fc_figma"
-class FcBriefs(ModuleChecks, unittest.TestCase): module = "fc_briefs"
-class FcLibapi(ModuleChecks, unittest.TestCase): module = "fc_libapi"
-class FcImplement(ModuleChecks, unittest.TestCase): module = "fc_implement"
-class FcJev(ModuleChecks, unittest.TestCase): module = "fc_jev"
-class FcAccept(ModuleChecks, unittest.TestCase): module = "fc_accept"
-class FcVerify(ModuleChecks, unittest.TestCase): module = "fc_verify"
-class FcProve(ModuleChecks, unittest.TestCase): module = "fc_prove"
-class FcShip(ModuleChecks, unittest.TestCase): module = "fc_ship"
-class FcRun(ModuleChecks, unittest.TestCase): module = "fc_run"
-class FcStatus(ModuleChecks, unittest.TestCase): module = "fc_status"
-class FcSpec(ModuleChecks, unittest.TestCase): module = "fc_spec"
-class FcWatch(ModuleChecks, unittest.TestCase): module = "fc_watch"
-class FcYolo(ModuleChecks, unittest.TestCase): module = "fc_yolo"
-class FcBench(ModuleChecks, unittest.TestCase): module = "fc_bench"
 
 
 class Residue(unittest.TestCase):
@@ -246,6 +152,11 @@ class Residue(unittest.TestCase):
         for i, m in enumerate(RANK):
             with self.subTest(m):
                 self.assertLessEqual(fc_imports(parse(f"{m}.py")), set(RANK[:i]) | HELPERS)
+
+    def test_every_module_is_ranked_and_every_list_belongs_to_one(self):
+        self.assertEqual(sorted(p.stem for p in BIN.glob("fc_*.py") if p.stem not in HELPERS), sorted(RANK))
+        self.assertEqual(len(set(RANK)), len(RANK))
+        self.assertEqual(sorted(p.stem for p in REGISTRY.glob("*.txt")), sorted([*RANK, "rank", "subcommands"]))
 
     def test_settings_have_one_owner(self):
         owners = {m: set(defined(parse(f"{m}.py"))) for m in RANK}
@@ -285,7 +196,15 @@ class TestModules(unittest.TestCase):
                 self.assertRegex(f.read_text(), r'(?m)^os\.environ\["HERDR_ENV"\] = ""$')
 
 
-MODULE_CLASSES = {"fc_core": FcCore, "fc_prompt": FcPrompt, "fc_proc": FcProc, "fc_auth": FcAuth, "fc_config": FcConfig, "fc_tasks": FcTasks, "fc_plan": FcPlan, "fc_linear": FcLinear, "fc_linear_cmd": FcLinearCmd, "fc_readguard": FcReadguard, "fc_claude": FcClaude, "fc_models": FcModels, "fc_herdr": FcHerdr, "fc_worktree": FcWorktree, "fc_checks": FcChecks, "fc_pi": FcPi, "fc_keys": FcKeys, "fc_steps": FcSteps, "fc_layers": FcLayers, "fc_stack": FcStack, "fc_change": FcChange, "fc_frame0": FcFrame0, "fc_f0pages": FcF0pages, "fc_ask": FcAsk, "fc_hooks": FcHooks, "fc_crew": FcCrew, "fc_toolbug": FcToolbug, "fc_init": FcInit, "fc_clean": FcClean, "fc_herdrconf": FcHerdrconf, "fc_links": FcLinks, "fc_defaults": FcDefaults, "fc_steprun": FcSteprun, "fc_finish": FcFinish, "fc_setup": FcSetup, "fc_update": FcUpdate, "fc_figmaplan": FcFigmaplan, "fc_figma": FcFigma, "fc_briefs": FcBriefs, "fc_libapi": FcLibapi, "fc_implement": FcImplement, "fc_jev": FcJev, "fc_accept": FcAccept, "fc_verify": FcVerify, "fc_ship": FcShip, "fc_prove": FcProve, "fc_run": FcRun, "fc_status": FcStatus, "fc_spec": FcSpec, "fc_watch": FcWatch, "fc_yolo": FcYolo, "fc_bench": FcBench}
+def module_class(m):
+    """The module's own test class when it has extra tests, else a plain ModuleChecks case, named FcLinearCmd for fc_linear_cmd."""
+    name = "".join(part.capitalize() for part in m.split("_"))
+    if name not in globals():
+        globals()[name] = type(name, (ModuleChecks, unittest.TestCase), {"module": m})
+    return globals()[name]
+
+
+MODULE_CLASSES = {m: module_class(m) for m in RANK}
 
 
 def load_tests(loader, tests, pattern):

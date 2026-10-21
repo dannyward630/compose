@@ -1,0 +1,12 @@
+GUARDED_TOOLS
+GUARDED_ROLES
+CLI_FILE
+guard_decision
+cmd_guard
+SKILL_DIR
+SKILL_SEEN
+SKILL_FILES
+skill_hashes
+skill_changed
+skill_notice
+cmd_skillcheck

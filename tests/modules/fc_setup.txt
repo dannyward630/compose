@@ -1,0 +1,4 @@
+MODES
+walk_steps
+run_setup
+cmd_setup

@@ -1,0 +1,16 @@
+STOP
+Stopped
+HOOKS
+RUNNING
+run
+kill_group
+stop
+on_termination
+AWAKE
+keep_awake
+SLOTS
+QUICK_SLOTS
+SLOT_SAY_AFTER
+SCOPED_RE
+scoped
+slot

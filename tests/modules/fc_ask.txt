@@ -1,0 +1,7 @@
+SESSION_URL
+ASK_FALLBACK
+ASK_HEAD
+url_problem
+card_ids
+decided_cards
+ask_gate

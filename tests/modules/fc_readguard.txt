@@ -1,0 +1,12 @@
+PI_EXT
+OC_PLUGIN
+guard_file
+pack_paths
+write_guard
+command
+AWK_WORDS
+awk_program_ok
+measure
+refusal
+refused
+cli

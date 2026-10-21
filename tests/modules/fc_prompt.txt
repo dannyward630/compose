@@ -1,0 +1,11 @@
+FRAMES
+paint
+intro
+bars
+note
+step
+outro
+select
+confirm
+password
+spin

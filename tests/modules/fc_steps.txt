@@ -1,0 +1,12 @@
+FRAMELINK_ENV
+FRAMELINK_ADD
+HERDR_MIN
+TREEHOUSE_MIN
+FLOORS
+user_mcp_servers
+version_of
+owned_link
+key_ok
+herdr_integration
+check
+STEPS
