@@ -105,3 +105,42 @@ class PiExtension(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "PRICES", {"fakelocal/fake-1": (1, 2)}): self.assertEqual(fc_providers.cost("fakelocal/fake-1", u), 5000 / 1e6)
         self.assertEqual(fc_providers.cost("claude:opus", u), 9.0)
         self.assertIsNone(fc_providers.cost("claude:opus", {"tokens_in": 1, "tokens_out": 2}))
+
+PT_OUT = "\n".join(json.dumps(e) for e in ({"type": "message_update", "usage": {"input": 42, "output": 7}},
+                   {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}))
+PT_FAST = "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"
+
+class PiTurnLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.cwd = self.d / "task"; self.cwd.mkdir(); self.js = self.d / "pi-providers.js"
+        self.run = mock.Mock(return_value=mock.Mock(stdout=PT_OUT, stderr="", returncode=0)); self.ledger = fc.fc_core.Ledger()
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "LEDGER", self.ledger),
+                  mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_models.subprocess, "run", self.run), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_PI_MODEL", None)
+    def turn(self, model):
+        fc.fc_models.pi_turn(self.cwd, model, "hi")
+        return self.run.call_args[0][0], self.run.call_args[1]["env"]
+    def test_local_turn_loads_the_extension_names_the_model_and_costs_nothing(self):
+        argv, env = self.turn("fakelocal/fake-1")
+        self.assertEqual(argv[argv.index("-e"):argv.index("-e") + 2], ["-e", str(self.js)])
+        self.assertEqual((argv[-1], env["COMPOSE_PI_MODEL"]), ("hi", "fakelocal/fake-1"))
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True})
+        self.assertIn("fakelocal $0.0000 (", self.ledger.line())
+    def test_probe_carries_the_extension_before_the_model(self):
+        argv = fc.fc_models.probe_command("pi:fakelocal/fake-1")
+        self.assertEqual(argv[argv.index("-e"):argv.index("-e") + 2], ["-e", str(self.js)])
+        self.assertLess(argv.index("-e"), argv.index("--model"))
+        self.assertEqual((argv[argv.index("--model") + 1], argv[-1]), ("fakelocal/fake-1", "Reply with exactly: ok"))
+        self.assertEqual(fc.fc_models.probe_once("pi:fakelocal/fake-1", 5)[0], True)
+        self.assertEqual(self.run.call_args[1]["env"]["COMPOSE_PI_MODEL"], "fakelocal/fake-1")
+    def test_openrouter_models_are_unchanged(self):
+        for model in ("openrouter/openai/gpt-oss-120b", PT_FAST):
+            with self.subTest(model):
+                argv, env = self.turn(model)
+                self.assertNotIn("-e", argv); self.assertNotIn("COMPOSE_PI_MODEL", env); self.assertEqual(argv[-1], "hi")
+                p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6); self.ledger.rows.clear()
+                self.assertNotIn("-e", fc.fc_models.probe_command("pi:" + model))
+                fc.fc_models.probe_once("pi:" + model, 5); self.assertNotIn("COMPOSE_PI_MODEL", self.run.call_args[1]["env"])
+        self.assertFalse(self.js.exists())
