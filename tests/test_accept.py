@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import hashlib, importlib.machinery, importlib.util, os, unittest
+import hashlib, importlib.machinery, importlib.util, json, os, unittest
 from pathlib import Path
 import sys
 os.environ["HERDR_ENV"] = ""
@@ -53,3 +53,55 @@ class SufficiencyQuestions(unittest.TestCase):
         self.assertEqual(needs(None), ["manual"])
         self.assertEqual(needs({"choice": "bogus", "probabilities": {}}), ["manual"])
         self.assertEqual(needs({"choice": "bogus", "probabilities": {"test": 0.5}}), ["test", "manual"])
+
+
+KEYS = ["event_id", "run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail", "cites", "needs"]
+N1 = {"choice": "test", "probabilities": {"test": 1.0}}
+
+
+def row(eid, phase, result, cids=()):
+    return {"event_id": eid, "criterion_id": list(cids), "phase": phase, "result": result}
+
+
+class SufficiencyEvents(unittest.TestCase):
+    def judge(self, rows, answers):
+        events = fc_accept.sufficiency_events(META, rows, answers, 0.6, "run1", "sha1")
+        self.assertEqual(len(events), 2)
+        for e in events:
+            d = {k: v for k, v in e.items() if k != "event_id"}
+            self.assertEqual(list(e), KEYS)
+            self.assertEqual(e["event_id"], hashlib.sha256(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12])
+        return events
+
+    def test_event_shape_and_cites_at_threshold_in_order(self):
+        rows = [row("r1", "review", "pass"), row("r2", "acceptance", "pass", [C2]), row("r3", "e2e", "pass", [C1])]
+        e1, e2 = self.judge(rows, {"v1": {"choice": "proven"}, "n1": N1, "e1_r1": {"noul": 0.7}, "e1_r3": {"noul": 0.5},
+                                    "v2": {"choice": "contradicted"}, "e2_r1": {"noul": 0.6}, "e2_r2": {"noul": 0.9}})
+        base = {"run_id": "run1", "commit_sha": "sha1", "task_ids": ["031"], "phase": "sufficiency", "source": "verify", "fails_on_base": None}
+        self.assertEqual({k: v for k, v in e1.items() if k != "event_id"}, {**base, "criterion_id": [C1], "result": "proven", "detail": "alpha",
+                                                                              "cites": ["r1"], "needs": fc_accept.sufficiency_needs(N1)})
+        self.assertEqual({k: v for k, v in e2.items() if k != "event_id"}, {**base, "criterion_id": [C2], "result": "contradicted", "detail": "beta",
+                                                                              "cites": ["r1", "r2"], "needs": fc_accept.sufficiency_needs(None)})
+
+    def test_missing_or_unknown_verdict_is_unproven(self):
+        rows = [row("r1", "review", "pass")]
+        e1, e2 = self.judge(rows, {"v2": {"choice": "bogus"}, "e1_r1": {"noul": 1}, "e2_r1": {"noul": 1}})
+        self.assertEqual((e1["result"], e2["result"], e1["cites"]), ("unproven", "unproven", ["r1"]))
+
+    def test_deterministic_fail_unproves_and_joins_cites_once(self):
+        rows = [row("f1", "attempt", "fail", [C1]), row("f2", "final", "fail", [C1]), row("f3", "review", "fail"), row("f4", "sufficiency", "fail", [C2]),
+                row("f5", "acceptance", "fail"), row("p1", "e2e", "pass")]
+        e1, e2 = self.judge(rows, {"v1": {"choice": "proven"}, "e1_f1": {"noul": 1}, "e1_f3": {"noul": 1}, "e1_p1": {"noul": 1},
+                                    "v2": {"choice": "proven"}, "e2_p1": {"noul": 1}})
+        self.assertEqual((e1["result"], e1["cites"]), ("unproven", ["f1", "f3", "p1", "f2"]))
+        self.assertEqual((e2["result"], e2["cites"]), ("proven", ["p1"]))
+
+    def test_deterministic_fail_does_not_change_other_verdicts(self):
+        e1, e2 = self.judge([row("f1", "checks", "fail")], {"v1": {"choice": "contradicted"}, "v2": {"choice": "unproven"}})
+        self.assertEqual((e1["result"], e1["cites"], e2["result"]), ("contradicted", [], "unproven"))
+
+    def test_proven_needs_a_cited_row_other_than_error(self):
+        rows = [row("x1", "checks", "error"), row("p1", "e2e", "pass", [C1])]
+        e1, e2 = self.judge(rows, {"v1": {"choice": "proven"}, "e1_x1": {"noul": 1}, "e1_p1": {"noul": 1}, "v2": {"choice": "proven"}, "e2_x1": {"noul": 1}})
+        self.assertEqual((e1["result"], e2["result"], e2["cites"]), ("proven", "unproven", ["x1"]))
+        self.assertEqual(self.judge([], {"v1": {"choice": "proven"}, "v2": {"choice": "contradicted"}})[0]["result"], "unproven")
