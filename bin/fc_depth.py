@@ -19,7 +19,27 @@ def stack_depth(proj, tasks):
 
 def depth_config(cfg, proj, tasks):
     """(new cfg, depth, task id): the verify cfg at the stack's depth, `cfg` left unchanged."""
-    raise NotImplementedError("depth_config")
+    import fc_routerec
+    import fc_tasks
+    depth, task_id = stack_depth(proj, tasks)
+    issues = fc_tasks.linear_cache(proj).get("issues") or {}
+    code = fc_tasks.code_tasks(tasks)
+    reqs = []
+    for m in code:
+        route = fc_routerec.parse_route((issues.get(m.get("linear")) or {}).get("description") or "")
+        value = (route or {}).get("verification requirements") or ""
+        reqs += [p.strip() for p in value.split(",") if p.strip() and p.strip() != "none"]
+    tests = [m["test"] for m in code] if depth == "FAST" else []
+    new = {**cfg, "depth": depth, "checks": list(dict.fromkeys([*cfg.get("checks", []), *tests, *reqs]))}
+    if "e2e" in cfg:
+        new["e2e"] = list(cfg["e2e"])
+    if depth == "FAST":
+        named = {line.strip()[5:].strip() for m in code for line in m["body"].splitlines() if line.strip().startswith("case:")}
+        new["review"] = False
+        new["e2e"] = [c for c in cfg.get("e2e", []) if c["name"] in named]
+    if depth == "DEEP":
+        new["acceptance_gate"] = True
+    return new, depth, task_id
 
 
 def depth_events(cfg, run_cfg, depth, task_id, sha):
