@@ -363,3 +363,53 @@ class Record(unittest.TestCase):
     def test_a_record_that_fails_raises(self):
         with self.assertRaisesRegex(RuntimeError, "Linear: down"):
             self.reassess(side_effect=RuntimeError("Linear: down"))
+
+
+class Sweep(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        # 001, 005 and 006 passed with an issue; 002 failed, 003 has no result file, 004 has no issue
+        self.tasks = [{"id": t, **({} if t == "004" else {"linear": f"XX-{t}"})} for t in ("001", "002", "003", "004", "005", "006")]
+        for t, status in (("001", "passed"), ("002", "failed"), ("004", "passed"), ("005", "passed"), ("006", "passed")):
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": status}))
+
+    def sweep(self, ids=("001", "002", "003", "004", "005", "006"), key="lin_test", kinds=("diff",), reassess=None, run_id=lambda proj, t: f"run-{t}"):
+        """catch_up with `reassess` mocked; returns (its return value, the mock)."""
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc_reroute, "reassess", **reassess or {}) as re, \
+                mock.patch.object(fc_reroute, "layer_base", side_effect=lambda repo, proj, t, trunk: f"{trunk}/below-{t}"), mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=run_id):
+            return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re
+
+    def test_each_passed_task_with_an_issue_is_reassessed_for_diff_in_order_with_its_run_id_layer_base_and_branch(self):
+        got, re = self.sweep(("006", "001", "005"))
+        self.assertEqual(got, {})
+        self.assertEqual([c.args for c in re.call_args_list], [(self.repo, self.proj, next(m for m in self.tasks if m["id"] == t), self.tasks, ["diff"], f"run-{t}", f"main/below-{t}",
+                                                                  fc.fc_worktree.task_branch(self.repo, self.proj, t)) for t in ("006", "001", "005")])
+
+    def test_tasks_not_passed_without_a_result_file_or_without_an_issue_are_skipped(self):
+        (self.proj / "results" / "006.json").write_text(json.dumps({"id": "006", "status": "already_green"}))
+        got, re = self.sweep()
+        self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({}, ["001", "005"]))
+
+    def test_without_a_linear_key_or_without_the_diff_kind_nothing_is_reassessed(self):
+        for key, kinds in (("", ("diff",)), (None, ("diff",)), ("lin_test", ())):
+            with self.subTest(key=key, kinds=kinds):
+                got, re = self.sweep(key=key, kinds=kinds)
+                self.assertEqual((got, re.call_count), ({}, 0))
+
+    def test_a_failure_is_returned_under_its_id_and_the_other_tasks_go_on(self):
+        def boom(repo, proj, meta, *a):
+            if meta["id"] == "001": raise RuntimeError("Linear: down")
+        got, re = self.sweep(reassess={"side_effect": boom})
+        self.assertEqual((got, re.call_count), ({"001": "Linear: down"}, 3))
+        got, re = self.sweep(run_id=lambda proj, t: [][0] if t == "005" else "r")
+        self.assertEqual((list(got), re.call_count), (["005"], 2))
+
+    def test_payment_required_propagates_and_stops_the_sweep(self):
+        seen = []
+        def broke(repo, proj, meta, *a): seen.append(meta["id"]); raise fc.fc_models.PaymentRequired("typesafe", "top up")
+        with self.assertRaises(fc.fc_models.PaymentRequired):
+            self.sweep(reassess={"side_effect": broke})
+        self.assertEqual(seen, ["001"])
