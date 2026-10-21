@@ -1,6 +1,7 @@
 """The product owner's models block as setup's default, the OpenRouter preset steps, and setup's implementer probe."""
 import copy, json
 
+import fc_config
 import fc_models
 
 
@@ -51,4 +52,6 @@ def probe_implementer(cfg):
     ok, why = fc_models.model_available(model)
     if ok:
         return True, [f"implementer {model}: {why}"]
+    if fc_config.provider_of(model) is not None:
+        return False, [why]
     return False, [why, *PRESET_STEPS]

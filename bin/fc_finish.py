@@ -43,7 +43,9 @@ def _finish(results, yes, dry=False):
         if names or n:
             lines.append(("would add" if dry else "added") + " default models to ~/.compose/config.json: " +
                          ", ".join(names + ([f"crew ({n} roles)"] if n else [])))
-    lines += fc_defaults.PRESET_STEPS
+    local = fc_config.provider_of(merged["models"]["implementer"]) is not None
+    if not local:
+        lines += fc_defaults.PRESET_STEPS
     ws, _ = fc_config.settings(cfg)
     status = fc_keys.key_status(fc_auth.read_auth(fc_config.AUTH_PATH), ws, fc_steps.FRAMELINK_ENV)
     missing = [k for k in ("openrouter", "typesafe", "linear") if not status[k]]
@@ -51,9 +53,9 @@ def _finish(results, yes, dry=False):
         lines += [fc_keys.skipped_line(k, ws) for k in missing]
     ready = not missing
     probe_ok = None
-    if dry and not yes and status["openrouter"]:
+    if dry and not yes and (status["openrouter"] or local):
         lines.append(f"would check implementer {merged['models']['implementer']}")
-    elif not yes and status["openrouter"]:
+    elif not yes and (status["openrouter"] or local):
         ok, probe_lines = fc_defaults.probe_implementer(merged)
         lines += [line for line in probe_lines if line not in fc_defaults.PRESET_STEPS]
         ready = ready and ok
