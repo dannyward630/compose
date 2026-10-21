@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, os, unittest
+import importlib, importlib.machinery, importlib.util, os, unittest
 from pathlib import Path
 import subprocess, sys, tempfile
 from unittest import mock
@@ -113,3 +113,43 @@ class Prove(unittest.TestCase):
 
 class Record(unittest.TestCase):
     """A proof's red and final rows go on the task's ledger."""
+    META = {"id": "001", "linear": "ENG-3"}
+    SHA = "0123456789abcdef0123456789abcdef01234567"
+
+    def setUp(self):
+        self.ledger = importlib.import_module("fc_ledger")  # the foundation's module, not on every branch
+        self.add = mock.Mock(return_value=True)
+        for patch in (mock.patch.object(self.ledger, "add_row", self.add), mock.patch.object(self.ledger, "run_id", return_value="run-1"),
+                      mock.patch.object(self.ledger, "criterion_ids", return_value=["001.1:ab", "001.2:cd"])):
+            patch.start(); self.addCleanup(patch.stop)
+
+    def proof(self, base=("fail_expected", True), tip_exit=0, **kw):
+        return dict({"commit": self.SHA, "base_sha": "b" * 40, "base": base, "tip_sha": "t" * 40, "tip_exit": tip_exit}, **kw)
+
+    def rows(self, red, final):
+        e, c = self.ledger.event, ["001.1:ab", "001.2:cd"]
+        return [e("run-1", "b" * 40, ["001"], c, "red", "run", red[0], red[1], "regression test 0123456789ab " + red[2] + " on the base"),
+                e("run-1", "t" * 40, ["001"], c, "final", "run", final[0], None, "regression test 0123456789ab " + final[1] + " on the fix")]
+
+    def test_rows_by_the_base_and_the_tip(self):
+        for base, tip_exit, red, final in ((("fail_expected", True), 0, ("fail_expected", True, "fails"), ("pass", "passes")),
+                                           (("pass", False), 0, ("pass", False, "passes"), ("pass", "passes")),
+                                           (("error", None), 1, ("error", None, "errors"), ("fail", "fails")),
+                                           (("fail_expected", True), 2, ("fail_expected", True, "fails"), ("fail", "fails"))):
+            with self.subTest(base=base, tip_exit=tip_exit):
+                self.add.reset_mock()
+                fc_regproof.record_proof(Path("p"), self.META, self.proof(base, tip_exit))
+                self.add.assert_called_once_with("ENG-3", self.rows(red, final))
+
+    def test_a_failed_pick_has_an_empty_tip_sha(self):
+        fc_regproof.record_proof(Path("p"), self.META, self.proof(("pass", False), 1, tip_sha=""))
+        self.assertEqual(self.add.call_args[0][1][1]["commit_sha"], "")
+
+    def test_a_task_without_an_issue_is_passed_none(self):
+        fc_regproof.record_proof(Path("p"), {"id": "001"}, self.proof())
+        self.assertIsNone(self.add.call_args[0][0])
+
+    def test_returns_what_add_row_returned(self):
+        for ret in (True, False):
+            self.add.return_value = ret
+            self.assertIs(fc_regproof.record_proof(Path("p"), self.META, self.proof()), ret)
