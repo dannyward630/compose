@@ -92,11 +92,13 @@ The engineering manager relays their questions to you, and you can answer there 
 
 ## When you step away
 
-Run `/compose:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
+Run `/compose:away [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
 Your words pre-answer the questions they name, taken exactly as written and never stretched by analogy.
 Every answer it takes is logged and stays marked unconfirmed in the feature's Decisions so far until you confirm it, and a billing halt still notifies you.
-`/compose:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
-When you are back, `/compose:yolo off` prints a digest of your instructions, what was decided for you (to confirm or change in one ask), what waits on you, what failed, what is done, and the cost.
+`/compose:away --push` also gives permission in advance to submit the verified stack as draft pull requests.
+When you are back, `/compose:away off` prints a digest of your instructions, what was decided for you (to confirm or change in one ask), what waits on you, what failed, what is done, and the cost.
+`/compose:yolo [words]` works the same but stays on until you send `yolo:off`, and your other messages steer it without ending it.
+`/compose:away digest` or `/compose:yolo digest` prints the digest and leaves it on.
 
 The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -186,7 +188,8 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `compose resume --project <name>` | Continues after a billing halt |
 | `compose clean --project <name>` | Removes what has merged, including a stack re-cut onto a moved base, and moves it to Done in Linear, story and feature included; names the first unmatched commit of each branch it keeps |
-| `compose yolo --project <name> [--push] [words]\|--clear-words\|off` | Lets the engineering manager answer for you while you are away, and prints a digest when you turn it off |
+| `compose away --project <name> [--push] [words]\|--clear-words\|digest\|off` | Lets the engineering manager answer for you while you are away, until your first message, and prints a digest when you turn it off |
+| `compose yolo --project <name> [--push] [words]\|--clear-words\|digest\|off` | Lets the engineering manager answer for you until you send `yolo:off`, while you still steer, and prints a digest when you turn it off |
 | `compose workspace [<name>]` | Lists or switches billing workspaces; `workspace key` sets a key in `~/.compose/auth.json` |
 
 Every command is documented in [docs/cli.md](docs/cli.md).
