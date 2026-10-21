@@ -40,6 +40,7 @@ Keys reach pi and jev through the environment, and OpenCode through a key file `
 ## Config
 
 The commands edit `~/.compose/config.json` (mode 600), which holds no keys.
+[config.md](config.md) lists every key in it.
 The active workspace is merged over the top level:
 
 ```json

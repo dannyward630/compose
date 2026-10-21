@@ -207,6 +207,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | [herdr.md](docs/herdr.md) | Watching and steering every agent inside herdr |
 | [tasks.md](docs/tasks.md) | The task issue format and `sync` |
 | [verify.md](docs/verify.md) | `verify.json`, the stages, e2e, and jev |
+| [config.md](docs/config.md) | Every `config.json` key, what it takes, and what a bad entry does |
 | [workspaces.md](docs/workspaces.md) | Workspaces, model config, and billing halts |
 
 ## Development
