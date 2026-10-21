@@ -1,9 +1,10 @@
 """The setup steps table: one row per step, read by doctor and the setup flow.
 A row is (name, check, install, level, needs_claude, mode); level is required, default, or designer; mode is run, interactive,
-manual (never run), write (compose's own writer; install is `compose setup`), or key."""
+manual (never run), write (compose's own writer; install is `compose setup`), key, or perms (rules for the user's Claude Code settings,
+written by fc_perms.offer only on the user's yes)."""
 import json, re, shutil
 from pathlib import Path
-import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_pi, fc_keys
+import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_pi, fc_keys, fc_perms
 
 
 FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
@@ -106,6 +107,7 @@ STEPS = (  # the rows, in setup order
     ("TEXT_MODEL lines", lambda co: (fc_pi.text_model_set(fc_config.ENV_FILE), ""), "compose setup", "default", False, "write"),
     ("git rerere", lambda co: (fc_checks.rerere_set(), ""), "git config --global rerere.enabled true", "default", False, "run"),
     ("pi auth.json override", lambda co: (not fc_pi.pi_auth_overrides(fc_pi.PI_AUTH), ""), f"remove the openrouter and openrouter-fast entries from {fc_pi.PI_AUTH}: pi reads those entries before the workspace key, so they override the workspace key", "default", False, "manual"),
+    (fc_perms.NAME, fc_perms.check, "compose setup", "default", False, "perms"),
     ("framelink-figma", lambda co: ("framelink-figma" in user_mcp_servers(), ""), FRAMELINK_ADD, "designer", True, "run"),
     ("framelink-figma token", lambda co: key_ok("figma"), "put a Figma personal access token in ~/.config/figma-context-mcp/.env as one line FIGMA_API_KEY=<token>, chmod 600", "designer", False, "key"),
 )

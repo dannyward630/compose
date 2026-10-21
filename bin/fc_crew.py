@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -246,9 +246,9 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
-    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "crew"  # `guard` keeps the team lead and the planner off the code
+    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "planner" if a.role.startswith("planner-") else "crew"  # `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code
     tab = fc_herdr.herdr_tab(space, fc_herdr.tab_label(proj, title), cwd, "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
-                             check=True)
+                             *[x for k, v in (fc_providers.pi_env(fc_models.pi_id(model)) if model.startswith("pi:") else {}).items() for x in ("--env", f"{k}={v}")], check=True)
     pane = tab["root_pane"]["pane_id"]
     brief_file = crew_dir(proj) / f"{name}.brief.md"  # the session's first prompt points here, so no later `herdr agent prompt` can be mistaken for the brief
     reports_to = os.environ.get("COMPOSE_ROLE") or "manager"  # who started it is who it reports to: the engineering manager has no role
@@ -266,7 +266,7 @@ def cmd_crew(a):
     try:
         if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
             fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
-                  *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
+                  *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), *fc_providers.pi_args(fc_models.pi_id(model)), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), "--append-system-prompt", TRUST_PROMPT)
         else:
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
@@ -413,7 +413,7 @@ def cmd_report(a):
     message = " ".join(a.message)
     if not crew_record(proj, a.as_):
         crew_reregister(proj, a.as_)
-    if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, message)) is None:
+    if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, message, (crew_record(proj, a.as_) or {}).get("reports_to", ""))) is None:
         return
     write_report(proj, a.as_, a.state, message)
     if a.state == "tool-bug":

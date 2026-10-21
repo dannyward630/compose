@@ -108,6 +108,14 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
         self.assertEqual(self.writer_branches(), [])
 
+    def test_a_collected_writer_is_not_started_again(self):
+        self.start_writers([])
+        self.crew_commits("001", "a_test.go", "a\n")
+        fc.fc_briefs.collect_tests(self.proj, "001")
+        started = []
+        self.start_writers(started)
+        self.assertEqual(started, ["tests-002"])  # 001's test is on the project branch; 002 was never collected
+
     def test_a_redone_writer_that_waits_for_another_writer_is_started_by_the_collect(self):
         """A re-plan changed passed tasks 001 and 003, which share a_test.go: --redo starts 001's writer, and the collect starts 003's."""
         self.add_task("003", "a_test.go")
@@ -125,6 +133,33 @@ class TestCrewWorktrees(unittest.TestCase):
         with crews[0], crews[1], mock.patch("sys.stdout", io.StringIO()):
             fc.fc_briefs.collect_tests(self.proj)
         self.assertEqual(started, ["tests-001", "tests-003"])
+
+    def capped_writers(self, started, cap=1):
+        (self.proj / "results" / "contract.md").write_text("c")
+        crews = (mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)),
+                 mock.patch.object(fc.fc_config, "PARALLEL", cap), mock.patch("sys.stdout", io.StringIO()))
+        for c in crews: c.start(); self.addCleanup(c.stop)
+        ns = SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, collect=False, budget=None)
+        fc.fc_briefs.cmd_testcrews(ns)
+
+    def test_a_writer_queued_past_the_cap_still_starts_before_a_later_writer_of_its_file(self):
+        self.add_task("003", "b_test.go")  # shares b_test.go with 002, which the cap of 1 queues behind 001
+        started = []
+        self.capped_writers(started)
+        self.assertEqual(started, ["tests-001"])
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual(started, ["tests-001", "tests-002"])  # 003 waits for 002, not the other way round
+
+    def test_collect_never_starts_writers_past_the_cap(self):
+        self.add_task("003", "c_test.go")
+        started = []
+        self.capped_writers(started)
+        fc.fc_briefs.collect_tests(self.proj)  # 001 is still writing: its branch is open, so the cap of 1 is full
+        self.assertEqual(started, ["tests-001"])
+        self.crew_commits("001", "a_test.go", "a\n", state="done")
+        fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual(started, ["tests-001", "tests-002"])
 
     def test_writers_of_a_protected_file_that_already_exists_start_together(self):
         (self.repo / "a_test.go").write_text("pinned\n"); self.run("add", "a_test.go"); self.run("commit", "-qm", "stubs")  # groundwork wrote it, no writer edits it

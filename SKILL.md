@@ -130,6 +130,7 @@ Leave `model:` unset. A task that seems to need a stronger model is a task to sp
 There is no fallback by default. When `models.fallback` is set, a task stays on its model for `models.fallback_after` failed attempts (default 2: misses, errors, and timeouts count) and then moves to the fallback in a fresh session that carries the failure; a rate limit, or a provider too busy to start the turn (a 429 or a 5xx before any token), moves it at once, and with no fallback it gets a fresh session after a wait without spending an attempt; verify's fix rounds after the first use it too. `bench` never falls back.
 `run` and `resume` probe every model they may call (each task's, and the fallback) with one tiny prompt before cloning anything; a wrong model id or preset slug stops the run there with the provider's message.
 Models, the fallback, and the OpenRouter key come from the active workspace in `~/.compose/config.json` (`compose workspace [name | add | key | remove <name>]`, or `/compose:workspace`; `default` always exists); `run` and `verify` print `workspace <name>` first, so check it before spending.
+A local OpenAI-compatible server is declared under `providers` in that config (`base_url`, optional `models`), and a model id `pi:<provider>/<model>` (pi) or `<provider>/<model>` (OpenCode) runs on it at `$0.0000`; a keyed one takes `compose workspace key <name> --provider <provider>`. `run` and `resume` stop before cloning when the server does not answer `GET <base_url>/models`.
 
 The issue's title is the task's title. Its description is the brief, then the block the CLI reads, last:
 
@@ -158,7 +159,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 ````
 
 - `id` is the stack order a reviewer reads in, except that a task always sits above its `after` tasks; ids are unique within the feature.
-- `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs. Any other blocker (a design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`.
+- `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature. Each one becomes the layer this task stacks on, and makes it wait, so link only a task whose code this one needs. Any other blocker (a design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`, unless its task branch or project top layer is an ancestor of the trunk. `run` prints each release proof or hold reason.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it. One labelled `Task` is a hand task (a lowfi flow in Frame0): `run` never dispatches it, and spec-check counts it as one of its story's tasks.
 - A design task (0d) adds `kind: design` and replaces `files:` with `nodes:`, the Figma page and top-level names it may touch; its `test:` is `compose figma judge --project <slug> --only NNN`. An optional `figma:` line (file key or url) names the task's own Figma file when it is not the stored one.
 

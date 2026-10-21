@@ -476,6 +476,14 @@ class ImplementerContradiction(unittest.TestCase):
             self.assertEqual(fc.fc_implement.contradiction(f"Read a.txt.\n{line}\n"), found, line)
         self.assertIsNone(fc.fc_implement.contradiction("`CONTRADICTION: <what the brief says> / <what the code shows, file:line>`"))
 
+    def test_a_field_that_says_there_is_none_is_not_a_contradiction(self):
+        for none in ("none", "None.", "none - the brief and the code agreed.", "NONE: all matched", "n/a", "N/A - nothing", "no contradiction", "No contradiction found.", "none\u2014agreed"):
+            self.assertIsNone(fc.fc_implement.contradiction(f"Done.\nCONTRADICTION: {none}\n"), none)
+            self.assertIsNone(fc.fc_implement.contradiction(f"Done.\n**CONTRADICTION:** {none}\n"), none)
+        for real in ("the brief says none exist / a.txt:1 defines one", "nonexistent file a.txt / brief names it", "none of the exports the brief lists exist / a.txt:1",
+                     "brief says no contradiction is possible / code shows one, a.txt:1", "n/aplan / x"):
+            self.assertEqual(fc.fc_implement.contradiction(f"CONTRADICTION: {real}"), real, real)
+
 
 class AutoReflect(unittest.TestCase):
     def setUp(self):

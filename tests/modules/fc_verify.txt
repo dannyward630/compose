@@ -6,6 +6,8 @@ verify_failed
 review_inputs
 e2e_stage
 fix_tests
+save_output
+failure_summary
 run_stages
 verify_root
 at_root

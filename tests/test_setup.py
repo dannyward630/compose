@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_prompt, fc_steps, fc_steprun, fc_keys, fc_finish, fc_config, fc_setup
+import fc_prompt, fc_steps, fc_steprun, fc_keys, fc_finish, fc_config, fc_perms, fc_setup
 
 CHECKOUT = Path(fc_setup.__file__).resolve().parents[1]
 RESULTS = [("gh", "done")]
@@ -32,6 +32,7 @@ class Flow(unittest.TestCase):
             log.append(("spin", label)); yield; log.append(("spun",))
         with fake(fc_prompt, "intro"), fake(fc_prompt, "select", mode), fake(fc_prompt, "note"), fake(fc_prompt, "outro"), \
              fake(fc_setup, "walk_steps", (RESULTS, designer)), fake(fc_keys, "ask_keys"), fake(fc_finish, "finish", (["a", "b", "end"], 3)), \
+             mock.patch.object(fc_perms, "offer", return_value=[]), \
              mock.patch.object(fc_prompt, "spin", spin), mock.patch.object(fc_steps, "STEPS", ()), mock.patch("shutil.which", return_value=None), \
              mock.patch("os.execvp", side_effect=AssertionError("exec")), mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: stdin)), \
              mock.patch.object(sys, "stdout", out), self.assertRaises(SystemExit) as r:
@@ -164,7 +165,7 @@ class NoTextualApp(unittest.TestCase):
 
 ENDING = ["would add default models to ~/.compose/config.json: a", "copied herdr", "would move linear out of ~/.compose/.env", "not finished"]
 class DryFlow(unittest.TestCase):
-    def flow(self, yes, dry, rows=ROWS, keys=["openrouter"], ending=(ENDING, 1)):
+    def flow(self, yes, dry, rows=ROWS, keys=["openrouter"], ending=(ENDING, 1), offered=[]):
         self.log, out = [], Out(); out.tty = True
         def spy(module, name, ret):
             sig = inspect.signature(getattr(module, name))
@@ -175,6 +176,7 @@ class DryFlow(unittest.TestCase):
         run = lambda row, checkout, dry, **k: ("ok", "") if row[1](checkout)[0] else ("would", f"would run: {row[2]}") if dry else ("done", "")
         answers = {"Set up gh?": True, "Set up brew?": True, "Set up figma?": False, "Set up pi?": False}
         with mock.patch.object(fc_steps, "STEPS", rows), spy(fc_steprun, "run_step", run), spy(fc_keys, "ask_keys", keys), \
+             mock.patch.object(fc_perms, "offer", return_value=offered) as self.offer, \
              spy(fc_finish, "finish", ending), mock.patch.object(fc_prompt, "spin", lambda label: contextlib.nullcontext()), \
              mock.patch.object(fc_prompt, "confirm", side_effect=lambda question, default: answers[question]) as self.confirm, \
              mock.patch.object(fc_prompt, "select", return_value=1) as self.select, mock.patch.object(fc_prompt, "password", return_value=""), \
@@ -204,6 +206,13 @@ class DryFlow(unittest.TestCase):
         self.assertEqual((code, outro, self.confirm.call_count, sum(l.endswith(" [set]") for l in lines)),
                          (0, ("dry run: nothing changed; 0 changes listed above",), 0, 3))
 
+    def test_permission_rules_are_offered_after_the_steps_and_lead_the_summary(self):
+        code, lines, intro, summary, outro = self.flow(False, True, offered=["would add 3 permission rule(s)"])
+        self.assertEqual((self.offer.call_args, summary, outro), (mock.call(False, True), [("Summary", ["would add 3 permission rule(s)", *ENDING])],
+                                                                  ("dry run: nothing changed; 6 changes listed above",)))
+        self.flow(False, False)
+        self.assertEqual(self.offer.call_args, mock.call(False, False))
+
     def test_cmd_setup_passes_dry_run(self):
         with mock.patch.object(fc_setup, "run_setup", return_value=4) as run, mock.patch("os.execvp", side_effect=AssertionError("exec")), \
              mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: True)), mock.patch.object(sys, "stdout", Out()) as out, \
@@ -216,7 +225,7 @@ class TopImports(unittest.TestCase):
 
     def test_the_fc_modules_are_imported_on_one_top_level_line(self):
         lines = [ast.unparse(n) for n in self.tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-        self.assertEqual([l for l in lines if "fc_" in l], ["import fc_checks, fc_config, fc_finish, fc_keys, fc_prompt, fc_steprun, fc_steps"])
+        self.assertEqual([l for l in lines if "fc_" in l], ["import fc_checks, fc_config, fc_finish, fc_keys, fc_perms, fc_prompt, fc_steprun, fc_steps"])
 
     def test_no_function_holds_an_import(self):
         found = [f"{f.name}: {ast.unparse(i)}" for f in ast.walk(self.tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))

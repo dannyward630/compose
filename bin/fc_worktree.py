@@ -154,11 +154,23 @@ def slot_on(repo, branch, holder, detach=False):
     if p.returncode:
         raise RuntimeError(f"treehouse get for {holder}\n{p.stdout}\n{p.stderr}")
     path = Path(json.loads(p.stdout)["path"])
+    checkout_in_slot(path, branch, detach)
+    return path
+
+def checkout_in_slot(path, branch, detach=False):
     fc_core.sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
     for d in fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], path, check=False).stdout.splitlines():
         if Path(d).name in fc_config.DEP_DIRS and (path / d).is_symlink():
             (path / d).unlink()
-    return path
+
+def park_slot(path, at):
+    """Empty a slot of its holder's work, keeping its lease and installs, so the next holder can take it without a gap in which
+    another project's lease takes it: detached at `at`, the holder's branch free to delete, and compose's leftovers gone as in
+    release_slot. The lease keeps the first holder's label: treehouse does not relabel a leased slot."""
+    clear_leftovers(path)
+    fc_core.sh(["git", "checkout", "-q", "--detach", at], path)
+    fc_core.sh(["git", "reset", "-q", "--hard"], path)
+    fc_core.sh(["git", "clean", "-fdq"], path)  # ignored files stay, as `return` keeps them
 
 def pool_shortfall(repo, need):
     """None when the pool can lease `need` more slots, else one line: how many it needs, how many are free, who holds the rest.
@@ -206,13 +218,16 @@ def review_base(repo, cfg):
 def release_slot(repo, path):
     """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
+    clear_leftovers(path)
+    treehouse(repo, "return", "--force", str(path), check=False)
+
+def clear_leftovers(path):
     for d in (".compose", "graft", ".trail"):
         t = Path(path) / d
         if t.is_symlink() or t.is_file():
             t.unlink()
         elif t.is_dir():
             shutil.rmtree(t, ignore_errors=True)
-    treehouse(repo, "return", "--force", str(path), check=False)
 
 def common_dir(path):
     """The git common dir of the checkout at `path`, None when it is not in one: every worktree of a repository shares it."""

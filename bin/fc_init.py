@@ -1,6 +1,6 @@
 import json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
-import fc_auth, fc_checks, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_herdr, fc_worktree, fc_layers, fc_crew
+import fc_auth, fc_checks, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_providers, fc_herdr, fc_worktree, fc_layers, fc_crew
 
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
@@ -44,9 +44,10 @@ def cmd_trail(a):
 TRAIL_INSTALL = "npm i -g @trailhq/trail-code"
 
 def check_deps(role=None):
-    """Print one `MISSING: <name>[: <detail>] (install: <command>)` line per setup step that is not ok, without any network call;
-    a key row names the key and its fix, never a value. herdr's config is one more row (loud toasts or sounds are the detail),
-    optional, fixed by `compose setup`. While `claude` itself is missing, the rows that need it share one `waiting on Claude Code:`
+    """Print one `MISSING: <name>[: <detail>] (install: <command>)` line per setup step that is not ok; the setup steps make
+    no network call, but each local provider row pings its server once (a 5 s GET). a key row names the key and its fix,
+    never a value. herdr's config is one more row (loud toasts or sounds are the detail), optional, fixed by `compose setup`,
+    and the local provider rows follow it. While `claude` itself is missing, the rows that need it share one `waiting on Claude Code:`
     line instead of a MISSING line each (they still count as missing when required). Returns the required steps that are missing:
     those stop `init`; the optional ones only warn. With no role the designer rows are opt-in: a miss among them gets one
     `designer extras not set up: compose setup, choose the designer rows` line instead, never the waiting line, never returned.
@@ -54,7 +55,7 @@ def check_deps(role=None):
     bad, waiting, designer = [], [], False
     checkout = Path(__file__).resolve().parents[1]
     claude = bool(shutil.which("claude"))
-    for row in (*fc_steps.STEPS, ("herdr config", lambda co: herdr_loud(), "compose setup", "default", False, "run")):
+    for row in (*fc_steps.STEPS, ("herdr config", lambda co: herdr_loud(), "compose setup", "default", False, "run"), *fc_providers.doctor_rows()):
         name, _, install, needed, needs_claude, mode = row
         if role and needed != role:
             continue

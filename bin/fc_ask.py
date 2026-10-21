@@ -42,9 +42,10 @@ def decided_cards(issues, ids):
         out |= {i for i in ids if any(re.match(rf"[\s*_`(\[]*{re.escape(i)}(?!\w)", l) for l in lines)}
     return out
 
-def ask_gate(proj, message):
+def ask_gate(proj, message, hop=""):
     """What `report needs-user` sends: the message (a verified link and the text fallback added, repeats marked), or None when it
-    must not go out. Exits with the reason when a page link is missing, doubled, or does not answer."""
+    must not go out. Exits with the reason when a page link is missing, doubled, or does not answer. A card is asked once per `hop`
+    (whom the reporter reports to): a teammate's ask to its team lead does not use up the team lead's ask to the engineering manager."""
     urls = list(dict.fromkeys(SESSION_URL.findall(message)))
     if re.search(r"open in Lavish", message, re.I) and not urls:
         sys.exit("not reported: a visual page needs its link in the message. Run `npx -y lavish-axi <file>` and put the `url:` it prints in the line.")
@@ -60,7 +61,7 @@ def ask_gate(proj, message):
         return message
     reminder = message.lower().startswith("reminder:")
     head = ASK_HEAD.match(message)
-    scope = f"{head[1] or ''}/{head[2]}" if head else "?"
+    scope = (f"{hop}@" if hop else "") + (f"{head[1] or ''}/{head[2]}" if head else "?")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature")
     open_ids = [i for i in ids if i not in decided_cards([x for x in (head[2] if head else None, feature) if x], ids)]
     if not open_ids:

@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import fcntl, os, pty, re, select, subprocess, sys, tempfile, termios, time, unittest
+import fcntl, json, os, pty, re, select, subprocess, sys, tempfile, termios, time, unittest
 from pathlib import Path
 from types import SimpleNamespace
 os.environ["HERDR_ENV"] = ""
@@ -103,6 +103,7 @@ STEP_LINES = ["◇  gh: ok", "◇  compose CLI link: done", "◇  ~/.local/bin o
 PATHS = {".local/bin/compose", ".local/bin/bp", ".claude/skills/compose", ".pi/agent/models.json", ".compose/.env", ".compose/config.json",
          ".config/herdr/config.toml"}
 SKIP = [("(Enter skips): ", ""), ("Continue without it? (y/N) ", "y")]
+PERMS_YES, PERMS_NO = ("settings.json? (Y/n) ", "y"), ("settings.json? (Y/n) ", "n")
 
 
 def assert_run(test, r, code, last):
@@ -115,12 +116,14 @@ class Prompted(SetupE2E, unittest.TestCase):
     """`compose setup` on a terminal, answered in the pty (task 006)."""
 
     def test_quick_start_with_every_key_skipped(self):
-        r = self.run_setup(answers=[("number [1]: ", "1"), *SKIP * 3])
+        r = self.run_setup(answers=[("number [1]: ", "1"), PERMS_YES, *SKIP * 3])
         assert_run(self, r, 1, "└  setup is not finished: missing OpenRouter, TypeSafe, Linear")
         at = [next(i for i, line in enumerate(r.lines) if part in line) for part in
               ("┌  compose setup", "◆  How do you want to set up?", STEP_LINES[0], "OpenRouter key (Enter skips)", "◇  Summary")]
         self.assertEqual(at, sorted(at))
-        self.assertNotIn("(Y/n)", r.text)
+        self.assertEqual(r.text.count("(Y/n)"), 1)
+        self.assertEqual(json.loads((r.home / ".claude" / "settings.json").read_text())["permissions"]["allow"],
+                         ["Bash(gh pr view *)", "Bash(compose land *)", "Bash(git branch -f compose/*)"])
         self.assertIn("git config --global rerere.enabled true", r.calls)
 
 
@@ -157,7 +160,7 @@ class StepDetail(SetupE2E, unittest.TestCase):
     """A step's │ lines never repeat the name or only the state of the ◇ header above them (task 023)."""
 
     def test_detail_lines_never_repeat_their_header(self):
-        r = self.run_setup(answers=[("number [1]: ", "1"), *SKIP * 3])
+        r = self.run_setup(answers=[("number [1]: ", "1"), PERMS_NO, *SKIP * 3])
         under, head = {}, None
         for line in r.lines:
             if not line.startswith("│"):

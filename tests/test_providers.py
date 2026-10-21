@@ -1,0 +1,553 @@
+import hermetic  # first: no test sees the real home
+import importlib.machinery, importlib.util, io, json, os, socket, subprocess, sys, tempfile, threading, unittest, urllib.error, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+os.environ["HERDR_ENV"] = ""
+
+_spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
+fc = importlib.util.module_from_spec(_spec)
+for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
+_spec.loader.exec_module(fc)
+import fc_providers  # bin/ is on sys.path once compose.py is loaded
+import fc_defaults, fc_finish, fc_steps
+
+FAKE = {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1", "fake-2"]}
+
+def cp_apply(test, cfg):
+    """A scratch config.json holding `cfg`, fc_config pointed at it, and apply_config() run; every global it sets is restored."""
+    c, d = fc.fc_config, Path(tempfile.mkdtemp()); (d / "config.json").write_text(json.dumps(cfg))
+    for p in [mock.patch.object(c, "CONFIG_PATH", d / "config.json"), mock.patch.object(c, "AUTH_PATH", d / "auth.json"), mock.patch.object(c, "ENV_FILE", d / ".env"),
+              mock.patch.object(c, "PROBE_CACHE", d / "model-probe.json"), mock.patch.dict(os.environ), mock.patch.object(c, "PROVIDERS", {})] + [
+              mock.patch.object(c, k, getattr(c, k)) for k in ("DEFAULT_MODEL", "FALLBACK_MODEL", "TEST_READER", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")]:
+        p.start(); test.addCleanup(p.stop)
+    c.apply_config()
+
+class ConfigProviders(unittest.TestCase):
+    def exits(self, cfg, line):
+        with self.assertRaises(SystemExit) as e: cp_apply(self, cfg)
+        self.assertEqual(str(e.exception.code), f"{fc.fc_config.CONFIG_PATH}: {line}")
+    def test_provider_of_names_declared_providers_only(self):
+        cp_apply(self, {"providers": {"fakelocal": FAKE}})
+        for m in ("pi:fakelocal/fake-1", "fakelocal/fake-1"): self.assertEqual(fc.fc_config.provider_of(m), ("fakelocal", "fake-1"))
+        self.assertEqual(fc.fc_config.provider_of("pi:fakelocal/org/m"), ("fakelocal", "org/m"))
+        for m in ("claude:opus", "pi:openrouter/x/y", "other/fake-1", "pi:other/x", "fakelocal", "pi:fakelocal"): self.assertIsNone(fc.fc_config.provider_of(m), m)
+    def test_workspace_provider_replaces_the_top_level_one_by_name(self):
+        other = {"base_url": "http://h/v1"}
+        cp_apply(self, {"workspace": "w", "providers": {"fakelocal": FAKE, "other": other}, "workspaces": {"w": {"providers": {"fakelocal": {"base_url": "https://ws/v1"}}}}})
+        self.assertEqual(fc.fc_config.PROVIDERS, {"fakelocal": {"base_url": "https://ws/v1"}, "other": other})
+    def test_bad_entries_exit_with_their_line(self):
+        for name in ("Fake", "-x", "_x", "a b", "a/b", ""):
+            with self.subTest(name): self.exits({"providers": {name: FAKE}}, f"provider names are lowercase letters, digits, - and _: {name!r}")
+        for name in ("openrouter", "openrouter-fast"):
+            with self.subTest(name): self.exits({"providers": {name: {}}}, f"providers.{name} is reserved: openrouter models already route there")
+        for entry in ({"models": ["a"]}, {"base_url": ""}, {"base_url": "localhost:11434/v1"}, {"base_url": "ftp://h/v1"}):
+            with self.subTest(entry): self.exits({"providers": {"fakelocal": entry}}, "providers.fakelocal needs a base_url such as http://localhost:11434/v1")
+        for models in ("fake-1", [1], {"a": "b"}, ["a", None]):
+            with self.subTest(models): self.exits({"providers": {"fakelocal": {"base_url": "http://h/v1", "models": models}}}, "providers.fakelocal.models must be a list of model ids")
+        self.exits({"providers": {"first": {"base_url": "nope"}, "Bad": FAKE}}, "providers.first needs a base_url such as http://localhost:11434/v1")
+    def test_configured_model_missing_from_models_exits(self):
+        bad, line = "fakelocal/nope", "{} is not in providers.fakelocal.models: fake-1, fake-2"
+        self.exits({"providers": {"fakelocal": FAKE}, "models": {"implementer": "pi:" + bad}}, line.format("pi:" + bad))
+        for models in ({"fallback": bad}, {"fix": bad}, {"test_reader": bad}, {"crew": {"s": bad}}, {"crew": {"s": {"model": bad}}},
+                       {"crew": {"s": {"model": "claude:opus", "fallback": bad}}}, {"crew": {"s": {"model": "claude:opus", "fallback": ["claude:haiku", {"model": bad}]}}}):
+            with self.subTest(models): self.exits({"providers": {"fakelocal": FAKE}, "models": models}, line.format(bad))
+    def test_unrestricted_models_pass_and_no_providers_leaves_other_settings(self):
+        cp_apply(self, {"models": {"implementer": "claude:opus"}})
+        self.assertEqual((fc.fc_config.PROVIDERS, fc.fc_config.DEFAULT_MODEL), ({}, "claude:opus"))
+        models = {"implementer": "pi:fakelocal/fake-2", "fallback": "pi:open/any/id", "test_reader": "claude:opus", "crew": {"small": "fakelocal/fake-1"}}
+        cp_apply(self, {"providers": {"fakelocal": FAKE, "open": {"base_url": "http://h/v1"}}, "models": models})
+        self.assertEqual(fc.fc_config.DEFAULT_MODEL, "pi:fakelocal/fake-2")
+
+PE_JS = """// generated by compose from ~/.compose/config.json providers; do not edit
+const PROVIDERS = <json>;
+export default function (pi) {
+  const want = process.env.COMPOSE_PI_MODEL || "";
+  for (const p of PROVIDERS) {
+    const ids = p.models.length ? p.models : want.startsWith(p.name + "/") ? [want.slice(p.name.length + 1)] : [];
+    pi.registerProvider(p.name, { name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKeyEnv ? process.env[p.apiKeyEnv] || "" : "none", api: "openai-completions",
+      models: ids.map((id) => ({ id, name: id, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 16384 })) });
+  }
+}
+"""
+
+def pe_provider_of(model):
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name == "fakelocal" and mid else None
+
+class PiExtension(unittest.TestCase):
+    def setUp(self):
+        self.d, self.providers = Path(tempfile.mkdtemp()), {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", self.providers),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of)):
+            p.start(); self.addCleanup(p.stop)
+        self.js = self.d / "pi-providers.js"
+    def test_text_is_the_template_with_the_providers_json(self):
+        self.providers["other"] = {"base_url": "http://h/v1"}  # no models: an empty list; sorted by name
+        rows = [{"apiKeyEnv": None, "baseUrl": p["base_url"], "models": p.get("models", []), "name": n} for n, p in sorted(self.providers.items())]
+        self.assertEqual(fc_providers.pi_extension_text().rstrip("\n"), PE_JS.replace("<json>", json.dumps(rows, sort_keys=True)).rstrip("\n"))
+    def test_args_write_the_file_only_when_providers_change(self):
+        for m in ("pi:fakelocal/fake-1", "pi:fakelocal/org/m"): self.assertEqual(fc_providers.pi_args(m), ["-e", str(self.js)])
+        self.assertEqual(self.js.read_text(), fc_providers.pi_extension_text())
+        os.utime(self.js, ns=(1, 1)); fc_providers.pi_args("pi:fakelocal/fake-1")
+        self.assertEqual(self.js.stat().st_mtime_ns, 1)
+        self.providers["fakelocal"]["base_url"] = "http://127.0.0.1:2/v1"; fc_providers.pi_args("pi:fakelocal/fake-1")
+        self.assertIn("http://127.0.0.1:2/v1", self.js.read_text())
+    def test_other_models_get_nothing_and_write_nothing(self):
+        for m in ("claude:opus", "pi:openrouter/x/y", "pi:undeclared/x", "undeclared/x"):
+            with self.subTest(m): self.assertEqual((fc_providers.pi_args(m), fc_providers.pi_env(m)), ([], {}))
+        self.assertFalse(self.js.exists())
+    def test_env_names_the_provider_and_id(self):
+        for m, want in (("pi:fakelocal/fake-1", "fakelocal/fake-1"), ("fakelocal/fake-1", "fakelocal/fake-1"), ("pi:fakelocal/org/m", "fakelocal/org/m")):
+            self.assertEqual(fc_providers.pi_env(m), {"COMPOSE_PI_MODEL": want})
+    def test_cost_is_priced_then_free_when_local_then_the_reported_one(self):
+        u = {"tokens_in": 1000, "tokens_out": 2000, "cost": 9.0}
+        self.assertEqual(fc_providers.cost("openrouter/openai/gpt-oss-120b", u), (1000 * 0.35 + 2000 * 0.75) / 1e6)
+        self.assertEqual(fc_providers.cost("pi:fakelocal/fake-1", u), 0.0)
+        with mock.patch.object(fc.fc_config, "PRICES", {"fakelocal/fake-1": (1, 2)}): self.assertEqual(fc_providers.cost("fakelocal/fake-1", u), 5000 / 1e6)
+        self.assertEqual(fc_providers.cost("claude:opus", u), 9.0)
+        self.assertIsNone(fc_providers.cost("claude:opus", {"tokens_in": 1, "tokens_out": 2}))
+
+PT_OUT = "\n".join(json.dumps(e) for e in ({"type": "message_update", "usage": {"input": 42, "output": 7}},
+                   {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}))
+PT_FAST = "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"
+
+class PiTurnLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.cwd = self.d / "task"; self.cwd.mkdir(); self.js = self.d / "pi-providers.js"
+        self.run = mock.Mock(return_value=mock.Mock(stdout=PT_OUT, stderr="", returncode=0)); self.ledger = fc.fc_core.Ledger()
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "LEDGER", self.ledger),
+                  mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_models.subprocess, "run", self.run), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_PI_MODEL", None)
+    def turn(self, model):
+        fc.fc_models.pi_turn(self.cwd, model, "hi")
+        return self.run.call_args[0][0], self.run.call_args[1]["env"]
+    def test_local_turn_loads_the_extension_names_the_model_and_costs_nothing(self):
+        argv, env = self.turn("fakelocal/fake-1")
+        self.assertEqual(argv[argv.index("-e"):argv.index("-e") + 2], ["-e", str(self.js)])
+        self.assertEqual((argv[-1], env["COMPOSE_PI_MODEL"]), ("hi", "fakelocal/fake-1"))
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True})
+        self.assertIn("fakelocal $0.0000 (", self.ledger.line())
+    def test_probe_carries_the_extension_before_the_model(self):
+        argv = fc.fc_models.probe_command("pi:fakelocal/fake-1")
+        self.assertEqual(argv[argv.index("-e"):argv.index("-e") + 2], ["-e", str(self.js)])
+        self.assertLess(argv.index("-e"), argv.index("--model"))
+        self.assertEqual((argv[argv.index("--model") + 1], argv[-1]), ("fakelocal/fake-1", "Reply with exactly: ok"))
+        self.assertEqual(fc.fc_models.probe_once("pi:fakelocal/fake-1", 5)[0], True)
+        self.assertEqual(self.run.call_args[1]["env"]["COMPOSE_PI_MODEL"], "fakelocal/fake-1")
+    def test_openrouter_models_are_unchanged(self):
+        for model in ("openrouter/openai/gpt-oss-120b", PT_FAST):
+            with self.subTest(model):
+                argv, env = self.turn(model)
+                self.assertNotIn("-e", argv); self.assertNotIn("COMPOSE_PI_MODEL", env); self.assertEqual(argv[-1], "hi")
+                p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6); self.ledger.rows.clear()
+                self.assertNotIn("-e", fc.fc_models.probe_command("pi:" + model))
+                fc.fc_models.probe_once("pi:" + model, 5); self.assertNotIn("COMPOSE_PI_MODEL", self.run.call_args[1]["env"])
+        self.assertFalse(self.js.exists())
+
+class HerdrPiLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); (self.d / "wt").mkdir(); (self.d / "wt.guard.json").write_text("{}"); self.ledger = fc.fc_core.Ledger()
+        self.panes, self.starts, self.js = [], [], self.d / "pi-providers.js"
+        started = {"agent": {"agent_session": {"value": "sfile"}}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1"}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_error", return_value=({}, None)),
+                  mock.patch.object(fc.fc_herdr, "herdr_agent_start", lambda *a: self.starts.append(list(a)) or started), mock.patch.object(fc.fc_readguard, "command", lambda f: "guard"),
+                  mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: self.panes.append(env) or "p1"),
+                  mock.patch.object(fc.fc_models, "parse_pi_session", return_value=(1, "ok", [], {"tokens_in": 42, "tokens_out": 7, "cost": 0.5}, []))):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_PI_MODEL", None)
+    def turn(self, model):
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.d / "shop", "space": "w9"}
+        fc.fc_implement.herdr_pi(str(self.d / "wt"), model, "hi", None, task)
+        return self.panes[-1], self.starts[-1][self.starts[-1].index("--") + 1:]
+    def test_local_pane_env_start_args_and_ledger_row(self):
+        env, args = self.turn("fakelocal/fake-1")
+        self.assertEqual(env["COMPOSE_PI_MODEL"], "fakelocal/fake-1")
+        pairs = [args[i:i + 2] for i in range(len(args))]
+        self.assertLess(pairs.index(["-e", str(fc.fc_readguard.PI_EXT)]), pairs.index(["-e", str(self.js)]))
+        self.assertLess(args.index(str(self.js)), args.index("--model")); self.assertEqual(args[args.index("--model") + 1], "fakelocal/fake-1")
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True})
+    def test_openrouter_fast_model_is_unchanged(self):
+        model = PT_FAST; env, args = self.turn(model)
+        self.assertNotIn("COMPOSE_PI_MODEL", env); self.assertNotIn(str(self.js), args); self.assertEqual(args[args.index("--model") + 1], model)
+        p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6)
+        self.assertFalse(self.js.exists())
+    def test_fc_implement_stays_within_its_line_cap(self):
+        self.assertLessEqual(len(Path(fc.fc_implement.__file__).read_text().splitlines()), 600)
+
+class CrewPiLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.js, self.ext, self.calls = self.d / "pi-providers.js", self.d / "herdr-ext.ts", []
+        self.ext.write_text("")
+        replies = {("agent", "list"): {"agents": []}, ("tab", "create"): {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}, ("agent", "get"): {"agent": {"agent_status": "working"}}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1"}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", self.ext), mock.patch.object(fc.fc_core, "project_dir", return_value=self.d / ".compose" / "shop"),
+                  mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args) or replies.get(args[:2], {})), mock.patch("time.sleep"),
+                  mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"),
+                  mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]),
+                  mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.dict(os.environ), mock.patch("builtins.print")):
+            p.start(); self.addCleanup(p.stop)
+        (self.d / ".compose" / "shop").mkdir(parents=True); os.environ.pop("COMPOSE_PI_MODEL", None)
+    def start(self, model):
+        fc.fc_crew.cmd_crew(type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": model}))
+        tab, start = (next(c for c in self.calls if c[:2] == pair) for pair in (("tab", "create"), ("agent", "start")))
+        return list(tab), list(start)
+    def test_local_pi_teammate_gets_tab_env_and_pi_args(self):
+        tab, start = self.start("pi:fakelocal/fake-1")
+        self.assertIn(["--env", "COMPOSE_PI_MODEL=fakelocal/fake-1"], [tab[i:i + 2] for i in range(len(tab))])
+        self.assertIn(["-e", str(self.js)], [start[i:i + 2] for i in range(len(start))])
+        self.assertLess(start.index(str(self.js)), start.index("--model")); self.assertEqual(start[start.index("--model") + 1], "fakelocal/fake-1")
+        self.assertLess(start.index(str(self.ext)), start.index(str(self.js)))
+        self.assertFalse([a for a in tab + start if "sk-or" in a or a == "--api-key"])
+    def test_claude_and_openrouter_teammates_are_unchanged(self):
+        for model in ("claude:opus", "pi:openrouter-fast/z-ai/glm@preset/p"):
+            with self.subTest(model=model):
+                self.calls.clear(); tab, start = self.start(model)
+                self.assertFalse([a for a in tab + start if "COMPOSE_PI_MODEL" in a or "pi-providers.js" in a])
+        self.assertFalse(self.js.exists())
+
+class ReachHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.server.seen.append(self.path); self.send_response(self.server.code); self.send_header("Content-Length", "0"); self.end_headers()
+
+class Reach(unittest.TestCase):
+    def providers(self, **urls):
+        p = mock.patch.object(fc.fc_config, "PROVIDERS", {n: {"base_url": u} for n, u in urls.items()}); p.start(); self.addCleanup(p.stop)
+    def serve(self, code=200):
+        s = ThreadingHTTPServer(("127.0.0.1", 0), ReachHandler); s.code, s.seen = code, []
+        threading.Thread(target=s.serve_forever, daemon=True).start(); self.addCleanup(s.server_close); self.addCleanup(s.shutdown)
+        return s, f"http://127.0.0.1:{s.server_address[1]}/v1/"
+    def closed(self):
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        return f"http://127.0.0.1:{port}/v1/"
+    def line(self, name, url): return f"local provider {name} at {url} is not answering: start the server, then run again"
+    def test_any_http_answer_is_up_and_gets_models_under_the_base_url(self):
+        for code in (200, 404, 503):
+            with self.subTest(code=code):
+                s, url = self.serve(code); self.providers(fakelocal=url)
+                self.assertEqual(fc_providers.reach("fakelocal"), (True, f"HTTP {code}")); self.assertEqual(s.seen, ["/v1/models"])
+    def test_closed_port_is_not_answering_with_a_5_second_timeout(self):
+        url = self.closed(); self.providers(fakelocal=url)
+        with mock.patch.object(urllib.request, "urlopen", wraps=urllib.request.urlopen) as uo:
+            self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+        args, kw = uo.call_args; self.assertEqual(kw.get("timeout", args[1] if len(args) > 1 else None), 5)
+    def test_url_errors_oserrors_and_timeouts_are_not_answering(self):
+        url = self.closed(); self.providers(fakelocal=url)
+        for err in (urllib.error.URLError("refused"), OSError("down"), socket.timeout("slow")):
+            with self.subTest(err=err), mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+    def test_reach_is_never_cached(self):
+        s, url = self.serve(); self.providers(fakelocal=url)
+        self.assertTrue(fc_providers.reach("fakelocal")[0]); s.shutdown(); s.server_close()
+        self.assertEqual(fc_providers.reach("fakelocal"), (False, self.line("fakelocal", url)))
+    def test_doctor_rows_are_sorted_with_a_check_that_reaches_the_provider(self):
+        s, up = self.serve(); down = self.closed(); self.providers(zeta=up, alpha=down)
+        rows = fc_providers.doctor_rows()
+        self.assertEqual([(r[0], r[2], *r[3:]) for r in rows], [(f"local provider {n}", f"start the server at {u}", "default", False, "manual") for n, u in (("alpha", down), ("zeta", up))])
+        self.assertEqual([r[1](Path(".")) for r in rows], [(False, "not answering"), (True, "not answering")])
+    def test_no_providers_give_no_rows(self):
+        self.providers(); self.assertEqual(fc_providers.doctor_rows(), [])
+
+class ProbeReach(unittest.TestCase):
+    LOCAL, DOWN = "pi:fakelocal/fake-1", "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+    def setUp(self):
+        self.cache, self.reach = Path(tempfile.mkdtemp()) / "model-probe.json", mock.Mock(return_value=(False, self.DOWN))
+        self.probe = mock.Mock(return_value=(True, "answered", False)); m = fc.fc_models
+        for p in (mock.patch.object(fc.fc_config, "PROBE_CACHE", self.cache), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": FAKE}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc_providers, "reach", self.reach), mock.patch.object(m, "probe_once", self.probe)):
+            p.start(); self.addCleanup(p.stop)
+        m._PROBED.clear(); self.addCleanup(m._PROBED.clear)
+    def test_down_provider_fails_at_once_and_a_later_up_probes(self):
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, self.DOWN)); self.reach.assert_called_once_with("fakelocal")
+        self.probe.assert_not_called(); self.assertFalse(self.cache.exists()); self.assertEqual(fc.fc_models._PROBED, {})
+        self.reach.return_value = (True, "HTTP 200")
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered")); self.probe.assert_called_once()
+    def test_a_cached_pass_still_reaches_first(self):
+        self.reach.return_value = (True, "HTTP 200"); self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered"))
+        self.assertIn("fakelocal/fake-1", json.loads(self.cache.read_text()))
+        self.reach.return_value = (False, self.DOWN)
+        for _ in range(2):  # the in-memory pass, then a new process reading the day cache
+            self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, self.DOWN)); fc.fc_models._PROBED.clear()
+        self.reach.return_value = (True, "HTTP 200"); self.assertEqual(fc.fc_models.model_available(self.LOCAL), (True, "answered"))
+        self.assertEqual((self.reach.call_count, self.probe.call_count), (4, 1))
+    def test_transient_failure_is_not_retried_and_not_cached(self):
+        self.reach.return_value, self.probe.return_value = (True, "HTTP 200"), (False, "timed out", True)
+        self.assertEqual(fc.fc_models.model_available(self.LOCAL), (False, "timed out"))
+        self.assertEqual(self.probe.call_args_list, [mock.call(self.LOCAL, 60)]); self.assertFalse(self.cache.exists())
+    def test_models_that_are_not_local_never_reach_and_retry_as_before(self):
+        self.probe.return_value = (False, "timed out", True)
+        for model in ("pi:openrouter-fast/z-ai/glm", "claude:opus"):
+            with self.subTest(model=model):
+                self.probe.reset_mock(); fc.fc_models.model_available(model)
+                self.assertEqual(self.probe.call_args_list, [mock.call(model, 60), mock.call(model, 180)])
+        self.reach.assert_not_called()
+
+def pf_provider_of(model):
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in ("alpha", "fakelocal", "zeta") and mid else None
+
+class PreflightReach(unittest.TestCase):
+    STOP = "preflight stopped; nothing was cloned or run. "
+    def setUp(self):
+        self.reach, self.impl = mock.Mock(return_value=(True, "HTTP 200")), mock.Mock()
+        for p in (mock.patch.object(fc.fc_config, "provider_of", pf_provider_of), mock.patch.object(fc_providers, "reach", self.reach),
+                  mock.patch.object(fc.fc_implement, "implementer", self.impl), mock.patch.object(fc.fc_run.fc_pi, "pi_auth_overrides", return_value=[])):
+            p.start(); self.addCleanup(p.stop)
+    def test_down_provider_stops_the_run_before_any_probe(self):
+        why = "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+        self.reach.return_value = (False, why)
+        with self.assertRaises(SystemExit) as e: fc.fc_run.preflight(["pi:fakelocal/fake-1"])
+        self.assertEqual(e.exception.code, self.STOP + why); self.impl.assert_not_called()
+    def test_each_provider_is_reached_once_in_sorted_order_and_up_models_get_their_probe(self):
+        models = ["pi:zeta/m", "pi:alpha/n", "claude:opus", "pi:alpha/m", "pi:openrouter-fast/z-ai/glm"]
+        fc.fc_run.preflight(models)
+        self.assertEqual(self.reach.call_args_list, [mock.call("alpha"), mock.call("zeta")])
+        self.assertEqual(sorted(c[0][1] for c in self.impl.call_args_list), sorted(m for m in models if m != "claude:opus"))
+    def test_first_failure_stops_before_later_providers_are_reached(self):
+        self.reach.side_effect = [(False, "alpha is down"), (True, "HTTP 200")]
+        with self.assertRaises(SystemExit) as e: fc.fc_run.preflight(["pi:zeta/m", "pi:alpha/m"])
+        self.assertEqual(e.exception.code, self.STOP + "alpha is down")
+        self.assertEqual(self.reach.call_args_list, [mock.call("alpha")]); self.impl.assert_not_called()
+    def test_a_run_with_no_local_models_never_reaches(self):
+        fc.fc_run.preflight(["pi:openrouter-fast/z-ai/glm", "claude:opus", "openrouter/x/y"])
+        self.reach.assert_not_called(); self.assertEqual(self.impl.call_count, 2)
+
+class DoctorProviders(unittest.TestCase):
+    URL = "http://127.0.0.1:9/v1"
+    def setUp(self):
+        self.up = {"fakelocal": False}
+        self.checks = {n: mock.Mock(side_effect=lambda co, n=n: (self.up[n], "" if self.up[n] else "not answering")) for n in self.up}
+        self.rows = lambda: [(f"local provider {n}", c, f"start the server at {self.URL}", "default", False, "manual") for n, c in sorted(self.checks.items())]
+        for p in (mock.patch.object(fc_providers, "doctor_rows", side_effect=lambda: self.rows()), mock.patch.object(fc.fc_init, "herdr_loud", return_value=(True, "")),
+                  mock.patch.object(fc.fc_init.fc_steps, "STEPS", (("req", lambda co: (False, ""), "fix req", "required", False, "run"),))):
+            p.start(); self.addCleanup(p.stop)
+    def deps(self, role=None):
+        with mock.patch("sys.stdout", io.StringIO()) as out: bad = fc.fc_init.check_deps(role)
+        return bad, out.getvalue().splitlines()
+    REQ = "MISSING: req (install: fix req)"
+    LINE = f"MISSING: local provider fakelocal: not answering (install: start the server at {URL}) - optional"
+    def test_a_down_provider_prints_one_optional_line_and_is_not_returned(self):
+        self.assertEqual(self.deps(), (["req"], [self.REQ, self.LINE]))
+    def test_an_up_provider_prints_nothing(self):
+        self.up["fakelocal"] = True
+        self.assertEqual(self.deps(), (["req"], [self.REQ]))
+    def test_no_providers_leave_the_output_as_before(self):
+        self.checks.clear()
+        self.assertEqual(self.deps(), (["req"], [self.REQ]))
+    def test_a_role_checks_no_provider_row(self):
+        self.assertEqual(self.deps("designer"), ([], []))
+        self.checks["fakelocal"].assert_not_called()
+    def test_provider_rows_follow_the_herdr_config_row(self):
+        self.checks["alpha"] = mock.Mock(return_value=(False, "not answering"))
+        with mock.patch.object(fc.fc_init, "herdr_loud", return_value=(False, "loud")):
+            bad, lines = self.deps()
+        self.assertEqual(bad, ["req"])
+        self.assertEqual([l.split(":")[1] for l in lines], [" req (install", " herdr config", " local provider alpha", " local provider fakelocal"])
+
+class SetupLocal(unittest.TestCase):
+    LOCAL, OR, DOWN = "pi:fakelocal/fake-1", "pi:openrouter-fast/z-ai/glm", "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+    def setUp(self):
+        self.tmp, self.up = Path(tempfile.mkdtemp()), mock.Mock(return_value=(True, "answered")); c = fc.fc_config
+        for p in (mock.patch.object(c, "CONFIG_PATH", self.tmp / "config.json"), mock.patch.object(c, "AUTH_PATH", self.tmp / "auth.json"), mock.patch.object(c, "ENV_FILE", self.tmp / ".env"),
+                  mock.patch.object(c, "PROBE_CACHE", self.tmp / "model-probe.json"), mock.patch.object(c, "PROVIDERS", {"fakelocal": FAKE}), mock.patch.dict(os.environ),
+                  mock.patch.object(c, "provider_of", lambda m: ("fakelocal", m.partition("/")[2]) if m.startswith("pi:fakelocal/") else None),
+                  mock.patch.object(fc.fc_models, "model_available", self.up), mock.patch.object(fc_steps, "FRAMELINK_ENV", self.tmp / "figma.env"),
+                  mock.patch.object(fc_finish.shutil, "which", lambda n, *a, **k: f"/bin/{n}"), mock.patch("sys.stdin.isatty", lambda: True)):
+            p.start(); self.addCleanup(p.stop)
+    def finish(self, model, key, dry=False):
+        (self.tmp / "config.json").write_text(json.dumps({"providers": {"fakelocal": FAKE}, "workspaces": {"w": {"target": "x"}}, "models": {"implementer": model}}))
+        (self.tmp / "auth.json").write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test"} if key else {}}}))
+        with mock.patch("fc_herdrconf.apply_herdr_config", return_value=("ok", [])):
+            return fc_finish.finish([("pi", "ok")], False, dry)
+    def test_local_implementer_is_probed_without_a_key_and_the_key_stays_missing(self):
+        lines, code = self.finish(self.LOCAL, key=False)
+        self.up.assert_called_once_with(self.LOCAL); self.assertIn(f"implementer {self.LOCAL}: answered", lines)
+        self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.assertEqual(code, 1); self.assertTrue(lines[-1].startswith("setup is not finished: missing OpenRouter"))
+    def test_failed_local_probe_prints_the_providers_line_without_preset_steps(self):
+        self.up.return_value = (False, self.DOWN)
+        lines, code = self.finish(self.LOCAL, key=True)
+        self.assertIn(self.DOWN, lines); self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.assertEqual(code, 1)
+        self.assertEqual(fc_defaults.probe_implementer({"models": {"implementer": self.LOCAL}}), (False, [self.DOWN]))
+    def test_dry_run_names_the_check_without_preset_steps_or_a_key(self):
+        lines, _ = self.finish(self.LOCAL, key=False, dry=True)
+        self.assertIn(f"would check implementer {self.LOCAL}", lines); self.assertFalse(set(fc_defaults.PRESET_STEPS) & set(lines)); self.up.assert_not_called()
+    def test_openrouter_implementer_is_unchanged(self):
+        self.up.return_value = (False, "no preset")
+        lines, _ = self.finish(self.OR, key=True)
+        self.assertTrue(set(fc_defaults.PRESET_STEPS) <= set(lines)); self.up.assert_called_once_with(self.OR)
+        self.up.reset_mock(); lines, _ = self.finish(self.OR, key=False)
+        self.assertTrue(set(fc_defaults.PRESET_STEPS) <= set(lines)); self.up.assert_not_called()
+        self.assertEqual(fc_defaults.probe_implementer({"models": {"implementer": self.OR}}), (False, ["no preset", *fc_defaults.PRESET_STEPS]))
+
+class ProviderKeyCommand(unittest.TestCase):
+    def setUp(self):
+        self.env = {**os.environ, **hermetic.temp_home()}; self.cfg = Path(self.env["COMPOSE_CONFIG"]); self.cfg.parent.mkdir(parents=True, exist_ok=True)
+    def ws(self, *args, key="sk-local\n", top=True, own=False, elsewhere=False):
+        self.cfg.write_text(json.dumps({"providers": {"fakelocal": FAKE} if top else {}, "workspaces": {"w": {"providers": {"fakelocal": FAKE} if own else {}}, "x": {"providers": {"fakelocal": FAKE} if elsewhere else {}}}}))
+        return subprocess.run([sys.executable, _spec.origin, "workspace", "key", "w", *args], input=key, capture_output=True, text=True, env=self.env)
+    def auth(self): return json.loads((self.cfg.parent / "auth.json").read_text())["workspaces"]["w"]
+    def test_key_command_stores_the_key_in_auth_json_only(self):
+        for kw in ({}, {"top": False, "own": True}):  # declared at the top level, or in the workspace's own providers
+            r = self.ws("--provider", "fakelocal", **kw); self.assertEqual((r.returncode, r.stdout.splitlines()[:1]), (0, ["w: provider fakelocal key set"]), r.stderr)
+            self.assertEqual(self.auth()["provider:fakelocal"], "sk-local")
+            self.assertNotIn("sk-local", self.cfg.read_text())
+    def test_undeclared_provider_and_empty_key_exit_with_their_lines(self):
+        r = self.ws("--provider", "ghost", top=False); self.assertEqual(r.returncode, 1)
+        self.assertIn(f"no provider 'ghost' in {self.cfg}; declare providers.ghost with a base_url first", r.stderr)
+        r = self.ws("--provider", "fakelocal", key=""); self.assertEqual(r.returncode, 1)
+        self.assertIn("no key read; copy it, then: pbpaste | compose workspace key w --provider fakelocal", r.stderr)
+        self.assertFalse((self.cfg.parent / "auth.json").exists())
+    def test_a_provider_declared_only_in_another_workspace_is_undeclared(self):
+        r = self.ws("--provider", "fakelocal", top=False, elsewhere=True); self.assertEqual(r.returncode, 1); self.assertIn("no provider 'fakelocal' in", r.stderr)
+        self.assertFalse((self.cfg.parent / "auth.json").exists())
+    def test_provider_with_linear_or_typesafe_is_an_argparse_error(self):
+        for flag in ("--linear", "--typesafe"):
+            r = self.ws("--provider", "fakelocal", flag); self.assertEqual(r.returncode, 2); self.assertIn("not allowed with", r.stderr)
+    def test_without_provider_the_key_command_sets_openrouter_and_keeps_the_provider_key(self):
+        self.ws("--provider", "fakelocal"); r = self.ws(key="sk-or\n")
+        self.assertEqual((r.returncode, r.stdout.splitlines()[:1]), (0, ["w: OpenRouter key set"]), r.stderr)
+        self.assertEqual(self.auth(), {"openrouter": "sk-or", "provider:fakelocal": "sk-local"})
+
+class ProviderKeyExport(unittest.TestCase):
+    def setUp(self):
+        c, self.d = fc.fc_config, Path(tempfile.mkdtemp())
+        for p in (mock.patch.object(c, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(c, "AUTH_PATH", self.d / "auth.json"), mock.patch.object(c, "ENV_FILE", self.d / ".env"),
+                  mock.patch.object(c, "PROBE_CACHE", self.d / "model-probe.json"), mock.patch.object(c, "PROVIDERS", {}), mock.patch.dict(os.environ),
+                  mock.patch.object(c, "provider_env", lambda n: n.upper() + "_API_KEY"), mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS))):
+            p.start(); self.addCleanup(p.stop)
+        for var in ("FAKELOCAL_API_KEY", "PLAIN_API_KEY", "GHOST_API_KEY"): os.environ.pop(var, None)
+    def export(self, held):
+        (self.d / "config.json").write_text(json.dumps({"workspace": "w", "providers": {"fakelocal": FAKE, "plain": FAKE}, "workspaces": {"w": {}}}))
+        (self.d / "auth.json").write_text(json.dumps({"workspaces": held})); (self.d / "auth.json").chmod(0o600); fc.fc_config.apply_config()
+        return {v: os.environ.get(v) for v in ("FAKELOCAL_API_KEY", "PLAIN_API_KEY", "GHOST_API_KEY")}
+    def test_the_active_workspaces_key_wins_over_defaults(self):
+        self.assertEqual(self.export({"w": {"provider:fakelocal": "own"}, "default": {"provider:fakelocal": "dflt"}})["FAKELOCAL_API_KEY"], "own")
+    def test_default_key_is_exported_when_the_workspace_holds_none(self):
+        self.assertEqual(self.export({"w": {}, "default": {"provider:fakelocal": "dflt"}})["FAKELOCAL_API_KEY"], "dflt")
+    def test_no_key_held_exports_nothing_and_adds_nothing_to_secret_vars(self):
+        self.assertEqual(self.export({"default": {}}), {"FAKELOCAL_API_KEY": None, "PLAIN_API_KEY": None, "GHOST_API_KEY": None}); self.assertNotIn("FAKELOCAL_API_KEY", fc.fc_core.SECRET_VARS)
+    def test_an_exported_key_is_a_secret_var_and_clean_env_drops_it(self):
+        self.export({"default": {"provider:fakelocal": "dflt"}})
+        self.assertIn("FAKELOCAL_API_KEY", fc.fc_core.SECRET_VARS); self.assertNotIn("FAKELOCAL_API_KEY", fc.fc_core.clean_env())
+    def test_only_declared_providers_get_the_keys_held_for_them_by_the_active_or_default_workspace(self):
+        got = self.export({"w": {"provider:ghost": "g"}, "x": {"provider:plain": "other"}, "default": {"provider:fakelocal": "dflt"}})
+        self.assertEqual(got, {"FAKELOCAL_API_KEY": "dflt", "PLAIN_API_KEY": None, "GHOST_API_KEY": None})
+        self.assertNotIn("PLAIN_API_KEY", fc.fc_core.SECRET_VARS); self.assertNotIn("GHOST_API_KEY", fc.fc_core.SECRET_VARS)
+
+class ProviderEnvName(unittest.TestCase):
+    def test_provider_env_upcases_and_replaces_other_characters(self):
+        for name, var in (("lm-studio", "LM_STUDIO_API_KEY"), ("fakelocal", "FAKELOCAL_API_KEY"), ("gpu2_a.b--c", "GPU2_A_B__C_API_KEY")): self.assertEqual(fc.fc_config.provider_env(name), var)
+    def test_key_file_names_the_file_and_defaults_to_openrouter_key(self):
+        d = Path(tempfile.mkdtemp())
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"):
+            f, g, h = fc.fc_config.key_file("k1", "fakelocal.key"), fc.fc_config.key_file("k2"), fc.fc_config.key_file("k3", name="other.key")
+        self.assertEqual((f, f.read_text(), f.stat().st_mode & 0o777), (d / "fakelocal.key", "k1", 0o600)); self.assertEqual((g, g.read_text()), (d / "openrouter.key", "k2"))
+        self.assertEqual((h, h.read_text(), h.stat().st_mode & 0o777), (d / "other.key", "k3", 0o600))
+
+class KpHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.server.seen.append(self.headers.get("Authorization")); self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
+
+def kp_env(name): return name.upper().replace("-", "_") + "_API_KEY"
+
+class KeyedProvider(unittest.TestCase):
+    KEY = "sk-local-secret-123"
+    def setUp(self):
+        s = ThreadingHTTPServer(("127.0.0.1", 0), KpHandler); s.seen = []
+        threading.Thread(target=s.serve_forever, daemon=True).start(); self.addCleanup(s.server_close); self.addCleanup(s.shutdown)
+        url, self.d, self.server = f"http://127.0.0.1:{s.server_address[1]}/v1", Path(tempfile.mkdtemp()), s
+        providers = {"fakelocal": {"base_url": url, "models": ["fake-1"]}, "plain": {"base_url": url, "models": ["p-1"]}}  # plain never gets a key
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", providers),
+                  mock.patch.object(fc.fc_config, "provider_env", kp_env), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_config, "provider_of", lambda m: (m.removeprefix("pi:").split("/", 1)[0], m.split("/", 1)[1]) if m.removeprefix("pi:").split("/", 1)[0] in providers else None)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("FAKELOCAL_API_KEY", None); os.environ.pop("PLAIN_API_KEY", None)
+    def test_extension_names_the_env_var_never_the_key_and_a_keyless_provider_stays_null(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; text = fc_providers.pi_extension_text()
+        self.assertIn('"apiKeyEnv": "FAKELOCAL_API_KEY"', text); self.assertEqual(text.count('"apiKeyEnv": null'), 1); self.assertNotIn(self.KEY, text)
+        del os.environ["FAKELOCAL_API_KEY"]; self.assertEqual(fc_providers.pi_extension_text().count('"apiKeyEnv": null'), 2)
+    def test_env_adds_the_key_under_its_var_for_the_keyed_provider_only(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        for m in ("pi:fakelocal/fake-1", "fakelocal/fake-1"): self.assertEqual(fc_providers.pi_env(m), {"COMPOSE_PI_MODEL": "fakelocal/fake-1", "FAKELOCAL_API_KEY": self.KEY})
+        self.assertEqual(fc_providers.pi_env("pi:plain/p-1"), {"COMPOSE_PI_MODEL": "plain/p-1"})
+        del os.environ["FAKELOCAL_API_KEY"]; self.assertEqual(fc_providers.pi_env("pi:fakelocal/fake-1"), {"COMPOSE_PI_MODEL": "fakelocal/fake-1"})
+    def test_reach_sends_a_bearer_header_only_for_the_keyed_provider(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        self.assertTrue(fc_providers.reach("fakelocal")[0]); self.assertTrue(fc_providers.reach("plain")[0])
+        self.assertEqual(self.server.seen, [f"Bearer {self.KEY}", None])
+    def test_key_stays_out_of_pi_args_and_the_written_file(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; args = fc_providers.pi_args("pi:fakelocal/fake-1")
+        self.assertEqual(args, ["-e", str(self.d / "pi-providers.js")]); self.assertNotIn(self.KEY, " ".join(args))
+        self.assertNotIn(self.KEY, (self.d / "pi-providers.js").read_text()); self.assertIn("FAKELOCAL_API_KEY", (self.d / "pi-providers.js").read_text())
+
+def oc_provider_of(model):
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in ("fakelocal", "plain") and mid else None
+
+class OpenCodeProvider(unittest.TestCase):
+    KEY = "sk-local-secret-123"
+    def setUp(self):
+        self.d, self.url = Path(tempfile.mkdtemp()), "http://127.0.0.1:1/v1"
+        providers = {"fakelocal": {"base_url": self.url, "models": ["fake-1", "org/m"]}, "plain": {"base_url": self.url}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", providers),
+                  mock.patch.object(fc.fc_config, "provider_of", oc_provider_of), mock.patch.object(fc.fc_config, "provider_env", lambda n: n.upper() + "_API_KEY"), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("FAKELOCAL_API_KEY", None); os.environ.pop("PLAIN_API_KEY", None)
+    def entry(self, name, mid, **options):
+        return {name: {"npm": "@ai-sdk/openai-compatible", "name": name, "options": {"baseURL": self.url, **options}, "models": {mid: {"name": mid}}}}
+    def test_keyless_provider_is_exactly_the_entry(self):
+        self.assertEqual(fc_providers.opencode_provider("fakelocal/fake-1"), self.entry("fakelocal", "fake-1"))
+    def test_keyed_provider_names_a_0600_key_file_and_never_holds_the_key(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; got = fc_providers.opencode_provider("fakelocal/fake-1"); f = self.d / "fakelocal.key"
+        self.assertEqual(got, self.entry("fakelocal", "fake-1", apiKey=f"{{file:{f}}}"))
+        self.assertEqual((f.read_text(), f.stat().st_mode & 0o777), (self.KEY, 0o600)); self.assertNotIn(self.KEY, json.dumps(got))
+    def test_a_keyless_provider_gets_no_api_key_while_another_is_keyed(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        self.assertEqual(fc_providers.opencode_provider("plain/p-1"), self.entry("plain", "p-1"))
+    def test_other_models_give_an_empty_dict(self):
+        for m in ("pi:fakelocal/fake-1", "claude:opus", "openrouter/x/y", "fakelocal", "unknown/x"): self.assertEqual(fc_providers.opencode_provider(m), {}, m)
+    def test_an_id_holding_a_slash_keys_models_by_the_whole_id(self):
+        self.assertEqual(fc_providers.opencode_provider("fakelocal/org/m"), self.entry("fakelocal", "org/m"))
+
+OL_OUT = json.dumps({"type": "step_finish", "sessionID": "s1", "part": {"tokens": {"input": 42, "output": 7}, "cost": 0.5}})
+OL_KEY = "sk-local-secret-123"
+
+class OpenCodeLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.cwd = self.d / "task"; self.cwd.mkdir(); self.ledger = fc.fc_core.Ledger()
+        self.entry = {"fakelocal": {"npm": "@ai-sdk/openai-compatible", "name": "fakelocal", "options": {"baseURL": "http://127.0.0.1:1/v1", "apiKey": f"{{file:{self.d}/fakelocal.key}}"}, "models": {"fake-1": {"name": "fake-1"}}}}
+        self.run = mock.Mock(return_value=mock.Mock(stdout=OL_OUT, stderr="", returncode=0))
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}),
+                  mock.patch.object(fc.fc_config, "provider_of", oc_provider_of), mock.patch.object(fc_providers, "opencode_provider", lambda m: self.entry if m.startswith("fakelocal/") else {}),
+                  mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_core, "SECRET_VARS", set(fc.fc_core.SECRET_VARS) | {"FAKELOCAL_API_KEY"})):  # what apply_config adds for a keyed provider
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+    def turn(self, model, key=None):
+        fc.fc_config.OPENROUTER_KEY = key
+        fc.fc_models.opencode(self.cwd, model, "hi")
+        argv, env = self.run.call_args[0][0], self.run.call_args[1]["env"]
+        return argv, env, json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))
+    def test_local_model_config_holds_its_provider_beside_openrouter_when_keyed(self):
+        self.assertEqual(self.turn("fakelocal/fake-1")[2].get("provider"), self.entry)
+        provider = self.turn("fakelocal/fake-1", "sk-or-test")[2].get("provider", {})
+        self.assertEqual(provider.get("fakelocal"), self.entry["fakelocal"]); self.assertEqual(provider["openrouter"]["options"]["apiKey"], f"{{file:{self.d / 'openrouter.key'}}}")
+    def test_local_turn_adds_a_priced_zero_ledger_row_despite_a_reported_cost(self):
+        self.turn("fakelocal/fake-1")
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True}); self.assertIn("fakelocal $0.0000 (", self.ledger.line())
+    def test_no_key_value_reaches_env_or_argv_and_the_config_names_the_key_file(self):
+        os.environ["FAKELOCAL_API_KEY"] = OL_KEY
+        argv, env, config = self.turn("fakelocal/fake-1", "sk-or-test")
+        self.assertIn(f"{self.d}/fakelocal.key", json.dumps(config))
+        for secret in (OL_KEY, "sk-or-test"):
+            self.assertNotIn(secret, " ".join(argv)); self.assertFalse([k for k, v in env.items() if secret in v and k != "OPENCODE_CONFIG_CONTENT"])
+    def test_openrouter_model_config_and_cost_are_unchanged(self):
+        model = "openrouter/openai/gpt-oss-120b"; config = self.turn(model, "sk-or-test")[2]
+        self.assertEqual(config["provider"], {"openrouter": {"options": {"apiKey": f"{{file:{self.d / 'openrouter.key'}}}"}}})
+        p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6)
