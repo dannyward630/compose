@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, stat, sys, tempfile, time, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -9,6 +9,26 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_steprun, fc_steps
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
+
+
+class CodexIds(unittest.TestCase):
+    def test_probe_command(self):
+        head, prompt = ["codex", "exec", "--ephemeral", "--skip-git-repo-check"], "Reply with exactly: ok"
+        self.assertEqual(fc_harness.probe_command("codex:gpt-6-sol"), head + ["-m", "gpt-6-sol", prompt])
+        self.assertEqual(fc_harness.probe_command("codex:a:b"), head + ["-m", "a:b", prompt])
+        for model in ("codex", "codex:"): self.assertEqual(fc_harness.probe_command(model), head + [prompt])
+
+    def test_probe_result(self):
+        def result(code, out, err, model="codex:gpt-6-sol"): return fc_harness.probe_result(model, subprocess.CompletedProcess([], code, out, err))
+        refused = 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'x\' model is not supported."}}'
+        self.assertEqual(result(0, "", "ERROR: noise"), (True, "answered"))
+        self.assertEqual(result(0, "", "", "codex"), (True, "answered"))
+        self.assertEqual(result(1, "", "warn\n" + refused + "\n"), (False, "The 'x' model is not supported."))
+        self.assertEqual(result(1, "", "ERROR: unexpected status 401 Unauthorized: no key\n", "codex"), (False, "unexpected status 401 Unauthorized: no key"))
+        self.assertEqual(result(1, "", "ERROR: first\nERROR: second\n"), (False, "first"))
+        self.assertEqual(result(1, "out\n", "x ERROR: not first\nlast\n\n"), (False, "last"))
+        self.assertEqual(result(1, "a\nb\n\n", " \n"), (False, "b"))
+        self.assertEqual(result(3, "", ""), (False, "exit 3"))
 
 
 class CodexSkillLink(unittest.TestCase):
