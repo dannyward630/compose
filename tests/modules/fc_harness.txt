@@ -3,3 +3,4 @@ is_codex
 codex_id
 probe_command
 probe_result
+crew_argv

@@ -14,3 +14,6 @@ def probe_command(model):
 
 def probe_result(p):
     raise NotImplementedError
+
+def crew_argv(model, effort, prompt, skill, cwd, results, work=None):
+    raise NotImplementedError
