@@ -179,10 +179,11 @@ class HerdrPiLocal(unittest.TestCase):
 
 class CrewPiLocal(unittest.TestCase):
     def setUp(self):
-        self.d = Path(tempfile.mkdtemp()); self.js = self.d / "pi-providers.js"; self.calls = []
+        self.d = Path(tempfile.mkdtemp()); self.js, self.ext, self.calls = self.d / "pi-providers.js", self.d / "herdr-ext.ts", []
+        self.ext.write_text("")
         replies = {("agent", "list"): {"agents": []}, ("tab", "create"): {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}, ("agent", "get"): {"agent": {"agent_status": "working"}}}
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1"}}),
-                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "project_dir", return_value=self.d / ".compose" / "shop"),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", self.ext), mock.patch.object(fc.fc_core, "project_dir", return_value=self.d / ".compose" / "shop"),
                   mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args) or replies.get(args[:2], {})), mock.patch("time.sleep"),
                   mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"),
                   mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]),
@@ -198,7 +199,7 @@ class CrewPiLocal(unittest.TestCase):
         self.assertIn(["--env", "COMPOSE_PI_MODEL=fakelocal/fake-1"], [tab[i:i + 2] for i in range(len(tab))])
         self.assertIn(["-e", str(self.js)], [start[i:i + 2] for i in range(len(start))])
         self.assertLess(start.index(str(self.js)), start.index("--model")); self.assertEqual(start[start.index("--model") + 1], "fakelocal/fake-1")
-        if fc.fc_herdr.PI_HERDR_EXT.exists(): self.assertLess(start.index(str(fc.fc_herdr.PI_HERDR_EXT)), start.index(str(self.js)))
+        self.assertLess(start.index(str(self.ext)), start.index(str(self.js)))
         self.assertFalse([a for a in tab + start if "sk-or" in a or a == "--api-key"])
     def test_claude_and_openrouter_teammates_are_unchanged(self):
         for model in ("claude:opus", "pi:openrouter-fast/z-ai/glm@preset/p"):
