@@ -2,9 +2,9 @@
 batch on the task or feature issue, retried, and kept in memory while unsaved. Stages hand it events and never write
 Linear themselves; fc_evidence reads the rows back and derives the `## Evidence` section."""
 
-import hashlib, json, secrets
+import hashlib, json, secrets, time
 
-import fc_core, fc_tasks
+import fc_core, fc_evidence, fc_linear, fc_tasks
 
 KEYS = ("event_id", "run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail")
 
@@ -35,19 +35,51 @@ SAVED = set()
 
 def comment_text(rows):
     """One comment holding a batch of rows in an `evidence` fenced block."""
-    raise NotImplementedError("fc_ledger.comment_text")
+    phases = []
+    for r in rows:
+        if r["phase"] not in phases:
+            phases.append(r["phase"])
+    return f"Evidence: {rows[0]['source']} {', '.join(phases)}\n\n```evidence\n" + \
+        "\n".join(json.dumps(r) for r in rows) + "\n```"
 
 def add_row(issue, rows):
     """Write the issue's unsaved rows and these as one comment, retried; False while anything stays unsaved."""
-    raise NotImplementedError("fc_ledger.add_row")
+    if not issue or not fc_linear.linear_ready():
+        return True
+    seen, batch = set(), []
+    for r in [t[1] for t in UNSAVED if t[0] == issue] + list(rows):
+        if (issue, r["event_id"]) in SAVED or r["event_id"] in seen:
+            continue
+        seen.add(r["event_id"])
+        batch.append(r)
+    if not batch:
+        return True
+    err = ""
+    for n in range(3):
+        try:
+            fc_linear.linear_comment(fc_linear.linear_issue(issue), comment_text(batch))
+            SAVED.update((issue, r["event_id"]) for r in batch)
+            UNSAVED[:] = [t for t in UNSAVED if t[0] != issue]
+            return True
+        except Exception as e:
+            err = str(e)
+            if n < 2:
+                time.sleep(2)
+    UNSAVED[:] = [t for t in UNSAVED if t[0] != issue] + [(issue, r) for r in batch]
+    fc_core.say(f"ledger {issue}: evidence not saved after 3 tries, kept in memory: "
+                f"{', '.join(r['event_id'] for r in batch)} ({err[:200]})")
+    return False
 
 def unsaved():
     """The rows not saved yet, every issue, in order."""
-    raise NotImplementedError("fc_ledger.unsaved")
+    return [r for _, r in UNSAVED]
 
 def record(issue, events):
     """Write the events on the issue, then refresh its `## Evidence` section; the write's result."""
-    raise NotImplementedError("fc_ledger.record")
+    ok = add_row(issue, events)
+    if ok:
+        fc_evidence.refresh(issue)
+    return ok
 
 def run_events(proj, repo, meta, result):
     """The evidence events of one finished task's run result, in order."""
