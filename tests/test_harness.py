@@ -485,18 +485,23 @@ class CodexProbe(unittest.TestCase):
 class ClaudeOptional(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        self.bin, self.home, self.co, self.other = tmp / "bin", tmp / "home", tmp / "co", tmp / "other"
-        for d in (self.bin, self.home, self.co / "bin", self.other): d.mkdir(parents=True)
+        self.bin, self.home, self.co, self.elsewhere = tmp / "bin", tmp / "home", tmp / "co", tmp / "elsewhere"
+        for d in (self.bin, self.home, self.co / "bin", self.elsewhere): d.mkdir(parents=True)
         for f in ("bin/compose.py", "SKILL.md"): (self.co / f).write_text("")  # a compose checkout
         p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
         os.environ.pop("CODEX_HOME", None)
 
-    def codex(self):
-        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+    def exe(self, name):
+        (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(stat.S_IRWXU)
 
-    def link(self, target):
-        link = self.home / ".codex/skills/compose"
+    def link(self, hidden, target):
+        link = self.home / hidden / "skills/compose"
         link.parent.mkdir(parents=True); link.symlink_to(target)
+
+    def second(self):
+        self.exe("other")
+        row = {**fc_harness.HARNESSES.get("codex", {}), "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}
+        p = mock.patch.dict(fc_harness.HARNESSES, {"other": row}); p.start(); self.addCleanup(p.stop)
 
     def test_claude_only_names_are_steps_rows(self):
         self.assertEqual(fc_steps.CLAUDE_ONLY, ("claude", "herdr skill", "i-have-adhd skill", "compose skill link"))
@@ -504,28 +509,34 @@ class ClaudeOptional(unittest.TestCase):
 
     def test_other_harness_is_codex_only_with_the_binary_and_a_link_to_the_checkout(self):
         self.assertIsNone(fc_steps.other_harness(self.co))
-        self.link(self.co)
+        self.link(".codex", self.co)
         self.assertIsNone(fc_steps.other_harness(self.co))  # the link without codex on PATH
-        self.codex()
+        self.exe("codex")
         self.assertEqual(fc_steps.other_harness(self.co), "codex")
 
     def test_other_harness_needs_the_link_to_point_at_the_checkout(self):
-        self.codex()
+        self.exe("codex")
         self.assertIsNone(fc_steps.other_harness(self.co))  # codex on PATH, no link
-        self.link(self.other)
+        self.link(".codex", self.elsewhere)
         self.assertIsNone(fc_steps.other_harness(self.co))
+
+    def test_other_harness_is_the_first_installed_row_whose_own_link_is_ok(self):
+        self.exe("codex"); self.second(); self.link(".other", self.co)
+        self.assertEqual(fc_steps.other_harness(self.co), "other")  # codex has no link
+        self.link(".codex", self.co)
+        self.assertEqual(fc_steps.other_harness(self.co), "codex")
 
     def test_required_drops_only_claude_only_rows_and_only_while_other_is_set(self):
         for row in fc_steps.STEPS:
             with self.subTest(row=row[0]):
                 self.assertEqual(fc_steps.required(row, None), row[3] == "required")
-                self.assertEqual(fc_steps.required(row, "Codex"), row[3] == "required" and row[0] not in fc_steps.CLAUDE_ONLY)
+                self.assertEqual(fc_steps.required(row, "codex"), row[3] == "required" and row[0] not in fc_steps.CLAUDE_ONLY)
         by = {r[0]: r for r in fc_steps.STEPS}
-        for name in ("git", "herdr", "pi"): self.assertTrue(fc_steps.required(by[name], "Codex"))
-        for name in fc_steps.CLAUDE_ONLY: self.assertEqual((fc_steps.required(by[name], "Codex"), fc_steps.required(by[name], None)), (False, True))
+        for name in ("git", "herdr", "pi"): self.assertTrue(fc_steps.required(by[name], "codex"))
+        for name in fc_steps.CLAUDE_ONLY: self.assertEqual((fc_steps.required(by[name], "codex"), fc_steps.required(by[name], None)), (False, True))
         for level in ("default", "designer"):
             row = next(r for r in fc_steps.STEPS if r[3] == level)
-            self.assertEqual((fc_steps.required(row, None), fc_steps.required(row, "Codex")), (False, False))
+            self.assertEqual((fc_steps.required(row, None), fc_steps.required(row, "codex")), (False, False))
 
 
 import fc_finish, fc_prompt, fc_setup
