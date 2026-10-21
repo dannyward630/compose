@@ -144,3 +144,35 @@ class PiTurnLocal(unittest.TestCase):
                 self.assertNotIn("-e", fc.fc_models.probe_command("pi:" + model))
                 fc.fc_models.probe_once("pi:" + model, 5); self.assertNotIn("COMPOSE_PI_MODEL", self.run.call_args[1]["env"])
         self.assertFalse(self.js.exists())
+
+class HerdrPiLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); (self.d / "wt").mkdir(); (self.d / "wt.guard.json").write_text("{}"); self.ledger = fc.fc_core.Ledger()
+        self.panes, self.starts, self.js = [], [], self.d / "pi-providers.js"
+        started = {"agent": {"agent_session": {"value": "sfile"}}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1"}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.dict(os.environ),
+                  mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_error", return_value=({}, None)),
+                  mock.patch.object(fc.fc_herdr, "herdr_agent_start", lambda *a: self.starts.append(list(a)) or started), mock.patch.object(fc.fc_readguard, "command", lambda f: "guard"),
+                  mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: self.panes.append(env) or "p1"),
+                  mock.patch.object(fc.fc_models, "parse_pi_session", return_value=(1, "ok", [], {"tokens_in": 42, "tokens_out": 7, "cost": 0.5}, []))):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_PI_MODEL", None)
+    def turn(self, model):
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.d / "shop", "space": "w9"}
+        fc.fc_implement.herdr_pi(str(self.d / "wt"), model, "hi", None, task)
+        return self.panes[-1], self.starts[-1][self.starts[-1].index("--") + 1:]
+    def test_local_pane_env_start_args_and_ledger_row(self):
+        env, args = self.turn("fakelocal/fake-1")
+        self.assertEqual(env["COMPOSE_PI_MODEL"], "fakelocal/fake-1")
+        pairs = [args[i:i + 2] for i in range(len(args))]
+        self.assertLess(pairs.index(["-e", str(fc.fc_readguard.PI_EXT)]), pairs.index(["-e", str(self.js)]))
+        self.assertLess(args.index(str(self.js)), args.index("--model")); self.assertEqual(args[args.index("--model") + 1], "fakelocal/fake-1")
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True})
+    def test_openrouter_fast_model_is_unchanged(self):
+        model = PT_FAST; env, args = self.turn(model)
+        self.assertNotIn("COMPOSE_PI_MODEL", env); self.assertNotIn(str(self.js), args); self.assertEqual(args[args.index("--model") + 1], model)
+        p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6)
+        self.assertFalse(self.js.exists())
+    def test_fc_implement_stays_within_its_line_cap(self):
+        self.assertLessEqual(len(Path(fc.fc_implement.__file__).read_text().splitlines()), 600)
