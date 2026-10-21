@@ -285,3 +285,33 @@ class ProbeReach(unittest.TestCase):
                 self.probe.reset_mock(); fc.fc_models.model_available(model)
                 self.assertEqual(self.probe.call_args_list, [mock.call(model, 60), mock.call(model, 180)])
         self.reach.assert_not_called()
+
+def pf_provider_of(model):
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in ("alpha", "fakelocal", "zeta") and mid else None
+
+class PreflightReach(unittest.TestCase):
+    STOP = "preflight stopped; nothing was cloned or run. "
+    def setUp(self):
+        self.reach, self.impl = mock.Mock(return_value=(True, "HTTP 200")), mock.Mock()
+        for p in (mock.patch.object(fc.fc_config, "provider_of", pf_provider_of), mock.patch.object(fc_providers, "reach", self.reach),
+                  mock.patch.object(fc.fc_implement, "implementer", self.impl), mock.patch.object(fc.fc_run.fc_pi, "pi_auth_overrides", return_value=[])):
+            p.start(); self.addCleanup(p.stop)
+    def test_down_provider_stops_the_run_before_any_probe(self):
+        why = "local provider fakelocal at http://127.0.0.1:1/v1 is not answering: start the server, then run again"
+        self.reach.return_value = (False, why)
+        with self.assertRaises(SystemExit) as e: fc.fc_run.preflight(["pi:fakelocal/fake-1"])
+        self.assertEqual(e.exception.code, self.STOP + why); self.impl.assert_not_called()
+    def test_each_provider_is_reached_once_in_sorted_order_and_up_models_get_their_probe(self):
+        models = ["pi:zeta/m", "pi:alpha/n", "claude:opus", "pi:alpha/m", "pi:openrouter-fast/z-ai/glm"]
+        fc.fc_run.preflight(models)
+        self.assertEqual(self.reach.call_args_list, [mock.call("alpha"), mock.call("zeta")])
+        self.assertEqual(sorted(c[0][1] for c in self.impl.call_args_list), sorted(m for m in models if m != "claude:opus"))
+    def test_first_failure_stops_before_later_providers_are_reached(self):
+        self.reach.side_effect = [(False, "alpha is down"), (True, "HTTP 200")]
+        with self.assertRaises(SystemExit) as e: fc.fc_run.preflight(["pi:zeta/m", "pi:alpha/m"])
+        self.assertEqual(e.exception.code, self.STOP + "alpha is down")
+        self.assertEqual(self.reach.call_args_list, [mock.call("alpha")]); self.impl.assert_not_called()
+    def test_a_run_with_no_local_models_never_reaches(self):
+        fc.fc_run.preflight(["pi:openrouter-fast/z-ai/glm", "claude:opus", "openrouter/x/y"])
+        self.reach.assert_not_called(); self.assertEqual(self.impl.call_count, 2)
