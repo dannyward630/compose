@@ -132,6 +132,29 @@ def verify_record(proj, repo, report):
         review = [ev("review", "skipped", "review did not run")]
     else:
         review = [ev("review", "pass" if rv["pass"] else "fail", f"{len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")]
-    return all([record(feature, checks or [ev("checks", "skipped", "no checks ran")]),
-                record(feature, e2e or [ev("e2e", "skipped", "no e2e cases ran")]),
-                record(feature, review)])
+    acc = report["acceptance"]
+    rows = (acc or {}).get("criteria")
+    oks = [record(feature, checks or [ev("checks", "skipped", "no checks ran")]),
+           record(feature, e2e or [ev("e2e", "skipped", "no e2e cases ran")]),
+           record(feature, review)]
+    if not rows:
+        if acc is None:
+            oks.append(record(feature, [ev("acceptance", "skipped", "acceptance did not run")]))
+        elif "error" in acc:
+            oks.append(record(feature, [ev("acceptance", "error", acc["error"])]))
+        else:
+            oks.append(record(feature, [ev("acceptance", "skipped", acc.get("note", ""))]))
+    for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)):
+        ids, rid = criterion_ids(t), run_id(proj, t["id"])
+        texts = fc_tasks.parse_criteria(t["body"])
+        tev = lambda cid, phase, r, detail: event(rid, sha, [t["id"]], cid, phase, "verify", r, None, detail)
+        scoped = [tev(ids, "scoped", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report["scoped"] if c["cmd"] == t["test"]]
+        acceptance = []
+        for row in (rows or []):
+            if row["task"] != t["id"]:
+                continue
+            r = "error" if row.get("judge_error") or row["choice"] is None else "pass" if row["choice"] == "MET" else "fail" if row.get("confirmed") else "unclear"
+            acceptance.append(tev([ids[texts.index(row["criterion"])]], "acceptance", r, f"{row['choice']}: p_met {row['p_met']}, p_not_met {row['p_not_met']}"))
+        oks.append(record(t.get("linear"), scoped))
+        oks.append(record(t.get("linear"), acceptance))
+    return all(oks)
