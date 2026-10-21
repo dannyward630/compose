@@ -103,6 +103,59 @@ def board(repo, proj):
     _board[proj] = (stamp, b)
     return b
 
+FAILED_STATES = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "interrupted")
+
+def verify_why(vd):
+    """The few words behind a failed verify, from the last round of its verify.json: which stage failed and how many cases, and
+    whether every failure was the tooling (browser, harness) rather than the code. "" when the file says nothing."""
+    rounds = vd.get("rounds") or []
+    last = rounds[-1] if rounds and isinstance(rounds[-1], dict) else {}
+    why, failed, tool = [], 0, 0
+    for stage in ("checks", "e2e"):
+        rows = last.get(stage) or []
+        bad = [r for r in rows if r.get("exit")]
+        if bad:
+            why.append(f"{stage} {len(bad)}/{len(rows)} failed")
+            failed += len(bad)
+            tool += sum(bool(r.get("tool_error")) for r in bad)
+    rv = last.get("review") or {}
+    if rv and not rv.get("pass", True):
+        why.append(f"review {len(rv.get('confirmed') or [])} confirmed")
+        failed += 1
+    if vd.get("rejected_fixes"):
+        why.append("a fix touched files outside the stack")
+    text = ", ".join(why) + (" - tool errors, not the code" if failed and tool == failed else "")
+    return text + (f" after {len(rounds) - 1} fix round(s)" if text and len(rounds) > 1 else "")
+
+def digest(repo, proj):
+    """The project's honest state in one line, for the product owner who asks "where are we": tasks done of all, the run, the last
+    verify and why it failed, a halt, and every question waiting on them. `status --digest` prints it; `watch` sends its changes."""
+    rows = board(repo, proj)["rows"]
+    done = sum(r["state"].split(" ")[0] in ("merged", "passed", "hand_done", "already_green") for r in rows)
+    bad = [r["id"] for r in rows if r["state"] in FAILED_STATES]
+    out = [f"{proj.name}: {done}/{len(rows)} tasks done" + (f", failed {','.join(bad)}" if bad else "")]
+    m = fc_tasks.run_marker(proj)
+    out.append("run live" if m and fc_tasks.pid_alive(m.get("pid")) else "run interrupted" if m else "no run")
+    v = proj / "results" / "verify.json"
+    if v.exists():
+        try:
+            vd = json.loads(v.read_text())
+            at = time.strftime("%H:%M", time.localtime(v.stat().st_mtime))
+            why = verify_why(vd)
+            out.append(f"verify PASS at {at}" if vd.get("passed") else f"verify FAIL at {at}" + (f" ({why})" if why else ""))
+        except (OSError, json.JSONDecodeError):
+            pass
+    if (proj / "results" / "resume.json").exists():
+        out.append("HALTED on payment")
+    for f in sorted((proj / "results" / "crew").glob("*.status")) if (proj / "results" / "crew").exists() else []:
+        try:
+            last = json.loads(f.read_text().strip().splitlines()[-1])
+        except (OSError, IndexError, json.JSONDecodeError):
+            continue
+        if last.get("state") == "needs-user":
+            out.append(f"{f.stem} asks: {last.get('message', '')[:100]}")
+    return "; ".join(out)
+
 def render_status(repo, projects):
     out = []
     for proj in projects:
@@ -190,13 +243,18 @@ def cmd_cost(a):
         print(fc_cost.render(rows))
 
 def cmd_status(a):
-    """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress."""
+    """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress.
+    --digest prints one honest line per project instead: the answer to "where are we"."""
     repo = Path(a.repo).resolve()
     projects = fc_core.all_projects(repo)
     if a.project:
         projects = {a.project: projects[a.project]} if a.project in projects else {}
     if not projects:
         sys.exit("no compose projects in this repository")
+    if a.digest:
+        for wt, proj in projects.values():
+            print(digest(wt, proj))
+        return
     while True:
         text = "\n".join(render_status(wt, [proj]) for wt, proj in projects.values())
         if a.watch:

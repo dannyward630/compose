@@ -225,6 +225,45 @@ def herdr_unname_manager(slug):
             rest = [x for x in projects if x != slug]
             herdr("pane", "rename", p["pane_id"], f"{MANAGER}: {', '.join(rest)}" if rest else "--clear")
 
+def herdr_manager_record(proj):
+    """results/manager.json: the engineering manager session (herdr pane) that drives the project, set by its first `crew start` or `watch`."""
+    try:
+        return json.loads((Path(proj) / "results" / "manager.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+def herdr_manager_live(pane):
+    """Whether a live agent still sits in herdr pane `pane`. herdr unable to say counts as gone: it must not lock a project."""
+    listed = herdr("agent", "list")
+    return listed is not None and any(ag.get("pane_id") == pane for ag in listed.get("agents", []))
+
+def herdr_manager_claim(proj, takeover=False):
+    """One engineering manager session drives a project. The first `crew start`, `crew stop`, or continuous `watch` of a session with no
+    crew role claims it; the same from another session while the owner's pane still holds a live agent refuses, naming it, unless
+    `takeover`, which moves the claim and the owner's teammates (`started_by`) here. An owner whose pane is gone is replaced silently.
+    Outside herdr sessions cannot be told apart, so nothing is claimed."""
+    mine, proj = fc_core.session_id(), Path(proj)
+    if os.environ.get("COMPOSE_ROLE") or not mine or not herdr_env():
+        return
+    rec = herdr_manager_record(proj)
+    owner = rec.get("session")
+    if owner == mine:
+        return
+    if owner and herdr_manager_live(owner):
+        if not takeover:
+            sys.exit(f"{proj.name} is driven by another engineering manager session (herdr pane {owner}, since {rec.get('since', '?')}): two sessions on "
+                     f"one project send prompts to the same teammates and take each other's events. From here you may look (`compose status --digest`, "
+                     f"`compose watch --now`). To drive it from this session instead, run the same command with --takeover.")
+        for f in sorted((proj / "results" / "crew").glob("*.json")):
+            try:
+                c = json.loads(f.read_text())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(c, dict) and c.get("started_by") == owner:
+                fc_core.atomic_write(f, json.dumps({**c, "started_by": mine}, indent=2))
+    (proj / "results").mkdir(parents=True, exist_ok=True)
+    fc_core.atomic_write(proj / "results" / "manager.json", json.dumps({"session": mine, "since": time.strftime("%Y-%m-%d %H:%M:%S")}))
+
 def herdr_tab(space, label, cwd, *args, check=False):
     """A new tab labelled `label` whose one pane carries the same name. The `tab create` result, {} when herdr refused."""
     r = herdr("tab", "create", "--workspace", space, "--label", label, "--cwd", str(cwd), *args, "--no-focus", check=check) or {}

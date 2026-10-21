@@ -76,14 +76,14 @@ class Watch(unittest.TestCase):
         return {"tasks": {k: {"state": v, "attempts": 1, "cost": 0.01, "note": "", "linear": "ENG-7", "title": "T"} for k, v in tasks.items()},
                 "agents": {}, "run": True, "verify": None}
 
-    def test_task_final_and_running_are_events_attempts_are_not(self):
+    def test_task_final_is_an_event_attempts_and_starting_are_not(self):
         a, b = self.snap(**{"001": "running"}), self.snap(**{"001": "passed"})
         ev = fc.fc_watch.watch_events(a, b)
         self.assertEqual(len(ev), 1)
         self.assertIn("task=001 state=passed", ev[0]); self.assertIn("linear=ENG-7", ev[0])
         b["tasks"]["001"]["attempts"] = 2; b["tasks"]["001"]["state"] = "running"
         self.assertEqual(fc.fc_watch.watch_events(self.snap(**{"001": "running"}), b), [])
-        self.assertIn("state=running", fc.fc_watch.watch_events(self.snap(**{"001": "pending"}), self.snap(**{"001": "running"}))[0])
+        self.assertEqual(fc.fc_watch.watch_events(self.snap(**{"001": "pending"}), self.snap(**{"001": "running"})), [])  # a task starting wakes nobody
 
     def test_agent_blocked_run_ended_verify(self):
         a, b = self.snap(**{"001": "passed"}), self.snap(**{"001": "passed"})
