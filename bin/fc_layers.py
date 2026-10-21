@@ -1,4 +1,4 @@
-import json, os, re, subprocess, sys, tempfile, time
+import hashlib, json, os, re, subprocess, sys, tempfile, time
 from pathlib import Path
 import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree
 
@@ -16,15 +16,63 @@ def layer_prefix(repo, proj):
     return fc_worktree.task_prefix(repo, proj)
 
 
+COMPOSE_COMMANDS = "verify|run|stack|resume|status|clean|sync|init|done|watch|crew|change|linear|report|reword|land|doctor|setup|update|cli|skill|project|tasks?|waves?"
+PROCESS_RE = re.compile(
+    rf"(?<![\w./-])compose(?=\s+(?:{COMPOSE_COMMANDS})\b)|\bby compose\b|(?<![\w./-])compose['’]s\b|`compose`"
+    r"|\bwaves?\b(?=\s*[-#]?\d)|\b(?:this|next|last|first|second|third|each|every|previous) wave\b"
+    r"|\btasks?[ -]?#?\d{2,3}\b|\bteammates?\b|\bimplementers?\b|\bteam lead\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
+    r"|\b(?:fix|verify|review) rounds?\b|^co-authored-by:", re.I | re.M)
+
+def typed_subject(subject, conv):
+    """Whether a subject starts with one of the convention's types (`feat:`, `fix(api):`, `feat!:`); True when there is no convention."""
+    return not conv or bool(re.match(r"(?:%s)(?:\([^)]*\))?!?: \S" % "|".join(map(re.escape, conv["types"])), subject))
+
+def message_problem(message, conv=None):
+    """Why a commit message breaks the commit rules, or "" when it keeps them: it names the process (compose and its commands,
+    waves, task ids, teammates, implementers, the team lead, Linear issues, verify or fix rounds, a co-author trailer), or the
+    repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types."""
+    subject = (message or "").strip().split("\n")[0]
+    if not subject:
+        return "the message is empty"
+    if (hit := PROCESS_RE.search(message)):
+        return f"it mentions the process (`{hit.group(0).strip()}`); a commit describes the change itself, in plain words"
+    if re.match(r"\s*\d{3}[:.\s-]", subject):
+        return "it starts with a task id; a commit describes the change itself, in plain words"
+    if not typed_subject(subject, conv):
+        return f"it has no type prefix; the repo's commit convention starts with one of {', '.join(conv['types'])}"
+    return ""
+
+def commit_kind(files, subject=""):
+    """What a commit changes, as fc_core.typed knows it: test (tests only), docs, deps (dependency or config files only), fix (a
+    subject that starts with Fix), else feat."""
+    tests = bool(files) and all(re.search(r"(^|/)(tests?|__tests__)/|[._-](test|spec)\.|(^|/)test_", f) for f in files)
+    return ("test" if tests else "docs" if files and all(fc_config.DOC_RE.search(f) for f in files)
+            else "deps" if files and all(CONFIG_FILE_RE.search(f) for f in files) else "fix" if re.match(r"fix\b", subject, re.I) else "feat")
+
+def scrub_message(message, files, conv=None):
+    """A message that keeps the commit rules, for a commit whose own does not: the task id cut off the subject, the body lines
+    that name the process dropped, a type prefix added when the convention wants one; when no subject is left, `Update <files>`
+    (`Add tests in <files>` for tests only). The message itself when it already keeps the rules."""
+    if not message_problem(message, conv):
+        return message
+    first, *rest = message.strip().split("\n")
+    subject = re.sub(r"^\s*(?:tasks?[ -]?#?)?\d{3}[:.\s-]*", "", first).strip()
+    kind = commit_kind(files, subject)
+    if not subject or PROCESS_RE.search(subject):
+        names = ", ".join(Path(f).name for f in files[:3]) or "files"
+        subject = f"Add tests in {names}" if kind == "test" else f"Update {names}"
+    if not typed_subject(subject, conv):
+        subject = fc_core.typed(subject, kind, conv)
+    return "\n".join([subject, *(l for l in rest if not PROCESS_RE.search(l))]).rstrip()
+
 def commit_message(meta, conv=None):
-    """A task's commit says what changed, in the task title's words: no tool name, task id, or process. With a commit convention it
-    starts with the type of the change: docs or dependency/config files only, else fix for a "Fix ..." title, else feat."""
+    """A task's commit says what changed, in the task title's words: no tool name, task id, or process (a title that names the
+    process gives `Update <files>`). With a commit convention it starts with the type of the change: docs or dependency/config
+    files only, else fix for a "Fix ..." title, else feat."""
     title = re.sub(r"^\s*\d{3}[:.\s-]*", "", meta.get("title") or "").strip()
-    msg = title or "Update " + ", ".join(meta.get("files") or ["files"])
     files = meta.get("files") or []
-    kind = ("docs" if files and all(fc_config.DOC_RE.search(f) for f in files) else "deps" if files and all(CONFIG_FILE_RE.search(f) for f in files)
-            else "fix" if re.match(r"fix\b", title, re.I) else "feat")
-    return fc_core.typed(msg, kind, conv)
+    msg = title if title and not message_problem(title) else "Update " + ", ".join(files or ["files"])
+    return fc_core.typed(msg, commit_kind(files, title), conv)
 
 
 def chain_order(repo, proj):
@@ -198,20 +246,48 @@ def review_units(repo, proj, base, trunk, chain):
         prev = b
     return units
 
-def cherry_pick_same(wt, c):
+def commit_key(repo, c):
+    """What names a commit across rebuilds and rebases, which change its hash: its author, author date, and the files it touches."""
+    who = fc_core.sh(["git", "show", "-s", "--format=%an <%ae> %aI", c], repo).stdout.strip()
+    files = fc_core.sh(["git", "show", "--name-only", "--no-renames", "--format=", c], repo).stdout.split()
+    return hashlib.sha1("\0".join([who, *sorted(files)]).encode()).hexdigest()[:16]
+
+def rewords(proj):
+    """{commit_key: {"message", "was"}}: the messages `compose reword` chose, applied to the layers every time they are rebuilt."""
+    f = Path(proj) / "rewords.json"
+    return json.loads(f.read_text()) if f.exists() else {}
+
+def layer_message(repo, proj, c, conv=None):
+    """The message commit c has in a layer when it differs from its own: the one `compose reword` chose for it, else its own with
+    the process scrubbed out when it breaks the commit rules (scrub_message). None when its own stands."""
+    own = fc_core.sh(["git", "show", "-s", "--format=%B", c], repo).stdout.strip()
+    chosen = rewords(proj).get(commit_key(repo, c))
+    if chosen:
+        return chosen["message"] if chosen["message"] != own else None
+    if not message_problem(own, conv):
+        return None
+    files = fc_core.sh(["git", "show", "--name-only", "--no-renames", "--format=", c], repo).stdout.split()
+    return scrub_message(own, files, conv)
+
+def cherry_pick_same(wt, c, message=None):
     """Cherry-pick keeping the original committer and date, so a layer rebuilt from unchanged commits gets the same hashes and
-    a resubmit pushes nothing new. None when it applied, else the files it conflicts in (aborted, so the tree is as before)."""
+    a resubmit pushes nothing new; `message` replaces the commit's own. None when it applied, else the files it conflicts in
+    (aborted, so the tree is as before)."""
     who = fc_core.sh(["git", "show", "-s", "--format=%cn%n%ce%n%cI", c], wt).stdout.splitlines()
     env = {**os.environ, "GIT_COMMITTER_NAME": who[0], "GIT_COMMITTER_EMAIL": who[1], "GIT_COMMITTER_DATE": who[2]}
     p = fc_core.sh(["git", "cherry-pick", "--allow-empty", c], wt, check=False, env=env)
     if p.returncode == 0:
+        if message:
+            fc_core.sh(["git", "commit", "--amend", "--allow-empty", "-q", "-m", message], wt, env=env)
         return None
     conflicts = fc_core.sh(["git", "diff", "--name-only", "--diff-filter=U"], wt, check=False).stdout.split()
     fc_core.sh(["git", "cherry-pick", "--abort"], wt, check=False)
     return conflicts
 
 def record_layers(proj, layers):
-    """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it."""
+    """Remember which tasks each layer holds once the stack is submitted: from then on a layer has a PR, so its tasks stay in it.
+    A land in progress (land.json) belongs to the layers it started from, so it ends here."""
+    (Path(proj) / "results" / "land.json").unlink(missing_ok=True)
     fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l.get("keys", l["tasks"]))) for l in layers}, indent=2))
 
 def group_by_record(proj, units, budget, max_prs=None):
@@ -254,6 +330,8 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
     if cfg_file.exists() and fc_core.project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
         fc_core.atomic_write(cfg_file, json.dumps({**fc_core.project_config(proj), "layer_prefix": prefix}, indent=2))
     kept = "the layers and the stack are left as they were"
+    conv = fc_core.commit_convention(proj)
+    first_line = lambda c: fc_core.sh(["git", "show", "-s", "--format=%s", c], repo).stdout.strip()
     def stop(why):
         global STACK_STOP
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
@@ -266,7 +344,10 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
         for u in g:
             units.append([])
             for c in u["commits"]:
-                conflicts = cherry_pick_same(wt, c)
+                message = layer_message(repo, proj, c, conv)
+                if message:
+                    fc_core.say(f"stack  note  {c[:7]} message: {first_line(c)!r} becomes {message.splitlines()[0]!r}")
+                conflicts = cherry_pick_same(wt, c, message)
                 if conflicts is not None:
                     files = ", ".join(conflicts) or "no file git names"
                     if fc_core.sh(["git", "merge-base", "--is-ancestor", base, trunk], repo, check=False).returncode:  # trunk is behind base

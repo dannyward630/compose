@@ -37,6 +37,30 @@ class CommitConvention(unittest.TestCase):
         self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat", "build"]}), "build: Add lodash")
         self.assertEqual(fc.fc_core.typed("Add lodash", "deps", {"types": ["feat"]}), "Add lodash")
 
+    def test_message_problem_names_the_process_and_leaves_plain_words_alone(self):
+        bad = fc.fc_layers.message_problem
+        for m in ("Add search (task 004)", "Wire compose verify into CI", "Land wave 2 of the work", "Fix what the teammate broke", "Close the Linear issue first",
+                  "Add search\n\nCo-authored-by: A <a@b.c>", "001: Add search", "", "compose's retry loop", "Apply the fix round result"):
+            self.assertTrue(bad(m), m)
+        for m in ("Add search", "Pin composer version", "Fix docker-compose healthcheck", "Update compose.yaml port", "Add a wavelength slider"):
+            self.assertEqual(bad(m), "", m)
+        self.assertIn("no type prefix", bad("Add search", CONV))
+        self.assertEqual(bad("feat(api)!: add search", CONV), "")
+
+    def test_a_task_title_that_names_the_process_gives_update_files_in_the_commit(self):
+        msg = lambda title, files, conv=None: fc.fc_layers.commit_message({"title": title, "files": files}, conv)
+        self.assertEqual(msg("Task 001", ["src/a.js", "src/b.js"]), "Update src/a.js, src/b.js")
+        self.assertEqual(msg("Wire compose run into CI", ["ci.yml"], CONV), "chore: Update ci.yml")
+        self.assertEqual(msg("Cover the toggle", ["tests/toggle.test.js"], CONV), "test: Cover the toggle")
+
+    def test_scrub_message_keeps_what_describes_the_change_and_drops_the_process(self):
+        scrub = fc.fc_layers.scrub_message
+        self.assertEqual(scrub("task 001: add search\n\nDone by the implementer.\nIndex the title.", ["a.js"]), "add search\n\nIndex the title.")
+        self.assertEqual(scrub("Wave 2 groundwork for compose run", ["src/a.js"]), "Update a.js")
+        self.assertEqual(scrub("tests for task 003", ["tests/a.test.js", "tests/b.test.js"]), "Add tests in a.test.js, b.test.js")
+        self.assertEqual(scrub("Add search", ["a.js"], CONV), "feat: Add search")
+        self.assertEqual(scrub("Add search", ["a.js"]), "Add search")
+
     def test_briefs_carry_the_convention_and_forbid_config_tests(self):
         meta = {"id": "001", "protected": ["tests/a.test.js"], "test": "true"}
         plain, typed = fc.fc_briefs.test_brief(meta, ""), fc.fc_briefs.test_brief(meta, "", conv=CONV)

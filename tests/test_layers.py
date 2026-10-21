@@ -127,7 +127,7 @@ class Layers(unittest.TestCase):
         self.sizes = {"001": 100, "002": 120, "003": 150}
         for t, base in (("001", "compose/p"), ("002", "compose/p"), ("003", "compose/p")):
             self.git("checkout", "-q", "-b", f"compose/p-{t}", base)
-            self.write(f"{t}.src", "c\n" * self.sizes[t]); self.commit(f"task {t}")
+            self.write(f"{t}.src", "c\n" * self.sizes[t]); self.commit(f"Build {t}")
             self.git("checkout", "-q", "compose/p")
 
     def git(self, *a):
@@ -297,7 +297,7 @@ class Layers(unittest.TestCase):
         calls = (self.repo / ".git" / "fake-gh-calls").read_text()
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append), self.assertRaises(SystemExit) as e:
-            fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
         self.assertTrue(e.exception.code)
         self.assertEqual((refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text()), before)
         self.assertEqual((self.repo / ".git" / "fake-gh-calls").read_text(), calls)
@@ -342,7 +342,7 @@ class Layers(unittest.TestCase):
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
             try:
-                fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
+                fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
             except SystemExit as e:
                 return out, e.code
         return out, 0
@@ -383,14 +383,14 @@ class Layers(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({**cache, "feature": {"title": "Build it", "description": "Fixes o/r#9."}}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            fc.fc_stack.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
         prs = [l for l in out if l.startswith("pr ")]
         self.assertEqual([l.split()[1] for l in prs], self.layers())
         for i, l in enumerate(prs, 1):
             self.assertIn(f"({i}/3)", l.splitlines()[0])
             self.assertIn("## What changed", l)
             self.assertNotRegex(l, r" lines|attempt")  # no size line or attempt count reaches a reviewer
-        self.assertIn("## What changed\n    - task 001\n    - task 002\n\n", prs[1])  # one line per task, its test commit folded in
+        self.assertIn("## What changed\n    - Build 001\n    - Build 002\n\n", prs[1])  # one line per task, its test commit folded in
         self.assertIn("- Part of o/r#9", prs[1])  # as submit writes it: the issue is fixed by the layer with its last task
         self.assertIn("- Fixes o/r#9", prs[2])
         calls =(self.repo / ".git" / "fake-gh-calls").read_text().splitlines()
@@ -677,7 +677,7 @@ class PrTitle(unittest.TestCase):
 class PrBody(unittest.TestCase):
     """A layer's PR body: Why from its stories, What changed, How it was tested and Tickets, from results files and its own commits."""
     setUp, git, write, commit = Layers.setUp, Layers.git, Layers.write, Layers.commit
-    METAS = [{"title": f"Task {m['id']}", "files": [], "after": "", **m} for m in [
+    METAS = [{"title": f"Build {m['id']}", "files": [], "after": "", **m} for m in [
              {"id": "001", "linear": "NEB-1", "test": "python3 -m unittest tests.toggle", "protected": ["t004.test", "t001.test"],
               "body": "## Goal\n\nIn `bin/toggle.py` (L10-L40), flip `state`.\n"},
              {"id": "002", "linear": "NEB-2", "test": "python3 -m unittest tests.toggle", "protected": ["t005.test"], "body": "## Goal\nShow the panel.\n"},
@@ -748,7 +748,7 @@ class PrBody(unittest.TestCase):
         self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`", "- `make all`", "- compose verify passed"])
         s = self.body(["001"], [[("Cover more", ["t004.test"], "")]], verify={"passed": False, "rounds": [{}, {}]})
         self.assertEqual(s["How it was tested"], ["- `python3 -m unittest tests.toggle`", "- compose verify failed"])
-        self.assertEqual(s["What changed"], ["- Task 001"])  # only test commits: the task's own title
+        self.assertEqual(s["What changed"], ["- Build 001"])  # only test commits: the task's own title
 
     def test_a_groundwork_layer_says_in_one_sentence_what_it_prepares_with_no_issues_tests_or_tickets(self):
         s = self.body(["groundwork", "groundwork"], [[("Ignore build output", ["a.txt"], "Keeps dist out of review.")], [("Pin the toolchain", ["b.txt"], "")]])
