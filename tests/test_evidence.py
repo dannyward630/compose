@@ -56,3 +56,66 @@ class Rows(unittest.TestCase):
                 with mock.patch.object(fc.fc_config, "LINEAR_KEY", key): self.assertEqual(fc_evidence.rows(issue), [])
             gql.assert_not_called()
             with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_api_x"), self.assertRaises(RuntimeError): fc_evidence.rows("ENG-4")
+
+
+class Refresh(unittest.TestCase):
+    def setUp(self):
+        self.said, self.calls, self.desc = [], [], ""
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "lin_api_x"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", self.said.append)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((query, variables))
+        if "issueUpdate" in query:
+            self.desc = variables["d"]
+            return {"issueUpdate": {"success": True}}
+        return {"issue": {"id": "uuid-" + variables["id"], "description": self.desc}}
+
+    def refresh(self, rows, issue="ENG-4"):
+        with mock.patch.object(fc_evidence, "rows", return_value=rows): return fc_evidence.refresh(issue)
+
+    def test_table_is_newest_first_with_the_verdict_of_each_criterions_newest_sufficiency_row(self):
+        rs = [row("a", at="2026-10-21T09:05:59.000Z", fails_on_base=True, criterion_id=["001.1:aa", "001.2:bb"], detail="x | y"),
+              row("b", at="2026-10-21T10:00:00.000Z", fails_on_base=False, phase="sufficiency", source="verify", result="proven", criterion_id=["001.1:aa", "001.2:bb"]),
+              row("c", at="2026-10-21T11:00:00.000Z", phase="sufficiency", source="verify", result="unproven", criterion_id=["001.1:aa"])]
+        head = "## Evidence\n\nVerdict: %s\n\n| id | at | source | phase | result | fails on base | criteria | detail |\n|---|---|---|---|---|---|---|---|\n"
+        self.assertEqual(fc_evidence.table([]), head % "not judged")
+        self.assertEqual(fc_evidence.table(rs[:1]), head % "not judged" + "| a | 2026-10-21 09:05 | run | red | fail | yes | 001.1, 001.2 | x \\| y |\n")
+        self.assertEqual(fc_evidence.table(rs), head % "001.1 unproven, 001.2 proven" + "| c | 2026-10-21 11:00 | verify | sufficiency | unproven | - | 001.1 | d |\n"
+                         "| b | 2026-10-21 10:00 | verify | sufficiency | proven | no | 001.1, 001.2 | d |\n| a | 2026-10-21 09:05 | run | red | fail | yes | 001.1, 001.2 | x \\| y |\n")
+        self.assertIn("| all |", fc_evidence.table([row("d", at="2026-10-21T09:00:00.000Z")]))
+
+    def test_table_keeps_the_60_newest_rows(self):
+        lines = fc_evidence.table([row("e%d" % i, at="2026-10-21T09:00:00.000Z") for i in range(65)]).splitlines()[6:]
+        self.assertEqual([l.split(" | ")[0] for l in lines], ["| e%d" % i for i in range(64, 4, -1)])
+
+    def test_appends_a_missing_section_last_then_replaces_it_in_place_and_skips_an_unchanged_write(self):
+        self.desc = None
+        self.refresh([])
+        self.assertEqual(self.desc, fc.fc_plan.replace_section("", "## Evidence", fc_evidence.table([])))
+        self.desc, self.calls[:] = "## Goal\nx\n\n```compose\nid: 1\n```\n", []
+        a, b = [row("a", at="2026-10-21T09:00:00.000Z")], [row("b", at="2026-10-21T10:00:00.000Z")]
+        self.assertIsNone(self.refresh(a))
+        self.assertEqual(self.desc, "## Goal\nx\n\n```compose\nid: 1\n```\n\n" + fc_evidence.table(a))
+        self.assertEqual(self.calls[0], ("query($id: String!) { issue(id: $id) { id description } }", {"id": "ENG-4"}))
+        self.assertEqual(self.calls[1], ("mutation($id: String!, $d: String!) { issueUpdate(id: $id, input: {description: $d}) { success } }", {"id": "uuid-ENG-4", "d": self.desc}))
+        self.desc += "\n## Notes\n\nkeep\n"
+        self.refresh(b)
+        self.assertEqual(self.desc, "## Goal\nx\n\n```compose\nid: 1\n```\n\n" + fc_evidence.table(b) + "\n## Notes\n\nkeep\n")
+        self.refresh(b)
+        self.assertEqual(sum("issueUpdate" in q for q, v in self.calls), 2)
+
+    def test_does_nothing_without_an_issue_or_a_ready_workspace(self):
+        self.refresh([], issue="")
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None): self.refresh([])
+        self.assertEqual(self.calls, [])
+
+    def test_a_failed_read_write_or_row_load_says_the_line_and_raises_nothing(self):
+        err = RuntimeError("e" * 300)
+        line = "ledger ENG-4: Evidence section not refreshed (%s)" % ("e" * 200)
+        for what in ("read", "write", "rows"):
+            with self.subTest(what), mock.patch.object(fc.fc_linear, "linear_gql", side_effect=lambda q, v: (_ for _ in ()).throw(err) if what == "read" or "issueUpdate" in q else self.gql(q, v)), \
+                    mock.patch.object(fc_evidence, "rows", side_effect=err if what == "rows" else None, return_value=[]):
+                self.said.clear()
+                self.assertIsNone(fc_evidence.refresh("ENG-4"))
+                self.assertEqual(self.said, [line])
