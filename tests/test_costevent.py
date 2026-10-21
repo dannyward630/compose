@@ -44,3 +44,46 @@ class VerifyEvents(unittest.TestCase):
     def test_no_fix_rounds_are_zero(self):
         for rounds in (None, [{}, {"stage": "smoke"}]):
             self.assertEqual([e["fix_rounds"] for e in self.events(rounds)], [0, 0, 0])
+
+
+class RunEvent(unittest.TestCase):
+    NUMBERS = {"attempts": 2, "escalations": 1, "fix_rounds": 0, "cost": 0.01234}
+    SIX = ["workflow", "depth", "attempts", "escalations", "fix_rounds", "cost"]
+
+    def final(self, result="pass"):
+        return {"event_id": "e1", "run_id": "run-1", "commit_sha": "abc123", "task_ids": ["001"], "criterion_id": ["C1", "C2"], "phase": "red", "source": "gate", "result": result, "fails_on_base": True, "detail": "x"}
+
+    def project(self, route=True):
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
+        (proj / "results").mkdir(parents=True)
+        issues = {"XX-1": {"description": "## Route\n\n* workflow: implement-then-test\n* depth: DEEP\n"}} if route else {}
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": TASKS, "issues": issues}))
+        return proj
+
+    def test_detail_line_has_four_decimals(self):
+        self.assertEqual(fc_costevent.detail("test-first", "FAST", self.NUMBERS), "test-first FAST: attempts 2, escalations 1, fix rounds 0, cost $0.0123")
+
+    def test_cost_event_is_ledger_event_plus_six_keys(self):
+        ev = fc_costevent.cost_event(self.final(), "test-first", "FAST", self.NUMBERS)
+        want = fc_costevent.fc_ledger.event("run-1", "abc123", ["001"], ["C1", "C2"], "cost", "gate", "pass", None, fc_costevent.detail("test-first", "FAST", self.NUMBERS))
+        want.update(workflow="test-first", depth="FAST", **self.NUMBERS)
+        self.assertEqual(ev, want)
+        self.assertEqual(list(ev), list(want))
+
+    def test_none_without_final(self):
+        for status in ("passed", "failed", "already_green", None):
+            self.assertIsNone(fc_costevent.run_event(self.project(), TASKS[0], {"status": status, "attempts": 1}, None))
+
+    def test_ran_task_carries_route_and_result_numbers(self):
+        final = self.final("fail")
+        result = {"status": "passed", "attempts": 3, "cost": 0.42, "log": [{"attempt": 1}, {"attempt": 2, "fallback": {"from": "a", "to": "b"}}]}
+        ev = fc_costevent.run_event(self.project(), TASKS[0], result, final)
+        self.assertEqual([ev[k] for k in ("task_ids", "criterion_id", "run_id", "commit_sha", "result", "phase", "source")], [["001"], ["C1", "C2"], "run-1", "abc123", "fail", "cost", "run"])
+        self.assertEqual([ev[k] for k in self.SIX], ["implement-then-test", "DEEP", 3, 1, 0, 0.42])
+        self.assertEqual(final["source"], "gate")
+
+    def test_already_green_has_zero_numbers_and_unrouted_dashes(self):
+        final = self.final("pass")
+        ev = fc_costevent.run_event(self.project(route=False), TASKS[0], {"status": "already_green"}, final)
+        self.assertEqual([ev[k] for k in self.SIX], ["-", "-", 0, 0, 0, 0.0])
+        self.assertEqual((ev["result"], ev["criterion_id"]), ("pass", ["C1", "C2"]))
