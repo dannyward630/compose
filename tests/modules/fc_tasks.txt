@@ -1,5 +1,8 @@
 TASK_BLOCK
 SYNC_SHAPE
+WORKFLOWS
+DEPTHS
+route_text
 task_from_issue
 hand_task
 sync_tasks

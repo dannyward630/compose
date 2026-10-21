@@ -2,7 +2,7 @@
 tells a recorded route is still current."""
 
 
-def route_context(repo, meta, tasks, issues):
+def route_context(repo, proj, meta, tasks, issues):
     """The Jev state for one task: task, criteria, files, other_files, story, bug, pin."""
     raise NotImplementedError("route_context")
 

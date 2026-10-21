@@ -19,6 +19,12 @@ TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
 SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "labels", '
               '"blockedBy": ["<issue id>" or {"id", "status", "labels"}]}]}'
               ": every issue under the feature, its stories' children included")
+WORKFLOWS = ("test-first", "implement-then-test", "fix-then-regression-test")
+DEPTHS = ("FAST", "STANDARD", "DEEP")
+
+def route_text(desc):
+    """The `## Route` section of an issue description, from its heading to the next `## ` heading or the compose fence; "" when there is none."""
+    raise NotImplementedError("route_text")
 
 def task_from_issue(issue):
     """A task meta (with its brief under "body") from a Linear issue whose description carries the compose block, else None."""
