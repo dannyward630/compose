@@ -1,11 +1,20 @@
 """The proof of a regression test: its run on the base and on the fix, and its ledger rows."""
 
-HARNESS_RE = None
+import re
+
+import fc_jev
+
+HARNESS_RE = re.compile(r"ImportError|ModuleNotFoundError|Failed to import test module|ERROR collecting|errors? during collection")
 
 
 def base_result(proc):
     """(result, fails_on_base) of the regression test's run on the base."""
-    raise NotImplementedError("base_result")
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
+        return "pass", False
+    if proc.returncode == 124 or fc_jev.tool_error(output) or HARNESS_RE.search(output):
+        return "error", None
+    return "fail_expected", True
 
 
 def prove(repo, proj, meta, result, commit, command):
