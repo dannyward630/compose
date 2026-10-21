@@ -195,6 +195,17 @@ class Groundwork(unittest.TestCase):
         self.assertIn("1 test writer(s) queued past the cap of 1", out.getvalue())
         self.assertIn("compose testcrews --project p --only 002", out.getvalue())
 
+    def test_claude_test_writers_stay_within_claude_parallel_but_pi_writers_do_not(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        for models, cap, expect in (({}, 1, ["tests-001"]), ({"tests": "claude:opus"}, 1, ["tests-001"]), ({"tests": "pi:zai/glm-5"}, 1, ["tests-001", "tests-002"])):
+            started, out = [], io.StringIO()
+            with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+                 mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out), \
+                 mock.patch.object(fc.fc_config, "PARALLEL", None), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", cap), mock.patch.object(fc.fc_config, "CREW_MODELS", models):
+                fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False))
+            self.assertEqual(started, expect, models)
+            self.assertEqual("queued past the cap of 1" in out.getvalue(), len(expect) == 1, models)
+
     def test_a_named_task_that_needs_no_test_writer_says_why(self):
         (self.proj / "results" / "contract.md").write_text("c")
         (self.proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))

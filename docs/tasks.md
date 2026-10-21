@@ -75,6 +75,9 @@ A task is ready when it meets all four of these:
 
 If you cannot write the test, it is not a task yet.
 
+A test that pins a line width or exact text puts that text in the task's brief, wrapped line by line as the test expects.
+A model cannot count columns, so a brief that only states the limit fails every attempt.
+
 ## Sync
 
 `compose sync` reads the feature, its stories, and their tasks from Linear with the workspace's key (read-only, descriptions whole) and stores them.

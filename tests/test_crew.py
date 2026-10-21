@@ -445,7 +445,8 @@ class Crew(unittest.TestCase):
         self.assertIn("Fact-check before you say it", pre)
         self.assertIn("not verified", pre)
         self.assertIn("through `compose timed <seconds> -- <command>`", pre)
-        self.assertIn("at most two such commands run at once on this machine", pre)
+        self.assertIn("at most two suites run at once on this machine", pre)
+        self.assertIn("two quick runs", pre); self.assertIn("run the whole suite once, before you report `done`", pre)
         self.assertIn("Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) directly", pre)
 
     def test_start_in_an_untrusted_worktree_says_so_before_opening_a_tab(self):
@@ -1175,6 +1176,13 @@ class CardsById(unittest.TestCase):
         stories = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
         self.assertIn("map", stories)  # stories are drafted on the map ...
         self.assertIn("needs-user", stories)  # ... and named in one line
+
+    def test_planner_cuts_a_width_pinned_test_with_its_exact_wrapped_text_in_the_brief(self):
+        cut = " ".join(fc.fc_briefs.PLANNER_BRIEF.split())
+        self.assertIn("A test that pins a line width or exact text", cut)
+        self.assertIn("already wrapped as the test expects, in the brief, line by line", cut)
+        self.assertIn("width-pinned or exact text the test asserts, verbatim", cut)
+        self.assertIn("pins a line width or exact text, the brief holds that text verbatim", (Path(__file__).resolve().parents[1] / "sections" / "2.md").read_text())
 
     def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
         for name in ("WAYFINDER_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):

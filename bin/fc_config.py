@@ -15,6 +15,8 @@ import fc_auth, fc_core
 # `default` is the top level itself; it always exists and is active when `workspace` is unset.
 # `parallel` is how many agents start at once: the tasks of run and resume (else 3) and testcrews' writers (else all at once).
 # A command's own flag wins. designcrews never reads it: Figma's per-minute write rate limit caps its builders.
+# `claude_parallel` (default 3) caps the Claude Code sessions of those commands that run at once, apart from the pi and OpenCode ones:
+# parallel Opus writers slow a machine more than the same number of GLM calls.
 # A model id names its harness: `pi:<provider/model>` runs pi, `claude:<model-id>` runs Claude Code with that model, bare
 # `claude` runs Claude Code with its default model, anything else is an OpenCode model id. Teammate sessions run in pi or Claude Code.
 
@@ -44,6 +46,7 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
 PARALLEL = None  # `parallel` from the config; None keeps each command's own default
+CLAUDE_PARALLEL = 3  # `claude_parallel` from the config: how many Claude Code writers (run's tasks, testcrews' test writers) run at once
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
@@ -75,7 +78,7 @@ def settings(cfg):
 def apply_config(move=True):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -83,6 +86,9 @@ def apply_config(move=True):
     PARALLEL = st.get("parallel")
     if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
         sys.exit(f"{CONFIG_PATH}: parallel must be a whole number of 1 or more, not {PARALLEL!r}")
+    CLAUDE_PARALLEL = st.get("claude_parallel", 3)
+    if type(CLAUDE_PARALLEL) is not int or CLAUDE_PARALLEL < 1:
+        sys.exit(f"{CONFIG_PATH}: claude_parallel must be a whole number of 1 or more, not {CLAUDE_PARALLEL!r}")
     WORKSPACE = name
     auth = fc_auth.read_auth(AUTH_PATH)
     held = auth.get("workspaces", {})

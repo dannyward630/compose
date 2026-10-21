@@ -85,8 +85,9 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
             f"and a test failing on the stubs plus the team lead's read of it is the proof.\n"
             f"Run tests and the project's own commands through `compose timed <seconds> -- <command>`: it gives them a scratch "
-            f"~/.compose and says if your real one changes, and at most two such commands run at once on this machine "
-            f"(`COMPOSE_TEST_SLOTS`): one that waits for a slot says so. Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) "
+            f"~/.compose and says if your real one changes, and at most two suites run at once on this machine "
+            f"(`COMPOSE_TEST_SLOTS`), beside two quick runs (a `-k`/`-run` filter or one test file) that never wait on a suite: one that waits for a slot says so. "
+            f"While you work run only the tests of what you changed; run the whole suite once, before you report `done`. Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) "
             f"directly: under `compose timed` they get that scratch config, with no workspace and no keys.\n"
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
@@ -94,12 +95,8 @@ def crew_preamble(proj, name, title, reports_to=None):
 def crew_pick(role, explicit=None):
     return crew_pick_full(role, explicit)[:3]
 
-def crew_pick_full(role, explicit=None):
-    """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under
-    models.crew such as `small`) wins, then models.crew[<role>], then `planner` for the planning role (the wayfinder
-    teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
-    probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it
-    exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""
+def crew_chain(role, explicit=None):
+    """(key, chain): the models.crew entry a role resolves to and its (model, effort) list in order, unprobed; (None, []) means bare `claude`."""
     if explicit and explicit not in fc_config.CREW_MODELS:
         key, chain = "--model", [(explicit, None)]
     else:
@@ -109,10 +106,17 @@ def crew_pick_full(role, explicit=None):
                            role if role in fc_config.CREW_DEFAULTS else
                            "planner" if role in fc_config.PLANNING_ROLES and "planner" in fc_config.CREW_MODELS else
                            "default" if "default" in fc_config.CREW_MODELS else None)
-        if key is None:
-            return "claude", None, "", []
-        chain = [(fc_config.CREW_MODELS[key], fc_config.CREW_EFFORT.get(key)), *fc_config.CREW_FALLBACK.get(key, [])] \
+        chain = [] if key is None else [(fc_config.CREW_MODELS[key], fc_config.CREW_EFFORT.get(key)), *fc_config.CREW_FALLBACK.get(key, [])] \
             if key in fc_config.CREW_MODELS else [fc_config.CREW_DEFAULTS[key]]
+    return key, chain
+
+def crew_pick_full(role, explicit=None):
+    """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under models.crew such as `small`) wins,
+    then models.crew[<role>], then `planner` for the planning role (the wayfinder teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
+    probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""
+    key, chain = crew_chain(role, explicit)
+    if key is None:
+        return "claude", None, "", []
     label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in fc_config.CREW_DEFAULTS and key not in fc_config.CREW_MODELS else "")
     for m, _ in chain:
         if not (fc_claude.is_claude(m) or str(m).startswith("pi:")):
