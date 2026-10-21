@@ -2,19 +2,33 @@
 batch on the task or feature issue, retried, and kept in memory while unsaved. Stages hand it events and never write
 Linear themselves; fc_evidence reads the rows back and derives the `## Evidence` section."""
 
-KEYS = ()
+import hashlib, json, secrets
+
+import fc_core, fc_tasks
+
+KEYS = ("event_id", "run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail")
 
 def event(run_id, commit_sha, task_ids, criterion_id, phase, source, result, fails_on_base, detail):
     """One evidence event: a dict with the keys of KEYS in order and an event_id hashed from the rest."""
-    raise NotImplementedError("fc_ledger.event")
+    d = {"run_id": run_id, "commit_sha": commit_sha, "task_ids": list(task_ids), "criterion_id": list(criterion_id), "phase": phase,
+         "source": source, "result": result, "fails_on_base": fails_on_base,
+         "detail": " ".join(fc_core.scrub(detail).split())[:160]}
+    return {"event_id": hashlib.sha256(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12], **d}
 
 def criterion_ids(meta):
     """`<task id>.<order>:<hash of the text>` for each criterion of the task, in order."""
-    raise NotImplementedError("fc_ledger.criterion_ids")
+    return [f"{meta['id']}.{n}:{hashlib.sha256(c.encode()).hexdigest()[:8]}"
+            for n, c in enumerate(fc_tasks.parse_criteria(meta["body"]), 1)]
 
 def run_id(proj, tid, fresh=False):
     """The task's run id, kept in results/runs.json; a new one when it has none or `fresh` is true."""
-    raise NotImplementedError("fc_ledger.run_id")
+    f = proj / "results" / "runs.json"
+    runs = json.loads(f.read_text()) if f.exists() else {}
+    if fresh or tid not in runs:
+        runs[tid] = secrets.token_hex(6)
+        (proj / "results").mkdir(exist_ok=True)
+        fc_core.atomic_write(f, json.dumps(runs, indent=2))
+    return runs[tid]
 
 UNSAVED = []
 SAVED = set()
