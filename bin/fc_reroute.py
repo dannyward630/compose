@@ -201,9 +201,14 @@ LEDGER = ("failed tests", "invalid evidence", "unmet requirements")
 def ledger_triggers(repo, proj, meta, rows):
     """The `LEDGER` triggers of the task's counted rows, each once in `LEDGER` order."""
     c = fc_ledger.counted(repo, proj, meta, rows)
+    ids = fc_ledger.criterion_ids(meta)
+    voided = any(
+        any(i.startswith(f"{meta['id']}.") and i not in ids for i in r["criterion_id"])
+        and fc_ledger.counted(repo, proj, meta, [{**r, "criterion_id": []}])
+        for r in rows)
     fired = (
         any(r["source"] == "verify" and r["phase"] in ("checks", "scoped", "e2e") and r["result"] == "fail" for r in c),
-        any(r["result"] == "contradicted" for r in c),
+        any(r["result"] == "contradicted" for r in c) or voided or any(not r["task_ids"] or meta["id"] in r["task_ids"] for r in fc_ledger.unsaved()),
         any(r["phase"] == "acceptance" and r["result"] in ("fail", "unclear") or r["phase"] == "sufficiency" and r["result"] == "unproven" for r in c),
     )
     return [t for t, on in zip(LEDGER, fired) if on]
