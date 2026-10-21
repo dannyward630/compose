@@ -16,6 +16,7 @@ fc_routerec
 fc_readguard
 fc_routecost
 fc_costevent
+fc_fast
 fc_claude
 fc_models
 fc_routejev
@@ -55,9 +56,14 @@ fc_implement
 fc_jev
 fc_accept
 fc_reroute
+fc_depth
 fc_verify
 fc_ship
 fc_prove
+fc_regwriter
+fc_regproof
+fc_unproven
+fc_regress
 fc_run
 fc_status
 fc_spec

@@ -454,3 +454,7 @@ class RewrittenTrunk(unittest.TestCase):
         self.assertTrue(any(l.startswith("run done   1/4 passed") for l in said))
         self.assertEqual(json.loads((self.proj / "results" / "013.json").read_text())["status"], "unchained")
         self.assertFalse((self.proj / "results" / "run.json").exists())  # watch sees a finished run, not a crashed one
+
+
+class UnprovenRestart(unittest.TestCase):
+    """Resume or run --only of an unproven task restarts only its regression test writer, never the fix."""
