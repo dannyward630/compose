@@ -1,6 +1,9 @@
 opencode
 RATE_LIMIT_MARK
 pi_error
+PI_AGENT_DIR
+PI_COMPACTION
+pi_agent_dir
 pi_turn
 fallback_for
 PaymentRequired

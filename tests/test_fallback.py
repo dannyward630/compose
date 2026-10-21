@@ -791,6 +791,41 @@ class PiKeyFromEnv(unittest.TestCase):
                 self.keyless(start)
 
 
+class PiCompaction(unittest.TestCase):
+    """A task's pi runs with an agent directory of its own that pins pi's default compaction, whatever the user's pi settings say:
+    a huge compaction.reserveTokens there made GLM compact every few tool calls until the 180 s turn limit."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.user = self.root / "user-agent"
+        self.user.mkdir()
+        (self.user / "models.json").write_text("{}")
+        (self.user / "settings.json").write_text(json.dumps({"compaction": {"enabled": True, "reserveTokens": 116072, "keepRecentTokens": 4000}}))
+        (self.root / "wt").mkdir()
+        p = mock.patch.object(fc.fc_models, "PI_AGENT_DIR", self.user)
+        p.start(); self.addCleanup(p.stop)
+
+    def check(self, adir):
+        self.assertEqual(json.loads((Path(adir) / "settings.json").read_text()), {"compaction": {"enabled": True, "reserveTokens": 16384, "keepRecentTokens": 20000}})
+        self.assertEqual((Path(adir) / "models.json").resolve(), (self.user / "models.json").resolve())  # the user's providers stay
+        self.assertFalse((Path(adir) / "auth.json").exists())  # the user has none, so no dangling link
+        self.assertEqual(Path(adir).parent, self.root)  # beside the clone, so `git add -A` never commits it
+        self.assertIn("reserveTokens\": 116072", (self.user / "settings.json").read_text())  # the user's own file is untouched
+
+    def test_pi_turn_runs_in_the_pinned_agent_dir(self):
+        run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
+        with mock.patch.object(fc.fc_proc, "run", run):
+            fc.fc_models.pi_turn(str(self.root / "wt"), "openrouter/x/y", "hi")
+        self.check(run.call_args[1]["env"]["PI_CODING_AGENT_DIR"])
+
+    def test_herdr_pi_pane_runs_in_the_pinned_agent_dir(self):
+        panes = []
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", side_effect=KeyboardInterrupt), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), self.assertRaises(KeyboardInterrupt):
+            fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", None, task)
+        self.check(panes[0]["PI_CODING_AGENT_DIR"])
+
+
 class ProbeKey(unittest.TestCase):
     """A pi probe gets the process's OpenRouter key in its env, the way pi_turn does; a claude probe keeps headless_env()."""
     KEY, PI, CLAUDE = "sk-or-test-probe", ("pi:openrouter-fast/z-ai/glm@preset/p", "pi:openrouter/x/y", "pi:x/y"), "claude:opus"
@@ -1121,7 +1156,7 @@ class ProcGroupTurns(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"PATH": f"{self.d / 'bin'}{os.pathsep}{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
 
     def test_both_turns_start_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
-        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {}),
+        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {"PI_CODING_AGENT_DIR": str(self.d / "wt.pi-agent")}),
                                                       ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}',
                                                        {"OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"})):
             with self.subTest(name), mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \
