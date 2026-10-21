@@ -489,3 +489,39 @@ class OpenCodeProvider(unittest.TestCase):
         for m in ("pi:fakelocal/fake-1", "claude:opus", "openrouter/x/y", "fakelocal", "unknown/x"): self.assertEqual(fc_providers.opencode_provider(m), {}, m)
     def test_an_id_holding_a_slash_keys_models_by_the_whole_id(self):
         self.assertEqual(fc_providers.opencode_provider("fakelocal/org/m"), self.entry("fakelocal", "org/m"))
+
+OL_OUT = json.dumps({"type": "step_finish", "sessionID": "s1", "part": {"tokens": {"input": 42, "output": 7}, "cost": 0.5}})
+OL_KEY = "sk-local-secret-123"
+
+class OpenCodeLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.cwd = self.d / "task"; self.cwd.mkdir(); self.ledger = fc.fc_core.Ledger()
+        self.entry = {"fakelocal": {"npm": "@ai-sdk/openai-compatible", "name": "fakelocal", "options": {"baseURL": "http://127.0.0.1:1/v1", "apiKey": f"{{file:{self.d}/fakelocal.key}}"}, "models": {"fake-1": {"name": "fake-1"}}}}
+        self.run = mock.Mock(return_value=mock.Mock(stdout=OL_OUT, stderr="", returncode=0))
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1", "models": ["fake-1"]}}),
+                  mock.patch.object(fc.fc_config, "provider_of", oc_provider_of), mock.patch.object(fc_providers, "opencode_provider", lambda m: self.entry if m.startswith("fakelocal/") else {}),
+                  mock.patch.object(fc.fc_core, "LEDGER", self.ledger), mock.patch.object(fc.fc_proc, "run", self.run), mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+    def turn(self, model, key=None):
+        fc.fc_config.OPENROUTER_KEY = key
+        fc.fc_models.opencode(self.cwd, model, "hi")
+        argv, env = self.run.call_args[0][0], self.run.call_args[1]["env"]
+        return argv, env, json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))
+    def test_local_model_config_holds_its_provider_beside_openrouter_when_keyed(self):
+        self.assertEqual(self.turn("fakelocal/fake-1")[2].get("provider"), self.entry)
+        provider = self.turn("fakelocal/fake-1", "sk-or-test")[2].get("provider", {})
+        self.assertEqual(provider.get("fakelocal"), self.entry["fakelocal"]); self.assertEqual(provider["openrouter"]["options"]["apiKey"], f"{{file:{self.d / 'openrouter.key'}}}")
+    def test_local_turn_adds_a_priced_zero_ledger_row_despite_a_reported_cost(self):
+        self.turn("fakelocal/fake-1")
+        self.assertEqual(self.ledger.rows["fakelocal"], {"calls": 1, "tokens_in": 42, "tokens_out": 7, "cost": 0.0, "priced": True}); self.assertIn("fakelocal $0.0000 (", self.ledger.line())
+    def test_no_key_value_reaches_env_or_argv_and_the_config_names_the_key_file(self):
+        os.environ["FAKELOCAL_API_KEY"] = OL_KEY
+        argv, env, config = self.turn("fakelocal/fake-1", "sk-or-test")
+        self.assertIn(f"{self.d}/fakelocal.key", json.dumps(config))
+        for secret in (OL_KEY, "sk-or-test"):
+            self.assertNotIn(secret, " ".join(argv)); self.assertFalse([k for k, v in env.items() if secret in v and k != "OPENCODE_CONFIG_CONTENT"])
+    def test_openrouter_model_config_and_cost_are_unchanged(self):
+        model = "openrouter/openai/gpt-oss-120b"; config = self.turn(model, "sk-or-test")[2]
+        self.assertEqual(config["provider"], {"openrouter": {"options": {"apiKey": f"{{file:{self.d / 'openrouter.key'}}}"}}})
+        p = fc.fc_config.PRICES[model]; self.assertEqual(self.ledger.rows["openrouter"]["cost"], (42 * p[0] + 7 * p[1]) / 1e6)
