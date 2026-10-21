@@ -112,3 +112,62 @@ class Writer(unittest.TestCase):
 
 class Ready(unittest.TestCase):
     """run waits for the writer's ready line, and stops waiting when the writer ends without one."""
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        self.name = fc.fc_herdr.agent_name("p", "tests-007")
+        self.rec = fc.fc_crew.crew_dir(self.proj) / f"{self.name}.json"
+        self.rec.write_text(json.dumps({"name": self.name, "space": "w1"}))
+        self.agents, self.sleeps = {"agents": [{"name": self.name, "workspace_id": "w1"}]}, []
+
+    def wait(self, *later, **kw):
+        queue = list(later)
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            self.assertTrue(queue, "still waiting")
+            for state, message in queue.pop(0):
+                fc.fc_crew.write_report(self.proj, self.name, state, message)
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value=self.agents), mock.patch("time.sleep", sleep):
+            return fc_regwriter.wait_ready(self.proj, "007", **kw)
+
+    def report(self, state, message):
+        fc.fc_crew.write_report(self.proj, self.name, state, message)
+
+    def test_parse_ready(self):
+        self.assertEqual(fc_regwriter.READY_RE.pattern, r"test ready: ([0-9a-f]{7,40}) (.+)")
+        self.assertEqual(fc_regwriter.parse_ready("x\ntest ready: abc1234 python3 -m unittest tests.test_x "), ("abc1234", "python3 -m unittest tests.test_x"))
+        for message in (None, "", "test ready: abc12 cmd", "test ready: ABC1234 cmd"):
+            self.assertIsNone(fc_regwriter.parse_ready(message))
+
+    def test_first_ready_line_in_working_or_done_wins_even_after_a_blocked_report(self):
+        self.report("blocked", "stuck")
+        self.report("done", "no line")
+        self.report("done", "test ready: abc1234 cmd one")
+        self.report("working", "test ready: def5678 cmd two")
+        self.assertEqual(self.wait(), ("abc1234", "cmd one"))
+
+    def test_ready_line_before_since_is_ignored_and_a_closed_record_ends_the_wait(self):
+        self.report("working", "test ready: abc1234 cmd")
+        self.rec.write_text(json.dumps({"name": self.name, "space": "w1", "closed": True}))
+        self.assertIsNone(self.wait(since=1))
+        self.assertEqual(self.wait(since=0), ("abc1234", "cmd"))
+
+    def test_report_written_after_the_first_pass_is_read_after_sleeping_poll_seconds(self):
+        self.report("working", "still going")
+        self.assertEqual(self.wait([("working", "x")], [("working", "test ready: abc1234 cmd")], poll=3), ("abc1234", "cmd"))
+        self.assertEqual(self.sleeps, [3, 3])
+
+    def test_blocked_tool_bug_contradiction_or_done_without_a_ready_line_ends_the_wait(self):
+        for state in ("blocked", "tool-bug", "contradiction", "done"):
+            with self.subTest(state=state):
+                self.assertIsNone(self.wait([(state, "no line")]))
+
+    def test_writer_gone_ends_the_wait_but_herdr_unable_to_say_keeps_waiting(self):
+        self.agents = {"agents": []}
+        self.assertIsNone(self.wait())
+        self.rec.unlink()
+        self.assertIsNone(self.wait())
+        self.rec.write_text(json.dumps({"name": self.name, "space": "w1"}))
+        self.agents = None
+        self.assertEqual(self.wait([("working", "hi")], [("working", "test ready: abc1234 cmd")]), ("abc1234", "cmd"))
