@@ -94,6 +94,17 @@ class Ask(unittest.TestCase):
         self.assertEqual(self.sent(), [ask])
         self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["/NEB-1/Q1", "/NEB-1/Q2", "/NEB-1/Q3"])
 
+    def test_a_teammates_ask_to_the_team_lead_does_not_use_up_the_forward_to_the_manager(self):
+        for who, up in (("shop-planner", "orchestrator"), ("shop-orchestrator", "manager")):
+            (self.proj / "results" / "crew" / f"{who}.json").write_text(json.dumps({"name": who, "reports_to": up, "pane": "p"}))
+        ask = "NEB-1: 2 cards Q1-Q2; recommendation accept-all"
+        self.report(ask, who="shop-planner")
+        self.assertIn("already asked", self.report(ask, who="shop-planner"))
+        self.assertNotIn("already asked", self.report(ask, who="shop-orchestrator"))
+        self.assertIn("already asked", self.report(ask, who="shop-orchestrator"))
+        self.assertEqual([r["message"] for r in fc.fc_crew.crew_reports(self.proj, "shop-orchestrator")], [ask])
+        self.assertEqual([r["message"] for r in fc.fc_crew.crew_reports(self.proj, "shop-planner")], [ask])
+
     def test_one_reminder_is_allowed_then_no_more(self):
         ask = "NEB-1: 2 cards Q1-Q2; recommendation accept-all"
         self.report(ask)

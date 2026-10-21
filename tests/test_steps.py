@@ -13,6 +13,7 @@ ROWS = [("Homebrew", D, "interactive"), ("git", R, "manual"), ("npx", R, "run"),
         ("OpenRouter key", R, "key"), ("TypeSafe key", R, "key"), ("Linear key", R, "key"), ("uv", D, "run"), ("jev", D, "run"),
         ("treehouse", D, "run"), ("bp link", D, "write"), ("Chromium", D, "run"), ("superpowers", D, "run", c), ("herdr pi integration", D, "run"),
         ("herdr claude integration", D, "run", c), ("TEXT_MODEL lines", D, "write"), ("git rerere", D, "run"), ("pi auth.json override", D, "manual"),
+        ("Claude Code permissions", D, "perms"),
         ("framelink-figma", G, "run", c), ("framelink-figma token", G, "key")]
 INSTALLS = {"git": "xcode-select --install", "npx": "brew install node", "gh": "brew install gh", "gh auth": "gh auth login",
             "herdr": "curl -fsSL https://herdr.dev/install.sh | sh", "pi": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",

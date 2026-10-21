@@ -6,6 +6,11 @@ linear_sync_payload
 LINEAR_URL
 LINEAR_ISSUE
 _linear_warned
+LINEAR_RETRIES
+LINEAR_MAX_WAIT
+LinearRateLimited
+_rate_limit_wait
+_linear_post
 linear_gql
 linear_issue
 linear_move

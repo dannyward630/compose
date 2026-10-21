@@ -12,6 +12,7 @@ watch_mem
 watch_save
 watch_lock
 watch_stalls
+RUN_ENDED
 watch_events
 owner_lines
 is_info

@@ -1,3 +1,4 @@
+from __future__ import annotations  # the X | None annotations on /usr/bin/python3 3.9
 import json, os, re, sys
 from pathlib import Path
 import fc_auth, fc_core
@@ -54,6 +55,7 @@ CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order wh
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
+PROVIDERS = {}  # name -> the active settings' providers entry (base URL, optional models list), set by apply_config
 
 
 def read_config():
@@ -78,11 +80,22 @@ def settings(cfg):
 def apply_config(move=True):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
     name, st = settings(read_config())
+    PROVIDERS = st.get("providers", {})
+    for pname, p in PROVIDERS.items():
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pname):
+            sys.exit(f"{CONFIG_PATH}: provider names are lowercase letters, digits, - and _: {pname!r}")
+        if pname in ("openrouter", "openrouter-fast"):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: openrouter models already route there")
+        if not (isinstance(p.get("base_url"), str) and p["base_url"].startswith(("http://", "https://"))):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} needs a base_url such as http://localhost:11434/v1")
+        ids = p.get("models")
+        if ids is not None and (not isinstance(ids, list) or any(not isinstance(i, str) for i in ids)):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname}.models must be a list of model ids")
     PARALLEL = st.get("parallel")
     if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
         sys.exit(f"{CONFIG_PATH}: parallel must be a whole number of 1 or more, not {PARALLEL!r}")
@@ -110,12 +123,20 @@ def apply_config(move=True):
     TEST_READER = models.get("test_reader", TEST_READER)
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
+    for m in [m for m in (models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader"), *CREW_MODELS.values(),
+                          *(f[0] for fs in CREW_FALLBACK.values() for f in fs)) if isinstance(m, str)]:
+        if (hit := provider_of(m)) and (ids := PROVIDERS[hit[0]].get("models")) and hit[1] not in ids:
+            sys.exit(f"{CONFIG_PATH}: {m} is not in providers.{hit[0]}.models: {', '.join(ids)}")
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
     fc_core.SECRET_VARS.update(k for k in st.get("env", {}) if k.endswith("_API_KEY"))
     if OPENROUTER_KEY:
         os.environ["OPENROUTER_API_KEY"] = os.environ["TEXT_MODEL_API_KEY"] = OPENROUTER_KEY
     if auth.get("typesafe"):
         os.environ["TYPESAFE_API_KEY"] = auth["typesafe"]
+    for prov in PROVIDERS:
+        if key := fc_auth.workspace_key(auth, WORKSPACE, f"provider:{prov}"):
+            os.environ[provider_env(prov)] = key
+            fc_core.SECRET_VARS.add(provider_env(prov))
     dotenv = fc_core.load_env(ENV_FILE)
     fc_core.SECRET_VALUES.update(v for v in [OPENROUTER_KEY, LINEAR_KEY, auth.get("typesafe"), *(key for ws in held.values() for key in ws.values()),
                                              *(dotenv[k].strip('"') for k in dotenv if k in fc_core.SECRET_VARS or k.endswith("_API_KEY"))] if v)
@@ -144,9 +165,9 @@ def openrouter_key():
     """The OpenRouter key a harness bills to: the workspace's from auth.json, else the shell's. None leaves the harness on its own auth store."""
     return OPENROUTER_KEY or os.environ.get("OPENROUTER_API_KEY") or None
 
-def key_file(key):
+def key_file(key, name="openrouter.key"):
     """A 0600 file beside the config holding `key`, for a harness that reads its key from a file its config names, not from the env its tools inherit."""
-    f = CONFIG_PATH.parent / "openrouter.key"
+    f = CONFIG_PATH.parent / name
     if not (f.exists() and f.read_text() == key):
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
@@ -155,6 +176,15 @@ def key_file(key):
         fc_core.note_home_write(f, tmp)
         os.replace(tmp, f)  # parallel OpenCode turns never read a half-written key
     return f
+
+def provider_of(model) -> tuple[str, str] | None:
+    """(name, id) for `pi:<name>/<id>` or `<name>/<id>` when `name` is a declared provider, else None."""
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in PROVIDERS and mid else None
+
+def provider_env(name) -> str:
+    """The env var apply_config exports provider `name`'s auth.json key as."""
+    return re.sub(r"[^A-Z0-9]", "_", name.upper()) + "_API_KEY"
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
@@ -185,6 +215,15 @@ def cmd_workspace(a):
         spaces[name] = {}
         fc_auth.set_key(AUTH_PATH, name, "openrouter", key)  # empty fails loudly on use instead of billing another account
         print(f"added {name}" + ("" if key else f"; no key yet: pbpaste | compose workspace key {name}"))
+    elif action == "key" and getattr(a, "provider", None):
+        prov = a.provider
+        if prov not in cfg.get("providers", {}) and prov not in spaces.get(name, {}).get("providers", {}):
+            sys.exit(f"no provider {prov!r} in {CONFIG_PATH}; declare providers.{prov} with a base_url first")
+        key = read_key(name, f"{prov} provider")
+        if not key:
+            sys.exit("no key read; copy it, then: pbpaste | compose workspace key " + name + f" --provider {prov}")
+        fc_auth.set_key(AUTH_PATH, name, f"provider:{prov}", key)
+        print(f"{name}: provider {prov} key set")
     elif action == "key":
         linear = getattr(a, "linear", False)
         ts = getattr(a, "typesafe", False)

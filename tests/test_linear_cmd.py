@@ -23,7 +23,7 @@ class LinearProject(unittest.TestCase):
         (self.repo / ".compose").mkdir()
         (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
         self.calls, self.nodes, self.teams = [], None, [{"id": "t0", "name": "Design", "key": "DES"}, {"id": "t1", "name": "Engineering", "key": "ENG"}]
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_config, "WORKSPACE", "work"), (fc.fc_linear, "linear_gql", self.gql)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_config, "WORKSPACE", "work"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_linear_cmd, "await_write", mock.Mock())):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def gql(self, query, variables):
@@ -405,7 +405,7 @@ class LinearUpdate(unittest.TestCase):
         self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", "project": {"id": "p1", "name": "Shop"},
                                       "team": {"name": "Engineering", "states": {"nodes": [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "In Progress"}]}, "labels": {"nodes": [{"id": "l1", "name": "Bug"}]}}}
         tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear_cmd, "await_write", mock.Mock())):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def gql(self, query, variables):
@@ -537,6 +537,55 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.update(title="T", any_project=True)[0], {"title": "T"})
 
 
+class LinearStaleRead(unittest.TestCase):
+    """Linear serves an issue's description from before the last write for a few seconds: a second write must not start from that read."""
+    args, fails = LinearProject.args, LinearProject.fails
+    STALE_READS = 3
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.stored, self.served, self.stale, self.clock = "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", 0, [0.0]
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty),
+                                 (fc.fc_linear_cmd.time, "sleep", lambda s: self.clock.__setitem__(0, self.clock[0] + s)), (fc.fc_linear_cmd.time, "monotonic", lambda: self.clock[0])):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        if "issueUpdate" in query:
+            self.stored, self.stale = variables["in"]["description"], self.STALE_READS
+            return {"issueUpdate": {"success": True}}
+        if self.stale:
+            self.stale -= 1
+        else:
+            self.served = self.stored
+        return {"issue": {"id": "iid", "identifier": "ENG-7", "description": self.served, "project": {"id": "p1", "name": "Shop"},
+                          "team": {"name": "Engineering", "states": {"nodes": []}, "labels": {"nodes": []}}}}
+
+    def update(self, text, **kw):
+        (self.repo / "body.md").write_text(text)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            fc.fc_linear_cmd.verb_update(self.args("update", "ENG-7", file=str(self.repo / "body.md"), **kw))
+        return err.getvalue()
+
+    def test_section_writes_back_to_back_keep_every_earlier_write(self):
+        self.update("new plan", section="## Plan")
+        self.update("new notes", section="## Notes")
+        self.assertEqual(self.stored, "# Cart\n\n## Plan\n\nnew plan\n\n## Notes\n\nnew notes\n")
+
+    def test_a_write_that_never_shows_warns_after_the_wait_and_still_ends_as_updated(self):
+        self.STALE_READS = 10 ** 6
+        err = self.update("new plan", section="## Plan")
+        self.assertIn("still serves the old text", err)
+        self.assertEqual(self.clock[0], fc.fc_linear_cmd.SETTLE_SECONDS)
+
+    def test_a_write_that_changes_nothing_waits_for_nothing(self):
+        self.update("old", section="## Plan")
+        self.assertEqual(self.clock[0], 0.0)
+
+
 class LinearCommentLabelsDoc(unittest.TestCase):
     ISSUE, LABELS, DOC = "issue(id: $id) { id identifier project { id name } }", "team(id: $id) { labels(first: 250) { nodes { id name } } }", "document(id: $id) { title content url }"
     NEW_LABEL, NEW_DOC, DOC_URL = "issueLabelCreate(input: {name: $name, teamId: $team}) { success }", "documentCreate(input: $in) { document { url } }", "https://linear.app/acme/document/research-d1"
@@ -548,7 +597,7 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.calls, self.issue, self.doc = [], {"id": "iid", "identifier": "ENG-7", "project": {"id": "p1", "name": "Shop"}}, None
         self.sent = lambda query: [v for q, v in self.calls if query in q]
         tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear, "linear_comment", mock.Mock())):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear, "linear_comment", mock.Mock()), (fc.fc_linear_cmd, "await_write", mock.Mock())):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def gql(self, query, variables):

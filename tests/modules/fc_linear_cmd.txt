@@ -8,6 +8,9 @@ priority
 print_body
 writes_body
 new_body
+SETTLE_SECONDS
+SETTLE_POLL
+await_write
 verb_project
 GET_CACHE_SECONDS
 get_cache_files

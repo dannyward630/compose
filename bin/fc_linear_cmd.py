@@ -100,13 +100,29 @@ def new_body(a, old):
         return old.rstrip("\n") + "\n\n" + body.strip() + "\n"
     return body
 
+SETTLE_SECONDS, SETTLE_POLL = 30, 0.5
+
+def await_write(read, old, new):
+    """Return once `read()` no longer gives `old`, the text a body write replaced.
+    Linear can serve a body from before the last write for several seconds, and the next section write starts from that read, so it would put the whole body back without this one."""
+    old = (old or "").strip()
+    if (new or "").strip() == old:
+        return
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while (read() or "").strip() == old:
+        if time.monotonic() >= deadline:
+            print(f"warning: Linear still serves the old text {SETTLE_SECONDS}s after the write: read it again, and write the next change only once it shows", file=sys.stderr)
+            return
+        time.sleep(SETTLE_POLL)
+
 def verb_project(a):
     writes = writes_body(a, "project")
     p = linear_project(a.repo)
     content = fc_linear.linear_gql("query($id: String!) { project(id: $id) { content } }", {"id": p["id"]})["project"]["content"] if writes or a.body else None
     if writes:
-        fc_linear.linear_gql("mutation($id: String!, $in: ProjectUpdateInput!) { projectUpdate(id: $id, input: $in) { success } }",
-                             {"id": p["id"], "in": {"content": new_body(a, content)}})
+        new = new_body(a, content)
+        fc_linear.linear_gql("mutation($id: String!, $in: ProjectUpdateInput!) { projectUpdate(id: $id, input: $in) { success } }", {"id": p["id"], "in": {"content": new}})
+        await_write(lambda: fc_linear.linear_gql("query($id: String!) { project(id: $id) { content } }", {"id": p["id"]})["project"]["content"], content, new)
         print(f"updated {p['name']}")
         return
     print(f"{p['name']} on team {p['team']['name']}: {p['url']}")
@@ -234,6 +250,8 @@ def verb_update(a):
         inp["description"] = new_body(a, issue["description"])
     if inp:  # empty only when --blocked-by is the one change
         fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
+        if writes:
+            await_write(lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": issue["id"]})["issue"]["description"], issue["description"], inp["description"])
     if a.blocked_by is not None:
         fc_linear.linear_blocked_by(issue, [x for x in a.blocked_by.split(",") if x])
     print(f"updated {issue['identifier']}")
@@ -291,6 +309,8 @@ def verb_doc(a):
         if writes:
             inp["content"] = new_body(a, doc["content"])
         fc_linear.linear_gql("mutation($id: String!, $in: DocumentUpdateInput!) { documentUpdate(id: $id, input: $in) { success } }", {"id": doc["id"], "in": inp})
+        if writes:
+            await_write(lambda: fc_linear.linear_gql("query($id: String!) { document(id: $id) { content } }", {"id": doc["id"]})["document"]["content"], doc["content"], inp["content"])
         print(f"updated {doc['url']}")
     elif len(a.target) == 2 and a.target[0] == "get":
         doc = fc_linear.linear_gql("query($id: String!) { document(id: $id) { title content url } }",

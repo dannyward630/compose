@@ -310,7 +310,9 @@ def cmd_planner(a):
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=a.issue or feature, name=fc_herdr.agent_name(proj.name, "planner"))
+    issue = a.issue or feature
+    role = "planner" if issue.lower() == feature.lower() else re.sub(r"[^a-z0-9_-]+", "-", f"planner-{issue.lower()}").strip("-")  # a story's planner runs beside the feature's
+    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=issue, name=fc_herdr.agent_name(proj.name, role))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_toolsmith(a):
@@ -378,7 +380,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
 def cmd_testcrews(a):
     """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
-    their briefs needs their tests rewritten first."""
+    their briefs needs their tests rewritten first. `--parallel N` starts up to N writers now, Claude Code or not, over the config's caps."""
     proj = fc_core.project_dir(a)
     if getattr(a, "collect", False):
         return collect_tests(proj, a.only)
@@ -388,14 +390,14 @@ def cmd_testcrews(a):
     contract, budget, redo = contract_file.read_text(), getattr(a, "budget", None), bool(getattr(a, "redo", False))
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
-    finished = lambda m: fc_tasks.task_finished(proj, m, redo)  # a finished task needs no test writer
+    finished = lambda m: fc_tasks.task_finished(proj, m, redo) or (not redo and test_collected(proj, m["id"]))  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
     rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
             why = finished(m) if m else "no such task"
-            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith("its result") else ""))
+            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith(("its result", "its test")) else ""))
     brief = lambda m: test_brief(m, contract, budget, fc_core.commit_convention(proj), m["id"] in rebuilt)
     again = " --redo" if redo else ""
     if a.print_:
@@ -405,18 +407,20 @@ def cmd_testcrews(a):
     blocked = test_blockers(proj, tasks, metas)
     metas = [m for m in metas if m["id"] not in blocked]
     model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
-    cap = fc_config.PARALLEL  # unset: every writer starts at once
+    cap = getattr(a, "parallel", None) or fc_config.PARALLEL  # unset: every writer starts at once
     key, chain = fc_crew.crew_chain("tests", model)
-    if key is None or fc_claude.is_claude(chain[0][0]):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is
+    if not getattr(a, "parallel", None) and (key is None or fc_claude.is_claude(chain[0][0])):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is, unless --parallel says otherwise
         cap = min(cap or fc_config.CLAUDE_PARALLEL, fc_config.CLAUDE_PARALLEL)
-    metas, queued = (metas[:cap], metas[cap:]) if cap else (metas, [])
+    metas, queued = cap_split(proj, tasks, metas, cap)
     if fc_worktree.use_treehouse():  # the whole set fits, or nothing is leased and no teammate starts
         held = fc_worktree.slots(proj)
-        short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas))
+        spare = sum(k.startswith("spare-") for k in held)  # slots a collect kept for these writers
+        short = fc_worktree.pool_shortfall(fc_herdr.project_worktree(proj), sum(not (held.get(f"tests-{m['id']}") and Path(held[f"tests-{m['id']}"]).exists()) for m in metas) - spare)
         if short:
             sys.exit(f"testcrews: {short}")
     asked = only or {m["id"] for m in tasks}
-    waiting_writers(proj, {**{t: None for t in asked}, **{t: {"contract": str(contract_file), "budget": budget, "redo": redo} for t in blocked}})
+    how = {"contract": str(contract_file), "budget": budget, "redo": redo}
+    waiting_writers(proj, {**{t: None for t in asked}, **{t: how for t in blocked}, **{m["id"]: how for m in queued}})  # a queued writer counts as an earlier one
     for tid, by in blocked.items():
         print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
     if not metas:
@@ -438,7 +442,16 @@ def cmd_testcrews(a):
     if queued:
         ids = ",".join(m["id"] for m in queued)
         print(f"{len(queued)} test writer(s) queued past the cap of {cap} (`parallel`, and `claude_parallel` for Claude writers, in {fc_config.CONFIG_PATH}): {ids}\n"
-              f"start them as earlier ones report done: compose testcrews --project {proj.name} --only {ids}{again}")
+              f"--collect starts them, in task order, as earlier ones are collected; or start them yourself: compose testcrews --project {proj.name} --only {ids}{again}")
+
+def cap_split(proj, tasks, metas, cap):
+    """`metas` split into the writers to start now and those queued past `cap`. A writer whose branch is open is still writing
+    or not collected yet, and holds a slot: the cap counts those too, so --collect never runs more than `cap` at once."""
+    if not cap:
+        return metas, []
+    ids = {m["id"] for m in metas}
+    room = max(cap - sum(test_open(proj, o["id"]) for o in tasks if o["id"] not in ids), 0)
+    return metas[:room], metas[room:]
 
 def test_branch(proj, tid):
     return fc_worktree.task_prefix(fc_herdr.project_worktree(proj), proj) + f"tests-{tid}"
@@ -446,6 +459,12 @@ def test_branch(proj, tid):
 def test_open(proj, tid):
     """Whether a test writer's branch is still to be collected."""
     return fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, tid)], fc_herdr.project_worktree(proj), check=False).returncode == 0
+
+def test_collected(proj, tid):
+    """Why a task's test writer is over, or None: it reported done and its branch is collected, so a plain `testcrews` leaves it be.
+    Only --redo starts a writer again."""
+    last = (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{tid}")) or [{}])[-1]
+    return "its test is collected" if last.get("state") == "done" and not test_open(proj, tid) else None
 
 def waiting_writers(proj, update=None):
     """The test writers waiting for another writer of the same test file, by task id, with the contract, budget, and --redo to start
@@ -493,8 +512,13 @@ def test_worktree(proj, tid):
         return Path(held)
     if fc_worktree.use_treehouse():
         fc_core.sh(["git", "branch", "-f", branch, "HEAD"], wt)
-        path = fc_worktree.slot_on(wt, branch, f"compose:{proj.name}:tests-{tid}")
-        fc_worktree.slots(proj, {f"tests-{tid}": str(path)})
+        spare = next((k for k in fc_worktree.slots(proj) if k.startswith("spare-")), None)  # a collected writer's slot, still leased
+        if spare:
+            path = Path(fc_worktree.slots(proj)[spare])
+            fc_worktree.checkout_in_slot(path, branch)
+        else:
+            path = fc_worktree.slot_on(wt, branch, f"compose:{proj.name}:tests-{tid}")
+        fc_worktree.slots(proj, {f"tests-{tid}": str(path), **({spare: None} if spare else {})})
     else:
         path = proj / "worktrees" / f"tests-{tid}"
         if path.exists():
@@ -536,7 +560,10 @@ def collect_tests(proj, only=None):
                 break
         else:
             held = fc_worktree.slots(proj).get(f"tests-{tid}")
-            if held:
+            if held and waiting_writers(proj):  # the chained next writer takes this slot as it is: returning it leaves a gap for another project's lease
+                fc_worktree.park_slot(held, fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
+                fc_worktree.slots(proj, {f"tests-{tid}": None, f"spare-{tid}": held})
+            elif held:
                 fc_worktree.release_slot(wt, held)
                 fc_worktree.slots(proj, {f"tests-{tid}": None})
             else:
@@ -549,8 +576,13 @@ def collect_tests(proj, only=None):
     groups = {}
     for tid, how in waiting_writers(proj).items():
         groups.setdefault((how["contract"], how["budget"], bool(how.get("redo"))), []).append(tid)
-    for (contract, budget, redo), tids in groups.items():
-        cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
-                                         redo=redo))
+    try:
+        for (contract, budget, redo), tids in groups.items():
+            cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
+                                             redo=redo))
+    finally:  # slots kept for writers that did not start (still blocked, failed, or past the cap) go back to the pool
+        for role, held in {k: v for k, v in fc_worktree.slots(proj).items() if k.startswith("spare-")}.items():
+            fc_worktree.release_slot(wt, held)
+            fc_worktree.slots(proj, {role: None})
     if conflicts:
         sys.exit("\n".join(conflicts))
