@@ -458,3 +458,46 @@ class RewrittenTrunk(unittest.TestCase):
 
 class UnprovenRestart(unittest.TestCase):
     """Resume or run --only of an unproven task restarts only its regression test writer, never the fix."""
+    def setUp(self):
+        import fc_regress, fc_unproven  # noqa: E402
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.proj = self.repo / ".compose" / "p"; (self.proj / "results").mkdir(parents=True)
+        self.wt = self.repo / "wt"; self.wt.mkdir()
+
+    def save(self, tid, status="unproven", worktree=None):
+        (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"id": tid, "status": status, "branch": f"fast/p/{tid}", "worktree": str(worktree or self.wt)}))
+        return json.loads((self.proj / "results" / f"{tid}.json").read_text())
+
+    def run_ids(self, ids, redo=False):
+        tasks = [{"id": t, "title": t, "after": "", "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ids]
+        done = lambda *x, **k: {"id": x[2]["id"], "title": "t", "status": "passed", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "b"}
+        a = mock.Mock(trunk="trunk", attempts=3, parallel=1, no_stack=True, redo=redo)
+        with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
+             mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch("builtins.print"), \
+             mock.patch.object(fc.fc_implement, "run_task", mock.Mock(side_effect=lambda r, p, m, n, **k: done(r, p, m))) as run_task, \
+             mock.patch("fc_regress.regress", mock.Mock(side_effect=lambda r, p, m, pr, n: done(r, p, m))) as regress, self.assertRaises(SystemExit):
+            fc.fc_run.run_tasks(self.repo, self.proj, tasks, a)
+        return run_task, regress, [str(c.args[0]) for c in say.call_args_list]
+
+    def test_an_unproven_task_with_a_kept_worktree_restarts_only_its_writer(self):
+        saved = self.save("001")
+        run_task, regress, said = self.run_ids(["001"])
+        run_task.assert_not_called()
+        regress.assert_called_once(); args = regress.call_args.args
+        self.assertEqual((args[0], args[1], args[2]["id"], args[3], args[4]), (self.repo, self.proj, "001", saved, 3))
+        self.assertIn("001 regress  fix kept on fast/p/001; restarting its regression test writer", said)
+
+    def test_redo_runs_the_fix_again(self):
+        self.save("001")
+        run_task, regress, said = self.run_ids(["001"], redo=True)
+        regress.assert_not_called(); run_task.assert_called_once()
+        self.assertFalse(any("regress " in l for l in said))
+
+    def test_only_a_kept_unproven_task_restarts_its_writer(self):
+        self.save("001", worktree=self.repo / "gone"); self.save("002", status="failed"); self.save("003"); self.save("004", worktree=self.repo / "gone2")
+        run_task, regress, said = self.run_ids(["001", "002", "003", "004", "005"])
+        self.assertEqual([c.args[2]["id"] for c in regress.call_args_list], ["003"])
+        self.assertEqual(sorted(c.args[2]["id"] for c in run_task.call_args_list), ["001", "002", "004", "005"])
+        self.assertEqual(len([l for l in said if " regress " in l]), 1)
+
