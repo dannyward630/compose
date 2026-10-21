@@ -272,3 +272,53 @@ class JevState(unittest.TestCase):
         self.assertEqual(self.ask.call_count, 0)
         with self.assertRaises(fc.fc_models.PaymentRequired):
             self.reassess(jev=fc.fc_models.PaymentRequired("typesafe", "top up"))
+
+
+class Floor(unittest.TestCase):
+    DOCS = {"name": "Docs", "statement": "Docs stay true.", "globs": ["docs/*"], "checks": ["make e2e", "make docs"]}
+    KEPT = "; depth DEEP kept from the recorded route"
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-qb", "task")
+        for f in ("docs/note.md", "src/greet.py"): (self.repo / f).parent.mkdir(exist_ok=True); (self.repo / f).write_text("n\n")
+        git("add", "-A"); git("commit", "-qm", "task")
+
+    def route(self, recorded="DEEP", jev="FAST", checks="make lint, make e2e", policies=(), triggers=("diff",)):
+        """The route reassess returns for a recorded `recorded` depth and checks, Jev answering depth `jev` (or raising) and `policies`."""
+        bullet = f"* depth: {recorded}\n" if recorded else ""
+        desc = f"## Goal\nGreet.\n\n## Acceptance criteria\n* greets\n\n## Route\n\n* workflow: implement-then-test\n{bullet}* verification requirements: {checks}\n\n```compose\nid: 001\ntest: t\nfiles: src/greet.py\n```\n"
+        tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1"}, "issues": [{"id": "ENG-2", "title": "Greet", "description": desc, "status": "Todo"}]})
+        reply = jev if isinstance(jev, Exception) else {"model": "jev-test", "answers": {"depth": {"choice": jev, "probabilities": {jev: 0.9}, "confidence": 0.9}}}
+        with mock.patch.object(fc.fc_models, "jev_ask", **{"side_effect" if isinstance(jev, Exception) else "return_value": reply}), mock.patch.object(fc_reroute, "diff_callers", return_value={"callers": {}}), \
+                mock.patch.object(importlib.import_module("fc_policy"), "read_policies", return_value=(list(policies), "")), mock.patch.object(importlib.import_module("fc_route"), "record_route"), \
+                mock.patch.object(fc.fc_linear, "linear_gql", return_value={}):
+            return fc_reroute.reassess(self.repo, self.proj, tasks[0], tasks, list(triggers), "3f9a0c1b2d4e", "main", "task")
+
+    def test_the_depth_is_the_higher_of_jevs_and_the_recorded_and_the_note_says_when_the_recorded_won(self):
+        for recorded, jev, depth, kept in [("DEEP", "FAST", "DEEP", True), ("DEEP", "STANDARD", "DEEP", True), ("STANDARD", "FAST", "STANDARD", True), ("STANDARD", "DEEP", "DEEP", False),
+                                           ("FAST", "STANDARD", "STANDARD", False), ("STANDARD", "STANDARD", "STANDARD", False), ("DEEP", "DEEP", "DEEP", False)]:
+            with self.subTest(recorded=recorded, jev=jev):
+                got = self.route(recorded, jev, triggers=("diff", "scope"))
+                self.assertEqual(got["depth"], depth)
+                self.assertEqual(got["note"], "rerouted after diff, scope (run 3f9a0c1b2d4e)" + (f"; depth {recorded} kept from the recorded route" if kept else ""))
+
+    def test_a_missing_or_unknown_recorded_depth_is_ignored(self):
+        for recorded in ("", "ULTRA"):
+            got = self.route(recorded, "FAST")
+            self.assertEqual((got["depth"], got["note"]), ("FAST", "rerouted after diff (run 3f9a0c1b2d4e)"))
+
+    def test_with_jev_unavailable_the_depth_is_standard_unless_the_recorded_is_higher(self):
+        got = [self.route(r, RuntimeError("no key")) for r in ("FAST", "STANDARD", "DEEP")]
+        self.assertEqual([g["depth"] for g in got], ["STANDARD"] * 2 + ["DEEP"])
+        self.assertEqual([g["note"].endswith(self.KEPT) for g in got], [False, False, True])
+
+    def test_checks_keep_the_recorded_first_then_add_new_ones_once_each(self):
+        self.assertEqual(self.route(policies=[self.DOCS])["checks"], ["make lint", "make e2e", "make docs"])
+        self.assertEqual(self.route(checks="none", policies=[self.DOCS])["checks"], ["make e2e", "make docs"])
+        self.assertEqual(self.route(jev=RuntimeError("no key"))["checks"], ["make lint", "make e2e"])
