@@ -261,7 +261,15 @@ def write_pr_text(proj, wt, b, before, title, body):
         fc_core.atomic_write(rec_file, json.dumps({**rec, b: {"title": title, "body": body}}, indent=2))
     return r.returncode == 0
 
-def register_stack(repo, proj, trunk, submit=False, preview=False):
+def layer_base(repo, proj, trunk):
+    """The branch the layers sit on: the review base (fc_worktree.review_base), else the trunk; the trunk itself when it is not
+    the project's branch or the review base is gone."""
+    base = fc_worktree.review_base(repo, fc_core.project_config(proj)) or trunk
+    if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
+        base = trunk
+    return base
+
+def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
     stops the chain there, is reported, and nothing is built or registered). The stack itself is review layers on the real base (fc_worktree.review_base: `review_base`, else the default
@@ -270,14 +278,14 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
     the registered stack stay as they were. Nothing is pushed unless submit=True; preview=True prints each layer's
     PR title and body as submit would write them, with no gh call. A project whose fast/<project>/ branches were never pushed
     first moves onto the names a new project gets (fc_worktree.rename_legacy_branches). A base ahead of its upstream would put
-    its unpushed commits into the PRs: the stack says so, and a submit stops before anything changes."""
+    its unpushed commits into the PRs: the stack says so, and a submit stops before anything changes. `gate(repo, proj, layers,
+    trunk, wt)` runs on a submit once the layers stand and before anything is pushed; the reason it returns, when it returns one,
+    stops the submit the same way."""
     fc_worktree.rename_legacy_branches(repo, proj)
     if not fc_worktree.stack_order(repo, proj):
         return []
     cfg = fc_core.project_config(proj)
-    base = fc_worktree.review_base(repo, cfg) or trunk
-    if trunk != fc_core.project_branch(proj) or fc_core.sh(["git", "rev-parse", "--verify", "-q", base], repo, check=False).returncode:
-        base = trunk
+    base = layer_base(repo, proj, trunk)
     up = fc_core.sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{base}@{{upstream}}"], repo, check=False)
     upstream = up.stdout.strip() if up.returncode == 0 else ""
     ahead = int(fc_core.sh(["git", "rev-list", "--count", f"{upstream}..{base}"], repo).stdout) if upstream else 0
@@ -324,6 +332,11 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
         fc_core.say(f"pr     {l['branch']}  {title}  [{source}]\n" + "\n".join(f"    {x}" if x else "" for x in body.splitlines()))
     for line in stale_pr_files(proj, layers) if (preview or submit) and layers else []:
         fc_core.say(f"pr     {line}")
+    if submit and gate and layers and (why := gate(repo, proj, layers, trunk, wt)):
+        fc_layers.STACK_STOP = why
+        fc_core.say(f"stack  STOP  {why}")
+        fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
+        return []
     if submit:
         fc_core.sh(["git", "checkout", "-q", stack[-1]], wt, check=False)
         before = {b: gh_pr_text(wt, b) for b in stack}  # which PRs exist, and their text, before this submit touches anything
@@ -342,11 +355,3 @@ def register_stack(repo, proj, trunk, submit=False, preview=False):
                 write_pr_text(proj, wt, b, before[b], title, body)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     return [stack]
-
-def cmd_stack(a):
-    proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    trunk = a.trunk or fc_core.current_branch(repo)
-    if not register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit):
-        if fc_layers.STACK_STOP:
-            sys.exit(1)  # the STOP line already said why and what to do
-        print("stack  nothing to register: no unmerged task branches")

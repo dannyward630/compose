@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -100,7 +100,9 @@ def main():
                             ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
                             ("watch", fc_watch.cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", fc_status.cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
-                            ("stack", fc_stack.cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit pushes and opens one draft PR per layer"),
+                            ("stack", fc_ship.cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit checks each layer on its own tree, then pushes and opens one draft PR per layer"),
+                            ("reword", fc_ship.cmd_reword, "list the stack layers' commits with the ones that break the commit rules flagged; --set SHA=MESSAGE rewords one and rebuilds the layers (never pushes)"),
+                            ("land", fc_ship.cmd_land, "merge the submitted stack bottom up with gh pr merge, rebasing and retargeting each next PR; prints the plan, acts only with --yes"),
                             ("clean", fc_init.cmd_clean, "the post-merge step: remove task clones and merged branches, move the tasks proven merged to Done in Linear and roll their story and the feature up, and remove a merged project's worktree and branch"),
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
@@ -181,6 +183,15 @@ def main():
         if name == "stack":
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes the layers and opens a draft PR per layer as a GitHub stack")
+        if name in ("reword", "land"):
+            s.add_argument("--trunk", default=None, help="default: the branch you are on")
+        if name == "reword":
+            s.add_argument("--set", action="append", metavar="SHA=MESSAGE", help="the message a layer commit gets from now on; repeat for more")
+            s.add_argument("--as-is", action="store_true", help="take the message even when it breaks the commit rules")
+        if name == "land":
+            s.add_argument("--yes", action="store_true", help="merge and push for real: only once the user has said to land this stack")
+            s.add_argument("--method", choices=("squash", "merge", "rebase"), help="how each PR merges (default: land_method in verify.json, else squash)")
+            s.add_argument("--timeout", type=float, default=30, help="minutes to wait on each PR's required checks (default 30)")
         if name == "bench":
             s.add_argument("--models", default="pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast,pi:openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras,claude",
                            help="comma-separated model ids: OpenCode ids, 'pi:<provider/model>' for the pi harness, 'claude' = Claude Code one-shot")
