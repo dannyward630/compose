@@ -1479,10 +1479,6 @@ class PlanOwnership(unittest.TestCase):
             self.assertNotRegex(line, r"[.!?] [A-Z]")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ManagerProseNamesPostures(unittest.TestCase):
     AWAY = "**Away: the product owner is away** (`/compose:away [--push] [words]`, `compose away`; modeled on firstmate's away mode)."
     BIAS = "Bias toward exit: when unsure whether a message is the return, it is."
@@ -1525,3 +1521,7 @@ class ManagerProseNamesPostures(unittest.TestCase):
         for line in self.NEVER:
             self.assertEqual(self.lines.count(line), 1)
         self.assertNotIn("—", "\n".join(self.lines))
+
+
+if __name__ == "__main__":
+    unittest.main()
