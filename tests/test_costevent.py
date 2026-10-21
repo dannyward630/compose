@@ -176,7 +176,7 @@ class VerifyBatch(unittest.TestCase):
     def test_full_verify_records_one_batch_built_from_the_rounds_just_written(self):
         for passed in (True, False):
             code, said, calls = self.verify(passed)
-            self.assertEqual(calls, [("events", (self.proj, self.TASKS, passed, 0.37, "", self.sha), [{"stage": "earlier"}, {"checks": []}]), ("record", "ENG-1", [{"event_id": "c1"}])])
+            self.assertEqual(calls, [("events", (self.proj, self.TASKS, passed, 0.37, "", self.sha), [{"stage": "earlier"}, {"checks": [], "sufficiency": None}]), ("record", "ENG-1", [{"event_id": "c1"}])])
             self.assertEqual((code, json.loads((self.proj / "results" / "verify.json").read_text())["passed"]), (0, True) if passed else (1, False))
             self.assertFalse([s for s in said if "not saved" in s])
 
