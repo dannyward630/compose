@@ -231,3 +231,19 @@ def pid_alive(pid):
 def run_alive(proj):
     m = run_marker(proj)
     return bool(m and pid_alive(m.get("pid")))
+
+def mark_interrupted(proj):
+    """Ctrl-C stopped the run on purpose: keep its marker for `resume`, and say so in it."""
+    m = run_marker(proj)
+    if m:
+        try:
+            fc_core.atomic_write(proj / "results" / "run.json", json.dumps({**m, "interrupted": True}, indent=2))
+        except OSError:
+            pass  # the stop goes on; watch then reads the run as crashed
+
+def run_ended(proj):
+    """How a run whose process is gone ended: "interrupted" when Ctrl-C stopped it, "crashed" when it just died, None without a marker or while it lives."""
+    m = run_marker(proj)
+    if not m or pid_alive(m.get("pid")):
+        return None
+    return "interrupted" if m.get("interrupted") else "crashed"
