@@ -101,7 +101,7 @@ It fails only when a screen cannot be reached; whether it matches is for the rea
 - Keep driver and assert scripts under `.compose/<project>/e2e/`.
 - Each stage launches its own Chromium with a throwaway profile, so verify never touches your real Chrome.
   The browser is headless, because an unattended verify runs while the display sleeps, and a headed Chromium then stops painting.
-  Set `"e2e_headed": true` to watch the browser; on macOS the stage then keeps the display awake with `caffeinate` while it runs.
+  Set `"e2e_headed": true` to watch the browser; on macOS the whole verify keeps the Mac awake with `caffeinate -dims -w <pid>`, headless or not, so the machine does not sleep under it.
 - When the stage ends, it stops everything it started.
   That covers setup processes, its browser and that browser's harness daemons, and anything listening on its ports.
   A SIGTERM or SIGHUP to verify ends them too.

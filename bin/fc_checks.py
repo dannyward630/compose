@@ -1,5 +1,5 @@
 """Read-only machine checks the setup steps table and doctor use. No network, no writes."""
-import os, re
+import datetime, os, re, shutil, subprocess
 from pathlib import Path
 import platform
 import fc_core
@@ -26,10 +26,10 @@ def local_bin_on_path():
     return str(Path.home() / ".local/bin") in os.environ.get("PATH", "").split(os.pathsep)
 
 def gh_authed():
-    """True when `gh auth status` exits 0; False when it does not or gh is absent."""
+    """True when `gh auth status` exits 0; False when it does not, hangs past 20 s, or gh is absent."""
     try:
-        return fc_core.sh(["gh", "auth", "status"], Path.home(), check=False).returncode == 0
-    except FileNotFoundError:
+        return fc_core.sh(["gh", "auth", "status"], Path.home(), check=False, timeout=20).returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 def rerere_set():
@@ -51,3 +51,70 @@ def chromium_installed():
         return False
     arch = "arm64" if platform.machine() == "arm64" else "x64"
     return (cache / versions[0] / f"chrome-mac-{arch}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing").exists()
+
+LOAD_FACTOR = 2  # the 5-minute load average that is "far above" the core count: this many times it
+CRASH_RESTARTS, CRASH_WINDOW = 3, 120  # a container restarted this many times, the last one under this many seconds ago, is in a crash loop
+
+def on_battery():
+    """True when `pmset -g batt` says the Mac runs on its battery; False on AC power, off macOS, and without pmset."""
+    if not shutil.which("pmset"):
+        return False
+    try:
+        return "Battery Power" in fc_core.sh(["pmset", "-g", "batt"], None, timeout=10, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+def busiest_process():
+    """(cpu percent, command name) of the process using the most CPU right now, else None."""
+    try:
+        out = fc_core.sh(["ps", "-Ao", "pcpu=,comm=", *(["-r"] if platform.system() == "Darwin" else ["--sort=-pcpu"])], None, timeout=10, check=False).stdout
+        cpu, _, comm = out.strip().splitlines()[0].strip().partition(" ")
+        return float(cpu), comm.strip().rsplit("/", 1)[-1]
+    except (OSError, subprocess.TimeoutExpired, IndexError, ValueError):
+        return None
+
+def restarting_containers():
+    """Names of the docker containers stuck in a crash loop (restarting now, or restarted CRASH_RESTARTS times and started under
+    CRASH_WINDOW seconds ago). Empty when docker is not installed, not running, or does not answer within 10 s: never an error."""
+    if not shutil.which("docker"):
+        return []
+    try:
+        ids = fc_core.sh(["docker", "ps", "-q", "--filter", "status=running", "--filter", "status=restarting"], None, timeout=10, check=False)
+        if ids.returncode or not ids.stdout.split():
+            return []
+        rows = fc_core.sh(["docker", "inspect", "--format", "{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{.State.StartedAt}}", *ids.stdout.split()],
+                          None, timeout=10, check=False).stdout.splitlines()
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    now, looping = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), []
+    for row in rows:
+        name, _, rest = row.partition("|")
+        status, restarts, started = (rest.split("|") + ["", "0", ""])[:3]
+        try:
+            age = (now - datetime.datetime.strptime(started[:19], "%Y-%m-%dT%H:%M:%S")).total_seconds()
+            recent = int(restarts) >= CRASH_RESTARTS and age < CRASH_WINDOW
+        except ValueError:
+            recent = False
+        if status == "restarting" or recent:
+            looping.append(name.lstrip("/"))
+    return looping
+
+def machine_warnings():
+    """One WARNING line per thing that makes long work lie or stop, each with the fix: a Mac on battery (closing the lid sleeps
+    it, which caffeinate cannot prevent), a 5-minute load average above LOAD_FACTOR times the cores (naming the busiest process),
+    and docker containers in a crash loop (they burn the CPU a verify's timings and e2e cases need). Read-only; never raises."""
+    out = []
+    if on_battery():
+        out.append("WARNING: the Mac is on battery: closing the lid will sleep it and stop the work, which keeping it awake cannot prevent; plug it in or leave the lid open")
+    cores = os.cpu_count() or 1
+    try:
+        load = os.getloadavg()[1]
+    except OSError:
+        load = 0
+    if load > LOAD_FACTOR * cores:
+        top = busiest_process()
+        out.append(f"WARNING: load average {load:.0f} on {cores} cores: checks and e2e run slow and time out"
+                   + (f"; busiest process is {top[1]} at {top[0]:.0f}% CPU, stop it or wait" if top else ""))
+    for name in restarting_containers():
+        out.append(f"WARNING: docker container {name} keeps restarting and burns CPU, so a verify measures the machine, not the code: docker stop {name}")
+    return out

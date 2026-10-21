@@ -62,6 +62,21 @@ enabled = false
 A config that is a symlink or not writable is left alone, and setup prints the two lines for you to set.
 `compose doctor` prints an optional `MISSING: herdr config: <key>=<value>` line while either one is on.
 
+## Before a long run
+
+Run `compose doctor --project <slug>` before `compose run`.
+It also reports, all at once and with the fix for each, what would stop or spoil the work:
+
+- uncommitted changes in the project worktree (the tools' own files and the agent wiring do not count),
+- an OpenRouter or Linear key that its service rejects, found with a free key-info call (`pbpaste | compose workspace key <workspace>` stores a new one),
+- a Mac on battery, a load average far above the core count, and a docker container that keeps restarting, as warnings.
+
+`run`, `resume`, and `verify` make the same checks at their start, so a run never stops later to ask about them.
+While they work, compose holds a macOS `caffeinate -dims -w <pid>` assertion so the Mac and its display stay awake, and releases it when the process ends.
+Closing the lid on battery still sleeps the Mac, which `caffeinate` cannot prevent: plug it in or leave the lid open.
+compose changes no power setting.
+Offline, `COMPOSE_NO_PREFLIGHT=1` skips the key calls, the gh check, and the machine warnings.
+
 ## Each repo
 
 A repo needs no setup ahead of time.

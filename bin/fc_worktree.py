@@ -315,17 +315,18 @@ TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # trail moves a repo's graph fro
 WIRING = (".claude/settings.json", ".claude/settings.local.json")  # the agent wiring trail's and graft's session hooks rewrite
 
 def dirty_paths(repo):
-    """The paths `git status` shows changed or untracked in a checkout, without the agent wiring (WIRING): a graph tool's
-    session hook rewrites a tracked .claude/settings.json whenever a session starts there, and info/exclude cannot hide a
-    tracked file. That rewrite is no change of the user's, and no clone needs it."""
-    fields, paths = fc_core.sh(["git", "status", "--porcelain", "-z"], repo).stdout.split("\0"), []
+    """The paths `git status` shows changed or untracked in a checkout, without the agent wiring (WIRING) and the tools' own
+    folders (TOOL_DIRS, the `.ignore` file): a graph tool's session hook rewrites a tracked .claude/settings.json whenever a
+    session starts there, and info/exclude cannot hide a tracked file; a graph built before the checkout ignored graft/ or
+    .trail/ shows up as untracked. None of that is a change of the user's, and no clone needs it."""
+    fields, paths = fc_core.sh(["git", "status", "--porcelain", "-z", "-uall"], repo).stdout.split("\0"), []
     while fields:
         entry = fields.pop(0)
         if entry:
             paths.append(entry[3:])
             if entry[0] in "RC":  # a rename or copy: its source path is the next field
                 fields.pop(0)
-    return [p for p in paths if p not in WIRING]
+    return [p for p in paths if p not in WIRING and p != ".ignore" and not p.startswith(TOOL_DIRS)]
 
 def graph_dir(root):
     """The folder holding the repo's trail graph: .trail/cache/, else an old `graft/` graph.

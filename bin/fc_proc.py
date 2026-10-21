@@ -1,6 +1,6 @@
 """Implementer commands in process groups the run can stop: each child starts in its own session, so a stop (Ctrl-C) kills
 the whole group, tool children included, and nothing new starts after it. Stdlib only, no fc_ module."""
-import contextlib, fcntl, os, re, signal, subprocess, threading, time
+import contextlib, fcntl, os, shutil, re, signal, subprocess, sys, threading, time
 
 STOP = threading.Event()  # set once the run is stopped
 
@@ -76,6 +76,27 @@ def on_termination(cleanup):
         os._exit(128 + sig)
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, terminated)
+
+
+AWAKE = {}  # pid -> the caffeinate that keeps the Mac awake while that process lives
+
+
+def keep_awake(pid=None):
+    """Keep a Mac awake while `pid` (default: this process) lives: `caffeinate -dims -w <pid>` holds the display, idle, disk and
+    (on AC) system-sleep assertions, and ends with that process however it dies, so none leaks. One per pid; returns it, or None
+    off macOS and where caffeinate is missing. It cannot stop a lid closed on battery (see fc_checks.battery_warning)."""
+    pid = pid or os.getpid()
+    held = AWAKE.get(pid)
+    if held and held.poll() is None:
+        return held
+    if sys.platform != "darwin" or not shutil.which("caffeinate"):
+        return None
+    try:
+        AWAKE[pid] = subprocess.Popen(["caffeinate", "-dims", "-w", str(pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return None
+    return AWAKE[pid]
 
 
 SLOTS = 2  # full-suite `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides

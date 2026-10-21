@@ -1,6 +1,6 @@
 import ast, hashlib, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -307,6 +307,8 @@ def cmd_crew(a):
                 crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
                 sys.exit(f"teammate {name} did not start on its brief: Enter and sending it again did nothing; its tab is closed and nothing is left registered: run the same crew start again")
     crew_up(proj, name)
+    for p in fc_herdr.pane_processes(pane)[:1]:  # a teammate works for hours: the Mac stays awake for as long as its session lives
+        fc_proc.keep_awake(p["pid"])
     fc_herdr.herdr_name_manager(proj)
     print(f"teammate {name} started in tab {title!r} of space {slug} on {model}{f' ({effort} effort)' if effort else ''}"
           f"{f' from {why_model}' if why_model else ''}; it reports with `compose report`, `watch` wakes on it")

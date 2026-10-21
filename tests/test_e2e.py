@@ -278,6 +278,8 @@ class UnattendedBrowser(unittest.TestCase):
         env = {"BP_CHROME": str(chromium), "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"}
         p = mock.patch.dict(os.environ, env); p.start(); self.addCleanup(p.stop)
         os.environ.pop("COMPOSE_E2E_HEADLESS")  # restored with the rest of the environment after the test
+        held = mock.patch.dict(fc.fc_proc.AWAKE, clear=True); held.start(); self.addCleanup(held.stop)  # no hold of an earlier test hides the fake
+        self.addCleanup(lambda: [(h.terminate(), h.wait()) for h in list(fc.fc_proc.AWAKE.values())])
 
     def browser(self, wait="", **cfg):
         ua = self.dir / "ua"
@@ -294,9 +296,8 @@ class UnattendedBrowser(unittest.TestCase):
         awake = f"for i in $(seq 100); do [ -s {self.dir}/caffeinate ] && break; sleep 0.05; done; "  # it runs while the case does
         self.assertTrue(self.browser(awake, e2e_headed=True).startswith("Chrome/"))
         pid, *args = (self.dir / "caffeinate").read_text().split()
-        self.assertEqual(args, ["-d", "-i", "-w", str(os.getpid())])  # the display stays awake while it is watched
-        time.sleep(0.3)
-        self.assertFalse(fc.fc_jev.alive(int(pid)))
+        self.assertEqual(args, ["-dims", "-w", str(os.getpid())])  # the Mac stays awake while it is watched, for as long as this process lives
+        self.assertTrue(fc.fc_jev.alive(int(pid)))  # the stage does not end it: cmd_verify holds it for the whole verify
 
     def test_a_sigterm_ends_the_stages_browser_setup_and_driver(self):
         repo = self.dir / "repo"

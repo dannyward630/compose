@@ -125,7 +125,8 @@ def temp_home():
     """{HOME, COMPOSE_CONFIG, DO_NOT_TRACK} for a new temp home that holds only INSTALLED and a fresh trail update cache: no keys,
     no config, no links. trail (graft) spawns a detached child to ask npm for a newer version when ~/.graft/update-check.json
     is a day old or missing, and another to flush telemetry; each writes under HOME after the test removed it, so the home
-    came back as an empty .graft. A cache checked now and DO_NOT_TRACK spawn neither."""
+    came back as an empty .graft. A cache checked now and DO_NOT_TRACK spawn neither. COMPOSE_NO_PREFLIGHT=1 keeps the preflight's
+    key calls, gh login check and machine warnings (fc_init.start_checks) out of a test: they ask the network and read this machine."""
     home = Path(tempfile.mkdtemp(prefix="compose-home-")).resolve()
     for rel, text in INSTALLED.items():
         f = home / rel
@@ -134,7 +135,7 @@ def temp_home():
         f.chmod(0o755)
     (home / ".graft").mkdir()
     (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None, "checkedAt": int(time.time() * 1000)}))
-    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1"}
+    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1", "COMPOSE_NO_PREFLIGHT": "1"}
 
 
 def snapshot():

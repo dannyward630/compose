@@ -108,6 +108,44 @@ class Slots(unittest.TestCase):
         with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOT": "q1", "COMPOSE_QUICK_SLOTS": "1"}):
             with fc.fc_proc.slot(None, True) as a, fc.fc_proc.slot(None, True) as b, fc.fc_proc.slot() as c:
                 self.assertEqual((a, b, c), ("q1", "q1", "q1"))
+class KeepAwake(unittest.TestCase):
+    """fc_proc.keep_awake holds one `caffeinate -dims -w <pid>` per process, and nothing where there is no caffeinate."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.dir, True)
+        (self.dir / "caffeinate").write_text(f"#!/bin/sh\necho \"$@\" >> {self.dir}/args\nexec sleep 30\n")
+        (self.dir / "caffeinate").chmod(0o755)
+        for p in (mock.patch.dict(os.environ, {"PATH": f"{self.dir}{os.pathsep}{os.environ['PATH']}"}), mock.patch.object(sys, "platform", "darwin"),
+                  mock.patch.dict(fc.fc_proc.AWAKE, clear=True)):
+            p.start(); self.addCleanup(p.stop)
+        self.addCleanup(lambda: [(h.terminate(), h.wait()) for h in list(fc.fc_proc.AWAKE.values())])
+
+    def args(self, count):
+        deadline = time.time() + 5
+        while time.time() < deadline and not ((self.dir / "args").exists() and len((self.dir / "args").read_text().splitlines()) >= count):
+            time.sleep(0.02)
+        return sorted((self.dir / "args").read_text().splitlines())
+
+    def test_it_holds_the_display_idle_disk_and_system_assertions_for_the_pid_and_only_once(self):
+        held = fc.fc_proc.keep_awake()
+        self.assertIs(fc.fc_proc.keep_awake(), held)  # run, verify and an e2e stage may each ask: one assertion
+        self.assertIsNone(held.poll())
+        self.assertEqual(self.args(1), [f"-dims -w {os.getpid()}"])
+        other = fc.fc_proc.keep_awake(4242)  # a teammate's session
+        self.assertIsNot(other, held)
+        self.assertEqual(self.args(2), sorted([f"-dims -w {os.getpid()}", "-dims -w 4242"]))
+
+    def test_it_asks_again_when_the_hold_ended(self):
+        held = fc.fc_proc.keep_awake()
+        held.terminate(); held.wait()
+        self.assertIsNot(fc.fc_proc.keep_awake(), held)
+
+    def test_it_does_nothing_without_caffeinate_or_off_macos(self):
+        with mock.patch.object(sys, "platform", "linux"):
+            self.assertIsNone(fc.fc_proc.keep_awake())
+        (self.dir / "caffeinate").unlink()
+        with mock.patch("shutil.which", return_value=None):
+            self.assertIsNone(fc.fc_proc.keep_awake())
+        self.assertEqual(fc.fc_proc.AWAKE, {})
 
 
 if __name__ == "__main__":

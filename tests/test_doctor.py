@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, re, stat, subprocess, sys, tempfile, unittest
+import io, json, os, re, shutil, stat, subprocess, sys, tempfile, unittest, urllib.error, urllib.parse
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -8,8 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 sys.modules.pop("compose", None)  # another test file may have imported it against the fc_ modules just dropped
 import compose as fc
-import fc_steps, fc_auth
+import fc_steps, fc_auth, fc_checks
 
+ORIGINAL_PATH = os.environ["PATH"]
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
 TOOLS = {"herdr": "0.9.3", "treehouse": "v3.1.2", "trail": "0.23.0", "gh": "gh version 2.94.0", "pi": "1.0.3", "claude": "2.1.301 (Claude Code)", "npx": "11.19.0", "bp": ""}
 SKILLS = (".claude/skills/herdr/SKILL.md", ".claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md",
@@ -476,6 +477,159 @@ class SummaryFix(unittest.TestCase):
         self.fake("git", "git version 2.50.0")
         code, lines = self.doctor((self.GIT, ("pi auth.json override",) + self.LOCAL[1:3] + ("default", False, "manual")), self.OLD)
         self.assertEqual((code, lines[-1], sum(l.startswith("WARNING:") for l in lines)), (0, DoctorWarnings.READY, 2), lines)
+
+
+class Answer:
+    """What urlopen returns: a context manager with a status and a JSON body."""
+    def __init__(self, body, status=200): self.body, self.status = body, status
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self, *n): return json.dumps(self.body).encode()
+
+
+class Preflight(unittest.TestCase):
+    """The checks run and verify make before any work, and doctor reports: every problem at once with its fix."""
+    fake, herdr_config = Doctor.fake, Doctor.herdr_config
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
+        Doctor.setUp(self)
+        os.environ["PATH"] += os.pathsep + str(Path(shutil.which("git", path=ORIGINAL_PATH)).parent)  # the real git, after the fake tools
+        os.environ.pop("COMPOSE_NO_PREFLIGHT", None)  # hermetic sets it; restored with the rest of the environment
+        for p in (mock.patch.object(fc.fc_config, "OPENROUTER_KEY", "or-key"), mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin-key"),
+                  mock.patch.object(fc.fc_config, "WORKSPACE", "work"), mock.patch.object(fc_checks, "machine_warnings", return_value=[])):
+            p.start(); self.addCleanup(p.stop)
+        self.requests = []
+
+    def serve(self, **answers):
+        """urlopen answering by host: an Answer, an exception, or a status number for an HTTP error."""
+        def urlopen(req, timeout=None):
+            self.requests.append(req)
+            what = answers[urllib.parse.urlparse(req.full_url).hostname.split(".")[-2]]
+            if isinstance(what, int):
+                raise urllib.error.HTTPError(req.full_url, what, "no", {}, None)
+            if isinstance(what, Exception):
+                raise what
+            return what
+        return mock.patch("urllib.request.urlopen", urlopen)
+
+    def test_a_key_its_service_rejects_is_a_problem_with_the_fix_and_credit_used_up_is_one_too(self):
+        with self.serve(openrouter=401, linear=400):
+            problems, warnings = fc.fc_init.key_problems()
+        self.assertEqual(warnings, [])
+        self.assertEqual(problems, [
+            "the OpenRouter key is rejected (HTTP 401): get a new key at openrouter.ai/keys, then: pbpaste | compose workspace key work",
+            "the Linear key is rejected (HTTP 400): get a new key at linear.app/settings/api, then: pbpaste | compose workspace key work --linear"])
+        auth = {r.full_url.split("/")[2]: r.get_header("Authorization") for r in self.requests}
+        self.assertEqual(auth, {"openrouter.ai": "Bearer or-key", "api.linear.app": "lin-key"})  # Linear takes the bare key
+        with self.serve(openrouter=Answer({"data": {"limit_remaining": 0}}), linear=Answer({"data": {"viewer": {"id": "u"}}})):
+            self.assertEqual(fc.fc_init.key_problems(), (["the OpenRouter key has no credit left: raise its limit or add credit at openrouter.ai/settings/credits"], []))
+        with self.serve(openrouter=Answer({"data": {"limit_remaining": None}}), linear=Answer({})):  # no limit set
+            self.assertEqual(fc.fc_init.key_problems(), ([], []))
+
+    def test_a_service_that_does_not_answer_is_a_warning_never_a_verdict(self):
+        with self.serve(openrouter=urllib.error.URLError("offline"), linear=503):
+            problems, warnings = fc.fc_init.key_problems()
+        self.assertEqual(problems, [])
+        self.assertEqual(warnings, ["WARNING: could not check the OpenRouter key (no answer): the work may stop later if it is bad",
+                                    "WARNING: could not check the Linear key (HTTP 503): the work may stop later if it is bad"])
+
+    def test_unset_keys_and_the_opt_out_make_no_call(self):
+        with self.serve() as urlopen:
+            with mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", ""):
+                self.assertEqual(fc.fc_init.key_problems(), ([], []))
+            with mock.patch.dict(os.environ, {"COMPOSE_NO_PREFLIGHT": "1"}):
+                self.assertEqual(fc.fc_init.key_problems(), ([], []))
+        self.assertEqual(self.requests, [])
+
+    def stop(self, **kw):
+        say = []
+        with mock.patch.object(fc.fc_core, "say", say.append), self.assertRaises(SystemExit) as e:
+            fc.fc_init.start_checks(self.repo, **kw)
+        return str(e.exception), say
+
+    def test_run_reports_the_dirty_tree_the_bad_key_and_the_logged_out_gh_all_at_once(self):
+        (self.repo / "new_test.py").write_text("x\n")
+        (self.repo / "graft").mkdir(); (self.repo / "graft" / "map.json").write_text("{}")  # the tools' own files never count
+        (self.repo / ".trail").mkdir(); (self.repo / ".trail" / "hook.cjs").write_text("")
+        (self.repo / ".claude").mkdir(); (self.repo / ".claude" / "settings.json").write_text("{}")
+        self.fake("gh", "gh version 2.94.0", body='[ "$1 $2" = "auth status" ] && exit 1')
+        with self.serve(openrouter=401, linear=Answer({})):
+            msg, say = self.stop(hint="commit the tests first so worktrees include them")
+        self.assertEqual(msg.splitlines()[0], "preflight stopped, nothing was cloned or run. Fix all 3 of these, then run again:")
+        self.assertEqual(msg.splitlines()[1:], [
+            "  repo has uncommitted changes (new_test.py); commit the tests first so worktrees include them",
+            "  the OpenRouter key is rejected (HTTP 401): get a new key at openrouter.ai/keys, then: pbpaste | compose workspace key work",
+            "  gh is not logged in, so the stack cannot be submitted: gh auth login (or run with --no-stack)"])
+
+    def test_no_stack_skips_gh_and_verify_skips_the_tree_and_a_clean_start_goes_on_with_its_warnings(self):
+        (self.repo / "new_test.py").write_text("x\n")
+        self.fake("gh", "gh version 2.94.0", body="exit 1")
+        with self.serve(openrouter=Answer({}), linear=Answer({})):
+            fc.fc_init.start_checks(self.repo, stack=False, tree=False)  # nothing to stop on
+            with mock.patch.object(fc_checks, "machine_warnings", return_value=["WARNING: the Mac is on battery"]), \
+                 mock.patch.object(fc.fc_core, "say") as say:
+                fc.fc_init.start_checks(self.repo, stack=False, tree=False)
+            say.assert_called_once_with("WARNING: the Mac is on battery")
+            msg, _ = self.stop(stack=False)
+        self.assertEqual(msg.splitlines()[0], "preflight stopped, nothing was cloned or run. Fix this, then run again:")
+        self.assertIn("uncommitted changes (new_test.py); commit or discard them", msg)
+
+    def test_the_opt_out_keeps_only_the_tree_check(self):
+        (self.repo / "new_test.py").write_text("x\n")
+        self.fake("gh", "gh version 2.94.0", body="exit 1")
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_PREFLIGHT": "1"}), mock.patch.object(fc_checks, "machine_warnings", side_effect=AssertionError):
+            msg, _ = self.stop()
+        self.assertEqual(msg.splitlines()[1:], ["  repo has uncommitted changes (new_test.py); commit or discard them"])
+
+    def test_run_resume_and_verify_hold_the_mac_awake_and_verify_leaves_the_tree_to_itself(self):
+        stop = RuntimeError("stop here")
+        with mock.patch.object(fc.fc_proc, "keep_awake") as awake, mock.patch.object(fc.fc_run, "preflight", side_effect=stop), \
+             mock.patch.object(fc.fc_tasks, "load_tasks", side_effect=stop), mock.patch.object(fc.fc_init, "start_checks") as checks, \
+             mock.patch.object(fc.fc_core, "project_dir", return_value=self.repo / ".compose" / "p"):
+            with self.assertRaises(RuntimeError):
+                fc.fc_run.run_tasks(self.repo, self.repo, [{"model": "m"}], None)
+            self.assertEqual(awake.call_count, 1)
+            with self.assertRaises(RuntimeError):
+                fc.fc_verify.cmd_verify(type("A", (), {"repo": str(self.repo), "project": "p", "skip_review": True, "fix": 0})())
+            self.assertEqual(awake.call_count, 2)
+            checks.assert_called_once_with(self.repo, stack=False, tree=False)  # verify tolerates a dirty tree and submits nothing
+            with self.assertRaises(RuntimeError):
+                fc.fc_run.cmd_run(type("A", (), {"repo": str(self.repo), "project": "p", "only": None, "no_stack": True})())
+            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them")  # --no-stack: gh need not be logged in
+
+    def doctor(self, args, rows=()):
+        out, code = io.StringIO(), 0
+        with mock.patch.object(fc_steps, "STEPS", rows), mock.patch("sys.stdout", out):
+            try:
+                fc.fc_init.cmd_doctor(args)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue().splitlines()
+
+    def test_doctor_prints_each_problem_and_exits_1_and_otherwise_stays_ready(self):
+        (self.repo / "new_test.py").write_text("x\n")
+        args = type("A", (), {"repo": str(self.repo), "project": "p"})
+        self.fake("gh", "gh version 2.94.0")
+        found = {"p": (self.repo, self.repo / ".compose" / "p")}
+        with mock.patch.object(fc.fc_core, "all_projects", return_value=found), mock.patch.object(fc_checks, "machine_warnings", return_value=["WARNING: load average 51 on 8 cores"]):
+            with self.serve(openrouter=401, linear=Answer({})):
+                code, lines = self.doctor(args)
+            self.assertEqual((code, lines), (1, [
+                "WARNING: load average 51 on 8 cores",
+                "PROBLEM: repo has uncommitted changes (new_test.py); commit or discard them",
+                "PROBLEM: the OpenRouter key is rejected (HTTP 401): get a new key at openrouter.ai/keys, then: pbpaste | compose workspace key work",
+                "2 problems to fix before work starts"]))
+            (self.repo / "new_test.py").unlink()
+            with self.serve(openrouter=Answer({}), linear=Answer({})):
+                self.assertEqual(self.doctor(args), (0, ["WARNING: load average 51 on 8 cores", "every step compose needs is ready"]))
+        with mock.patch.object(fc.fc_core, "all_projects", return_value={}), self.serve(openrouter=Answer({}), linear=Answer({})):
+            code, lines = self.doctor(args)
+            self.assertEqual(code, 1)
+            self.assertTrue(lines[0].startswith(f"PROBLEM: no project 'p' in {self.repo}"), lines)
+        with self.serve(openrouter=Answer({}), linear=Answer({})):  # no project named: no tree to check
+            self.assertEqual(self.doctor(None), (0, ["every step compose needs is ready"]))
 
 
 if __name__ == "__main__":

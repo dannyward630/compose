@@ -1326,10 +1326,10 @@ class MachineDocs(unittest.TestCase):
             self.assertEqual(lines[n - 1], line, f"{rel}:{n}")
 
     def test_new_machine_lines_in_place(self):
-        self.assertLines("docs/new-machine.md", MACHINE, 86)
+        self.assertLines("docs/new-machine.md", MACHINE, 101)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 125)
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 137)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):

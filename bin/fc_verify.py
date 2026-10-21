@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_jev, fc_accept
+import fc_core, fc_proc, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_init, fc_jev, fc_accept
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -143,7 +143,7 @@ def e2e_stage(repo, cfg, panes, report, findings, results=None, retry=True, keep
     With `results` (the project's results/), a jev case that does not pass keeps its step screenshots in results/e2e/, and with
     `keep` one that passes does too. `retry` False runs a harness failure once: prove expects failures and reads them itself."""
     ok = True
-    stage_setup = awake = None
+    stage_setup = None
     # The stage owns its lifecycle: fresh ports each run (the config uses $E2E_PORT / $E2E_CLIENT_PORT), and whatever
     # it started (setup's process group, plus anything left listening on its ports that was not before) ends with it,
     # pass, fail, exception, Ctrl-C, SIGTERM or SIGHUP, so no server or browser outlives a round to answer the next one.
@@ -173,9 +173,6 @@ def e2e_stage(repo, cfg, panes, report, findings, results=None, retry=True, keep
         """End what the stage started: from its `finally`, and from a SIGTERM or SIGHUP (fc_proc.HOOKS), which skips that."""
         if stage_setup:
             fc_jev.stop_group(stage_setup)
-        if awake:
-            awake.terminate()
-            awake.wait(5)
         fc_jev.kill_listeners(ports - busy)
         fc_jev.end_new_daemons(env["BU_NAME"], daemons)
         if profile:
@@ -188,9 +185,8 @@ def e2e_stage(repo, cfg, panes, report, findings, results=None, retry=True, keep
             # headed Chromium then stops painting, so screenshots and clicks time out. compose's own test suite forces
             # headless (COMPOSE_E2E_HEADLESS=1), so testing the tool never pops a window on the product owner's screen.
             headless = not cfg.get("e2e_headed") or os.environ.get("COMPOSE_E2E_HEADLESS") == "1"
-            if not headless and shutil.which("caffeinate"):  # macOS: keep the display awake while the window is watched
-                awake = subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())], stdin=subprocess.DEVNULL,
-                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            if not headless:  # a watched window needs the display awake (cmd_verify already holds this for its whole run)
+                fc_proc.keep_awake()
             p = fc_core.sh(["bp", "launch", "about:blank", "--profile", profile, *(["--headless"] if headless else [])], repo, timeout=30, check=False,
                    env={**os.environ, "BP_PORT": env["BU_CDP_URL"].rsplit(":", 1)[1]})
             if p.returncode:  # the cases then fail on the dead CDP port, which reads as a tool error, not the app's
@@ -369,6 +365,8 @@ def at_root(value, olds, root):
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
+    fc_init.start_checks(repo, stack=False, tree=False)  # keys and machine only: verify tolerates a dirty tree
+    fc_proc.keep_awake()  # a display that sleeps fails every e2e check, and a verify takes long enough for the Mac to sleep
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     review_only = getattr(a, "review_only", False)

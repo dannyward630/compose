@@ -177,7 +177,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose setup [--yes]` | Installs and configures everything `compose` needs, one question at a time on a terminal; `--yes`, or no terminal, takes every default |
 | `compose setup --dry-run` | Walks the same setup and changes nothing: every install, write, and key save prints as a `would` line, and the last line counts them |
 | `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |
-| `compose doctor` | Checks every setup step and prints the fix for each missing one; `init` runs it first |
+| `compose doctor` | Checks every setup step and prints the fix for each missing one, then the preflight of `run`: rejected keys, uncommitted changes, a loaded machine; `init` runs it first |
 | `compose init --project <name> [--branch <branch>]` | Creates the project's branch (`compose/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
 | `compose tasks --project <name>` | Shows the task list for you to review before dispatch |
 | `compose run --project <name>` | Dispatches the tasks to parallel implementers |

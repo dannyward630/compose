@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import os, platform, stat, sys, tempfile, unittest
+import datetime, os, platform, stat, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -60,3 +60,55 @@ class Checks(unittest.TestCase):
         self.assertFalse(C.chromium_installed())
         (cache / "chromium-1200" / app).write_text("")
         self.assertTrue(C.chromium_installed())
+
+
+class Machine(unittest.TestCase):
+    """The machine checks behind doctor and the start of run and verify read fake pmset, ps and docker, a patched load average and core count."""
+    def setUp(self):
+        self.bin = Path(tempfile.mkdtemp())
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        for p in (mock.patch("os.getloadavg", return_value=(1.0, 1.0, 1.0)), mock.patch("os.cpu_count", return_value=8)):
+            p.start(); self.addCleanup(p.stop)
+
+    fake = Checks.fake
+
+    def docker(self, rows, ids="aaa bbb"):
+        """A docker that lists `ids` as running or restarting and inspects them into `rows` (lines of name|status|restarts|started)."""
+        echoes = "; ".join(f"echo '{r}'" for r in rows)
+        self.fake("docker", f'case "$1" in ps) echo "{ids}";; inspect) {echoes};; esac')
+
+    def ago(self, seconds):
+        return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.123456789Z")
+
+    def test_on_battery_reads_pmset_and_is_false_without_it(self):
+        self.assertFalse(C.on_battery())
+        for out, want in (("Now drawing from 'Battery Power'", True), ("Now drawing from 'AC Power'", False)):
+            self.fake("pmset", f'[ "$*" = "-g batt" ] || exit 9\necho "{out}"')
+            self.assertIs(C.on_battery(), want)
+
+    def test_busiest_process_is_the_first_row_of_ps(self):
+        self.assertIsNone(C.busiest_process())
+        self.fake("ps", 'echo " 174.2 /usr/local/bin/node"\necho "  3.0 /bin/zsh"')
+        self.assertEqual(C.busiest_process(), (174.2, "node"))
+
+    def test_a_crash_looping_container_is_named_and_a_calm_one_is_not(self):
+        self.assertEqual(C.restarting_containers(), [])  # no docker installed
+        self.docker([f"/api|restarting|7|{self.ago(5)}", f"/db|running|0|{self.ago(86400)}", f"/old|running|9|{self.ago(86400)}", f"/flap|running|4|{self.ago(30)}"])
+        self.assertEqual(C.restarting_containers(), ["api", "flap"])
+        self.fake("docker", "exit 1")  # installed but the daemon is not running
+        self.assertEqual(C.restarting_containers(), [])
+        self.fake("docker", "echo")  # running, nothing to inspect
+        self.assertEqual(C.restarting_containers(), [])
+
+    def test_warnings_are_one_line_each_with_the_fix_and_empty_on_a_calm_machine(self):
+        self.assertEqual(C.machine_warnings(), [])
+        self.fake("pmset", 'echo "Now drawing from \'Battery Power\'"')
+        self.fake("ps", 'echo "174.2 /usr/local/bin/node"')
+        self.docker([f"/api|restarting|7|{self.ago(5)}"])
+        with mock.patch("os.getloadavg", return_value=(60.0, 51.0, 40.0)):
+            battery, load, container = C.machine_warnings()
+        self.assertIn("on battery: closing the lid will sleep it", battery)
+        self.assertEqual(load, "WARNING: load average 51 on 8 cores: checks and e2e run slow and time out; busiest process is node at 174% CPU, stop it or wait")
+        self.assertEqual(container, "WARNING: docker container api keeps restarting and burns CPU, so a verify measures the machine, not the code: docker stop api")
+        with mock.patch("os.getloadavg", return_value=(16.0, 16.0, 16.0)):  # twice the cores is busy, not far above
+            self.assertEqual(len(C.machine_warnings()), 2)
