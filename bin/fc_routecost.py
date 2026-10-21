@@ -8,7 +8,7 @@ import fc_routerec
 
 def route(proj, meta):
     """`(workflow, depth)` from the Route section of the task's issue in the sync cache, each `-` when missing or unknown."""
-    rec = fc_routerec.parse_route((fc_tasks.linear_cache(proj).get("issues", {}).get(meta["linear"]) or {}).get("description") or "")
+    rec = fc_routerec.parse_route((fc_tasks.linear_cache(proj).get("issues", {}).get(meta.get("linear")) or {}).get("description") or "")
     wf = rec.get("workflow") if rec else None
     dp = rec.get("depth") if rec else None
     return (wf if wf in fc_tasks.WORKFLOWS else "-", dp if dp in fc_tasks.DEPTHS else "-")

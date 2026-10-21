@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update, fc_routecost
 
 
 def project_head(repo, proj):
@@ -54,9 +54,12 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta], (facts or {}).get("released", ())).get(tid)
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
+    wf, dp = fc_routecost.route(proj, meta)
+    n = fc_routecost.counts(r, fc_routecost.rounds(proj), tid)
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
             "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or ("" if design else meta.get("model", ""))).split("/")[-1],
-            "linear": str(meta.get("linear") or "")}
+            "linear": str(meta.get("linear") or ""), "workflow": wf, "depth": dp,
+            "escalations": n["escalations"], "fix_rounds": n["fix_rounds"]}
 
 _git_dirs = {}
 
