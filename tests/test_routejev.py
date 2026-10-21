@@ -2,7 +2,8 @@ import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, json, os, sys, unittest
 from pathlib import Path
 from unittest import mock
-os.environ.update(COMPOSE_NO_TREEHOUSE="1", HERDR_ENV="")
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
+os.environ["HERDR_ENV"] = ""
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
@@ -34,8 +35,8 @@ class Ask(unittest.TestCase):
     def test_confident_answers_route_without_retry(self):
         good = reply(depth=ans("STANDARD", 0.65), workflow=ans("FIX_THEN_REGRESSION_TEST", 0.6), policy0=ans("APPLIES", 0.9))
         route, ask, more = self.decide([good], plain=PLAIN[:1])
-        self.assertEqual(route, {"workflow": "fix-then-regression-test", "depth": "STANDARD", "decided_by": "jev", "confidence": 0.6,
-                                 "answers": good["answers"], "retry": None, "fallback": None, "floor": [], "checks": []})
+        self.assertEqual(route, {"workflow": "fix-then-regression-test", "depth": "DEEP", "decided_by": "jev", "confidence": 0.6,
+                                 "answers": good["answers"], "retry": None, "fallback": None, "floor": ["Secrets"], "checks": ["t"]})
         self.assertEqual((ask.call_args.args[2:], more.call_count), ((STATE, fc_routejev.route_questions(STATE, PLAIN[:1]), "Jev route"), 0))
         route, ask, _ = self.decide([reply(depth=ans("FAST", 0.9))], state={**STATE, "pin": "fix-then-regression-test"})
         self.assertEqual((ask.call_count, *pick(route, "workflow", "depth", "decided_by", "confidence")), (1, "fix-then-regression-test", "FAST", "pin + jev", 0.9))
