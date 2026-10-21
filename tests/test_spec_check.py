@@ -13,12 +13,12 @@ _spec.loader.exec_module(fc)
 
 SETTLED = "## Not yet specified\n\nNone\n\n### Codebase brief\n\nWhere things live.\n\n## Plan\n\nThe plan."
 STORY = {"id": "ENG-2", "title": "Story", "description": "## Acceptance criteria\n\n* it works", "status": "Todo", "blockedBy": []}
-# What `compose tasks` printed before file_clashes was pulled out of it.
+# What `compose tasks` printed before file_clashes was pulled out of it, plus the route column.
 TASKS_OUT = """project p   3 tasks   stack order (bottom first): 001 <- 002 <- 003
-  id   title                                    after      linear    files | protected | test
-  001  T                                        -          ENG-3     a.go | 001_test.go | t
-  002  T                                        -          ENG-4     a.go | 002_test.go | t
-  003  T                                        001        ENG-5     b.go | 003_test.go | t
+  id   route                             title                                    after      linear    files | protected | test
+  001  STANDARD test-first               T                                        -          ENG-3     a.go | 001_test.go | t
+  002  -                                 T                                        -          ENG-4     a.go | 002_test.go | t
+  003  DEEP fix-then-regression-test     T                                        001        ENG-5     b.go | 003_test.go | t
 
   WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):
     a.go: 001, 002
@@ -33,6 +33,12 @@ def task(ident, tid, blocked_by=(), crit="- works", **kv):
     kv = {"id": tid, "files": f"{tid}.go", "protected": f"{tid}_test.go", "test": "t", **kv}
     desc = f"## Acceptance criteria\n{crit}\n\n```compose\n" + "\n".join(f"{k}: {v}" for k, v in kv.items()) + "\n```\n"
     return {"id": ident, "title": "T", "description": desc, "status": "Todo", "blockedBy": list(blocked_by), "parentId": "ENG-2"}
+
+
+def routed(issue, *bullets):
+    """The issue with a Route section of these bullets right above its compose block."""
+    section = "## Route\n\n" + "\n".join(bullets) + "\n\n"
+    return {**issue, "description": issue["description"].replace("```compose", section + "```compose")}
 
 
 def data(issues, desc=SETTLED):
@@ -190,8 +196,11 @@ class SpecCheck(unittest.TestCase):
         chain = [b.removeprefix("fast/p/") for b in fc.fc_worktree.stack_order(repo, proj)]
         self.assertEqual((header(), " <- ".join(chain)), ("011 <- 024 <- 025 <- 012 <- 013",) * 2)
 
-    def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
-        clash = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", files="a.go"), task("ENG-5", "003", ["ENG-3"], files="b.go")]
+    def clash_tasks(self, cache=None):
+        """`compose tasks` of three synced tasks, two sharing a.go, 001 and 003 routed; `cache` edits tasks.json first."""
+        clash = [routed(task("ENG-3", "001", files="a.go"), "* workflow: test-first", "* depth: STANDARD", "* decided by: jev"),
+                 task("ENG-4", "002", files="a.go"),
+                 routed(task("ENG-5", "003", ["ENG-3"], files="b.go"), "- depth: DEEP", "- decided by: fallback", "- workflow: fix-then-regression-test")]
         repo = Path(tempfile.mkdtemp())
         for a in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
             subprocess.run(["git", *a], cwd=repo, check=True)
@@ -199,12 +208,26 @@ class SpecCheck(unittest.TestCase):
         proj.mkdir(parents=True)
         (proj / "linear.json").write_text('{"feature": "ENG-1"}')
         fc.fc_tasks.sync_tasks(proj, data(clash, ""))
+        if cache:
+            path = proj / "results" / "tasks.json"
+            path.write_text(json.dumps(cache(json.loads(path.read_text()))))
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
             fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
-        self.assertEqual(out.getvalue(), TASKS_OUT)
+        return clash, proj, out.getvalue()
+
+    def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
+        clash, proj, out = self.clash_tasks()
+        self.assertEqual(out, TASKS_OUT)
         self.assertEqual(fc.fc_tasks.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
+
+    def test_route_is_a_dash_for_an_issue_missing_from_the_cache_or_a_cache_without_issues(self):
+        wide = lambda r: f"{r:33}"
+        _, _, out = self.clash_tasks(lambda c: {**c, "issues": {k: v for k, v in c["issues"].items() if k != "ENG-5"}})
+        self.assertEqual(out, TASKS_OUT.replace(wide("DEEP fix-then-regression-test"), wide("-")))
+        _, _, out = self.clash_tasks(lambda c: {k: v for k, v in c.items() if k != "issues"})
+        self.assertEqual(out, TASKS_OUT.replace(wide("DEEP fix-then-regression-test"), wide("-")).replace(wide("STANDARD test-first"), wide("-")))
 
     def test_unsynced_project_stops_with_the_sync_message(self):
         repo = Path(tempfile.mkdtemp())
