@@ -807,9 +807,9 @@ class HarnessTable(unittest.TestCase):
     def test_the_table_holds_the_codex_row_first_and_two_name_only_entries(self):
         h = fc_harness
         self.assertEqual((h.RESERVED, h.HARNESSES["gemini"], h.HARNESSES["grok"]), (("codex", "gemini", "grok"), {}, {}))
-        self.assertEqual({k: v for k, v in h.HARNESSES["codex"].items() if k != "hooks"}, {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$", "example": "gpt-6.1-sol",
-                                                "herdr_ready": False, "probe": h._codex_probe, "result": h._codex_result, "argv": h._codex_argv,
-                                                "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": h._codex_hash})
+        want = {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$", "example": "gpt-6.1-sol",
+                "herdr_ready": False, "probe": h._codex_probe, "result": h._codex_result, "argv": h._codex_argv}
+        self.assertEqual({k: v for k, v in h.HARNESSES["codex"].items() if k in want}, want)  # the hook fields are pinned in HookFields
 
     def test_harness_of_and_model_id_read_only_a_key_that_has_fields(self):
         for m, want in (("codex", ("codex", None)), ("codex:", ("codex", None)), ("codex:gpt-6-sol", ("codex", "gpt-6-sol")), ("codex:a:b", ("codex", "a:b")),
