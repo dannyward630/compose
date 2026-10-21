@@ -58,24 +58,28 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    def read_turn():  # what pi wrote to its session file since the last turn, priced and added to the ledger
+        if not session.get("sfile"):
+            session["sfile"] = (((fc_herdr.herdr("agent", "get", session["name"]) or {}).get("agent") or {}).get("agent_session") or {}).get("value")
+        session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
+        if model in fc_config.PRICES:
+            usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
+        fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
+        return text, tools, usage, errors
     if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt
         err = fc_herdr.herdr_stalled(session, prompt, t0 + timeout)
     if err == "timeout" or err == "agent_prompt_stalled":
         fc_herdr.herdr("agent", "send-keys", session["name"], "esc")
         fc_herdr.herdr("pane", "close", session["pane"])
-        raise subprocess.TimeoutExpired("herdr agent prompt", timeout)
+        timed_out = subprocess.TimeoutExpired("herdr agent prompt", timeout)
+        _, timed_out.tools, timed_out.usage, _ = read_turn()  # the tokens a cut turn spent were billed all the same
+        raise timed_out
     if err:
         raise RuntimeError(f"herdr agent prompt {session['name']}: {err}")
-    if not session.get("sfile"):
-        got = fc_herdr.herdr("agent", "get", session["name"]) or {}
-        session["sfile"] = ((got.get("agent") or {}).get("agent_session") or {}).get("value")
-    session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
+    text, tools, usage, errors = read_turn()
     busy = fc_models.provider_busy(errors, not text and not tools and not usage["tokens_in"])
     if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or 'empty turn with no usage'}")
-    if model in fc_config.PRICES:
-        usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
-    fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     if busy:
         raise fc_models.RateLimited(usage, busy)
     return session, text, tools, usage
@@ -441,14 +445,15 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if not edited():
                 continue
             cut = attempt + 1
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             if fc_proc.STOP.is_set():
                 raise fc_proc.Stopped
             # A hung implementer (tool call never returning) costs one attempt, not the task: fresh session, same prompt.
             fc_core.say(f"{tid} attempt {attempt} timeout  implementer turn did not finish within {fc_core.fmt(time.time() - t0)}; fresh session")
-            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out"})
-            session = None
-            prompt = original_prompt
+            cut_usage = getattr(e, "usage", {"cost": 0.0, "tokens_in": 0, "tokens_out": 0})  # what the cut turn cost is counted here, as for a rate limit
+            cost += cut_usage["cost"]
+            log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", "tool_calls": getattr(e, "tools", 0), "usage": cut_usage})
+            session, prompt = None, original_prompt
             failed("timed out", original_prompt)
             if not edited():
                 continue
