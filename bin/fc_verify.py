@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_costevent
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -553,18 +553,25 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
         else:
             break
-    for issue in list(dict.fromkeys(i for i, _ in fc_ledger.UNSAVED)):
-        fc_ledger.add_row(issue, [])
-    lost = fc_ledger.unsaved()
-    if lost:
-        ok = False
-        fc_core.say("verify FAIL  evidence not saved on Linear: " + ", ".join(r["event_id"] for r in lost))
     final = {"rounds": rounds, "passed": ok, "rejected_fixes": rejected, "seconds": round(time.time() - t0, 1), "cost": fc_core.LEDGER.snapshot()}
     if left_out:
         final["left_out"] = left_out
     (proj / "results").mkdir(exist_ok=True)
     review_only = getattr(a, "review_only", False)  # its own record: neither the last verify's nor a smoke run's
-    fc_core.atomic_write((proj / "results" / ("review.json" if review_only else "smoke.json" if left_out else "verify.json")), json.dumps(final, indent=2))
+    results = proj / "results" / ("review.json" if review_only else "smoke.json" if left_out else "verify.json")
+    fc_core.atomic_write(results, json.dumps(final, indent=2))
+    if results.name == "verify.json":
+        path = proj / "linear.json"
+        feature = json.loads(path.read_text()).get("feature") if path.exists() else None
+        sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+        fc_ledger.record(feature, fc_costevent.verify_events(proj, fc_tasks.load_tasks(proj), ok, final["cost"]["total"], "", sha))
+    for issue in list(dict.fromkeys(i for i, _ in fc_ledger.UNSAVED)):
+        fc_ledger.add_row(issue, [])
+    lost = fc_ledger.unsaved()
+    if lost:
+        ok = final["passed"] = False
+        fc_core.say("verify FAIL  evidence not saved on Linear: " + ", ".join(r["event_id"] for r in lost))
+        fc_core.atomic_write(results, json.dumps(final, indent=2))
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     fc_core.say((f"review {'PASS' if ok else 'FAIL'} (review and acceptance only; the full verify runs the checks and e2e)" if review_only else
                  f"smoke {'PASS' if ok else 'FAIL'} ({', '.join('no ' + x for x in left_out)})" if left_out else f"verify {'PASS' if ok else 'FAIL'}")
