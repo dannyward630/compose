@@ -252,6 +252,48 @@ class RunGate(ProveCommand):
         self.assertIs(cr.call_args[0][0].unproven, True)
 
 
+class ProveEvidence(Repo):
+    """cmd_prove records one event per case on the feature issue; event is faked as its arguments, so only cmd_prove's calls are tested."""
+    ROWS = [{"name": "a", "verdict": "feature_missing", "why": "no section"}, {"name": "b", "verdict": "passes", "why": "x"},
+            {"name": "c", "verdict": "environment", "why": "y"}]
+    FIELDS = ("run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail")
+
+    def prove(self, rows, ok, feature="ENG-1", saved=True):
+        self.config(e2e=[{"name": r["name"]} for r in rows])
+        (self.proj / "linear.json").unlink(missing_ok=True)
+        if feature:
+            (self.proj / "linear.json").write_text(json.dumps({"feature": feature}))
+        ledger = fc.fc_prove.fc_ledger
+        with mock.patch.object(fc.fc_prove, "prove", return_value=(rows, [], ok)), mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
+                mock.patch.object(ledger, "event", side_effect=lambda *a: dict(zip(self.FIELDS, a))), \
+                mock.patch.object(ledger, "record", return_value=saved) as self.record:
+            return self.call(fc.fc_prove.cmd_prove)
+
+    def test_one_event_per_case_in_order_on_the_feature_issue(self):
+        code, out = self.prove(self.ROWS, False)
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(code, 1, out)
+        self.record.assert_called_once()
+        issue, events = self.record.call_args.args
+        self.assertEqual(issue, "ENG-1")
+        self.assertEqual(events, [dict(zip(self.FIELDS, ("", sha, [], [], "case", "prove", res, fob, detail)))
+                                  for res, fob, detail in (("fail_expected", True, "a: no section"), ("pass", False, "b: x"), ("error", None, "c: y"))])
+
+    def test_a_passing_prove_records_and_exits_as_before(self):
+        code, out = self.prove(self.ROWS[:1], True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([e["result"] for e in self.record.call_args.args[1]], ["fail_expected"])
+        self.assertTrue(self.results("prove.json")["passed"])
+
+    def test_nothing_changes_when_the_events_are_not_saved_or_there_is_no_feature_issue(self):
+        for kw in ({"saved": False}, {"feature": None}):
+            code, out = self.prove(self.ROWS[:2], False, **kw)
+            self.assertEqual(code, 1, out)
+            self.assertEqual([c["verdict"] for c in self.results("prove.json")["cases"]], ["feature_missing", "passes"])
+            self.assertEqual(self.record.call_args.args[0], None if kw.get("feature", 1) is None else "ENG-1")
+            self.assertEqual(len(self.record.call_args.args[1]), 2)
+
+
 class PrototypeCommand(Repo):
     SCREEN = {"name": "settings", "url": "http://127.0.0.1:$E2E_PORT/settings", "goal": "Open the settings page", "reference": "frame0 page Settings",
               "must_match": ["icons", "empty state copy"]}
