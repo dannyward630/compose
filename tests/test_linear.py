@@ -727,3 +727,52 @@ class EvidenceBrief(unittest.TestCase):
         for line in ("See ## Evidence below", "### Evidence", "## Evidence log", " ## Evidence"):
             desc = block(id="001", test="t") + f"\nNote:\n{line}\nmore\n"
             self.assertEqual(self.task(desc)["body"], self.BRIEF + f"\nNote:\n{line}\nmore", line)
+
+
+class RoutePin(unittest.TestCase):
+    """A task may pin its workflow with `route:`; the Route section the CLI writes into a description is never part of the brief."""
+    ROUTE = "## Route\n\n* workflow: test-first\n### Why\n* depth: STANDARD"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"
+        self.proj.mkdir()
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+
+    def task(self, desc):
+        return fc.fc_tasks.task_from_issue(issue("ENG-3", "T", desc))
+
+    def test_the_workflow_and_depth_names(self):
+        self.assertEqual(fc.fc_tasks.WORKFLOWS, ("test-first", "implement-then-test", "fix-then-regression-test"))
+        self.assertEqual(fc.fc_tasks.DEPTHS, ("FAST", "STANDARD", "DEEP"))
+
+    def test_route_text_ends_at_the_next_section_or_the_block(self):
+        fence = "```compose\nid: 001\ntest: t\n```\n"
+        self.assertEqual(fc.fc_tasks.route_text(f"## Goal\nDo it.\n\n{self.ROUTE}\n\n\n{fence}"), self.ROUTE)
+        self.assertEqual(fc.fc_tasks.route_text(f"## Goal\nDo it.\n\n{self.ROUTE}\n\n## Acceptance criteria\n- works\n"), self.ROUTE)
+        for desc in (block(id="001", test="t"), "## Routes\n* workflow: test-first\n\n" + fence, "### Route\n* workflow: test-first\n"):
+            self.assertEqual(fc.fc_tasks.route_text(desc), "", desc)
+
+    def test_the_body_leaves_the_route_section_out(self):
+        plain = self.task(block(id="001", test="t"))["body"]
+        above_block = block(id="001", test="t").replace("\n\n```compose", f"\n\n{self.ROUTE}\n\n```compose")
+        between = block(id="001", test="t").replace("## Acceptance", f"{self.ROUTE}\n\n\n## Acceptance")
+        first = f"{self.ROUTE}\n\n" + block(id="001", test="t")
+        for desc in (above_block, between, first):
+            self.assertIn(self.ROUTE, desc)
+            self.assertEqual(self.task(desc)["body"], plain, desc)
+
+    def test_a_valid_pin_is_kept_and_no_pin_means_no_route_key(self):
+        for workflow in fc.fc_tasks.WORKFLOWS:
+            self.assertEqual(self.task(block(id="001", test="t", route=workflow))["route"], workflow)
+        self.assertNotIn("route", self.task(block(id="001", test="t")))
+        tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""},
+                                                   "issues": [issue("ENG-3", "T", block(id="001", test="t", route="implement-then-test"))]})
+        self.assertEqual(tasks[0]["route"], "implement-then-test")
+
+    def test_sync_exits_on_a_route_that_is_not_a_workflow(self):
+        for value in ("Test-First", "TEST_FIRST", "DEEP"):
+            with self.assertRaises(SystemExit) as e:
+                fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""},
+                                                   "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
+            self.assertEqual(e.exception.code,
+                             f"ENG-7: route must be test-first, implement-then-test or fix-then-regression-test, not {value}")
