@@ -1,3 +1,4 @@
+from __future__ import annotations  # the X | None annotations on /usr/bin/python3 3.9
 import json, os, re, sys
 from pathlib import Path
 import fc_auth, fc_core
@@ -54,6 +55,7 @@ CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order wh
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
+PROVIDERS = {}  # name -> the active settings' providers entry (base URL, optional models list), set by apply_config
 
 
 def read_config():
@@ -155,6 +157,14 @@ def key_file(key):
         fc_core.note_home_write(f, tmp)
         os.replace(tmp, f)  # parallel OpenCode turns never read a half-written key
     return f
+
+def provider_of(model) -> tuple[str, str] | None:
+    """(name, id) for `pi:<name>/<id>` or `<name>/<id>` when `name` is a declared provider, else None."""
+    return None
+
+def provider_env(name):
+    """The env var apply_config exports provider `name`'s auth.json key as."""
+    return None
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
