@@ -181,9 +181,10 @@ class RunEvidence(unittest.TestCase):
         task = {"id": "004", "model": "pi:x/glm", "linear": "ENG-4", "body": self.BODY}
         with mock.patch.object(fc.fc_implement, "run_task", passed), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
-                mock.patch.object(fc_ledger, "record") as record, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+                mock.patch.object(fc_ledger, "record") as record, mock.patch.object(fc_ledger, "record_task") as record_task, \
+                mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
             fc.fc_run.run_tasks(self.repo, self.proj, [task], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
-        (issue, events), = [c.args for c in record.call_args_list]
+        (issue, events), = [c.args for c in record.call_args_list] + [(c.args[2].get("linear"), c.args[3]) for c in record_task.call_args_list]
         self.assertEqual((issue, [(e["phase"], e["result"], e["task_ids"], e["criterion_id"]) for e in events]),
                          ("ENG-4", [("final", "pass", ["004"], fc_ledger.criterion_ids(task))]))
 
@@ -261,9 +262,14 @@ class VerifyTasks(unittest.TestCase):
 
     def record(self, scoped=(), acceptance=None, saved=lambda issue, events: True):
         report = {"checks": [], "e2e": [], "review": None, "scoped": list(scoped), "acceptance": acceptance}
-        with mock.patch.object(fc_ledger, "record", side_effect=saved) as record:
+        writes = []  # (issue, events) in call order, whichever writer made it
+        def write(issue, events):
+            writes.append((issue, events))
+            return saved(issue, events)
+        with mock.patch.object(fc_ledger, "record", side_effect=write), \
+                mock.patch.object(fc_ledger, "record_task", side_effect=lambda repo, proj, meta, events: write(meta.get("linear"), events)):
             ok = fc_ledger.verify_record(self.proj, self.repo, report)
-        return ok, [c.args for c in record.call_args_list]
+        return ok, writes
 
     def ev(self, t, ids, phase, result, detail):
         return fc_ledger.event(fc_ledger.run_id(self.proj, t["id"]), self.sha, [t["id"]], ids, phase, "verify", result, None, detail)

@@ -26,7 +26,7 @@ class DoneEvidence(unittest.TestCase):
         self.calls = mock.Mock()
         for mod, name, kw in ((fc.fc_core, "project_dir", {"return_value": self.proj}), (fc_ledger, "run_id", {"side_effect": lambda proj, tid: "run-" + tid}),
                               (fc_ledger, "criterion_ids", {"side_effect": lambda meta: [meta["id"] + ".1:x"]}), (fc_ledger, "event", {"side_effect": lambda *a: a}),
-                              (fc_ledger, "record", {"return_value": True}), (fc.fc_linear, "linear_event", {})):
+                              (fc_ledger, "record", {"return_value": True}), (fc_ledger, "record_task", {"return_value": True}), (fc.fc_linear, "linear_event", {})):
             p = mock.patch.object(mod, name, **kw); self.calls.attach_mock(p.start(), name); self.addCleanup(p.stop)
 
     def done(self, only):
@@ -36,7 +36,8 @@ class DoneEvidence(unittest.TestCase):
         return out.getvalue()
 
     def recorded(self):
-        return [c.args for c in self.calls.record.call_args_list]
+        """(issue, events) per write, in call order: `record(issue, events)` or `record_task(repo, proj, meta, events)`."""
+        return [c[1] if c[0] == "record" else (c[1][2].get("linear"), c[1][3]) for c in self.calls.mock_calls if c[0] in ("record", "record_task")]
 
     def test_each_task_records_one_done_event_on_its_own_issue(self):
         (self.proj / "results" / "021.json").write_text('{"branch": "task-021"}')
@@ -44,10 +45,10 @@ class DoneEvidence(unittest.TestCase):
         done = lambda tid, sha: [(f"run-{tid}", sha, [tid], [f"{tid}.1:x"], "done", "done", "pass", None, "hand done: by hand")]
         self.assertEqual(self.recorded(), [("ENG-4", done("021", self.tip)), ("ENG-5", done("022", "")), (None, done("023", ""))])
 
-    def test_record_comes_right_after_the_hand_done_linear_event(self):
+    def test_the_write_is_recorded_once_beside_the_hand_done_linear_event(self):
         self.done("021")
-        names = [c[0] for c in self.calls.mock_calls if c[0] in ("linear_event", "record")]
-        self.assertEqual(names, ["linear_event", "record"])
+        names = [c[0] for c in self.calls.mock_calls if c[0] in ("linear_event", "record", "record_task")]
+        self.assertIn(names, (["linear_event", "record"], ["record_task", "linear_event"]))
 
     def test_unknown_id_records_nothing_and_writes_no_result(self):
         out = self.done("999")
