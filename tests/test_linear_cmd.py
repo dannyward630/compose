@@ -373,15 +373,24 @@ class LinearUpdate(unittest.TestCase):
         (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
         self.calls, self.issue = [], {"id": "iid", "identifier": "ENG-7", "description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n", "project": {"id": "p1", "name": "Shop"},
                                       "team": {"name": "Engineering", "states": {"nodes": [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "In Progress"}]}, "labels": {"nodes": [{"id": "l1", "name": "Bug"}]}}}
+        self.shown, self.lag, self.lag_after_write = None, 0, 0
         tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
-        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty)):
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear_cmd.time, "sleep", lambda s: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def gql(self, query, variables):
         self.calls.append((" ".join(query.split()), variables))
         if "projects(" in query:
             return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
-        return {"issueUpdate": {"success": True}} if "issueUpdate" in query else {"issue": self.issue}
+        if "issueUpdate" in query:
+            self.shown = self.issue["description"]
+            self.issue["description"] = variables["in"].get("description", self.shown)
+            self.lag = self.lag_after_write
+            return {"issueUpdate": {"success": True}}
+        if self.lag:  # a lagging read: the last write is not visible yet
+            self.lag -= 1
+            return {"issue": {**self.issue, "description": self.shown}}
+        return {"issue": self.issue}
 
     def update(self, body=None, **kw):
         self.calls.clear()
@@ -426,6 +435,7 @@ class LinearUpdate(unittest.TestCase):
 
     def test_each_body_flag_sets_the_description(self):
         self.assertEqual(self.update("new plan", section="## Plan")[0], {"description": "# Cart\n\n## Plan\n\nnew plan\n\n## Notes\n\nkeep\n"})
+        self.issue["description"] = "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n"
         with mock.patch("sys.stdin", io.StringIO("\n more \n")):
             self.assertEqual(self.update(append=True)[0], {"description": "# Cart\n\n## Plan\n\nold\n\n## Notes\n\nkeep\n\nmore\n"})
         self.assertEqual(self.update("whole\n\n", description=True, title="T")[0], {"description": "whole\n\n", "title": "T"})
@@ -483,6 +493,19 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", section="## Notes", expect=seen, file=str(self.repo / "notes.md"))),
                          (1, f"## Notes is gone since you read it (hash {seen}): nothing written; read the body again and write from it"))
         self.assertFalse([q for q, _ in self.calls if "issueUpdate" in q])
+
+    def test_a_section_write_waits_until_it_is_visible_so_the_next_one_does_not_drop_it(self):
+        self.lag_after_write = 2  # the two reads after a write still show the description from before it
+        self.update("## Plan\n\nnew plan\n", section="## Plan")
+        self.update("## Notes\n\nnew notes\n", section="## Notes")
+        self.assertEqual(self.issue["description"], "# Cart\n\n## Plan\n\nnew plan\n\n## Notes\n\nnew notes\n")
+
+    def test_a_section_write_that_never_shows_up_exits_without_saying_updated(self):
+        self.lag_after_write = 10**6
+        (self.repo / "p.md").write_text("## Plan\n\nnew plan\n")
+        with mock.patch.object(fc.fc_linear_cmd, "VISIBLE_WITHIN", 0):
+            code, msg = self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", section="## Plan", file=str(self.repo / "p.md")))
+        self.assertEqual(code, 1); self.assertIn("ENG-7: the description still does not show this write after 0s", msg)
 
     def test_a_section_write_with_the_current_hash_goes_through(self):
         now = fc_plan.section_hash(self.issue["description"], "## Plan")

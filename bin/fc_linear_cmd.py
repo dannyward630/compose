@@ -1,5 +1,5 @@
 """`compose linear <verb>`: read and write Linear with the workspace key, printing compact text."""
-import json, sys, urllib.parse
+import json, sys, time, urllib.parse
 from pathlib import Path
 
 import fc_core, fc_config, fc_linear, fc_plan
@@ -100,6 +100,24 @@ def new_body(a, old):
         return old.rstrip("\n") + "\n\n" + body.strip() + "\n"
     return body
 
+VISIBLE_WITHIN, VISIBLE_EVERY = 10, 0.5
+
+def same_text(a, b):
+    return [l.rstrip() for l in (a or "").strip().split("\n")] == [l.rstrip() for l in (b or "").strip().split("\n")]
+
+def await_description(issue, want):
+    """Return once a fresh read of the issue shows `want`. A section write rebuilds the whole description from one read, so the next
+    write must not read before this one is visible: exit, writing nothing more, when it stays unseen."""
+    deadline = time.monotonic() + VISIBLE_WITHIN
+    while True:
+        got = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": issue["id"]})["issue"]["description"]
+        if same_text(got, want):
+            return
+        if time.monotonic() >= deadline:
+            sys.exit(f"{issue['identifier']}: the description still does not show this write after {VISIBLE_WITHIN}s (another writer, or Linear is slow); "
+                     "run get --body, check what it holds, and write again from that")
+        time.sleep(VISIBLE_EVERY)
+
 def verb_project(a):
     writes = writes_body(a, "project")
     p = linear_project(a.repo)
@@ -193,6 +211,8 @@ def verb_update(a):
         inp["description"] = new_body(a, issue["description"])
     if inp:  # empty only when --blocked-by is the one change
         fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": issue["id"], "in": inp})
+    if writes:
+        await_description(issue, inp["description"])
     if a.blocked_by is not None:
         fc_linear.linear_blocked_by(issue, [x for x in a.blocked_by.split(",") if x])
     print(f"updated {issue['identifier']}")

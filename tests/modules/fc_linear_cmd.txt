@@ -8,6 +8,10 @@ priority
 print_body
 writes_body
 new_body
+VISIBLE_WITHIN
+VISIBLE_EVERY
+same_text
+await_description
 verb_project
 verb_get
 verb_list
