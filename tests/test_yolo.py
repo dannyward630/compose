@@ -390,6 +390,7 @@ class PostureEntry(unittest.TestCase):
 
     def test_the_refusals_name_the_posture(self):
         for p in ("away", "yolo"):
+            self.file.unlink(missing_ok=True)
             for words, clear in (("off", False), ("decided", False), ("", True)):
                 self.assertIn(f"{p} is not on for hw; `compose {p} --project hw [--push] [words]` turns it on", self.run_as(p, *words.split(), clear_words=clear))
             self.put(p)
