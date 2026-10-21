@@ -685,9 +685,9 @@ class DesignerBrief(unittest.TestCase):
 
     def test_design_task_nodes_are_page_and_name_pairs_one_page_per_task(self):
         brief = " ".join(self.brief().split())
-        step4 = brief[brief.index(" 4. "):brief.index(" 5. ")]
+        step5 = brief[brief.index(" 5. "):brief.index(" 6. ")]
         self.assertIn("A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, "
-                      "as <page>/<name>, one page per task), and `test: compose figma judge --project p --only NNN`.", step4)
+                      "as <page>/<name>, one page per task), and `test: compose figma judge --project p --only NNN`.", step5)
         self.assertNotIn("node id", brief)
         self.assertEqual(brief.count("<page>/<name>"), 1)
 

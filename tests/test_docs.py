@@ -34,8 +34,8 @@ class CliAndTasksDocs(unittest.TestCase):
             self.assertIn(word, self.row(sec, "designer"))
         for word in ("--only", "--print", "design-NNN"):
             self.assertIn(word, self.row(sec, "designcrews"))
-        figma = self.row(sec, "figma check\\|tree\\|judge")
-        for word in ("check --figma", "tree --only", "Framelink", "judge --only", "linear.json", "results/NNN.tree.txt", "MET", "NOT_MET", "UNCLEAR"):
+        figma = self.row(sec, "figma check\\|tree\\|judge\\|publish")
+        for word in ("check --figma", "tree --only", "Framelink", "judge --only", "linear.json", "results/NNN.tree.txt", "MET", "NOT_MET", "UNCLEAR", "check --plan", "figma_caps", "publish --library", "publish: ask"):
             self.assertIn(word, figma)
         for cmd in ("crew start\\|list\\|focus\\|stop", "explore", "testcrews", "report", "watch", "teardown", "frame0 up", "guard", "rewake", "skillcheck"):
             self.assertIn(f"| `{cmd}", sec)
@@ -149,6 +149,10 @@ class SkillDoc(unittest.TestCase):
             "one Framelink image (`download_figma_images`) per story",
             "WRITES ONLY",
             "design_concurrency",
+            "figma_caps",
+            "compose figma check --project <slug> --plan",
+            "compose figma publish --project <slug> --library",
+            "publish: ask",
         ):
             self.assertIn(phrase, d)
         self.assertLess(d.index("Foundations"), d.index("Components"))
