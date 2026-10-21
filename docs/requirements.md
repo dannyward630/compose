@@ -112,7 +112,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING`, unless a compose outside it made that change (another session's `compose workspace`, say; compose journals each write it makes there in `~/.compose/home-writes.jsonl`) or it is in the CLI checkout |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
 | `COMPOSE_NO_TRAIL=1` | skip trail |
-| `COMPOSE_TEST_SLOTS=<n>` | how many `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so |
+| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for scoped ones (a `-k`/`-run`/`--grep` filter, one test file or module), in lanes apart from the suites (default 2) |
 | `COMPOSE_NO_HERDR=1` | bare `compose` does not open the herdr session; it prints the usage. Every subcommand runs headless, inside herdr too: no space, tab, pane, or agent |
 | `COMPOSE_INSTALL_DIR` | where `install.sh` puts the checkout (default `~/.compose/src`) |
 | `COMPOSE_FAKE_402=<provider>` | simulate a billing halt (tests) |

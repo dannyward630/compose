@@ -611,6 +611,22 @@ class Timed(unittest.TestCase):
         self.assertNotIn("WARNING", a.communicate()[0] + b.stdout + b.stderr)  # the slot files are the CLI's own, not a change to ~/.compose
         self.assertEqual([x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()], ["0"])
 
+    def test_a_scoped_timed_command_runs_at_once_while_a_suite_holds_every_slot(self):
+        """A `-k` run is short: it takes a quick lane, so five commands queued behind two suites no longer make it wait minutes."""
+        import subprocess as sp, time
+        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
+        env = {**os.environ, "COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
+        suite = sp.Popen([compose, "timed", "30", "--", "sleep", "4"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        time.sleep(0.7)
+        t0 = time.time()
+        quick = sp.run([compose, "timed", "30", "--", "sh", "-c", "echo quick-ok # -k filter"], env=env, capture_output=True, text=True)
+        self.assertEqual((quick.returncode, quick.stdout.strip()), (0, "quick-ok"), quick.stderr)
+        self.assertLess(time.time() - t0, 3)
+        self.assertNotIn("waiting for a", quick.stdout + quick.stderr)
+        suite.communicate(timeout=30)
+        self.assertEqual(suite.returncode, 0)
+        self.assertEqual(sorted(x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()), ["0", "q0"])
+
     def test_a_timed_command_under_a_slot_takes_none(self):
         """A suite under a slot runs compose itself: its timed commands would wait on their parent's slot for ever with one slot."""
         import subprocess as sp, time

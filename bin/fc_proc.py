@@ -1,6 +1,6 @@
 """Implementer commands in process groups the run can stop: each child starts in its own session, so a stop (Ctrl-C) kills
 the whole group, tool children included, and nothing new starts after it. Stdlib only, no fc_ module."""
-import contextlib, fcntl, os, signal, subprocess, threading, time
+import contextlib, fcntl, os, re, signal, subprocess, threading, time
 
 STOP = threading.Event()  # set once the run is stopped
 
@@ -78,25 +78,42 @@ def on_termination(cleanup):
         signal.signal(sig, terminated)
 
 
-SLOTS = 2  # `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides
+SLOTS = 2  # full-suite `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides
+QUICK_SLOTS = 2  # scoped ones (see `scoped`), in lanes of their own so a short run never waits on a suite; COMPOSE_QUICK_SLOTS overrides
 SLOT_SAY_AFTER = 1.0  # seconds a wait for a slot stays silent
+
+SCOPED_RE = re.compile(  # a name filter flag | one test file (python, go, ruby, rust, js/ts, jvm, swift) | one dotted test module
+    r"(?:^|\s)(?:-k|-run|-t|-only|--grep|-g|--filter|--only|--testNamePattern|--tests|--test-name-pattern|-testPathPattern|--testPathPattern)(?:[\s=]|$)"
+    r"|(?:^|[\s/='\"])(?:test_\w+\.py|\w+_test\.(?:py|go|rb|rs)|\w+\.(?:test|spec)\.[cm]?[jt]sx?|\w+(?:Test|Tests|Spec)\.(?:java|kt|swift))(?![\w*])"
+    r"|(?:^|\s)(?:\w+\.)*test_\w+(?:\.\w+)*(?:\s|$)")
+
+
+def scoped(cmd):
+    """Whether the shell line `cmd` runs a slice of the tests, not a suite: a name filter (`-k`, `-run`, `--grep`, `-t`, ...), one
+    test file, or one test module. Its run is short, so it takes a quick lane (QUICK_SLOTS) and never queues behind a suite. A line of
+    several commands is scoped only when each one past a `cd`, `export` or `source` is."""
+    parts = [x for x in re.split(r"&&|\|\||;|\n", cmd or "") if x.strip() and not re.match(r"\s*(?:cd|export|source|\.|set|echo)\s", x)]
+    return bool(parts) and all(SCOPED_RE.search(x) for x in parts)
 
 
 @contextlib.contextmanager
-def slot(say=None):
+def slot(say=None, quick=False):
     """One of SLOTS machine-wide slots (lock files under ~/.compose/test-slots), held while a timed command runs: five teammates
-    each running a suite at once leave the machine doing little else. Yields the slot's number, which goes in the command's env
-    as COMPOSE_TEST_SLOT so a compose it runs takes none: a suite under a slot runs compose itself, and with one slot its timed
-    commands would wait on their parent for ever; a process already under one yields that. `say` gets one line once the wait
-    passes SLOT_SAY_AFTER. The lock goes with the process, so a killed command frees its slot."""
+    each running a suite at once leave the machine doing little else. A `quick` command (see `scoped`) takes one of QUICK_SLOTS
+    in a lane of its own (files `q0`, `q1`, ...), so it waits only on other quick runs; the two lanes together bound the load.
+    Yields the slot's number, which goes in the command's env as COMPOSE_TEST_SLOT so a compose it runs takes none: a suite under
+    a slot runs compose itself, and with one slot its timed commands would wait on their parent for ever; a process already
+    under one yields that. `say` gets one line once the wait passes SLOT_SAY_AFTER. The lock goes with the process, so a killed
+    command frees its slot."""
     held = os.environ.get("COMPOSE_TEST_SLOT")
     if held:
         yield held
         return
-    n = max(1, int(os.environ.get("COMPOSE_TEST_SLOTS") or SLOTS))
+    n = max(1, int((os.environ.get("COMPOSE_QUICK_SLOTS") or QUICK_SLOTS) if quick else (os.environ.get("COMPOSE_TEST_SLOTS") or SLOTS)))
+    prefix = "q" if quick else ""
     d = os.path.join(os.path.expanduser("~"), ".compose", "test-slots")
     os.makedirs(d, exist_ok=True)
-    fds = [os.open(os.path.join(d, str(i)), os.O_RDWR | os.O_CREAT, 0o644) for i in range(n)]
+    fds = [os.open(os.path.join(d, f"{prefix}{i}"), os.O_RDWR | os.O_CREAT, 0o644) for i in range(n)]
     t0, said = time.monotonic(), False
     try:
         while True:
@@ -105,10 +122,10 @@ def slot(say=None):
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError:
                     continue
-                yield str(i)
+                yield f"{prefix}{i}"
                 return
             if say and not said and time.monotonic() - t0 >= SLOT_SAY_AFTER:
-                say(f"waiting for a test slot: {n} timed command{'s' if n > 1 else ''} already run on this machine")
+                say(f"waiting for a {'quick-run' if quick else 'test'} slot: {n} {'quick ' if quick else ''}timed command{'s' if n > 1 else ''} already run on this machine")
                 said = True
             time.sleep(0.2)
     finally:
