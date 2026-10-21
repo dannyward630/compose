@@ -12,10 +12,10 @@ def cost_event(base, workflow, depth, numbers):
 
 
 def run_event(proj, meta, result, final):
-    """The task's cost event for its run batch; None for a held or hand-done task or without a `final` event."""
+    """The task's cost event for its run batch; None without a `final` event, whatever the status."""
     raise NotImplementedError("run_event")
 
 
 def verify_events(proj, tasks, passed, cost, run_id, commit_sha):
-    """Verify's cost events for its final batch."""
+    """Verify's cost events for its final batch: one per code task, then one for verify itself."""
     raise NotImplementedError("verify_events")
