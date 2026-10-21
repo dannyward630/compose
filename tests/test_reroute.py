@@ -517,3 +517,52 @@ class RunHook(unittest.TestCase):
         code, order, *_ = self.run_tasks(("001",), {"001": "payment_required"}, mine)
         halted = order.halt.call_args.args[-1]
         self.assertEqual((order.halt.call_count, halted.provider), (1, "glm"))
+
+
+class VerifyCatchUp(unittest.TestCase):
+    def verify(self, linear=("001", "002"), key=None, **catch_up):
+        """cmd_verify over a two-layer stack of passed tasks with its setup and stages faked; catch_up is a mock when given, else the real one.
+        Returns (exit code or None, one mock recording catch_up, rounds, say and payment_halt, the repo, the proj)."""
+        repo = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, repo, True); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
+        tasks = [{"id": t, "after": "", **({"linear": f"XX-{t}"} if t in linear else {})} for t in ("001", "002")]
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        for t in ("001", "002"):
+            git("branch", fc.fc_worktree.task_branch(repo, proj, t), git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", t))
+            (proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+        order = mock.Mock(); order.catch_up.configure_mock(**catch_up)
+        a = mock.Mock(repo=str(repo), project="p", fix=0, skip_review=True, skip_e2e=True, review_only=False)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_init, "start_checks"), mock.patch.object(fc.fc_proc, "keep_awake"), \
+             mock.patch.object(fc.fc_verify, "verify_root", return_value=(repo, "main", None)), mock.patch.object(fc.fc_verify, "verify_rounds", order.rounds), \
+             mock.patch.object(fc.fc_core, "say", order.say), mock.patch.object(fc.fc_models, "payment_halt", order.halt), mock.patch.object(fc.fc_config, "LINEAR_KEY", key), \
+             mock.patch.object(fc_reroute, "catch_up", *([order.catch_up] if catch_up else [fc_reroute.catch_up])):
+            try: fc.fc_verify.cmd_verify(a); code = None
+            except SystemExit as e: code = e.code
+        return code, order, repo, proj
+
+    def test_the_stack_is_caught_up_once_with_diff_before_any_stage(self):
+        code, order, repo, proj = self.verify(return_value={})
+        self.assertEqual(order.catch_up.call_args_list, [mock.call(repo, proj, fc.fc_tasks.load_tasks(proj), ["001", "002"], "main", ("diff",))])
+        self.assertEqual(([c[0] for c in order.mock_calls if c[0] in ("catch_up", "rounds")], code), (["catch_up", "rounds"], None))
+
+    def test_each_route_not_recorded_is_said_exactly_and_verify_exits_1_without_a_stage(self):
+        code, order, *_ = self.verify(return_value={"003": "Linear timeout", "001": "Linear: down"})
+        said = [c.args[0] for c in order.say.call_args_list]
+        self.assertEqual([s for s in said if "FAIL" in s], ["verify FAIL  route not recorded for 003: Linear timeout", "verify FAIL  route not recorded for 001: Linear: down"])
+        self.assertEqual((code, order.rounds.call_count), (1, 0))
+
+    def test_a_payment_required_reaches_payment_halt_without_a_stage(self):
+        err = fc.fc_models.PaymentRequired("typesafe", "top up")
+        code, order, *_ = self.verify(side_effect=err)
+        self.assertEqual(([c.args[-1] for c in order.halt.call_args_list], order.rounds.call_count), ([err], 0))
+
+    def test_without_a_linear_key_nothing_is_asked_or_written_and_the_stages_run(self):
+        with mock.patch.object(fc.fc_models, "jev_ask") as ask, mock.patch.object(fc.fc_linear, "linear_gql") as gql, mock.patch.object(fc_reroute, "reassess") as re:
+            code, order, *_ = self.verify()
+        self.assertEqual((ask.call_count, gql.call_count, re.call_count, order.rounds.call_count, code), (0, 0, 0, 1, None))
+
+    def test_a_stack_task_without_a_linear_issue_is_neither_reassessed_nor_failed(self):
+        with mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set()):
+            code, order, *_ = self.verify(linear=("001",), key="lin_test")
+        self.assertEqual(([c.args[2]["id"] for c in re.call_args_list], order.rounds.call_count, code), (["001"], 1, None))
