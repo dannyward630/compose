@@ -122,12 +122,13 @@ def _linearize(repo, proj, trunk, wt):
             # chained as it was but now below a new one, or the trunk itself when it was rewritten (rebased onto a moved main).
             # Replay only b's own commits: start above the deepest tip it was built on whose work the chain already holds, or
             # that is being rebuilt: one recorded in this pass (a replaced layer, or a layer rebased just now), a chained layer
-            # as it is now, or one in the reflog of the layer below (fork-point), which holds a rewrite made before this pass,
+            # as it is now, or one in the reflog of a layer below (fork-point), which holds a rewrite made before this pass,
             # by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase.
             old = [(t, "the old base recorded in this pass") for rb, t in tips if (rb in linear or t in stale) and contains(t, b)]
             old += [(x, f"{x}, the chained layer it sits on") for x in linear if contains(x, b)]
-            fork = fc_core.sh(["git", "merge-base", "--fork-point", prev, b], repo, check=False).stdout.strip()
-            old += [(fork, f"the old base from the reflog of {prev}")] if fork else []
+            for x in dict.fromkeys([prev, *linear]):  # b may sit on the old tip of any layer below, not only the one it is going onto
+                fork = fc_core.sh(["git", "merge-base", "--fork-point", x, b], repo, check=False).stdout.strip()
+                old += [(fork, f"the old base from the reflog of {x}")] if fork else []
             upstream, source = max(old, key=lambda o: int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{o[0]}"], repo).stdout)) if old else ("", "")
             if not upstream:
                 upstream = fc_core.sh(["git", "merge-base", "--fork-point", trunk, b], repo, check=False).stdout.strip()
