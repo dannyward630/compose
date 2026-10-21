@@ -17,8 +17,51 @@ FIX = "fix-then-regression-test"
 PROOF = {"commit": "abc1234", "command": "true", "paths": ["tests/test_x.py"], "proven": True}
 
 
+BLOCK = "id: 003\nfiles: bin/a.py\nprotected: tests/test_a.py\ntest: python3 -m unittest tests.test_a\n"
+DESC = "## Goal\nFix it.\n\nprotected: stays\n\n```compose\n" + BLOCK + "```\n\n## Notes\ntest: stays\n"
+B = ("tests/test_b.py", "python3 -m unittest tests.test_b")
+PINNED = DESC.replace(BLOCK, "id: 003\nfiles: bin/a.py\nprotected: tests/test_a.py, tests/test_b.py\ntest: python3 -m unittest tests.test_a && python3 -m unittest tests.test_b\n")
+
+
 class Pin(unittest.TestCase):
     """A proven regression test is pinned into the task's protected files and test command."""
+    def test_pinned_edits_only_the_compose_block_and_lists_each_path_once(self):
+        self.assertEqual(fc_regress.pinned(DESC, [B[0]], B[1]), PINNED)
+        self.assertEqual(fc_regress.pinned(DESC, ["tests/test_a.py", B[0]], B[1]), PINNED)
+        bare = DESC.replace(BLOCK, "id: 003\nfiles: bin/a.py\ntest: true\n")
+        self.assertEqual(fc_regress.pinned(bare, [B[0], "tests/test_c.py"], B[1]),
+                         bare.replace("test: true\n", "protected: tests/test_b.py, tests/test_c.py\ntest: true && " + B[1] + "\n"))
+
+    def pin(self, fail=None):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        meta = {"id": "003", "title": "t", "files": ["bin/a.py"], "protected": ["tests/test_a.py"], "test": "python3 -m unittest tests.test_a", "linear": "ENG-3"}
+        other = dict(meta, id="004", linear="ENG-4")
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [other, meta], "issues": {"ENG-3": {"description": DESC}, "ENG-4": {"description": DESC}}}))
+        calls = []
+        def gql(query, variables):
+            calls.append((query.split("(")[0], variables))
+            if fail and query.startswith(fail): raise RuntimeError("boom")
+            return {"issue": {"id": "ENG-3", "description": DESC}}
+        with mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_core, "say") as say:
+            ok = fc_regress.pin_test(proj, meta, [B[0]], B[1])
+        return ok, calls, say, json.loads((proj / "results" / "tasks.json").read_text())
+
+    def check_cache(self, cache):
+        got = {t["id"]: t for t in cache["tasks"]}
+        self.assertEqual((got["003"]["protected"], got["003"]["test"]), (["tests/test_a.py", B[0]], "python3 -m unittest tests.test_a && " + B[1]))
+        self.assertEqual((got["004"]["protected"], cache["issues"]["ENG-3"]["description"], cache["issues"]["ENG-4"]["description"]), (["tests/test_a.py"], PINNED, DESC))
+
+    def test_pin_test_writes_the_pinned_description_once_and_the_cache(self):
+        ok, calls, say, cache = self.pin()
+        self.assertTrue(ok); say.assert_not_called(); self.check_cache(cache)
+        self.assertEqual([c[1] for c in calls if c[0].startswith("mutation")], [{"id": "ENG-3", "in": {"description": PINNED}}])
+
+    def test_a_failed_linear_write_still_pins_the_cache_says_so_and_returns_false(self):
+        for fail in ("query", "mutation"):
+            with self.subTest(fail):
+                ok, calls, say, cache = self.pin(fail)
+                self.assertFalse(ok); say.assert_called_once_with("003 pin     Linear update failed: boom"); self.check_cache(cache)
 
 
 class Regress(unittest.TestCase):
