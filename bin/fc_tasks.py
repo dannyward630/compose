@@ -37,7 +37,7 @@ def task_from_issue(issue):
     meta.setdefault("model", fc_config.DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
                  "blocked_by": [b if isinstance(b, dict) else {"id": b} for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
-                 "body": TASK_BLOCK.sub("\n", desc).strip()})
+                 "body": re.split(r"(?m)^## Evidence[ \t]*$", TASK_BLOCK.sub("\n", desc))[0].strip()})
     return meta
 
 def hand_task(issue):
