@@ -58,3 +58,35 @@ class Ask(unittest.TestCase):
         self.assertEqual((route, ask.call_count, more.call_count), ({"workflow": "test-first", "depth": "STANDARD", "decided_by": "fallback", "confidence": None, "answers": {},
                                  "retry": None, "fallback": "Jev unavailable: no key", "floor": [], "checks": []}, 1, 0))
         self.assertRaises(fc.fc_models.PaymentRequired, self.decide, fc.fc_models.PaymentRequired("typesafe", "top up"))
+
+
+GATE = {"name": "Gate", "statement": "Verify decides what ships.", "globs": ["bin/x.py"], "checks": ["v"]}
+TRIO = [{"name": "Secrets", "statement": "Keys.", "globs": [], "checks": ["t", "v"]}, {"name": "Docs", "statement": "Docs.", "globs": [], "checks": ["d"]},
+        {"name": "Style", "statement": "Style.", "globs": [], "checks": ["t"]}]
+SURE = {"depth": ans("FAST", 0.9), "workflow": ans("TEST_FIRST", 0.9)}
+
+
+class Floor(unittest.TestCase):
+    def decide(self, side_effect, matched=(), plain=()):
+        with mock.patch.object(fc.fc_models, "jev_ask", side_effect=side_effect) as ask:
+            return fc_routejev.decide({}, {}, STATE, list(matched), list(plain), mock.Mock(return_value=CALLERS)), ask.call_count
+
+    def test_glob_match_and_applying_plain_policies_floor_deep_and_change_nothing_else(self):
+        good = reply(**SURE, policy0=ans("DOES_NOT_APPLY", 0.6), policy1=ans("APPLIES", 0.9), policy2=ans("DOES_NOT_APPLY", 0.95))
+        bare, _ = self.decide([good])
+        self.assertEqual(pick(bare, "depth", "floor", "checks"), ("FAST", [], []))
+        route, calls = self.decide([good], [GATE], TRIO)
+        self.assertEqual((route, calls), ({**bare, "depth": "DEEP", "floor": ["Gate", "Docs"], "checks": ["v", "d"]}, 1))
+
+    def test_floor_reads_the_last_reply_and_overrides_the_fallback(self):
+        first = reply(**SURE, policy0=ans("APPLIES", 0.9), policy1=ans("DOES_NOT_APPLY", 0.4), policy2=ans("APPLIES", 0.9))
+        last = reply(**SURE, policy0=ans("DOES_NOT_APPLY", 0.3), policy1=ans("DOES_NOT_APPLY", 0.9))
+        route, calls = self.decide([first, last], [GATE], TRIO)
+        self.assertEqual((calls, *pick(route, "fallback", "depth", "floor", "checks")),
+                         (2, "confidence below 0.6", "DEEP", ["Gate", "Secrets", "Style"], ["v", "t"]))
+
+    def test_jev_unavailable_plain_policies_keep_checks_but_set_no_floor(self):
+        route, _ = self.decide(RuntimeError("no key"), plain=TRIO)
+        self.assertEqual(pick(route, "depth", "floor", "checks", "fallback"), ("STANDARD", [], ["t", "v", "d"], "Jev unavailable: no key"))
+        route, _ = self.decide(RuntimeError("no key"), [GATE], TRIO)
+        self.assertEqual(pick(route, "depth", "floor", "checks"), ("DEEP", ["Gate"], ["v", "t", "d"]))
