@@ -220,7 +220,7 @@ class RouteColumns(unittest.TestCase):
         h, rows = self.HEADER, lines[lines.index(self.HEADER) + 1:]
         cut = lambda l, a, b: l[h.index(a):h.index(a) + b].strip()
         return {l[2:6].strip(): (l[h.index("route"):h.index("att")].strip(), cut(l, "att", 3), cut(l, "esc", 3), cut(l, "fix", 3), l[h.index("cost") - 4:h.index("cost") + 4].strip())
-                for l in rows[:rows.index("")] if l[2:5].isdigit()}
+                for l in rows if l[2:5].isdigit()}
 
     def test_each_row_shows_its_route_escalations_and_fix_rounds_under_the_header(self):
         route = lambda body: {"description": "## Route\n\n" + body}
