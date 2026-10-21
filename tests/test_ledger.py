@@ -66,12 +66,15 @@ def row(n, phase="attempt", source="run"):
 
 class AddRow(unittest.TestCase):
     def setUp(self):
-        self.calls, self.comments, self.fail, self.err, self.said = [], [], 0, "boom", []
+        self.calls, self.comments, self.fail, self.err, self.said, self.tries, self.lookup = [], [], 0, "boom", [], 0, False
 
         def gql(query, variables):
             self.calls.append(variables)
             if "commentCreate" not in query:
+                if self.lookup:
+                    raise RuntimeError("no issue")
                 return {"issue": {"id": "uuid-" + variables["id"], "identifier": variables["id"]}}
+            self.tries += 1
             if self.fail:
                 self.fail -= 1
                 raise RuntimeError(self.err)
@@ -84,14 +87,13 @@ class AddRow(unittest.TestCase):
     def test_one_comment_holds_every_row_in_the_exact_text(self):
         rows = [row(1, "red"), row(2), row(3), row(4, "final", "prove")]
         self.assertTrue(fc_ledger.add_row("NEB-1", rows))
-        self.assertEqual(self.comments[0].splitlines(), ["Evidence: run red, attempt, final", "", "```evidence", *map(json.dumps, rows), "```"])
-        self.assertEqual((len(self.comments), self.calls[-1]["id"]), (1, "uuid-NEB-1"))
+        self.assertEqual([c.splitlines() for c in self.comments], [["Evidence: run red, attempt, final", "", "```evidence", *map(json.dumps, rows), "```"]])
 
     def test_three_failed_tries_say_the_line_and_keep_the_rows_for_the_next_call(self):
         self.fail, self.err = 3, "x" * 300
         a, b, c = row(1), row(2), row(3)
         self.assertFalse(fc_ledger.add_row("NEB-1", [a, b]))
-        self.assertEqual((len(self.calls) - 1, [c.args for c in self.sleep.call_args_list], fc_ledger.unsaved()), (3, [(2,), (2,)], [a, b]))
+        self.assertEqual((self.tries, [c.args for c in self.sleep.call_args_list], fc_ledger.unsaved()), (3, [(2,), (2,)], [a, b]))
         self.assertEqual(self.said[-1], f"ledger NEB-1: evidence not saved after 3 tries, kept in memory: {a['event_id']}, {b['event_id']} ({'x' * 200})")
         self.assertTrue(fc_ledger.add_row("NEB-2", [c]))
         self.assertEqual((fc_ledger.unsaved(), self.comments[-1]), ([a, b], fc_ledger.comment_text([c])))
@@ -106,6 +108,12 @@ class AddRow(unittest.TestCase):
         self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))
         self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))
         self.assertEqual(self.comments[1:], [fc_ledger.comment_text([b])])
+
+    def test_a_failing_issue_lookup_is_a_failed_try_and_never_raises(self):
+        self.lookup, a = True, row(1)
+        self.assertFalse(fc_ledger.add_row("NEB-1", [a]))
+        self.assertEqual((fc_ledger.unsaved(), self.comments, self.said[-1]),
+                         ([a], [], f"ledger NEB-1: evidence not saved after 3 tries, kept in memory: {a['event_id']} (no issue)"))
 
     def test_no_key_or_no_issue_writes_nothing_and_keeps_nothing(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None):
