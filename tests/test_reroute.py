@@ -143,3 +143,43 @@ class Callers(unittest.TestCase):
         self.assertEqual(got, {"callers": {"src/a.py": ["src/y.py", "src/z.py"], "src/c.py": [f"c/n{i:02}.py" for i in range(20)], "src/n.py": []}})
         self.assertEqual(sorted(a for a in self.asked if not a.startswith("src/")), ["f1", "f3", "f5", "g"])
         self.assertNotIn("src/gone.py", self.asked)
+
+
+class Unavailable(unittest.TestCase):
+    BAD = ["not json", "{}", "[]", '{"entries": [{"name": "f"}]}', '{"matches": [{"hits": []}]}']
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.git("init", "-q", "-b", "main")
+        for n in "ac": (self.repo / f"{n}.py").write_text("1\n2\n3\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "base"); self.git("checkout", "-qb", "task")
+        for n in "ac": (self.repo / f"{n}.py").write_text("1\nx\n3\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "task")
+
+    def git(self, *a):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+
+    def run_callers(self, fail=None, how=None):
+        """diff_callers with trail faked; call number `fail` (0-based) breaks as `how`. Returns (result, trail calls made)."""
+        calls, real = [], fc.fc_core.sh
+        def sh(cmd, cwd=None, *a, **kw):
+            if cmd[0] != "trail": return real(cmd, cwd, *a, **kw)
+            calls.append(cmd)
+            body = json.dumps({"entries": [{"name": "f", "span": "L1-L3"}]} if cmd[1] == "skeleton" else {"matches": [{"symbol": {"path": "a.py"}, "hits": [{"path": "z.py"}]}]})
+            if len(calls) - 1 != fail: return subprocess.CompletedProcess(cmd, 0, body, "")
+            if how == "missing": raise FileNotFoundError("trail")
+            return subprocess.CompletedProcess(cmd, how, body, "") if isinstance(how, int) else subprocess.CompletedProcess(cmd, 0, how, "")
+        with mock.patch.object(fc.fc_core, "sh", sh):
+            return fc_reroute.diff_callers(self.repo, "main", "task", {"files": ["a.py", "c.py"]}), calls
+
+    def test_the_first_failing_call_gives_its_why_and_stops_the_calls(self):
+        ok, calls = self.run_callers()
+        self.assertEqual(list(ok), ["callers"])
+        self.assertGreater(len(calls), 1)
+        for n in range(len(calls)):
+            for how, why in [("missing", "trail not installed"), (1, "trail exited 1"), (127, "trail exited 127")] + [(b, "trail gave unreadable output") for b in self.BAD]:
+                with self.subTest(call=n, how=how):
+                    got, made = self.run_callers(n, how)
+                    self.assertEqual(got, {"unavailable": why})
+                    self.assertEqual(len(made), n + 1)
