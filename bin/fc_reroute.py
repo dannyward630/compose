@@ -155,9 +155,10 @@ def catch_up(repo, proj, tasks, ids, trunk, kinds):
         try:
             if not result.exists() or json.loads(result.read_text()).get("status") != "passed":
                 continue
-            triggers = ["diff"] if "diff" in kinds else []
+            run_id = fc_ledger.run_id(proj, id)
+            triggers = [t for t in (["diff"] if "diff" in kinds else []) if (t, run_id) not in fired(meta["linear"])]
             if triggers:
-                reassess(repo, proj, meta, tasks, triggers, fc_ledger.run_id(proj, id), layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id))
+                reassess(repo, proj, meta, tasks, triggers, run_id, layer_base(repo, proj, id, trunk), fc_worktree.task_branch(repo, proj, id))
         except fc_models.PaymentRequired:
             raise
         except Exception as e:
