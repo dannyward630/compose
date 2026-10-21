@@ -116,6 +116,21 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual(self.git("log", "--format=%s", "main..fast/p/013"), "task 013\ntask 012\ntask 011\ntask 010")
         self.assertEqual(self.git("show", "fast/p/013:012.txt"), "new")
 
+    def test_a_layer_built_on_layers_restacked_since_replays_only_its_own_commit_onto_the_layer_below_it(self):
+        # 005 (after 012) was built while 010-012 sat on main; a later pass put 004 below them and 013 above 012, then 005 passed
+        self.git("branch", "-m", "fast/p/005", "held")
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"] += [{"id": "004", "after": ""}, {"id": "013", "after": "012"}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        self.layer("004", "main", "004.txt", "new\n")
+        fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.layer("013", "fast/p/012", "012.txt", "thirteen\n")
+        self.git("branch", "-m", "held", "fast/p/005")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("004", "010", "011", "012", "013", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "fast/p/013..fast/p/005"), "task 005")
+
     def test_a_task_built_on_a_low_layer_goes_to_its_own_place_and_moves_no_layer(self):
         # 006 after 010 starts on 010, as a run bases it, so it counts as many commits as 011; its place is still after 005
         tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
