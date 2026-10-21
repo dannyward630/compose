@@ -91,15 +91,14 @@ def settings(cfg, harness=None):
     out = {k: v for k, v in cfg.items() if k not in ("workspace", "workspaces")}
     for k, v in ws.items():
         out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    blocks = out.pop("harnesses", None)
-    if blocks:
-        for n, block in blocks.items():
-            if "default" not in (block.get("models") or {}).get("crew", {}):
-                sys.exit(f'{CONFIG_PATH}: harnesses.{n}.models.crew has no "default"')
-        if harness and harness not in blocks:
-            sys.exit(f'{CONFIG_PATH}: no "harnesses.{harness}" block')
-        for k, v in (blocks.get(harness) or {}).items():
-            out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    blocks = out.pop("harnesses", None) or {}
+    for n, block in blocks.items():
+        if "default" not in (block.get("models") or {}).get("crew", {}):
+            sys.exit(f'{CONFIG_PATH}: harnesses.{n}.models.crew has no "default"')
+    if harness and harness != "claude" and harness not in blocks:
+        sys.exit(f'{CONFIG_PATH}: no "harnesses.{harness}" block')
+    for k, v in (blocks.get(harness) or {}).items():
+        out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
     return name, out
 
 def apply_config(move=True, harness=None):
