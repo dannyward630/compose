@@ -162,9 +162,9 @@ def provider_of(model) -> tuple[str, str] | None:
     """(name, id) for `pi:<name>/<id>` or `<name>/<id>` when `name` is a declared provider, else None."""
     return None
 
-def provider_env(name):
+def provider_env(name) -> str:
     """The env var apply_config exports provider `name`'s auth.json key as."""
-    return None
+    return ""
 
 WORKSPACE_ACTIONS = ("add", "key", "remove")
 
