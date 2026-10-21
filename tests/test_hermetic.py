@@ -1,6 +1,7 @@
 import hermetic  # first: no test sees the real home
 import io, json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
+from unittest import mock
 os.environ["HERDR_ENV"] = ""
 
 
@@ -99,6 +100,42 @@ class HermeticEnv(unittest.TestCase):
         r = subprocess.run([sys.executable, "-c", "import hermetic, os; print(os.environ.get('COMPOSE_TEST_SLOT'))"],
                            cwd=Path(__file__).parent, env={**os.environ, "COMPOSE_TEST_SLOT": "0"}, capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "None"), r.stderr)
+
+
+class HermeticGitIdentity(unittest.TestCase):
+    """A temp HOME has no ~/.gitconfig, so every test's environment carries a git identity."""
+    IDENTITY = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+    def commit(self):
+        """git init and an empty commit in a fresh dir, with no -c user.*; returns the exit code and `author|committer` of the commit."""
+        repo = tempfile.mkdtemp()
+        for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"]):
+            r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        log = subprocess.run(["git", "log", "-1", "--format=%an <%ae>|%cn <%ce>"], cwd=repo, capture_output=True, text=True)
+        return log.stdout.strip()
+
+    def test_temp_home_returns_the_identity_beside_its_other_keys(self):
+        home = hermetic.temp_home()
+        self.assertEqual({k: home.get(k) for k in self.IDENTITY}, self.IDENTITY)
+        for k in ("HOME", "COMPOSE_CONFIG", "DO_NOT_TRACK", "COMPOSE_NO_PREFLIGHT", "COMPOSE_NO_AWAKE"):
+            self.assertIn(k, home)
+
+    def test_a_commit_in_a_test_needs_no_identity_of_its_own(self):
+        self.assertEqual(self.commit(), "t <t@t>|t <t@t>")
+
+    def test_a_tests_own_value_wins_and_the_environment_is_restored(self):
+        for var, value, expect in (("GIT_AUTHOR_NAME", "me", "me <t@t>|t <t@t>"), ("GIT_COMMITTER_EMAIL", "me@x", "t <t@t>|t <me@x>")):
+            with mock.patch.dict(os.environ, {var: value}):
+                self.assertEqual(self.commit(), expect)
+            self.assertEqual(os.environ[var], self.IDENTITY[var])
+        self.assertEqual(self.commit(), "t <t@t>|t <t@t>")
+
+    def test_the_docstring_names_the_identity_and_why(self):
+        doc = hermetic.temp_home.__doc__
+        for name in self.IDENTITY:
+            self.assertIn(name, doc)
+        self.assertIn(".gitconfig", doc)
 
 
 if __name__ == "__main__":
