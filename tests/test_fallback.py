@@ -18,7 +18,7 @@ PRIMARY, BACKUP = "pi:p/primary", "pi:b/backup"
 
 
 class Fallback(unittest.TestCase):
-    def run_once(self, first, reset_files=False, after=2, edit=None):
+    def run_once(self, first, reset_files=False, after=2, edit=None, impl=None):
         """The primary model behaves as `first` ("error", "miss", or "rate"); the fallback writes the answer. Returns (result, models called);
         the prompts land in self.prompts."""
         root = Path(tempfile.mkdtemp())
@@ -31,7 +31,7 @@ class Fallback(unittest.TestCase):
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         calls, self.prompts = [], []
-        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+        def run_impl(cwd, model, prompt, session=None, task=None, timeout=None):
             calls.append(model); self.prompts.append(prompt)
             if model == PRIMARY and first == "error":
                 raise RuntimeError("provider refused the request")
@@ -41,7 +41,7 @@ class Fallback(unittest.TestCase):
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl or run_impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.object(fc.fc_config, "FALLBACK_AFTER", after), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
@@ -128,6 +128,17 @@ class Fallback(unittest.TestCase):
         self.assertEqual((r["status"], calls, r["attempts"]), ("passed", [PRIMARY, BACKUP], 1))  # the cut-short turn cost no attempt
         self.assertIn("A previous attempt left edits in the files and did not pass", self.prompts[1])
         self.assertIn("grep -q yes a.txt", self.prompts[1].split("did not pass")[1])
+
+    def test_a_timed_out_turn_that_left_a_passing_edit_keeps_the_usage_it_spent(self):
+        spent = {"cost": 0.5, "tokens_in": 100, "tokens_out": 20}
+        def timed_out(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            e = subprocess.TimeoutExpired("herdr agent prompt", 180)
+            e.tools, e.usage = 4, spent
+            raise e
+        r, _ = self.run_once("timeout", impl=timed_out)
+        timeout, cut = r["log"]
+        self.assertEqual((r["status"], timeout["tool_calls"], timeout["usage"], cut["cut_short"], r["cost"]), ("passed", 4, spent, True, 0.5))
 
     def test_implementer_is_told_not_to_run_the_test(self):
         self.run_once("miss")
@@ -913,6 +924,12 @@ class HerdrPiTurn(unittest.TestCase):
         (first, t1), (again, t2) = self.sent("agent", "prompt")
         self.assertEqual((text, first[2:4], again[2:4], self.sent("pane", "close")), ("done", ("shop-028", "hi"), ("shop-028", "hi"), []))
         self.assertGreaterEqual(t2 - t1, fc.fc_herdr.PROMPT_START_WAIT)
+
+    def test_a_turn_cut_at_the_time_limit_carries_the_usage_it_had_written(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as cm:
+            self.turn(lambda n: self.write(self.USER, self.reply("halfway", stop="toolUse")) or "timeout")
+        self.assertEqual((cm.exception.usage["tokens_in"], cm.exception.usage["tokens_out"]), (10, 2))
+        self.assertEqual(self.sent("pane", "close")[0][0], ("pane", "close", "p1"))
 
     def test_a_turn_that_never_starts_ends_as_a_timeout_after_one_resend(self):
         with self.assertRaises(subprocess.TimeoutExpired):
