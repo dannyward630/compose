@@ -118,12 +118,14 @@ class Yolo(unittest.TestCase):
         s = snap(tasks={"001": "passed", "002": "failed", "003": "rejected_size"}, crew=crew,
                  verify=[int(time.time()), False], halt=["2026-01-01 10:00:00", "openrouter", 2])
         out = self.yolo("off", snapshot=s)
-        heads = ["Your instructions", "Decided for you", "Waiting on you", "Tried and failed", "Done", "Cost"]
+        heads = ["Your instructions", "Decided for you", "To confirm", "Waiting on you", "Tried and failed", "Done", "Cost"]
         pos = [out.index(h) for h in heads]
         self.assertEqual(pos, sorted(pos), out)
         sec = lambda h: out.split(h, 1)[1].split(heads[heads.index(h) + 1], 1)[0] if h != "Cost" else out.split(h, 1)[1]
         self.assertIn("go with Stripe", sec("Your instructions"))
         self.assertIn("provider?: Stripe", sec("Decided for you"))
+        self.assertIn("(yolo recommendation, unconfirmed, <date>)", sec("To confirm"))
+        self.assertIn("1 decision(s)", sec("To confirm"))
         waiting = sec("Waiting on you")
         self.assertIn("delete prod data?", waiting)
         self.assertNotIn("before yolo", waiting)
@@ -137,6 +139,18 @@ class Yolo(unittest.TestCase):
         self.assertIn("001", sec("Done"))
         self.assertFalse(self.file.exists())
         self.assertTrue((self.proj / "results" / "yolo-2026-01-01T090000.json").exists())
+
+    def test_off_with_no_decisions_has_nothing_to_confirm(self):
+        self.yolo("go")
+        out = self.yolo("off")
+        self.assertEqual(out.split("To confirm", 1)[1].split("Waiting on you", 1)[0].split(), ["-", "none"])
+
+    def test_decided_prints_the_yolo_form_that_tags_the_map_line(self):
+        self.yolo("go")
+        out = self.yolo("decided", "which db?: postgres")
+        self.assertIn("`yolo: <card id>: <answer>`", out)
+        self.assertIn(f"(yolo recommendation, unconfirmed, {time.strftime('%Y-%m-%d')})", out)
+        self.assertIn("never as the product owner's", out)
 
     def test_off_and_decided_without_yolo_exit_1(self):
         for words in (["off"], ["decided", "x: y"]):

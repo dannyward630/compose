@@ -4,7 +4,7 @@ argument-hint: "[--push] [words] | --clear-words | off"
 allowed-tools: Bash(compose yolo:*)
 ---
 The project is the one this session runs; for an epic, every project of the epic.
-If `$ARGUMENTS` is `off`, run `compose yolo off --project <slug> < /dev/null` for each project and show each digest as is.
+If `$ARGUMENTS` is `off`, run `compose yolo off --project <slug> < /dev/null` for each project and show each digest as is, then ask its "To confirm" decisions in one message: accept all, or name the ones to change.
 Otherwise run `compose yolo --project <slug> $ARGUMENTS < /dev/null` for each project and show the announcement as is.
 Do not reword, summarize, or widen the words: they pre-answer a question verbatim, never by analogy.
 Then continue under sections/0h.md's Yolo paragraph.

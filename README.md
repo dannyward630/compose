@@ -94,9 +94,9 @@ The engineering manager relays their questions to you, and you can answer there 
 
 Run `/compose:yolo [words]` before you leave, and the engineering manager answers each question with its recommendation instead of waiting for you.
 Your words pre-answer the questions they name, taken exactly as written and never stretched by analogy.
-Every answer it takes is logged, and a billing halt still notifies you.
+Every answer it takes is logged and stays marked unconfirmed in the feature's Decisions so far until you confirm it, and a billing halt still notifies you.
 `/compose:yolo --push` also gives permission in advance to submit the verified stack as draft pull requests.
-When you are back, `/compose:yolo off` prints a digest of your instructions, what was decided for you, what waits on you, what failed, what is done, and the cost.
+When you are back, `/compose:yolo off` prints a digest of your instructions, what was decided for you (to confirm or change in one ask), what waits on you, what failed, what is done, and the cost.
 
 The full walkthrough is in [docs/how-it-works.md](docs/how-it-works.md).
 

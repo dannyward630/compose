@@ -1,6 +1,6 @@
 import ast, hashlib, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0
+import fc_mcp, fc_core, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -477,6 +477,8 @@ def cmd_report(a):
     message = " ".join(a.message)
     if not crew_record(proj, a.as_):
         crew_reregister(proj, a.as_)
+    if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, message)) is None:
+        return
     write_report(proj, a.as_, a.state, message)
     if a.state == "tool-bug":
         log_tool_bug(proj, a.as_, message)

@@ -492,9 +492,24 @@ class CardsOnTheMap(unittest.TestCase):
     def test_step_3_reports_one_line_and_keeps_the_lavish_file(self):
         step = " ".join(self.step(3))
         self.assertIn(self.FORM, step)
-        self.assertIn("visual cards open in Lavish: <file>", step)
+        self.assertIn("visual cards open in Lavish: <url>", step)
         self.assertNotIn("the text cards in full", self.text)
         self.assertNotIn("with the text cards", self.text)
+
+    def test_one_working_link_bounded_polls_acknowledged_answers_and_disconnect(self):
+        text = " ".join(self.text.split())
+        for want in ("`url:` that `lavish-axi <file>` printed", "in no second host form", "a link that does not answer",
+                     "already asked and not answered", "answer in text", "rounds of 180000 ms", "--takeover",
+                     "reply <file> --agent-reply", "`browser_disconnected`", "`needs-user \"reminder: ...\"`"):
+            self.assertIn(want, text)
+        self.assertIn("are the options pictures, or words?", text)
+        self.assertEqual(self.text.count('is text although tokens are UI'), 1)
+        self.assertEqual(self.text.count('is visual.'), 1)
+
+    def test_yolo_answers_are_tagged_unconfirmed_on_the_map(self):
+        text = " ".join(self.text.split())
+        self.assertIn("`yolo:`", text)
+        self.assertIn("(yolo recommendation, unconfirmed, <date>)", text)
 
     def test_steps_3_and_6_forward_unchanged_read_once_answer_by_card_id(self):
         both = " ".join(self.step(3) + self.step(6))

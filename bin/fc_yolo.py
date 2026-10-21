@@ -8,6 +8,7 @@ YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are nev
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
               "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
+YOLO_TAG = "(yolo recommendation, unconfirmed, {date})"  # what the map's Decisions so far shows after a decision taken for the product owner
 def yolo_digest(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
@@ -34,6 +35,9 @@ def yolo_digest(repo, proj, y):
     task_cost = sum(v["cost"] for v in snap["tasks"].values())
     sections = [("Your instructions", [y.get("words") or "(no words)", f"push: {'yes' if y.get('push') else 'no'}"]),
                 ("Decided for you", [f"{d['ts']}  {d['text']}" for d in y.get("decisions", [])]),
+                ("To confirm", [f"the {len(y['decisions'])} decision(s) above are recommendations, not your answers: the map's Decisions so far shows them as "
+                                f"{YOLO_TAG.format(date='<date>')}. Ask once: accept all, or name the ones to change; the wayfinder then "
+                                f"rewrites each line as the product owner's, and work cut on one is redone if you change it"] if y.get("decisions") else []),
                 ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
                 ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
     out = [f"yolo off for {proj.name}: away since {y['since']}"]
@@ -67,6 +71,8 @@ def cmd_yolo(a):
         y["decisions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": " ".join(words[1:])})
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"logged for the product owner's return: {' '.join(words[1:])}")
+        print(f"send the answer to the teammate as `yolo: <card id>: <answer>`: it writes the map line "
+              f"\"<card id>: <answer> {YOLO_TAG.format(date=time.strftime('%Y-%m-%d'))}\", never as the product owner's")
         return
     # A shell variable holding a whole command reaches here as one word (zsh never splits an unquoted one): refuse it, never store it.
     if any(w.startswith(("--repo", "--project")) for w in words) or " decided " in f" {' '.join(words)} ":
