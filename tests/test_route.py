@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, os, sys, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -102,3 +102,62 @@ class Policies(unittest.TestCase):
         with mock.patch("sys.stdout", io.StringIO()):
             fc.fc_route.cmd_route(SimpleNamespace(repo=str(self.raw), project="p", only="002", recalculate=False))
         self.assertEqual((self.read_policies.call_count, self.decide.call_count), (1, 1))
+
+
+class Record(unittest.TestCase):
+    READ = "query($id: String!) { issue(id: $id) { id description } }"
+    UPDATE = "mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }"
+    SECTION = "R test-first STANDARD h1 why"
+
+    def setUp(self):
+        self.repo, self.proj = (r := Path(tempfile.mkdtemp()).resolve()), r / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [task("ENG-3", "001"), task("ENG-4", "002")]})
+        self.tasks, self.hash, self.calls, self.cache = fc.fc_tasks.load_tasks(self.proj), "h1", [], self.proj / "results" / "tasks.json"
+        self.gql = lambda q, v: (self.calls.append((q, v)), {"issue": {"id": "U-" + v["id"], "description": "live" if v["id"] == "ENG-3" else None}} if "issue(id" in q else {})[1]
+        for target, name, kw in [(fc.fc_config, "LINEAR_KEY", {"new": "lin_test"}), (fc.fc_linear, "linear_gql", {"side_effect": self.gql}), (fc_routectx, "route_context", {"return_value": {}}),
+                                 (fc_routectx, "context_hash", {"side_effect": lambda repo, m, pols: self.hash}), (fc_policy, "read_policies", {"return_value": ([], "")}), (fc_policy, "glob_matches", {"return_value": []}), (fc_routerec, "route_reason", {"return_value": "why"}),
+                                 (fc_routerec, "parse_route", {"side_effect": lambda d: dict(zip(("workflow", "depth", "context hash", "reason"), d.split("\n")[0][2:].split(" ", 3))) if d.startswith("R ") else None}),
+                                 (fc_routerec, "route_section", {"side_effect": lambda r: f"R {r['workflow']} {r['depth']} {r['hash']} {r['reason']}"}), (fc_routerec, "with_route", {"side_effect": lambda desc, sec: sec + "\n" + desc}),
+                                 (fc_routejev, "decide", {"side_effect": lambda *a: {"workflow": "test-first", "depth": "STANDARD"}})]:
+            setattr(self, name, mock.patch.object(target, name, **kw).start())
+        self.addCleanup(mock.patch.stopall)
+
+    def route(self, **kw):
+        self.calls.clear()
+        with mock.patch("sys.stdout", io.StringIO()) as out:
+            return fc.fc_route.route_tasks(self.repo, self.proj, self.tasks, **kw), out.getvalue()
+
+    def test_a_new_route_is_written_above_the_block_commented_and_cached(self):
+        want, live = json.loads(self.cache.read_text()), {"ENG-3": "live", "ENG-4": ""}
+        (_, held), _ = self.route()
+        for ident, desc in live.items(): want["issues"][ident]["description"] = self.SECTION + "\n" + desc
+        self.assertEqual([(q if "commentCreate" not in q else None, v) for q, v in self.calls], [c for ident, desc in live.items() for c in (
+            (self.READ, {"id": ident}), (self.UPDATE, {"id": ident, "in": {"description": self.SECTION + "\n" + desc}}), (None, {"id": "U-" + ident, "b": self.SECTION}))])
+        self.assertEqual((json.loads(self.cache.read_text()), held), (want, {}))
+
+    def test_the_same_hash_reuses_the_recorded_route_without_a_call_or_a_write(self):
+        self.route()
+        saved = self.cache.read_bytes()
+        self.decide.reset_mock()
+        (routes, _), out = self.route()
+        self.assertEqual((self.decide.called, self.calls, self.cache.read_bytes()), (False, [], saved))
+        self.assertEqual(out.splitlines(), ["001 STANDARD test-first  reused why", "002 STANDARD test-first  reused why"])
+        self.assertEqual(routes["002"], {"workflow": "test-first", "depth": "STANDARD", "reason": "why", "hash": "h1"})
+
+    def test_recalculate_or_a_changed_hash_decides_and_records_again(self):
+        self.route()
+        for hash_, kw in (("h1", {"recalculate": True}), ("h2", {})):
+            with self.subTest(hash=hash_):
+                self.decide.reset_mock()
+                self.hash = hash_
+                _, out = self.route(**kw)
+                self.assertEqual((self.decide.call_count, len(self.calls), "reused" in out), (2, 6, False))
+
+    def test_a_record_that_raises_is_said_and_the_tasks_stay_routed(self):
+        saved = self.cache.read_bytes()
+        self.linear_gql.side_effect = lambda q, v: 1 / 0 if "issueUpdate" in q else self.gql(q, v)
+        (routes, _), out = self.route()
+        self.assertEqual((sorted(routes), self.cache.read_bytes()), (["001", "002"], saved))
+        self.assertTrue(all(f"linear {i}: route not recorded (division by zero)" in out for i in ("ENG-3", "ENG-4")))
