@@ -1,18 +1,42 @@
-"""Harnesses other than Claude Code and pi: which model ids name Codex, and how to probe one."""
+"""Harnesses other than Claude Code and pi: one table of them, and the accessors every other module reads it through."""
+
+
+def _codex_probe(cid):
+    raise NotImplementedError
+
+def _codex_result(p):
+    raise NotImplementedError
+
+def _git_dirs(f):
+    raise NotImplementedError
+
+def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None):
+    raise NotImplementedError
+
+HARNESSES = {}
 
 RESERVED = ()
 
 
-def is_codex(model):
+def harness_of(model):
     raise NotImplementedError
 
-def codex_id(model):
+def model_id(model):
+    raise NotImplementedError
+
+def rows():
+    raise NotImplementedError
+
+def installed():
+    raise NotImplementedError
+
+def skills_dir(key):
     raise NotImplementedError
 
 def probe_command(model):
     raise NotImplementedError
 
-def probe_result(p):
+def probe_result(model, p):
     raise NotImplementedError
 
 def crew_argv(model, effort, prompt, skill, cwd, results, work=None):

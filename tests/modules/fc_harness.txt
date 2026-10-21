@@ -1,6 +1,14 @@
+_codex_probe
+_codex_result
+_git_dirs
+_codex_argv
+HARNESSES
 RESERVED
-is_codex
-codex_id
+harness_of
+model_id
+rows
+installed
+skills_dir
 probe_command
 probe_result
 crew_argv

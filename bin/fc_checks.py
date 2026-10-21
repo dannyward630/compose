@@ -5,9 +5,6 @@ import platform
 import fc_core
 
 
-def codex_skills():
-    raise NotImplementedError
-
 def owned_links(checkout):
     """[(name, link, target)] for the three links compose owns: compose CLI link, compose skill link, bp link."""
     checkout, home = Path(checkout), Path.home()
@@ -15,10 +12,10 @@ def owned_links(checkout):
             ("compose skill link", home / ".claude/skills/compose", checkout),
             ("bp link", home / ".local/bin/bp", checkout / "bp/bin/bp.mjs")]
 
-def codex_command_copies(checkout):
+def command_copies(key, checkout):
     raise NotImplementedError
 
-def codex_commands_ok(checkout):
+def commands_ok(key, checkout):
     raise NotImplementedError
 
 def link_state(path):

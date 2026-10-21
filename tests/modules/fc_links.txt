@@ -1,4 +1,4 @@
 ensure_link
-write_codex_commands
+write_commands
 relink_owned
 path_line

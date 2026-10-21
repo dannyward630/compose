@@ -21,7 +21,7 @@ def ensure_link(link, target):
     link.symlink_to(target)
     return "linked", f"linked {link} -> {target}"
 
-def write_codex_commands(checkout):
+def write_commands(key, checkout):
     raise NotImplementedError
 
 def relink_owned(checkout):
