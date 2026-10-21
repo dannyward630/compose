@@ -176,3 +176,33 @@ class HerdrPiLocal(unittest.TestCase):
         self.assertFalse(self.js.exists())
     def test_fc_implement_stays_within_its_line_cap(self):
         self.assertLessEqual(len(Path(fc.fc_implement.__file__).read_text().splitlines()), 600)
+
+class CrewPiLocal(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.js = self.d / "pi-providers.js"; self.calls = []
+        replies = {("agent", "list"): {"agents": []}, ("tab", "create"): {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}}, ("agent", "get"): {"agent": {"agent_status": "working"}}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", {"fakelocal": {"base_url": "http://127.0.0.1:1/v1"}}),
+                  mock.patch.object(fc.fc_config, "provider_of", pe_provider_of), mock.patch.object(fc.fc_core, "project_dir", return_value=self.d / ".compose" / "shop"),
+                  mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: self.calls.append(args) or replies.get(args[:2], {})), mock.patch("time.sleep"),
+                  mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"),
+                  mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]),
+                  mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), mock.patch.dict(os.environ), mock.patch("builtins.print")):
+            p.start(); self.addCleanup(p.stop)
+        (self.d / ".compose" / "shop").mkdir(parents=True); os.environ.pop("COMPOSE_PI_MODEL", None)
+    def start(self, model):
+        fc.fc_crew.cmd_crew(type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": model}))
+        tab, start = (next(c for c in self.calls if c[:2] == pair) for pair in (("tab", "create"), ("agent", "start")))
+        return list(tab), list(start)
+    def test_local_pi_teammate_gets_tab_env_and_pi_args(self):
+        tab, start = self.start("pi:fakelocal/fake-1")
+        self.assertIn(["--env", "COMPOSE_PI_MODEL=fakelocal/fake-1"], [tab[i:i + 2] for i in range(len(tab))])
+        self.assertIn(["-e", str(self.js)], [start[i:i + 2] for i in range(len(start))])
+        self.assertLess(start.index(str(self.js)), start.index("--model")); self.assertEqual(start[start.index("--model") + 1], "fakelocal/fake-1")
+        if fc.fc_herdr.PI_HERDR_EXT.exists(): self.assertLess(start.index(str(fc.fc_herdr.PI_HERDR_EXT)), start.index(str(self.js)))
+        self.assertFalse([a for a in tab + start if "sk-or" in a or a == "--api-key"])
+    def test_claude_and_openrouter_teammates_are_unchanged(self):
+        for model in ("claude:opus", "pi:openrouter-fast/z-ai/glm@preset/p"):
+            with self.subTest(model=model):
+                self.calls.clear(); tab, start = self.start(model)
+                self.assertFalse([a for a in tab + start if "COMPOSE_PI_MODEL" in a or "pi-providers.js" in a])
+        self.assertFalse(self.js.exists())
