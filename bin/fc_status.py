@@ -276,6 +276,7 @@ def cmd_done(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",") if x.strip()]
     (proj / "results").mkdir(exist_ok=True)
+    unsaved = False
     for tid in ids:
         meta = next((m for m in fc_tasks.load_tasks(proj) if m["id"] == tid), None)
         if not meta:
@@ -286,11 +287,16 @@ def cmd_done(a):
         prev.update({"id": tid, "title": meta.get("title"), "status": "hand_done", "note": a.note, "model": "orchestrator",
                      "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "attempts": prev.get("attempts", 0), "seconds": prev.get("seconds", 0.0),
                      "cost": prev.get("cost", 0.0), "branch": prev.get("branch", fc_worktree.task_branch(repo, proj, tid))})
+        sha = fc_core.sh(["git", "rev-parse", "--verify", "-q", prev["branch"] + "^{commit}"], repo, check=False).stdout.strip()
+        if not fc_ledger.record_task(repo, proj, meta, [fc_ledger.event(fc_ledger.run_id(proj, tid), sha, [tid], fc_ledger.criterion_ids(meta), "done", "done", "pass", None, f"hand done: {a.note}")]):
+            print(f"{tid} not done: its done event is not saved on Linear; run compose done again")
+            unsaved = True
+            continue
         fc_core.atomic_write(res, json.dumps(prev, indent=2))
         print(f"{tid} hand_done  {meta.get('title', '')}  ({a.note})")
         fc_linear.linear_event(proj, meta, "hand_done", prev)
-        sha = fc_core.sh(["git", "rev-parse", "--verify", "-q", prev["branch"] + "^{commit}"], repo, check=False).stdout.strip()
-        fc_ledger.record(meta.get("linear"), [fc_ledger.event(fc_ledger.run_id(proj, tid), sha, [tid], fc_ledger.criterion_ids(meta), "done", "done", "pass", None, f"hand done: {a.note}")])
+    if unsaved:
+        sys.exit(1)
 
 def cmd_top(a):
     """Check out the project's stack top in the CLI worktree and print its path, for manual testing of the whole feature
