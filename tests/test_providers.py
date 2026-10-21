@@ -460,3 +460,32 @@ class KeyedProvider(unittest.TestCase):
         os.environ["FAKELOCAL_API_KEY"] = self.KEY; args = fc_providers.pi_args("pi:fakelocal/fake-1")
         self.assertEqual(args, ["-e", str(self.d / "pi-providers.js")]); self.assertNotIn(self.KEY, " ".join(args))
         self.assertNotIn(self.KEY, (self.d / "pi-providers.js").read_text()); self.assertIn("FAKELOCAL_API_KEY", (self.d / "pi-providers.js").read_text())
+
+def oc_provider_of(model):
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in ("fakelocal", "plain") and mid else None
+
+class OpenCodeProvider(unittest.TestCase):
+    KEY = "sk-local-secret-123"
+    def setUp(self):
+        self.d, self.url = Path(tempfile.mkdtemp()), "http://127.0.0.1:1/v1"
+        providers = {"fakelocal": {"base_url": self.url, "models": ["fake-1", "org/m"]}, "plain": {"base_url": self.url}}
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", self.d / "config.json"), mock.patch.object(fc.fc_config, "PROVIDERS", providers),
+                  mock.patch.object(fc.fc_config, "provider_of", oc_provider_of), mock.patch.object(fc.fc_config, "provider_env", lambda n: n.upper() + "_API_KEY"), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("FAKELOCAL_API_KEY", None); os.environ.pop("PLAIN_API_KEY", None)
+    def entry(self, name, mid, **options):
+        return {name: {"npm": "@ai-sdk/openai-compatible", "name": name, "options": {"baseURL": self.url, **options}, "models": {mid: {"name": mid}}}}
+    def test_keyless_provider_is_exactly_the_entry(self):
+        self.assertEqual(fc_providers.opencode_provider("fakelocal/fake-1"), self.entry("fakelocal", "fake-1"))
+    def test_keyed_provider_names_a_0600_key_file_and_never_holds_the_key(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY; got = fc_providers.opencode_provider("fakelocal/fake-1"); f = self.d / "fakelocal.key"
+        self.assertEqual(got, self.entry("fakelocal", "fake-1", apiKey=f"{{file:{f}}}"))
+        self.assertEqual((f.read_text(), f.stat().st_mode & 0o777), (self.KEY, 0o600)); self.assertNotIn(self.KEY, json.dumps(got))
+    def test_a_keyless_provider_gets_no_api_key_while_another_is_keyed(self):
+        os.environ["FAKELOCAL_API_KEY"] = self.KEY
+        self.assertEqual(fc_providers.opencode_provider("plain/p-1"), self.entry("plain", "p-1"))
+    def test_other_models_give_an_empty_dict(self):
+        for m in ("pi:fakelocal/fake-1", "claude:opus", "openrouter/x/y", "fakelocal", "unknown/x"): self.assertEqual(fc_providers.opencode_provider(m), {}, m)
+    def test_an_id_holding_a_slash_keys_models_by_the_whole_id(self):
+        self.assertEqual(fc_providers.opencode_provider("fakelocal/org/m"), self.entry("fakelocal", "org/m"))
