@@ -107,7 +107,29 @@ def run_events(proj, repo, meta, result):
 
 def counted(repo, proj, meta, rows):
     """Copies of the rows that count for the task: its run, its revision at the task branch tip, and its current criteria."""
-    raise NotImplementedError("fc_ledger.counted")
+    sha = lambda ref: fc_core.sh(["git", "rev-parse", "--verify", "-q", ref + "^{commit}"], repo, check=False).stdout.strip()
+    f = proj / "results" / f"{meta['id']}.json"
+    b = (json.loads(f.read_text()).get("branch") or "HEAD") if f.exists() else "HEAD"
+    tip = sha(b) or sha("HEAD")
+    same = lambda s, paths: bool(paths) and fc_core.sh(["git", "diff", "--quiet", s, tip, "--", *paths], repo, check=False).returncode == 0
+    run, ids = run_id(proj, meta["id"]), criterion_ids(meta)
+    out = []
+    for r in rows:
+        if r["task_ids"] and meta["id"] not in r["task_ids"]:
+            continue
+        if not r.get("shared") and r["run_id"] != run:
+            continue
+        if r["commit_sha"]:
+            if r.get("fails_on_base"):
+                if not same(r["commit_sha"], meta.get("protected") or []):
+                    continue
+            elif r["commit_sha"] != tip and not same(r["commit_sha"], meta.get("files") or []):
+                continue
+        kept = [c for c in r["criterion_id"] if c in ids]
+        if r["criterion_id"] and not kept:
+            continue
+        out.append({**r, "criterion_id": kept})
+    return out
 
 def record_task(repo, proj, meta, events):
     """`record` for a task issue: write the events, then refresh its `## Evidence` section from the rows that count."""
