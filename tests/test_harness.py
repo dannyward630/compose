@@ -649,6 +649,15 @@ class DoctorWithoutClaude(unittest.TestCase):
         self.assertNotIn("claude", lines)
         for name in ("herdr skill", "i-have-adhd skill", "compose skill link"): self.assertTrue(lines[name].endswith(OPTIONAL), lines[name])
 
+    def test_the_note_names_whichever_harness_row_is_set_up(self):
+        row = {**fc_harness.HARNESSES.get("codex", {}), "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}
+        p = mock.patch.dict(fc_harness.HARNESSES, {"other": row}); p.start(); self.addCleanup(p.stop)
+        (self.bin / "other").write_text("#!/bin/sh\n"); (self.bin / "other").chmod(stat.S_IRWXU)
+        (self.home / ".other/skills").mkdir(parents=True); (self.home / ".other/skills/compose").symlink_to(self.co)
+        bad, lines, waiting = self.deps()
+        self.assertFalse(set(bad) & set(ONLY_CLAUDE))
+        self.assertEqual(lines["claude"], CLAUDE_LINE + " - optional, Other is set up")
+
     def test_without_codex_set_up_the_claude_rows_read_as_today(self):
         for tools in ({}, {"codex": True}, {"link": True}):  # the binary or the link alone is not set up
             self.setUp(); self.tools(**tools); bad, lines, waiting = self.deps()
