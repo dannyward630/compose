@@ -24,6 +24,12 @@ def ensure_link(link, target):
 def write_commands(key, checkout):
     raise NotImplementedError
 
+def write_hooks(key, checkout):
+    raise NotImplementedError
+
+def trust_hooks(key, checkout):
+    raise NotImplementedError
+
 def relink_owned(checkout):
     """ensure_link for each fc_checks.owned_links(checkout); one line per link naming it and its state."""
     lines = []

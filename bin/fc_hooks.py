@@ -56,6 +56,9 @@ def switch_decision(command, cwd, role, shared):
                     f"worktree of your own (ask for `crew start --work-repo` or `--cwd`) and run git there with `git -C <worktree>`.")
     return None
 
+def edit_paths(ev):
+    raise NotImplementedError
+
 def cmd_guard(a):
     """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository, and a crew
     session's branch switch in the shared project worktree."""

@@ -1,6 +1,7 @@
 owned_links
 command_copies
 commands_ok
+hooks_ok
 link_state
 local_bin_on_path
 gh_authed

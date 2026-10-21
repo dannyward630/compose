@@ -10,7 +10,10 @@ def _codex_result(p):
 def _git_dirs(f):
     raise NotImplementedError
 
-def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None):
+def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None, more=()):
+    raise NotImplementedError
+
+def _codex_hash(event, group):
     raise NotImplementedError
 
 HARNESSES = {}
@@ -30,6 +33,9 @@ def rows():
 def installed():
     raise NotImplementedError
 
+def home_dir(key):
+    raise NotImplementedError
+
 def skills_dir(key):
     raise NotImplementedError
 
@@ -39,5 +45,8 @@ def probe_command(model):
 def probe_result(model, p):
     raise NotImplementedError
 
-def crew_argv(model, effort, prompt, skill, cwd, results, work=None):
+def crew_argv(model, effort, prompt, skill, cwd, results, work=None, more=()):
+    raise NotImplementedError
+
+def hook_groups(key, checkout):
     raise NotImplementedError

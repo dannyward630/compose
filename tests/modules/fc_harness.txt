@@ -2,13 +2,16 @@ _codex_probe
 _codex_result
 _git_dirs
 _codex_argv
+_codex_hash
 HARNESSES
 RESERVED
 harness_of
 model_id
 rows
 installed
+home_dir
 skills_dir
 probe_command
 probe_result
 crew_argv
+hook_groups

@@ -18,6 +18,9 @@ def command_copies(key, checkout):
 def commands_ok(key, checkout):
     raise NotImplementedError
 
+def hooks_ok(key, checkout):
+    raise NotImplementedError
+
 def link_state(path):
     """("ok", target) when path resolves to something that exists, ("dangling", raw link text), or ("missing", None)."""
     path = Path(path)

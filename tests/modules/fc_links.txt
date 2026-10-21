@@ -1,4 +1,6 @@
 ensure_link
 write_commands
+write_hooks
+trust_hooks
 relink_owned
 path_line
