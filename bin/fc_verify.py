@@ -352,7 +352,9 @@ def verify_root(repo, proj, cfg):
 def at_root(value, olds, root):
     """`value` with every absolute path under one of `olds` (the project worktree, the main checkout) moved under `root`, in
     every string, inside dicts and lists too. One pass, longest prefix first, each matched as a whole path: a path already
-    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x."""
+    moved (the slot lives under the main checkout) is never moved again, and ~/code/app never matches ~/code/app-2/x.
+    A project's `.compose/` is git-ignored: a path in it moves only when it exists under `root` (the link stack_worktree makes),
+    else it stays where the file is, so an e2e driver kept in the project worktree is still found."""
     olds = sorted({str(o) for o in olds} - {str(root)}, key=len, reverse=True)
     if not olds:
         return value
@@ -361,7 +363,10 @@ def at_root(value, olds, root):
         return {k: at_root(v, olds, root) for k, v in value.items()}
     if isinstance(value, list):
         return [at_root(v, olds, root) for v in value]
-    return path.sub(lambda _: str(root), value) if isinstance(value, str) else value
+    def moved(m):
+        tail = re.match(r"/\.compose(?:/[^\s\"'`;:&|()<>,=]*)?", m.string[m.end():])
+        return m.group(0) if tail and not Path(str(root) + tail.group(0)).exists() else str(root)
+    return path.sub(moved, value) if isinstance(value, str) else value
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()

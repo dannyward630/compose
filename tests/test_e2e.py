@@ -570,6 +570,11 @@ class PathsAtStackTop(unittest.TestCase):
         proj = repo / ".compose" / "p"
         proj.mkdir(parents=True)
         e2e = f"{repo}/.compose/p/e2e"
+        (proj / "e2e").mkdir()
+        for name in ("e2e/refresh-verify-env.sh", "e2e/serve.sh", "e2e/login.sh", "e2e/check.py", "profile"):
+            (proj / name).touch()
+        root.mkdir(parents=True)
+        (root / ".compose").symlink_to(repo / ".compose")  # what stack_worktree links: the scripts exist there too
         cfg = {"checks": [f"{e2e}/refresh-verify-env.sh", f"bash {main}/scripts/lint.sh", "npm test", f"{base}/app2/tool --x"],
                "e2e_setup": f"cd {main} && {e2e}/serve.sh $E2E_PORT &", "e2e_env": {"PROFILE": f"{repo}/.compose/p/profile"},
                "e2e": [{"name": "login", "url": f"file://{repo}/index.html", "goal": "Log in", "setup": f"{e2e}/login.sh",
@@ -587,6 +592,21 @@ class PathsAtStackTop(unittest.TestCase):
         self.assertEqual(seen["e2e_env"], {"PROFILE": f"{root}/.compose/p/profile"})
         self.assertEqual(seen["e2e"], [{"name": "login", "url": f"file://{root}/index.html", "goal": "Log in", "setup": f"{top}/login.sh",
                                         "env": {"DATA": f"{root}/fixtures"}, "assert": f"python3 {top}/check.py --root={root}"}])
+
+    def test_a_project_file_the_stack_top_does_not_have_stays_in_the_project_worktree(self):
+        base = Path(tempfile.mkdtemp()).resolve()
+        repo, root = base / "app-feature", base / "slot" / "app"
+        (repo / ".compose" / "p" / "e2e").mkdir(parents=True)
+        (repo / ".compose" / "p" / "e2e" / "case.py").touch()
+        (root / ".compose" / "other").mkdir(parents=True)  # a real .compose of someone else's: the link was never made
+        olds = (repo,)
+        move = lambda v: fc.fc_verify.at_root(v, olds, root)
+        self.assertEqual(move(f"python3 {repo}/.compose/p/e2e/case.py --root={repo}"), f"python3 {repo}/.compose/p/e2e/case.py --root={root}")
+        self.assertEqual(move({"assert": f"{repo}/.compose/p"}), {"assert": f"{repo}/.compose/p"})
+        self.assertEqual(move(f"{repo}/.composer/x"), f"{root}/.composer/x")
+        (root / ".compose" / "p").mkdir()
+        (root / ".compose" / "p" / "e2e").symlink_to(repo / ".compose" / "p" / "e2e")
+        self.assertEqual(move(f"python3 {repo}/.compose/p/e2e/case.py"), f"python3 {root}/.compose/p/e2e/case.py")
 
 
 T = 1_760_000_000  # fixed mtimes: the other record is 3 hours off, so its HH:MM never matches
