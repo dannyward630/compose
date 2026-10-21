@@ -507,3 +507,54 @@ class FinishWithoutClaude(unittest.TestCase):
         self.assertEqual(self.walk(), required - set(ONLY_CLAUDE))
         self.setUp(); self.tools()
         self.assertEqual(self.walk(), required)
+
+
+CLAUDE_LINE = "MISSING: claude (install: curl -fsSL https://claude.ai/install.sh | bash)"
+OPTIONAL = " - optional, Codex is set up"
+
+
+class DoctorWithoutClaude(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.bin, self.home, self.co = tmp / "bin", tmp / "home", Path(fc_init.__file__).resolve().parents[1]
+        self.bin.mkdir(); self.home.mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin), "HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+
+    def tools(self, claude=False, codex=False, link=False):  # Codex is set up with the binary and a skill link to this checkout
+        for name in ("claude",) * claude + ("codex",) * codex:
+            (self.bin / name).write_text("#!/bin/sh\n"); (self.bin / name).chmod(stat.S_IRWXU)
+        if link:
+            (self.home / ".codex/skills").mkdir(parents=True); (self.home / ".codex/skills/compose").symlink_to(self.co)
+
+    def deps(self):  # (the rows returned, the MISSING lines by row name, the waiting line)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bad = fc_init.check_deps()
+        lines = out.getvalue().splitlines()
+        return bad, {l[len("MISSING: "):].split(" (")[0].split(":")[0]: l for l in lines if l.startswith("MISSING: ")}, [l for l in lines if l.startswith("waiting on Claude Code:")]
+
+    def test_codex_set_up_without_claude_makes_the_claude_rows_optional(self):
+        self.tools(codex=True, link=True)
+        bad, lines, waiting = self.deps()
+        self.assertFalse(set(bad) & set(ONLY_CLAUDE))
+        self.assertIn("git", bad)
+        self.assertEqual(lines["claude"], CLAUDE_LINE + " - optional, Codex is set up")
+        for name in ("herdr skill", "compose skill link"): self.assertTrue(lines[name].endswith(OPTIONAL), lines[name])
+        self.assertEqual(len(waiting), 1)
+        self.assertIn("i-have-adhd skill", waiting[0])
+
+    def test_codex_set_up_with_claude_installed_still_makes_its_rows_optional(self):
+        self.tools(claude=True, codex=True, link=True)
+        bad, lines, waiting = self.deps()
+        self.assertFalse(set(bad) & set(ONLY_CLAUDE))
+        self.assertNotIn("claude", lines)
+        for name in ("herdr skill", "i-have-adhd skill", "compose skill link"): self.assertTrue(lines[name].endswith(OPTIONAL), lines[name])
+
+    def test_without_codex_set_up_the_claude_rows_read_as_today(self):
+        for tools in ({}, {"codex": True}, {"link": True}):  # the binary or the link alone is not set up
+            self.setUp(); self.tools(**tools); bad, lines, waiting = self.deps()
+            self.assertTrue(set(ONLY_CLAUDE) <= set(bad), tools)
+            self.assertEqual(lines["claude"], CLAUDE_LINE, tools)
+            self.assertFalse(any(OPTIONAL in l for l in lines.values()), tools)
+            self.assertEqual((len(waiting), "i-have-adhd skill" in waiting[0]), (1, True), tools)
