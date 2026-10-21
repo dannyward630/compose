@@ -11,6 +11,12 @@ import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_stepru
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
 
+FC_MODULES = {n: m for n, m in sys.modules.items() if n.startswith("fc_")}
+
+def reload_steps():  # another test file may have dropped or replaced the fc_* modules in sys.modules; reload against the ones imported here
+    with mock.patch.dict(sys.modules, FC_MODULES):
+        for m in (fc_steps, fc_steprun): importlib.reload(m)
+
 
 class CodexIds(unittest.TestCase):
     def test_probe_command(self):
@@ -254,11 +260,19 @@ class CodexCommandsRow(unittest.TestCase):
         self.assertEqual(self.run_row(dry=True), ("would", "would write ~/.codex/skills/compose-planner/SKILL.md; would write ~/.codex/skills/compose-yolo/SKILL.md"))
         self.assertFalse((self.home / ".codex").exists())
 
-    def test_a_refused_copy_fails_the_step_with_the_writer_line(self):
-        self.codex(); self.planner.mkdir(parents=True)
-        state, line = self.run_row()
-        self.assertEqual(state, "failed")
-        self.assertIn("refused ~/.codex/skills/compose-planner/SKILL.md", line)
+    def test_every_harness_row_gets_its_own_commands_row_after_its_skill_link_row(self):
+        (self.bin / "other").write_text("#!/bin/sh\n"); (self.bin / "other").chmod(stat.S_IRWXU)
+        self.addCleanup(reload_steps)
+        p = mock.patch.dict(fc_harness.HARNESSES, {"other": {**fc_harness.HARNESSES["codex"], "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}})
+        p.start(); self.addCleanup(p.stop)
+        reload_steps()
+        names = [r[0] for r in fc_steps.STEPS]; i = names.index("Other commands")
+        self.assertEqual(names[i - 1], "Other skill link")
+        row = fc_steps.STEPS[i]; self.assertEqual(row[2:], ("compose setup", "default", False, "write"))
+        self.assertEqual(fc_steprun.run_step(row, self.co, True, False, False)[0], "done")
+        self.assertEqual((self.home / ".other/skills/compose-yolo/SKILL.md").read_bytes(), (self.co / "commands/yolo.md").read_bytes())
+        self.assertFalse((self.home / ".codex").exists())
+        self.assertEqual(set(fc_steprun.WRITERS), set(fc_steprun.PREVIEWS))
 
     def test_doctor_lists_the_first_missing_copy_as_optional(self):
         self.codex(); out = io.StringIO()
