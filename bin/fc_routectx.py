@@ -1,7 +1,7 @@
 """What Jev is shown to route a task: the cheap context first, dependency analysis only on the retry, and the hash that
 tells a recorded route is still current."""
 
-import json, re
+import json, re, subprocess
 
 import fc_tasks
 
@@ -32,7 +32,39 @@ def route_context(repo, proj, meta, tasks, issues):
 
 def dependency_context(repo, meta):
     """{"callers": {path: [file, ...]}} for the task's existing files, or {"unavailable": "<why>"}."""
-    raise NotImplementedError("dependency_context")
+    def trail(*args):
+        try:
+            run = subprocess.run(["trail", *args, "--json"], cwd=repo, capture_output=True, text=True)
+        except FileNotFoundError:
+            raise LookupError("trail not installed")
+        if run.returncode:
+            raise LookupError(f"trail exited {run.returncode}")
+        try:
+            return json.loads(run.stdout)
+        except ValueError:
+            raise LookupError("trail gave unreadable output")
+
+    callers = {}
+    try:
+        for path in meta["files"]:
+            if not (repo / path).exists():
+                continue
+            try:
+                spans = [(e["name"], *map(int, re.fullmatch(r"L(\d+)-L(\d+)", e["span"]).groups()))
+                         for e in trail("skeleton", path)["entries"]]
+                found = set()
+                for name, lo, hi in spans:
+                    if any((n, a, b) != (name, lo, hi) and a <= lo and hi <= b for n, a, b in spans):
+                        continue
+                    for m in trail("callers", name)["matches"]:
+                        if m["symbol"]["path"] == path:
+                            found.update(h["path"] for h in m["hits"])
+            except (KeyError, TypeError, AttributeError):
+                raise LookupError("trail gave unreadable output")
+            callers[path] = sorted(found - set(meta["files"]))[:20]
+    except LookupError as why:
+        return {"unavailable": str(why)}
+    return {"callers": callers}
 
 
 def context_hash(repo, meta, policies):
