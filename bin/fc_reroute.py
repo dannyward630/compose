@@ -1,12 +1,18 @@
 """The re-route after implementation: a passed task's route reassessed once per trigger from its real diff, recorded in Linear."""
 
+import fc_core
+
 DEPTHS = ("FAST", "STANDARD", "DEEP")
 MARK = "rerouted"
 
 
 def diff_signals(repo, meta, base, branch):
     """The task's real diff: `{"changed": [{"path", "added", "deleted"}], "lines", "outside", "untouched"}`."""
-    raise NotImplementedError("diff_signals")
+    out = fc_core.sh(["git", "diff", "--numstat", "--no-renames", f"{base}...{branch}"], repo).stdout.splitlines()
+    changed = [{"path": p, "added": int(a) if a.isdigit() else 0, "deleted": int(d) if d.isdigit() else 0} for a, d, p in (l.split("\t", 2) for l in out)]
+    files, done = meta["files"], {c["path"] for c in changed}
+    return {"changed": changed, "lines": sum(c["added"] + c["deleted"] for c in changed),
+            "outside": [c["path"] for c in changed if c["path"] not in files], "untouched": [p for p in files if p not in done]}
 
 
 def diff_callers(repo, base, branch, meta):
