@@ -914,11 +914,12 @@ class HooksFile(unittest.TestCase):
     def test_a_compose_group_of_another_checkout_is_replaced_at_its_index_and_an_equal_one_is_kept(self):
         herdr = {"hooks": [{"type": "command", "command": "herdr hook"}]}
         old = self.groups("/old")
-        self.put({"hooks": {"UserPromptSubmit": [herdr, old["UserPromptSubmit"][0]], "SessionStart": [self.want["SessionStart"][0], herdr]}})
+        self.put({"hooks": {"UserPromptSubmit": [herdr, old["UserPromptSubmit"][0]], "SessionStart": [self.want["SessionStart"][0], herdr], "PreToolUse": [old["PreToolUse"][1], old["PreToolUse"][0]]}})
         fc_links.write_hooks("codex", "/c")
         doc = json.loads(self.file.read_text())["hooks"]
         self.assertEqual(doc["UserPromptSubmit"], [herdr, *self.want["UserPromptSubmit"]])
         self.assertEqual(doc["SessionStart"], [*self.want["SessionStart"], herdr])
+        self.assertEqual(doc["PreToolUse"], [self.want["PreToolUse"][1], self.want["PreToolUse"][0]])
 
     def test_invalid_json_exits_naming_the_file_and_writes_nothing(self):
         self.put("{not json")
