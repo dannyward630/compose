@@ -9,7 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_fast, fc_routectx, fc_routerec  # noqa: E402
+import fc_fast  # noqa: E402
 
 
 WHY = "no expected behavior: add a Reproduction section or acceptance criteria"
@@ -21,6 +21,7 @@ CTX = {"001": ([], 0, 0, 0), "002": (["c"], 0, 0, 0), "003": ([], 0, 1, 0), "004
 class RunHolds(unittest.TestCase):
     """run holds a FAST task with no expected behavior, and prints that an implement-then-test task runs as test-first."""
     def setUp(self):
+        self.routectx, self.routerec = (importlib.import_module(m) for m in ("fc_routectx", "fc_routerec"))  # the foundation's modules, not on every branch
         self.repo = Path(tempfile.mkdtemp()).resolve(); self.proj = self.repo / ".compose" / "p"; (self.proj / "results").mkdir(parents=True)
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); (self.repo / "a.txt").write_text("x"); git("add", "-A"); git("commit", "-qm", "init")
@@ -30,9 +31,9 @@ class RunHolds(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": self.tasks, "issues": self.issues}))
         self.routes = {t: {"workflow": w} for t, w in reversed(FLOWS.items())}
         ctx = lambda repo, proj, meta, tasks, issues: {"criteria": CTX[meta["id"]][0], "bug": dict(zip(("label", "documented", "confirmed"), map(bool, CTX[meta["id"]][1:])))}
-        self.ctx = mock.patch.object(fc_routectx, "route_context", side_effect=ctx).start()  # a KeyError says it was asked about a task that is not FAST
+        self.ctx = mock.patch.object(self.routectx, "route_context", side_effect=ctx).start()  # a KeyError says it was asked about a task that is not FAST
         self.say = mock.patch.object(fc.fc_core, "say").start()
-        mock.patch.object(fc_routerec, "parse_route", side_effect=lambda d: {"workflow": d.split("workflow: ")[1]} if "workflow: " in d else None).start()
+        mock.patch.object(self.routerec, "parse_route", side_effect=lambda d: {"workflow": d.split("workflow: ")[1]} if "workflow: " in d else None).start()
         self.addCleanup(mock.patch.stopall)
 
     def test_holds_a_fast_task_with_no_reproduction_confirmed_case_or_criterion_and_says_implement_then_test_runs_as_test_first(self):
