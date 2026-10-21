@@ -119,3 +119,55 @@ class Refresh(unittest.TestCase):
                 self.said.clear()
                 self.assertIsNone(fc_evidence.refresh("ENG-4"))
                 self.assertEqual(self.said, [line])
+
+
+class TaskTable(unittest.TestCase):
+    def setUp(self):
+        self.said, self.calls, self.desc, self.comments = [], [], "", {}
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "lin_api_x"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", self.said.append)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((query, variables))
+        if "issueUpdate" in query:
+            self.desc = variables["d"]
+            return {"issueUpdate": {"success": True}}
+        if "comments(first: 100" in query: return page(self.comments.get(variables["id"], []))
+        return {"issue": {"id": "uuid-" + variables["id"], "description": self.desc}}
+
+    def put(self, issue, *rows_at): self.comments[issue] = [comment("2026-10-21T%02d:00:00.000Z" % h, r) for h, r in rows_at]
+
+    def test_task_issue_rows_then_feature_rows_once_each_oldest_first_without_other_tasks(self):
+        self.put("ENG-4", (10, row("t1")), (9, row("o", task_ids=["002"])), (12, row("t3", task_ids=[])))
+        self.put("ENG-1", (8, row("f1")), (7, row("fo", task_ids=["002"])), (11, row("t1")), (13, row("f4", task_ids=[])))
+        got = fc_evidence.task_rows("ENG-4", "ENG-1", "001")
+        self.assertEqual([(r["event_id"], r["shared"]) for r in got], [("f1", True), ("t1", False), ("t3", False), ("f4", True)])
+        self.assertEqual(got[1]["at"], "2026-10-21T10:00:00.000Z")
+
+    def test_an_empty_feature_adds_nothing_and_linear_errors_raise(self):
+        self.put("ENG-4", (10, row("t1")))
+        self.put("", (8, row("f1")))
+        for feature in ("", None): self.assertEqual([(r["event_id"], r["shared"]) for r in fc_evidence.task_rows("ENG-4", feature, "001")], [("t1", False)])
+        self.assertEqual({v["id"] for q, v in self.calls}, {"ENG-4"})
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=RuntimeError("boom")), self.assertRaises(RuntimeError): fc_evidence.task_rows("ENG-4", "ENG-1", "001")
+
+    def test_refresh_builds_the_section_from_select_else_from_rows(self):
+        seen, a, b = [], [row("s1", at="2026-10-21T09:00:00.000Z")], [row("r1", at="2026-10-21T10:00:00.000Z")]
+        with mock.patch.object(fc_evidence, "rows", return_value=b):
+            self.assertIsNone(fc_evidence.refresh("ENG-4", lambda i: seen.append(i) or a))
+            self.assertEqual(seen, ["ENG-4"])
+            self.assertIn(fc_evidence.table(a), self.desc)
+            fc_evidence.refresh("ENG-4")
+            self.assertIn(fc_evidence.table(b), self.desc)
+            self.assertNotIn("| s1 |", self.desc)
+        self.put("ENG-4", (10, row("t1")), (9, row("o", task_ids=["002"])))
+        self.put("ENG-1", (8, row("f1")))
+        fc_evidence.refresh("ENG-4", lambda i: fc_evidence.task_rows(i, "ENG-1", "001"))
+        self.assertEqual([l.split(" | ")[0] for l in self.desc.splitlines() if l[:4] in ("| t1", "| f1", "| o ")], ["| t1", "| f1"])
+
+    def test_a_select_that_raises_says_the_line_writes_nothing_and_raises_nothing(self):
+        self.desc = "## Goal\nx\n"
+        self.assertIsNone(fc_evidence.refresh("ENG-4", mock.Mock(side_effect=RuntimeError("e" * 300))))
+        self.assertEqual(self.said, ["ledger ENG-4: Evidence section not refreshed (%s)" % ("e" * 200)])
+        self.assertEqual(self.desc, "## Goal\nx\n")
+        self.assertFalse([q for q, v in self.calls if "issueUpdate" in q])
