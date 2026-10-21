@@ -1,5 +1,8 @@
 """The regression test writer of a FAST task whose fix passed: its branch, brief, start, and ready line."""
-import fc_herdr, fc_worktree
+import argparse
+from pathlib import Path
+
+import fc_config, fc_core, fc_crew, fc_herdr, fc_worktree
 
 
 def writer_branch(proj, tid):
@@ -24,7 +27,20 @@ def writer_brief(meta, diff):
 
 def start_writer(repo, proj, meta, result):
     """Start the `tests-<tid>` writer on its own branch and checkout off the task's tip; the checkout's path."""
-    raise NotImplementedError("start_writer")
+    tid, branch = meta["id"], writer_branch(proj, meta["id"])
+    diff = fc_core.sh(["git", "diff", "HEAD~1", "HEAD"], result["worktree"]).stdout
+    fc_core.sh(["git", "branch", "-f", branch, result["branch"]], repo)
+    if fc_worktree.use_treehouse():
+        path = Path(fc_worktree.slot_on(repo, branch, f"compose:{proj.name}:regress-{tid}"))
+        fc_worktree.slots(proj, {f"regress-{tid}": str(path)})
+    else:
+        path = proj / "worktrees" / f"regress-{tid}"
+        fc_core.sh(["git", "worktree", "add", "-q", str(path), branch], repo)
+    fc_worktree.ready_checkout(repo, path, install=fc_core.project_config(proj).get("install"))
+    model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
+    fc_crew.cmd_crew(argparse.Namespace(repo=str(repo), project=proj.name, action="start", role=f"tests-{tid}", title=f"tests {tid}",
+                                        brief=writer_brief(meta, diff), force=False, cwd=str(path), leased=True, model=model))
+    return path
 
 
 READY_RE = None
