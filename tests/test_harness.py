@@ -6,7 +6,7 @@ os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_checks, fc_harness, fc_init, fc_links, fc_steprun, fc_steps
+import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_steprun, fc_steps
 
 
 class CodexSkillLink(unittest.TestCase):
@@ -229,3 +229,60 @@ class CodexCommandsRow(unittest.TestCase):
         self.codex(); out = io.StringIO()
         with contextlib.redirect_stdout(out): fc_init.check_deps()
         self.assertIn("MISSING: Codex commands: ~/.codex/skills/compose-away/SKILL.md is missing (install: compose setup) - optional\n", out.getvalue())
+
+
+class HarnessBlock(unittest.TestCase):
+    CODEX = {"models": {"crew": {"default": "codex:gpt-6"}}}
+    CFG = {"models": {"implementer": "pi:top", "crew": {"default": "claude:sonnet", "planner": "claude:opus"}},
+           "workspace": "work", "workspaces": {"work": {"models": {"implementer": "pi:work"}}}, "harnesses": {"codex": CODEX}}
+
+    def setUp(self):
+        for k in ("HARNESS", "DEFAULT_MODEL", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK", "WORKSPACE"):
+            p = mock.patch.object(fc_config, k, getattr(fc_config, k)); p.start(); self.addCleanup(p.stop)
+
+    def apply(self, cfg, harness=None, **env):
+        fc_config.write_config(cfg)
+        with mock.patch.dict(os.environ):
+            for k in ("COMPOSE_HARNESS", "CLAUDECODE"): os.environ.pop(k, None)
+            os.environ.update(env)
+            return fc_config.apply_config(move=False, harness=harness)
+
+    def exits(self, cfg, message, **kw):
+        with self.assertRaises(SystemExit) as e: self.apply(cfg, **kw)
+        self.assertEqual(str(e.exception), f"{fc_config.CONFIG_PATH}: {message}")
+
+    def test_session_harness_precedence(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_HARNESS": "gemini", "CLAUDECODE": "1"}):
+            self.assertEqual(fc_config.session_harness("codex"), "codex")
+            self.assertEqual(fc_config.session_harness(), "gemini")
+            del os.environ["COMPOSE_HARNESS"]
+            self.assertEqual(fc_config.session_harness(), "claude")
+            os.environ["CLAUDECODE"] = "0"
+            self.assertIsNone(fc_config.session_harness())
+
+    def test_block_replaces_crew_whole_over_the_workspace_merge(self):
+        self.apply(self.CFG, "codex")
+        self.assertEqual((fc_config.CREW_MODELS, fc_config.DEFAULT_MODEL, fc_config.HARNESS), ({"default": "codex:gpt-6"}, "pi:work", "codex"))
+        st = fc_config.settings(self.CFG, "codex")[1]
+        self.assertNotIn("harnesses", st)
+        self.assertEqual(st["models"]["implementer"], "pi:work")
+
+    def test_block_from_the_workspace_and_a_top_level_key(self):
+        cfg = {**self.CFG, "harnesses": {}, "workspaces": {"work": {"harnesses": {"codex": {**self.CODEX, "parallel": 4}}}}}
+        self.assertEqual(fc_config.settings(cfg, "codex")[1]["parallel"], 4)
+
+    def test_config_without_harnesses_is_unchanged(self):
+        cfg = {k: v for k, v in self.CFG.items() if k != "harnesses"}
+        self.assertEqual(fc_config.settings(cfg, "claude"), fc_config.settings(cfg))
+        with self.assertRaises(SystemExit) as e: fc_config.settings(cfg, "codex")
+        self.assertEqual(str(e.exception), f'{fc_config.CONFIG_PATH}: no "harnesses.codex" block')
+        self.exits(cfg, 'no "harnesses.codex" block', COMPOSE_HARNESS="codex")
+
+    def test_a_block_without_default_exits_active_or_not(self):
+        bad = {**self.CFG, "harnesses": {"codex": self.CODEX, "gemini": {"models": {"crew": {"planner": "x"}}}}}
+        for kw in ({"harness": "codex"}, {}):
+            self.exits(bad, 'harnesses.gemini.models.crew has no "default"', **kw)
+
+    def test_a_harness_argument_without_a_block_exits(self):
+        self.exits(self.CFG, 'no "harnesses.gemini" block', harness="gemini")
+
