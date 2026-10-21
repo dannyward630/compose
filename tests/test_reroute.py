@@ -1,5 +1,6 @@
 import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
+from unittest import mock
 from pathlib import Path
 os.environ.update(COMPOSE_NO_TREEHOUSE="1", HERDR_ENV="")
 
@@ -95,3 +96,50 @@ class LayerBase(unittest.TestCase):
         (self.proj / "results" / "011.json").write_text(json.dumps({"status": "passed", "base": self.branch("005")}))
         (self.proj / "results" / "005.json").write_text("not json")
         self.assertEqual((self.base("011"), self.base("005")), (self.branch("010"), "trunk"))
+
+
+def _hit(path, *hits):
+    return {"symbol": {"path": path}, "hits": [{"path": h} for h in hits]}
+
+
+class Callers(unittest.TestCase):
+    SPANS = {"src/a.py": {"f1": "L1-L3", "f2": "L4-L6", "f3": "L7-L8", "f4": "L9-L10", "f5": "L12-L12"}, "src/c.py": {"g": "L1-L1"}, "src/n.py": {"h": "L1-L1"}, "src/gone.py": {"x": "L1-L1"}}
+    CALLERS = {"f1": [_hit("src/a.py", "src/z.py", "src/peer.py", "src/a.py", "src/z.py"), _hit("src/other.py", "src/intruder.py")], "f3": [_hit("src/a.py", "src/y.py", "src/z.py")],
+               "g": [_hit("src/c.py", *[f"c/n{i % 25:02}.py" for i in range(50, 0, -1)])]}
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.git("init", "-q", "-b", "main")
+        self.write({"src/a.py": "".join(f"l{i}\n" for i in range(1, 13)), "src/c.py": "c\n", "src/n.py": "1\n2\n3\n", "src/gone.py": "p\n"}); self.commit("base")
+        self.git("checkout", "-qb", "task")
+        self.write({"src/a.py": "l1\nx\n" + "".join(f"l{i}\n" for i in range(3, 9)) + "ins\nl9\nl10\n", "src/c.py": "C\n", "src/n.py": "1\n2\nthree\n"})
+        (self.repo / "src/gone.py").unlink(); self.commit("task")
+        self.asked = []
+
+    def git(self, *a):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
+
+    def commit(self, msg):
+        self.git("add", "-A"); self.git("commit", "-qm", msg)
+
+    def write(self, files):
+        for name, body in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True); (self.repo / name).write_text(body)
+
+    def sh(self, cmd, cwd=None, *a, **kw):
+        if cmd[:2] == ["trail", "skeleton"]:
+            self.asked.append(cmd[2])
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"entries": [{"name": n, "span": s} for n, s in self.SPANS[cmd[2]].items()]}), "")
+        if cmd[:2] == ["trail", "callers"]:
+            self.asked.append(cmd[2])
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"matches": self.CALLERS.get(cmd[2], [])}), "")
+        return self.real(cmd, cwd, *a, **kw)
+
+    def test_callers_of_the_symbols_whose_span_meets_an_old_side_range(self):
+        self.real = fc.fc_core.sh
+        with mock.patch.object(fc.fc_core, "sh", self.sh):
+            got = fc_reroute.diff_callers(self.repo, "main", "task", {"files": ["src/a.py", "src/c.py", "src/peer.py"]})
+        self.assertEqual(got, {"callers": {"src/a.py": ["src/y.py", "src/z.py"], "src/c.py": [f"c/n{i:02}.py" for i in range(20)], "src/n.py": []}})
+        self.assertEqual(sorted(a for a in self.asked if not a.startswith("src/")), ["f1", "f3", "f5", "g"])
+        self.assertNotIn("src/gone.py", self.asked)
