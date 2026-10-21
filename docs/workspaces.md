@@ -44,17 +44,43 @@ The commands edit `~/.compose/config.json` (mode 600), which holds no keys.
 The active workspace is merged over the top level:
 
 ```json
-{"workspace": "work",
- "models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
-            "fallback": null, "fallback_after": 2, "test_reader": "claude:claude-haiku-5-5", "fix": "<default: implementer>",
-            "crew": {"planner": {"model": "pi:openai/gpt-6-astra", "effort": "high",
-                                 "fallback": [{"model": "claude:claude-opus-5-5", "effort": "high"}]},
-                     "groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}},
- "env": {"SOME_VAR": "<any env var the CLI and its tools read>"},
- "parallel": 20, "claude_parallel": 3,
- "branch_prefix": "compose/", "max_stack_prs": 10,
- "workspaces": {"work": {},
-                "personal": {"models": {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"}}}}
+{
+  "workspace": "work",
+  "models": {
+    "implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast",
+    "fallback": null,
+    "fallback_after": 2,
+    "test_reader": "claude:claude-haiku-5-5",
+    "fix": "<default: implementer>",
+    "crew": {
+      "planner": {
+        "model": "pi:openai/gpt-6-astra",
+        "effort": "high",
+        "fallback": [
+          { "model": "claude:claude-opus-5-5", "effort": "high" }
+        ]
+      },
+      "groundwork": "claude:claude-opus-5-5",
+      "default": "claude:claude-sonnet-5-5",
+      "small": "claude:claude-haiku-5-5"
+    }
+  },
+  "env": {
+    "SOME_VAR": "<any env var the CLI and its tools read>"
+  },
+  "parallel": 20,
+  "claude_parallel": 3,
+  "branch_prefix": "compose/",
+  "max_stack_prs": 10,
+  "workspaces": {
+    "work": {},
+    "personal": {
+      "models": {
+        "implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"
+      }
+    }
+  }
+}
 ```
 
 The workspace key reaches pi, OpenCode, the Mercury review, and jev, so every OpenRouter call bills that account.
@@ -151,9 +177,26 @@ A server that speaks the OpenAI chat API, such as Ollama, LM Studio, or vLLM, ca
 Declare it under a top-level `providers` map in `~/.compose/config.json`, by name:
 
 ```json
-{"providers": {"ollama": {"base_url": "http://localhost:11434/v1", "models": ["qwen3-coder:30b"]}},
- "models": {"implementer": "pi:ollama/qwen3-coder:30b"},
- "workspaces": {"lab": {"providers": {"ollama": {"base_url": "http://gpu-box:11434/v1"}}}}}
+{
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "models": ["qwen3-coder:30b"]
+    }
+  },
+  "models": {
+    "implementer": "pi:ollama/qwen3-coder:30b"
+  },
+  "workspaces": {
+    "lab": {
+      "providers": {
+        "ollama": {
+          "base_url": "http://gpu-box:11434/v1"
+        }
+      }
+    }
+  }
+}
 ```
 
 - `base_url` is required and starts with `http://` or `https://`.
