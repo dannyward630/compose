@@ -64,13 +64,21 @@ Your answers go to the feature issue's "Decisions so far".
 
 A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown on its card.
 Each project has its own Frame0 app on `.compose/<project>/design.f0`, so parallel sessions never draw into each other's window.
-Three commands manage it:
+These commands manage it:
 
 1. `compose frame0 up --project <name>` starts it.
 2. `compose frame0 save --project <name>` writes the drawing to the file.
    `compose frame0 draw --project <name>` draws a whole page from one list of tool calls and saves it, so a page costs one agent turn rather than one per shape.
 3. `compose frame0 down --project <name>` saves and quits.
    `teardown` does this too.
+4. `compose frame0 pages --project <name>` lists the pages with their shape counts (`--empty` shows only the empty ones).
+   `move --page <page> --after <page>` (or `--first`) puts pages behind another, `delete --page <page>` or `delete --empty` removes pages and clears the links that pointed at them, and `links` checks every link between pages (`--retarget <old>=<new>` points them elsewhere, `--drop-dangling` clears those that lead nowhere).
+   A page is named by its id, its name, or the start of its name, and `--dry-run` shows the changes without making them.
+   A running app is changed through its own API, so it stays up and asks for no new permission; a closed file is edited directly.
+   Either way the file is copied to `design.f0.bak-<time>` first (the newest five stay), and the saved drawing is checked against the plan afterwards.
+5. `compose frame0 lint --project <name>` is the check before asking for a review.
+   It fails on empty pages, pages out of flow order (a page name starts with its flow number, `05.3 ...`, and a journey's new page goes right behind that journey's pages, never at the end), and links to pages that were deleted, and it prints the command that fixes each.
+   The designer draws a flow's pages only when it draws that flow, never a skeleton of every flow.
 
 On the first drawing after each app start, Frame0 asks you to allow "Frame0 MCP Server".
 Frame0 forgets its permissions when the app stops, so a session whose app was restarted asks again on its next drawing.

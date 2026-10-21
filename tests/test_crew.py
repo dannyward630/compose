@@ -1063,7 +1063,8 @@ class RestrictedStart(unittest.TestCase):
             with self.subTest(servers=servers, role=role, **kw):
                 self.P = servers
                 skills = [] if role == "designer" else ["--disable-slash-commands"]
-                self.assertEqual(self.tail(self.start(role, **kw)), skills + allow)  # a bare flag would swallow what follows
+                wireframes = ["Bash(compose frame0:*)"] if role == "designer" or kw.get("frame0") else []  # `compose frame0 draw|pages|lint` needs no prompt where Frame0 is drawn
+                self.assertEqual(self.tail(self.start(role, **kw)), skills + allow + wireframes)  # a bare flag would swallow what follows
 
     def test_patterns_sit_between_settings_and_the_allow_list(self):
         self.P = ["claude_ai_Linear", "claude_ai_Notion", "trail", "frame0"]
