@@ -3,7 +3,7 @@ from pathlib import Path
 import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs
 
 
-YOLO_HINT = "  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"
+YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
 
 # ---------- watch ----------
 FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
@@ -263,11 +263,12 @@ def is_info(e):
 URGENT = re.compile(r"event (?:stall=|halt=|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
 def yolo_mark(proj, events):
-    """Under yolo, a question line tells the engineering manager it answers it itself, and who set yolo when another session did."""
+    """Under the posture on (yolo or away), a question line tells the engineering manager it answers it itself, and who set the posture when another session did."""
     if not (y := fc_tasks.yolo_state(proj)):
         return events
     by = fc_tasks.yolo_by(y)
-    hint = YOLO_HINT if by in ("this session", "unknown") else YOLO_HINT.replace("yolo=on (", f"yolo=on set by {by} (", 1)
+    base = YOLO_HINT.format(m=y["mode"])
+    hint = base if by in ("this session", "unknown") else base.replace(f"{y['mode']}=on (", f"{y['mode']}=on set by {by} (", 1)
     return [e + hint if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
 
 def watch_filter(events, slug, sources, direct=(), others=()):
@@ -319,7 +320,7 @@ def cmd_watch(a, rewake=False):
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
         lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, *watch_scope(proj, cur)))
         if y := fc_tasks.yolo_state(proj):
-            lines.insert(0, f"event yolo=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} by={fc_tasks.yolo_by(y)!r} words={y.get('words', '')!r}")
+            lines.insert(0, f"event {y['mode']}=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} by={fc_tasks.yolo_by(y)!r} words={y.get('words', '')!r}")
         if cur["run"]:
             lines.append(f"event run=live pid={(fc_tasks.run_marker(proj) or {}).get('pid')}  (a run is in progress: supervise it with watch, "
                          f"read results/run.log; do not start a second)")
