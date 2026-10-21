@@ -24,7 +24,17 @@ DEPTHS = ("FAST", "STANDARD", "DEEP")
 
 def route_text(desc):
     """The `## Route` section of an issue description, from its heading to the next `## ` heading or the compose fence; "" when there is none."""
-    raise NotImplementedError("route_text")
+    lines = desc.splitlines()
+    if "## Route" not in lines:
+        return ""
+    start = lines.index("## Route")
+    end = start + 1
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## ") or lines[i].startswith("```compose"):
+            break
+        if lines[i].strip():
+            end = i + 1
+    return "\n".join(lines[start:end])
 
 def task_from_issue(issue):
     """A task meta (with its brief under "body") from a Linear issue whose description carries the compose block, else None."""
@@ -32,6 +42,8 @@ def task_from_issue(issue):
     m = TASK_BLOCK.search(desc)
     if not m:
         return None
+    route = route_text(desc)
+    body_desc = re.sub(re.escape(route) + r"\s*", "", desc, 1) if route else desc
     meta = {k.strip(): v.strip() for k, v in (l.split(":", 1) for l in m.group(1).splitlines() if ":" in l)}
     if "id" not in meta or "test" not in meta:
         sys.exit(f"{issue['id']}: its compose block needs id and test")
@@ -39,11 +51,13 @@ def task_from_issue(issue):
         meta[key] = [f.strip() for f in meta.get(key, "").split(",") if f.strip()]
     if "figma" in meta:  # a design task's own file, a key or a url; else the project's stored key
         meta["figma"] = fc_core.figma_key(meta["figma"]) or sys.exit(f"{issue['id']}: figma is not a Figma file url or key: {meta['figma']}")
+    if "route" in meta and meta["route"] not in WORKFLOWS:
+        sys.exit(f"{issue['id']}: route must be test-first, implement-then-test or fix-then-regression-test, not {meta['route']}")
     meta.setdefault("kind", "code")
     meta.setdefault("model", fc_config.DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
                  "blocked_by": [b if isinstance(b, dict) else {"id": b} for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
-                 "body": re.sub(r"(?m)^## Evidence[ \t]*$[\s\S]*?(?=\n## |\Z)", "", TASK_BLOCK.sub("\n", desc)).strip()})
+                 "body": re.sub(r"(?m)^## Evidence[ \t]*$[\s\S]*?(?=\n## |\Z)", "", TASK_BLOCK.sub("\n", body_desc)).strip()})
     return meta
 
 def hand_task(issue):
