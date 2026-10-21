@@ -195,12 +195,13 @@ def render_status(repo, projects):
             out.append(f"  {y['mode']} on{' (push)' if y.get('push') else ''} since {y['since']}" + (f", set by {by}" if (by := fc_tasks.yolo_by(y)) != "unknown" else ""))
         t = fc_cost.total(fc_cost.rows(proj))
         out.append(f"  cost  {t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)")
-        out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
+        out.append(f"  {'id':4} {'title':38} {'state':16} {'route':33} {'att':>3} {'esc':>3} {'fix':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
             if note in layers:
                 note = f"{note}  layer {layers[note]}"
-            out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {r['attempts']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
+            route = "-" if r["depth"] == "-" and r["workflow"] == "-" else f"{r['depth']} {r['workflow']}"
+            out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {route:33} {r['attempts']:>3} {r['escalations']:>3} {r['fix_rounds']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
         out.append("")
     return "\n".join(out)
 
