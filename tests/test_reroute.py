@@ -183,3 +183,30 @@ class Unavailable(unittest.TestCase):
                     got, made = self.run_callers(n, how)
                     self.assertEqual(got, {"unavailable": why})
                     self.assertEqual(len(made), n + 1)
+
+
+class Fired(unittest.TestCase):
+    QUERY = "query($id: String!, $after: String) { issue(id: $id) { comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { body } } } }"
+
+    @staticmethod
+    def page(*bodies, cursor=None):
+        return {"issue": {"comments": {"pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}, "nodes": [{"body": b} for b in bodies]}}}
+
+    def fired(self, *pages):
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=list(pages)) as gql:
+            return fc_reroute.fired("XX-2"), gql.call_args_list
+
+    def test_every_page_is_read_with_the_previous_cursor_and_each_trigger_gives_a_pair(self):
+        got, calls = self.fired(self.page("* rerouted: diff (run aaaaaaaaaaaa)", cursor="c1"), self.page("## Route\n\n* rerouted: diff, scope (run bbbbbbbbbbbb)", cursor="c2"), self.page())
+        self.assertEqual(got, {("diff", "aaaaaaaaaaaa"), ("diff", "bbbbbbbbbbbb"), ("scope", "bbbbbbbbbbbb")})
+        self.assertEqual([c.args for c in calls], [(self.QUERY, {"id": "XX-2", "after": a}) for a in (None, "c1", "c2")])
+
+    def test_dash_and_star_bullets_count_on_any_stripped_line_and_other_lines_give_none(self):
+        got, calls = self.fired(self.page("intro\n  - rerouted: scope (run r1)  \n\t* rerouted: diff (run r2)\n- rerouted: diff (run r2)", "no bullet\nrerouted: diff (run r3)\n* rerouted: diff\n* routed: diff (run r4)\n* rerouted: diff (run r5) extra", ""))
+        self.assertEqual((got, len(calls)), ({("scope", "r1"), ("diff", "r2")}, 1))
+
+    def test_a_null_issue_raises_and_a_linear_error_propagates(self):
+        with self.assertRaisesRegex(RuntimeError, "no issue XX-2"):
+            self.fired({"issue": None})
+        with self.assertRaisesRegex(RuntimeError, "Linear: boom"):
+            self.fired(self.page("* rerouted: diff (run r1)", cursor="c1"), RuntimeError("Linear: boom"))
