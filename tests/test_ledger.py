@@ -453,3 +453,50 @@ class RecordTask(unittest.TestCase):
         self.assertEqual([k in self.description for k in ("mine", "old-run")], [True, False])
         (self.proj / "linear.json").write_text("{}")
         self.assertIs(self.record(linear=False), True)
+
+
+class RedoRunId(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.proj = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "feat"
+        (self.proj / "results").mkdir(parents=True)
+        self.tasks = [{"id": "001", "model": "pi:x/glm", "linear": "ENG-1", "body": "", "protected": []},
+                      {"id": "002", "model": "pi:x/glm", "linear": "ENG-2", "body": "", "protected": [], "linear_state": "Done"},
+                      {"id": "003", "model": "pi:x/glm", "linear": "ENG-3", "body": "", "protected": []}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": self.tasks}))
+
+    def run_cmd(self, redo, only=None):
+        a = SimpleNamespace(repo=str(self.repo), project="p", only=only, redo=redo, no_stack=False, unproven=True)
+        parent = mock.Mock()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_run, "require_committed"), \
+                mock.patch.object(fc.fc_briefs, "test_open", return_value=False), mock.patch.object(fc.fc_briefs, "waiting_writers", return_value={}), \
+                mock.patch.object(fc.fc_run, "run_tasks", parent.run_tasks), mock.patch.object(fc_ledger, "run_id", parent.run_id), \
+                mock.patch.dict(os.environ), mock.patch("sys.stdout", io.StringIO()):
+            try:
+                fc.fc_run.cmd_run(a)
+            except SystemExit:
+                pass
+        return [(c[0], c[1][1], c[2]) if c[0] == "run_id" else (c[0],) for c in parent.mock_calls]
+
+    def test_redo_mints_a_new_run_id_for_each_dispatched_task_before_dispatch(self):
+        self.assertEqual(self.run_cmd(redo=True), [("run_id", "001", {"fresh": True}), ("run_id", "003", {"fresh": True}), ("run_tasks",)])
+        self.assertEqual(self.run_cmd(redo=True, only="003"), [("run_id", "003", {"fresh": True}), ("run_tasks",)])
+
+    def test_run_without_redo_keeps_every_run_id(self):
+        self.assertEqual(self.run_cmd(redo=False), [("run_tasks",)])
+
+    def test_a_run_that_stops_before_dispatch_mints_no_run_id(self):
+        self.tasks[0]["protected"] = ["tests/test_missing.py"]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": self.tasks}))
+        self.assertEqual(self.run_cmd(redo=True), [])
+        self.assertEqual(self.run_cmd(redo=True, only="002"), [])  # its only task is Done: nothing to run
+
+    def test_run_tasks_records_each_finished_task_with_record_task(self):
+        (self.proj / "results").mkdir(exist_ok=True)
+        passed = lambda repo, proj, meta, attempts: {"id": meta["id"], "title": "t", "status": "passed", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-"}
+        t1, t3 = self.tasks[0], self.tasks[2]
+        with mock.patch.object(fc.fc_implement, "run_task", passed), mock.patch.object(fc.fc_run, "preflight", lambda m: None), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), mock.patch.object(fc.fc_run, "triage", lambda *x: None), \
+                mock.patch.object(fc_ledger, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
+                mock.patch.object(fc_ledger, "record_task") as record_task, mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+            fc.fc_run.run_tasks(self.repo, self.proj, [t1, t3], SimpleNamespace(trunk="main", parallel=1, attempts=1, no_stack=True))
+        self.assertEqual(sorted(c.args for c in record_task.call_args_list), [(self.repo, self.proj, t1, ["001", "passed"]), (self.repo, self.proj, t3, ["003", "passed"])])
