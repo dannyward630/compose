@@ -148,5 +148,32 @@ class Briefs(unittest.TestCase):
         self.assertIn("Built on unconfirmed: <card ids>", flat)
 
 
+class BriefsNameBothPostures(unittest.TestCase):
+    AWAY, YOLO = "(away recommendation, unconfirmed, <date>)", "(yolo recommendation, unconfirmed, <date>)"
+    WAYFINDER = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer: "
+                 f"end its line `{AWAY}` or `{YOLO}`, the one its prefix names, and change that tag to `(product owner, <date>)` only when they confirm it.")
+    PLANNER = f"A Decisions line ending `{AWAY}` or `{YOLO}` is a recommendation the product owner has not confirmed:"
+    CHANGE = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's: "
+              f"end its line `{AWAY}` or `{YOLO}`, the one its prefix names.")
+
+    def flat(self, name):
+        return " ".join(getattr(fc.fc_briefs, name).split())
+
+    def test_each_brief_carries_its_sentence(self):
+        for name, want in (("WAYFINDER_BRIEF", self.WAYFINDER), ("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):
+            self.assertIn(want, self.flat(name), name)
+
+    def test_planner_sentence_still_leads_into_the_built_on_rule(self):
+        flat = self.flat("PLANNER_BRIEF")
+        self.assertLess(flat.index(self.PLANNER), flat.index("Built on unconfirmed: <card ids>"))
+
+    def test_no_brief_keeps_a_yolo_only_rule_or_an_em_dash(self):
+        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+            flat = self.flat(name)
+            self.assertNotIn("\u2014", flat, name)
+            self.assertNotIn("starts `yolo:` is", flat, name)
+            self.assertNotIn("ending `(yolo recommendation, unconfirmed, <date>)` is", flat, name)
+
+
 if __name__ == "__main__":
     unittest.main()
