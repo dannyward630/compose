@@ -8,6 +8,7 @@ import fc_config
 import fc_core
 import fc_linear
 import fc_policy
+import fc_route
 import fc_routectx
 import fc_routejev
 import fc_routerec
@@ -130,6 +131,11 @@ def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
     if kept in DEPTHS and DEPTHS.index(kept) > DEPTHS.index(route["depth"]):
         route["depth"] = kept
         route["note"] += f"; depth {kept} kept from the recorded route"
+    route["hash"] = fc_routectx.context_hash(repo, meta, policies)
+    route["reason"] = fc_routerec.route_reason(route, state)
+    section = fc_routerec.route_section(route)
+    section += "\n* " + MARK + ": " + ", ".join(triggers) + " (run " + run_id + ")"
+    fc_route.record_route(proj, meta, section)
     return route
 
 
