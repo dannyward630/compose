@@ -344,6 +344,44 @@ class Layers(unittest.TestCase):
         self.assertTrue(said["cmd_verify"][-1].startswith("verify FAIL  nothing verified or recorded: " + why), said["cmd_verify"])
         self.assertFalse((self.proj / "results" / "verify.json").exists())
 
+    def hold_stack_top(self, kind="verify"):
+        """A verify of project p alive in another process, as `compose verify` records it, and the worktree it stands in at the stack top."""
+        proc = subprocess.Popen(["sleep", "60"]); self.addCleanup(proc.wait); self.addCleanup(proc.kill)
+        live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
+        (live / f"{proc.pid}.json").write_text(json.dumps({"pid": proc.pid, "kind": kind, "project": "p", "repo": str(self.repo), "since": "21:01"}))
+        return proc
+
+    def test_stack_top_commands_refuse_while_a_verify_holds_the_stack_top_and_leave_it_where_it_is(self):
+        self.stack()
+        wt, _, _ = fc.fc_verify.verify_root(self.repo, self.proj, {})
+        top = lambda: self.git("-C", str(wt), "branch", "--show-current")
+        at = top(); self.assertEqual(at, "compose/p-003")
+        proc = self.hold_stack_top()
+        ns = lambda **kw: argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **kw)
+        for name, cmd, args in (("stack", fc.fc_ship.cmd_stack, ns(submit=False)), ("stack --submit", fc.fc_ship.cmd_stack, ns(submit=True)),
+                                ("top", fc.fc_status.cmd_top, ns(detach=False)), ("top --detach", fc.fc_status.cmd_top, ns(detach=True)),
+                                ("reword", fc.fc_ship.cmd_reword, ns(set=["abc=Add it"], as_is=False))):
+            with self.subTest(name), self.assertRaises(SystemExit) as e:
+                cmd(args)
+            self.assertIn(f"verify is running on p (pid {proc.pid}, since 21:01)", str(e.exception))
+            self.assertEqual(top(), at)
+        proc.kill(); proc.wait()  # the verify ended: the stack runs again
+        self.stack()
+
+    def test_a_verify_whose_checkout_moved_off_its_branch_during_a_stage_is_void_and_records_nothing(self):
+        self.stack()
+        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")
+        def stack_moves_it(*a, **k):
+            self.git("-C", str(wt), "checkout", "-q", "--detach", "compose/p")
+            return True, {"checks": []}, ""
+        a = argparse.Namespace(repo=str(self.repo), project="p", fix=0, skip_review=True, skip_e2e=True, detach=False)
+        out = []
+        with mock.patch.object(fc.fc_core, "say", out.append), mock.patch.object(fc.fc_verify, "run_stages", side_effect=stack_moves_it), self.assertRaises(SystemExit) as e:
+            fc.fc_verify.cmd_verify(a)
+        self.assertEqual(e.exception.code, 1)
+        self.assertTrue(any(l.startswith("verify VOID  nothing verified or recorded: ") and "compose/p-003" in l and "detached" in l for l in out), out)
+        self.assertFalse((self.proj / "results" / "verify.json").exists())
+
     def test_layers_that_do_not_add_up_to_the_chain_stop_the_stack_with_layers_and_gh_stack_untouched(self):
         real, broken = fc.fc_layers.review_units, mock.patch.object(fc.fc_layers, "review_units", lambda *a: real(*a)[:-1])
         stops = self.stop(broken.start)  # the top task's unit goes missing
