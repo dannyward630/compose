@@ -201,7 +201,9 @@ class Yolo(unittest.TestCase):
 
     def test_status_shows_the_header(self):
         self.yolo(push=True)
-        since = json.loads(self.file.read_text())["since"]
+        d = json.loads(self.file.read_text())
+        since = d["since"]
+        self.file.write_text(json.dumps(d | {"mode": "yolo"}))
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
                 mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
                 mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
@@ -209,7 +211,7 @@ class Yolo(unittest.TestCase):
             self.assertIn(f"  yolo on (push) since {since}, set by an engineering manager session in herdr pane w1:p1", lines)  # the status tab is no session's
             self.file.write_text(json.dumps({"since": since, "push": False, "words": "", "decisions": []}))  # from before `by` was recorded
             lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
-        self.assertIn(f"  yolo on since {since}", lines)
+        self.assertIn(f"  away on since {since}", lines)
 
     def test_help_and_docs_list_yolo(self):
         root = Path(__file__).resolve().parents[1]
@@ -234,6 +236,53 @@ class Yolo(unittest.TestCase):
                 mock.patch.object(fc.fc_yolo, "cmd_yolo", seen.append), mock.patch.object(fc.fc_config, "apply_config", return_value="default"):
             fc.main()
         self.assertEqual((seen[0].clear_words, seen[0].words), (True, []))
+
+
+class StatusNamesPosture(unittest.TestCase):
+    """The posture file's mode, `away` or `yolo`, is what `yolo_state` and `compose status` name; a file without one reads as away."""
+    SINCE = "2026-01-01 09:00:00"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.file = self.proj / "results" / "yolo.json"
+
+    def write(self, **extra):
+        self.file.write_text(json.dumps({"since": self.SINCE, "push": False, "words": "", "decisions": []} | extra))
+
+    def status(self):
+        with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[]), mock.patch.object(fc.fc_core, "current_branch", return_value="main"), \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(stdout="abc\n", returncode=0)), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]):
+            return fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
+
+    def test_yolo_state_fills_away_and_keeps_a_stored_mode(self):
+        self.write()
+        self.assertEqual(fc.fc_tasks.yolo_state(self.proj)["mode"], "away")
+        for mode in ("away", "yolo"):
+            self.write(mode=mode)
+            self.assertEqual(fc.fc_tasks.yolo_state(self.proj)["mode"], mode)
+        self.assertEqual(fc.fc_tasks.yolo_state(self.proj)["since"], self.SINCE)
+
+    def test_yolo_state_is_none_for_a_missing_or_unreadable_file(self):
+        self.assertIsNone(fc.fc_tasks.yolo_state(self.proj))
+        self.file.write_text("{not json")
+        self.assertIsNone(fc.fc_tasks.yolo_state(self.proj))
+
+    def test_status_names_yolo_with_push_and_who(self):
+        self.write(mode="yolo", push=True, by={"role": "manager", "session": "w1:p1"})
+        self.assertIn(f"  yolo on (push) since {self.SINCE}, set by an engineering manager session in herdr pane w1:p1", self.status())
+
+    def test_status_names_away_for_a_file_without_mode_or_by(self):
+        self.write()
+        self.assertIn(f"  away on since {self.SINCE}", self.status())
+
+    def test_status_names_away_with_push_and_who_for_a_stored_mode(self):
+        self.write(mode="away", push=True, by={"role": "manager", "session": "w1:p1"})
+        self.assertIn(f"  away on (push) since {self.SINCE}, set by an engineering manager session in herdr pane w1:p1", self.status())
+
+    def test_status_says_nothing_when_no_posture_is_on(self):
+        self.assertFalse([l for l in self.status() if l.startswith(("  away on", "  yolo on"))])
 
 
 if __name__ == "__main__":
