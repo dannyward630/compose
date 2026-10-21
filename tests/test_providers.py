@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
+import importlib.machinery, importlib.util, io, json, os, socket, sys, tempfile, threading, unittest, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -315,3 +315,35 @@ class PreflightReach(unittest.TestCase):
     def test_a_run_with_no_local_models_never_reaches(self):
         fc.fc_run.preflight(["pi:openrouter-fast/z-ai/glm", "claude:opus", "openrouter/x/y"])
         self.reach.assert_not_called(); self.assertEqual(self.impl.call_count, 2)
+
+class DoctorProviders(unittest.TestCase):
+    URL = "http://127.0.0.1:9/v1"
+    def setUp(self):
+        self.up = {"fakelocal": False}
+        self.checks = {n: mock.Mock(side_effect=lambda co, n=n: (self.up[n], "" if self.up[n] else "not answering")) for n in self.up}
+        self.rows = lambda: [(f"local provider {n}", c, f"start the server at {self.URL}", "default", False, "manual") for n, c in sorted(self.checks.items())]
+        for p in (mock.patch.object(fc_providers, "doctor_rows", side_effect=lambda: self.rows()), mock.patch.object(fc.fc_init, "herdr_loud", return_value=(True, "")),
+                  mock.patch.object(fc.fc_init.fc_steps, "STEPS", (("req", lambda co: (False, ""), "fix req", "required", False, "run"),))):
+            p.start(); self.addCleanup(p.stop)
+    def deps(self, role=None):
+        with mock.patch("sys.stdout", io.StringIO()) as out: bad = fc.fc_init.check_deps(role)
+        return bad, out.getvalue().splitlines()
+    REQ = "MISSING: req (install: fix req)"
+    LINE = f"MISSING: local provider fakelocal: not answering (install: start the server at {URL}) - optional"
+    def test_a_down_provider_prints_one_optional_line_and_is_not_returned(self):
+        self.assertEqual(self.deps(), (["req"], [self.REQ, self.LINE]))
+    def test_an_up_provider_prints_nothing(self):
+        self.up["fakelocal"] = True
+        self.assertEqual(self.deps(), (["req"], [self.REQ]))
+    def test_no_providers_leave_the_output_as_before(self):
+        self.checks.clear()
+        self.assertEqual(self.deps(), (["req"], [self.REQ]))
+    def test_a_role_checks_no_provider_row(self):
+        self.assertEqual(self.deps("designer"), ([], []))
+        self.checks["fakelocal"].assert_not_called()
+    def test_provider_rows_follow_the_herdr_config_row(self):
+        self.checks["alpha"] = mock.Mock(return_value=(False, "not answering"))
+        with mock.patch.object(fc.fc_init, "herdr_loud", return_value=(False, "loud")):
+            bad, lines = self.deps()
+        self.assertEqual(bad, ["req"])
+        self.assertEqual([l.split(":")[1] for l in lines], [" req (install", " herdr config", " local provider alpha", " local provider fakelocal"])
