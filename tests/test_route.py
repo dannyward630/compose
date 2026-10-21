@@ -161,3 +161,50 @@ class Record(unittest.TestCase):
         (routes, _), out = self.route()
         self.assertEqual((sorted(routes), self.cache.read_bytes()), (["001", "002"], saved))
         self.assertTrue(all(f"linear {i}: route not recorded (division by zero)" in out for i in ("ENG-3", "ENG-4")))
+
+
+class RunRoutes(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.proj = (r := Path(tempfile.mkdtemp()).resolve()), r / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        issues = [{**task(f"ENG-{n}", f"00{n}"), "blockedBy": [{"id": "ENG-90", "status": "In Progress"}] if n == 1 else []} for n in (1, 2, 3)]
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": issues})
+        for n in (1, 2, 3): (self.repo / f"test_00{n}.py").write_text("")
+        cache = json.loads((self.proj / "results" / "tasks.json").read_text())
+        del cache["tasks"][2]["waits_on"]  # a sync older than the key
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(cache))
+        self.calls, self.a = mock.Mock(), SimpleNamespace(repo=str(self.repo), project="p", only=None, redo=False, no_stack=False)
+        for target, name, kw in [(fc.fc_core, "project_dir", {"return_value": self.proj}), (fc.fc_core, "sh", {"return_value": SimpleNamespace(returncode=1, stdout="")}),
+                                 (fc.fc_run, "run_tasks", {}), (fc.fc_route, "route_tasks", {"return_value": ({}, {})})]:
+            setattr(self, name, mock.patch.object(target, name, **kw).start())
+            if name.endswith("_tasks"): self.calls.attach_mock(getattr(self, name), name)
+        self.addCleanup(mock.patch.stopall)
+
+    def test_routes_once_before_dispatching_the_same_tasks_and_changes_nothing_else(self):
+        fc.fc_run.cmd_run(self.a)
+        self.assertEqual([c[0] for c in self.calls.mock_calls], ["route_tasks", "run_tasks"])
+        self.assertEqual(self.run_tasks.call_args.args, (self.repo, self.proj, self.route_tasks.call_args.args[2], self.a))
+        self.assertEqual((self.route_tasks.call_args.args[:2], [m["id"] for m in self.run_tasks.call_args.args[2]]), ((self.repo, self.proj), ["001", "002", "003"]))
+        self.assertEqual([m["waits_on"] for m in self.run_tasks.call_args.args[2][:2]], [["ENG-90 (In Progress)"], []])
+        self.assertNotIn("waits_on", self.run_tasks.call_args.args[2][2])
+
+    def test_a_held_task_waits_on_the_route_after_its_blockers_and_the_others_are_untouched(self):
+        self.route_tasks.return_value = ({}, {"001": "boom", "003": "bang"})
+        fc.fc_run.cmd_run(self.a)
+        tasks = self.run_tasks.call_args.args[2]
+        self.assertEqual([m.get("waits_on") for m in tasks], [["ENG-90 (In Progress)", "the route (boom)"], [], ["the route (bang)"]])
+        self.assertEqual(fc.fc_tasks.waiting(tasks)["001"]["reason"], "waits on ENG-90 (In Progress), the route (boom)")
+
+    def test_a_run_with_nothing_to_dispatch_does_not_route(self):
+        with mock.patch.object(fc.fc_tasks, "task_finished", return_value="its result passed"):
+            fc.fc_run.cmd_run(self.a)
+        with self.assertRaises(SystemExit):
+            fc.fc_run.cmd_run(SimpleNamespace(**{**vars(self.a), "only": "009"}))
+        self.assertEqual((self.route_tasks.called, self.run_tasks.called), (False, False))
+
+    def test_a_route_that_raises_propagates_and_nothing_is_dispatched(self):
+        self.route_tasks.side_effect = fc.fc_models.PaymentRequired("p", "top up")
+        with self.assertRaises(fc.fc_models.PaymentRequired):
+            fc.fc_run.cmd_run(self.a)
+        self.assertFalse(self.run_tasks.called)

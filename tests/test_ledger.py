@@ -477,7 +477,7 @@ class RedoRunId(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_run, "require_committed"), \
                 mock.patch.object(fc.fc_briefs, "test_open", return_value=False), mock.patch.object(fc.fc_briefs, "waiting_writers", return_value={}), \
                 mock.patch.object(fc.fc_run, "run_tasks", parent.run_tasks), mock.patch.object(fc_ledger, "run_id", parent.run_id), \
-                mock.patch.dict(os.environ), mock.patch("sys.stdout", io.StringIO()):
+                mock.patch.object(fc.fc_route, "route_tasks", return_value=({}, {})), mock.patch.dict(os.environ), mock.patch("sys.stdout", io.StringIO()):
             try:
                 fc.fc_run.cmd_run(a)
             except SystemExit:
