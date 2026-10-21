@@ -28,6 +28,9 @@ def run(cmd, cwd=None, env=None, timeout=None):
             kill_group(p.pid)
             p.communicate()
             raise
+        except KeyboardInterrupt:  # Ctrl-C or a SIGINT to this process: the command is part of what is being stopped
+            kill_group(p.pid)
+            raise
         if STOP.is_set():
             raise Stopped
         return subprocess.CompletedProcess(cmd, p.returncode, out, err)
@@ -76,6 +79,14 @@ def on_termination(cleanup):
         os._exit(128 + sig)
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, terminated)
+
+
+def restore_sigint():
+    """Make SIGINT stop this process again when it started with SIGINT ignored: a background job of a non-interactive shell, or
+    nohup, hands that on, Python then installs no KeyboardInterrupt handler, and every command this process starts inherits the
+    ignore (exec keeps it, and resets only a handler), so a `kill -INT` stopped neither the verify nor its suite."""
+    if signal.getsignal(signal.SIGINT) == signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
 
 
 AWAKE = {}  # pid -> the caffeinate that keeps the Mac awake while that process lives
