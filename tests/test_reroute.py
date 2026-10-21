@@ -706,3 +706,32 @@ class LedgerVerdicts(unittest.TestCase):
         self.assertEqual(self.triggers(*rows, kept=[]), [])
         kept = [{"source": "verify", "phase": "acceptance", "result": "unclear"}]
         self.assertEqual(self.triggers(*rows, kept=kept), ["unmet requirements"])
+
+
+class LedgerInvalid(unittest.TestCase):
+    def triggers(self, *rows, unsaved=()):
+        led = importlib.import_module("fc_ledger")
+        counted = lambda repo, proj, meta, rs: [r for r in rs if r["run_id"] == "r1" and "001" in r["task_ids"]]
+        with mock.patch.object(led, "counted", side_effect=counted) as c, mock.patch.object(led, "criterion_ids", return_value=["001.1:aaaaaaaa", "001.2:bbbbbbbb"]), mock.patch.object(led, "unsaved", return_value=list(unsaved)):
+            return fc_reroute.ledger_triggers("repo", "proj", {"id": "001"}, list(rows)), c
+
+    def row(self, ids=(), run="r1", tasks=("001",), at=("verify", "checks", "pass")):
+        return {"event_id": "e", "run_id": run, "task_ids": list(tasks), "criterion_id": list(ids), "source": at[0], "phase": at[1], "result": at[2]}
+
+    def test_a_counted_row_holding_an_edited_criterion_of_the_task_is_voided_and_no_other_row_is(self):
+        for kw, want in [(dict(ids=["001.1:deadbeef"]), True), (dict(ids=["001.1:aaaaaaaa", "001.3:deadbeef"]), True), (dict(ids=["001.1:aaaaaaaa", "001.2:bbbbbbbb"]), False), (dict(ids=["002.1:cccccccc"]), False),
+                         (dict(ids=["0010.1:cccccccc"]), False), (dict(), False), (dict(ids=["001.1:deadbeef"], run="r2"), False), (dict(ids=["001.1:deadbeef"], tasks=["002"]), False)]:
+            with self.subTest(kw=kw):
+                got, counted = self.triggers(self.row(**kw))
+                self.assertEqual(got, ["invalid evidence"] if want else [])
+        got, counted = self.triggers(self.row(ids=["001.1:deadbeef"]))
+        self.assertIn(True, [len(c.args[3]) == 1 and c.args[3][0]["criterion_id"] == [] for c in counted.call_args_list])
+
+    def test_an_unsaved_row_naming_the_task_or_no_task_gives_invalid_evidence_and_one_naming_only_others_does_not(self):
+        for tasks, want in [([], True), (["001"], True), (["002", "001"], True), (["002"], False), (["002", "003"], False)]:
+            with self.subTest(tasks=tasks):
+                self.assertEqual(self.triggers(unsaved=[self.row(tasks=tasks)])[0], ["invalid evidence"] if want else [])
+
+    def test_invalid_evidence_appears_once_between_the_other_triggers_however_many_rows_fire_it(self):
+        rows = [self.row(at=("verify", "acceptance", "fail")), self.row(ids=["001.1:deadbeef"]), self.row(ids=["001.2:deadbeef"]), self.row(at=("verify", "checks", "fail"))]
+        self.assertEqual(self.triggers(*rows, unsaved=[self.row(tasks=[]), self.row()])[0], ["failed tests", "invalid evidence", "unmet requirements"])
