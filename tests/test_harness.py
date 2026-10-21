@@ -965,3 +965,65 @@ class HookTrust(unittest.TestCase):
         self.trust.write_text(self.trust.read_text().replace(self.records()[f"{self.file}:session_start:0:0"], "sha256:bad"))
         self.assertTrue(fc_checks.hooks_ok("codex", "/c")[1].endswith("has no trust record for compose's reenter hook"))
         with mock.patch.dict(fc_harness.HARNESSES, {"codex": {k: v for k, v in fc_harness.HARNESSES["codex"].items() if k != "hooks"}}): self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+
+
+class CodexGuard(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        fc.fc_core.sh(["git", "init", "-q"], self.repo)
+        d = Path(tempfile.mkdtemp())
+        (d / "skill").mkdir(); (d / "skill" / "SKILL.md").write_text("v1\n")
+        for p in (mock.patch.object(fc.fc_hooks, "SKILL_DIR", d / "skill"), mock.patch.object(fc.fc_hooks, "SKILL_SEEN", d / "seen")):
+            p.start(); self.addCleanup(p.stop)
+
+    def run_hook(self, cmd, ev, role):
+        env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"} | ({"COMPOSE_ROLE": role} if role else {})
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(ev))), mock.patch.object(sys, "stdout", out):
+            cmd(None)
+        return out.getvalue()
+
+    def denied(self, tool, ti, role="orchestrator"):
+        out = self.run_hook(fc.fc_hooks.cmd_guard, {"tool_name": tool, "cwd": str(self.repo), "tool_input": ti}, role)
+        return json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"] if out else None
+
+    def patch(self, *lines):
+        return {"command": "*** Begin Patch\n" + "\n".join(lines) + "\n*** End Patch"}
+
+    def test_apply_patch_headers_are_denied_when_relative_paths_land_in_the_repo(self):
+        self.assertEqual(self.denied("apply_patch", self.patch("*** Add File: a.go", "+x")), fc.fc_hooks.guard_decision("Write", str(self.repo / "a.go"), "orchestrator"))
+        for head in ("*** Update File: src/a.go", "*** Delete File: src/a.go", "*** Update File: .compose/shop/scratch/a\n*** Move to: src/b.go",
+                     "*** Add File: .compose/shop/scratch/a\n+x\n*** Update File: src/a.go\n@@"):
+            self.assertIn("never edit code", self.denied("apply_patch", self.patch(head)) or "", head)
+
+    def test_apply_patch_in_scratch_and_bash_without_a_target_are_allowed(self):
+        self.assertIsNone(self.denied("apply_patch", self.patch("*** Add File: .compose/shop/scratch/x.json", "+{}")))
+        self.assertIsNone(self.denied("Bash", {"command": "ls 2>&1"}))
+        self.assertIsNone(self.denied("Bash", {"command": "ls -la && git status"}))
+        self.assertIsNone(self.denied("Bash", {"command": "echo hi > .compose/shop/scratch/x"}))
+
+    def test_bash_redirection_targets_are_denied(self):
+        for cmd in ("echo hi > a.txt", "echo hi >> a.txt", "cat x 2>&1 > a.txt", "echo hi >a.txt", "ls | tee x > src/a.txt"):
+            self.assertIn("never edit code", self.denied("Bash", {"command": cmd}) or "", cmd)
+
+    def test_other_roles_and_claude_payloads(self):
+        for role in ("crew", None, ""):
+            self.assertIsNone(self.denied("apply_patch", self.patch("*** Add File: a.go"), role), role)
+            self.assertIsNone(self.denied("Bash", {"command": "echo hi > a.txt"}, role), role)
+        self.assertIn("never edit code", self.denied("Write", {"file_path": str(self.repo / "a.go")}))
+        self.assertIsNone(self.denied("Write", {"file_path": str(self.repo / "a.go")}, "crew"))
+        self.assertIsNone(self.denied("Read", {"file_path": str(self.repo / "a.go")}))
+
+    def test_edit_paths_resolves_relative_paths_against_cwd(self):
+        ev = {"tool_name": "apply_patch", "cwd": str(self.repo), "tool_input": self.patch("*** Add File: a", "*** Update File: b", "*** Delete File: /x/c", "*** Move to: d")}
+        self.assertEqual({os.path.realpath(p) for p in fc.fc_hooks.edit_paths(ev)}, {os.path.realpath(self.repo / n) for n in "abd"} | {os.path.realpath("/x/c")})
+
+    def test_a_sigil_prompt_enrolls_the_session_like_the_slash_command(self):
+        def seen(prompt):
+            self.run_hook(fc.fc_hooks.cmd_skillcheck, {"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt": prompt}, None)
+            return fc.fc_hooks.SKILL_SEEN.exists() and (fc.fc_hooks.SKILL_SEEN / "s.json").exists()
+        for p in ("$composer", "$compose:yolo", "compose-yolo", "go $compose"):
+            self.assertFalse(seen(p), p)
+        for p in ("$compose-yolo", "$compose", "$compose ship it"):
+            self.assertTrue(seen(p), p)
+            (fc.fc_hooks.SKILL_SEEN / "s.json").unlink()
