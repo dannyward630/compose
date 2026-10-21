@@ -1567,5 +1567,41 @@ class SlashCommandsNamePostures(unittest.TestCase):
             self.assertNotIn("—", read(f"commands/{p}.md"))
 
 
+class SkillNamesPostures(unittest.TestCase):
+    EVENTS = ["- `event away=on`: the product owner is away; continue under 0h's Away rules.",
+              "- `event yolo=on`: yolo is on until an explicit off; continue under 0h's Yolo rules."]
+    PUSH = ("- Never push or submit a stack without the user's explicit permission for that push; `compose away --push` or `compose yolo --push` is that permission for the project's stack, given in advance; neither posture without --push ever pushes. "
+            "`compose land --yes` merges on GitHub only when the user said to land; neither posture covers it. `run` registers stacks locally only.")
+    AWAY = ("- While the product owner is away (`results/yolo.json`, `event away=on` or `event yolo=on`), decisions follow 0h's Away or Yolo paragraph: "
+            "the recommendation, logged; the never-set still waits.")
+    TAG = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, not the product owner's: the line ends "
+           "`(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names, until they confirm it (0h).")
+
+    def test_skill_event_lines_in_order_and_old_one_gone(self):
+        lines = read("SKILL.md").splitlines()
+        self.assertIn(self.EVENTS[0], lines)
+        i = lines.index(self.EVENTS[0])
+        self.assertEqual(lines[i:i + 2], self.EVENTS)
+        self.assertEqual(lines.count(self.EVENTS[1]), 1)
+        self.assertFalse([l for l in lines if "event yolo=on" in l and "the product owner is away;" in l])
+
+    def test_skill_push_and_away_lines_once_and_old_ones_gone(self):
+        text = read("SKILL.md")
+        lines = text.splitlines()
+        for want in (self.PUSH, self.AWAY):
+            self.assertEqual(lines.count(want), 1)
+        for old in ("yolo without --push never pushes", "yolo never covers it", "(`results/yolo.json`, `event yolo=on`)"):
+            self.assertNotIn(old, text)
+
+    def test_0b_tag_line_once_and_old_one_gone(self):
+        lines = read("sections/0b.md").splitlines()
+        self.assertEqual(lines.count(self.TAG), 1)
+        self.assertNotIn("An answer that starts `yolo:` is", "\n".join(lines))
+
+    def test_no_em_dash(self):
+        for rel in ("SKILL.md", "sections/0b.md"):
+            self.assertNotIn("—", read(rel))
+
+
 if __name__ == "__main__":
     unittest.main()
