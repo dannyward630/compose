@@ -735,3 +735,52 @@ class LedgerInvalid(unittest.TestCase):
     def test_invalid_evidence_appears_once_between_the_other_triggers_however_many_rows_fire_it(self):
         rows = [self.row(at=("verify", "acceptance", "fail")), self.row(ids=["001.1:deadbeef"]), self.row(ids=["001.2:deadbeef"]), self.row(at=("verify", "checks", "fail"))]
         self.assertEqual(self.triggers(*rows, unsaved=[self.row(tasks=[]), self.row()])[0], ["failed tests", "invalid evidence", "unmet requirements"])
+
+
+class LedgerCatchUp(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1"}))
+        self.tasks = [{"id": t, "linear": f"XX-{t}"} for t in ("001", "002", "003")]
+        for t in ("001", "002", "003"): (self.proj / "results" / f"{t}.json").write_text(json.dumps({"id": t, "status": "passed"}))
+
+    def go(self, kinds, fired=(), fire=("failed tests", "invalid evidence", "unmet requirements"), ids=("001", "002", "003"), rows=None):
+        """catch_up with everything but its own logic mocked; returns (its value, reassess, task_rows, ledger_triggers)."""
+        ev = importlib.import_module("fc_evidence")
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc_reroute, "reassess") as re, mock.patch.object(fc_reroute, "fired", return_value=set(fired)), \
+                mock.patch.object(fc_reroute, "layer_base", return_value="main"), mock.patch.object(fc_reroute, "diff_signals", return_value={"outside": ["x"]}), \
+                mock.patch.object(importlib.import_module("fc_ledger"), "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(ev, "task_rows", **rows or {"return_value": ["row"]}) as tr, \
+                mock.patch.object(fc_reroute, "ledger_triggers", side_effect=lambda repo, proj, meta, rs: list(fire)) as lt:
+            return fc_reroute.catch_up(self.repo, self.proj, self.tasks, list(ids), "main", kinds), re, tr, lt
+
+    def test_the_asked_ledger_triggers_the_rows_fire_join_diff_and_scope_in_one_reassess_in_ledger_order(self):
+        got, re, tr, lt = self.go(("diff", "scope", "unmet requirements", "failed tests"), ids=("001", "002"))
+        self.assertEqual((got, [(c.args[2]["id"], c.args[4]) for c in re.call_args_list]), ({}, [(t, ["diff", "scope", "failed tests", "unmet requirements"]) for t in ("001", "002")]))
+        self.assertEqual(self.go(("invalid evidence",), ids=("001",))[1].call_args.args[4], ["invalid evidence"])
+
+    def test_a_trigger_fired_for_the_run_id_is_dropped_and_with_none_left_reassess_is_not_called(self):
+        for fired, want in ([("failed tests", "run-001"), ("diff", "run-001")], ["unmet requirements"]), ([("failed tests", "old"), ("unmet requirements", "run-002")], ["diff", "failed tests", "unmet requirements"]), \
+                           ([("diff", "run-001"), ("failed tests", "run-001"), ("unmet requirements", "run-001")], None):
+            with self.subTest(fired=fired):
+                got, re, tr, lt = self.go(("diff", "failed tests", "unmet requirements"), fired, ids=("001",))
+                self.assertEqual(re.call_args.args[4] if re.call_args else None, want)
+
+    def test_the_rows_are_read_once_per_task_from_its_issue_the_feature_and_its_id_and_never_without_a_ledger_kind(self):
+        got, re, tr, lt = self.go(("diff", "failed tests"))
+        self.assertEqual([c.args for c in tr.call_args_list], [(f"XX-{t}", "ENG-1", t) for t in ("001", "002", "003")])
+        self.assertEqual([c.args[3] for c in lt.call_args_list], [["row"]] * 3)
+        (self.proj / "linear.json").unlink()
+        self.assertEqual([c.args for c in self.go(("failed tests",), ids=("001",))[2].call_args_list], [("XX-001", None, "001")])
+        for kinds in (("diff", "scope"), ()): self.assertEqual((self.go(kinds)[2].call_count, self.go(kinds)[3].call_count), (0, 0))
+
+    def test_a_task_rows_or_ledger_triggers_error_is_that_tasks_failure_and_the_others_go_on(self):
+        def rows(issue, feature, tid):
+            if tid == "002": raise RuntimeError("Linear: boom")
+            return ["row"]
+        got, re, tr, lt = self.go(("diff", "failed tests"), rows={"side_effect": rows})
+        self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({"002": "Linear: boom"}, ["001", "003"]))
+        with mock.patch.object(fc_reroute, "ledger_triggers", side_effect=RuntimeError("bad rows")):
+            self.assertEqual(self.go(("failed tests",), ids=("001",))[0], {"001": "bad rows"})
