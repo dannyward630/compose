@@ -115,4 +115,23 @@ def record_task(repo, proj, meta, events):
 
 def verify_record(proj, repo, report):
     """Record one verify round's evidence: checks, e2e, review on the feature issue, scoped and acceptance on each task issue; True when all saved"""
-    raise NotImplementedError("fc_ledger.verify_record")
+    path = proj / "linear.json"
+    feature = json.loads(path.read_text()).get("feature") if path.exists() else None
+    sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+
+    def result(e):
+        if e.get("tool_error") or "JEV_GAVE_UP" in e.get("output", "") + e.get("stdout", "") + e.get("stderr", ""):
+            return "error"
+        return "pass" if e["exit"] == 0 else "fail"
+
+    ev = lambda phase, r, detail: event("", sha, [], [], phase, "verify", r, None, detail)
+    checks = [ev("checks", result(c), f"{c['cmd']}: exit {c['exit']}") for c in report["checks"]]
+    e2e = [ev("e2e", result(c), f"{c['name']}: exit {c['exit']}") for c in report["e2e"]]
+    rv = report["review"]
+    if rv is None:
+        review = [ev("review", "skipped", "review did not run")]
+    else:
+        review = [ev("review", "pass" if rv["pass"] else "fail", f"{len(rv['confirmed'])} confirmed of {len(rv['issues'])} raised")]
+    return all([record(feature, checks or [ev("checks", "skipped", "no checks ran")]),
+                record(feature, e2e or [ev("e2e", "skipped", "no e2e cases ran")]),
+                record(feature, review)])

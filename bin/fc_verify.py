@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_init, fc_jev, fc_accept
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_implement, fc_init, fc_jev, fc_accept
 
 
 SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
@@ -466,6 +466,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                         "and the stages judged that code, not the stack top; run verify again")
             sys.exit(1)
         rounds.append(report)
+        fc_ledger.verify_record(proj, repo, report)
         if ok or rnd == a.fix:
             break
         if not findings.strip():
