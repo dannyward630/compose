@@ -441,6 +441,29 @@ class FixScope(unittest.TestCase):
             self.assertEqual(asked, [1500, 1500])
             self.assertIn(found, rv["issues"][0]["note"])
 
+    def test_a_confirm_reply_with_prose_or_a_fence_around_the_object_is_read(self):
+        confirm = json.dumps({"requirement": "r", "wrong_line": "return a - b", "fixed_line": "return a + b", "confirmed": True})
+        found = json.dumps({"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]})
+        for reply in (f"The claim says `x = {{}}`, so:\n```json\n{confirm}\n```\nThat is my verdict.", f"Verdict: {confirm} (truncated notes", confirm):
+            replies = [found, reply]
+            def http(req, provider, timeout=90, replies=replies):
+                return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+            self.assertEqual(([i["evidence"] for i in rv["confirmed"]], rv["pass"]), (["return a - b"], False), reply)
+
+    def test_a_confirm_reply_that_stays_unparseable_is_not_judged_and_does_not_fail_verify(self):
+        found = json.dumps({"issues": [{"file": "a.py", "line": 2, "severity": "high", "note": "n"}]})
+        for bad in ('{"requirement": "r", "wrong_line": "return a - b", "fixed_', '{"requirement": "r"}', "no verdict here"):
+            replies = [found, bad, bad]  # the first ask and the strict re-ask
+            def http(req, provider, timeout=90, replies=replies):
+                return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
+            with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
+                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+            i = rv["issues"][0]
+            self.assertEqual((replies, i["confirmed"], i["evidence"], i.get("judge_error"), rv["pass"], "error" in rv),
+                             ([], False, "confirm unparseable, not judged", None, True, False), bad)
+
     def test_review_confirms_only_a_quoted_wrong_line_the_fix_changes(self):
         def review(reply, finding=None, code="build: {\n  fileName: 'x.js',\n}", perspective="spec", cfg=None, users=None):
             def fj(env, system, user, **kw):

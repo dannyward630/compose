@@ -40,6 +40,8 @@ One that names no branch (a project made before init recorded it holds `main`, a
 2. **review** makes one fast-model review per perspective.
    Each high or medium finding then gets a confirmation call that must quote the wrong line and say how it must read.
    A quote that is not in the code, or a line that must read as it already does, drops the finding, and only confirmed highs fail.
+   The reply is read from the first object that holds the verdict, whatever prose or fence surrounds it, and asked once more when it has none.
+   A claim whose reply is still unusable is shown as `unjudged` and dropped, and it does not fail the stage.
 3. **jev** asks one MET / NOT_MET / UNCLEAR question per acceptance criterion.
    Failures above the threshold become findings.
 4. **e2e** has jev drive a real browser to each case's goal.

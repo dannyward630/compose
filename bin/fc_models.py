@@ -362,21 +362,32 @@ def payment_halt(repo, proj, command, remaining, args, err):
     sys.exit(3)
 
 
-def lenient_json(content):
+def lenient_json(content, key=None):
+    """The first JSON value in a reply, whatever prose or fence surrounds it. With `key`, the first object holding it: a
+    `{}` quoted in the prose before the answer is not the answer."""
     content = content.strip()
-    content = content[content.index("{"):] if "{" in content else content
-    try:
-        return json.JSONDecoder().raw_decode(content)[0]  # first object; small models append prose
-    except json.JSONDecodeError:
-        # Common small-model slip: single-quoted JSON.
-        return json.JSONDecoder().raw_decode(re.sub(r"(?<![\\\\])'", '"', content))[0]
+    starts = [m.start() for m in re.finditer(r"\{", content)] or [0]
+    first = None
+    for at in starts:
+        try:
+            v = json.JSONDecoder().raw_decode(content[at:])[0]  # small models append prose
+        except json.JSONDecodeError:
+            continue
+        if key is None or isinstance(v, dict) and key in v:
+            return v
+        first = v if first is None else first
+    if first is not None:
+        return first
+    # Common small-model slip: single-quoted JSON.
+    return json.JSONDecoder().raw_decode(re.sub(r"(?<![\\\\])'", '"', content[starts[0]:]))[0]
 
 def fast_env():
     """The env a fast-model call reads: ~/.compose/.env, overridden by the process env (the workspace key)."""
     return {**fc_core.load_env(fc_config.ENV_FILE), **os.environ}
 
-def fast_json(env, system, user, max_tokens=1500, timeout=90):
-    """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact."""
+def fast_json(env, system, user, max_tokens=1500, timeout=90, key=None):
+    """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact. `key` names
+    the field the caller needs, so the object holding it is the one read."""
     body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
             "messages": [{"role": "system", "content": fc_core.scrub(system)}, {"role": "user", "content": fc_core.scrub(user)}]}
@@ -391,7 +402,7 @@ def fast_json(env, system, user, max_tokens=1500, timeout=90):
     try:
         if not content or not str(content).strip():
             raise EmptyReply("model returned an empty reply")
-        return lenient_json(str(content))
+        return lenient_json(str(content), key)
     except (EmptyReply, ValueError):
         if cut:  # the budget ran out before the object closed; a whole object followed by cut-off prose still parses above
             raise CutOff(f"reply cut off at max_tokens={max_tokens}")
@@ -424,7 +435,7 @@ def fast_object(env, system, user, shape, key, max_tokens=1500, timeout=90):
     strict = system + f" Reply with exactly one JSON object {shape} and nothing else: no list, no prose."
     for sysmsg, budget in ((system, max_tokens), (strict, max_tokens * CUT_RETRY)):
         try:
-            v = fast_json(env, sysmsg, user, max_tokens=budget, timeout=timeout)
+            v = fast_json(env, sysmsg, user, max_tokens=budget, timeout=timeout, key=key)
         except (EmptyReply, CutOff) as e:
             why = str(e)
             continue
