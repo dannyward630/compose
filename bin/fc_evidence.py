@@ -46,7 +46,17 @@ def rows(issue, task_id=None, run_id=None, criterion_id=None):
 
 def task_rows(issue, feature, task_id):
     """The task issue's rows and the feature issue's rows naming the task or no task, once each, oldest first."""
-    raise NotImplementedError("fc_evidence.task_rows")
+    out = rows(issue, task_id=task_id)
+    seen = {r["event_id"] for r in out}
+    for r in out:
+        r["shared"] = False
+    if feature:
+        for r in rows(feature, task_id=task_id):
+            if r["event_id"] not in seen:
+                r["shared"] = True
+                out.append(r)
+    out.sort(key=lambda r: r["at"])
+    return out
 
 def table(rows):
     """The `## Evidence` section text: the verdict line and the 60 newest rows."""
