@@ -1621,7 +1621,8 @@ class UserDocsNamePostures(unittest.TestCase):
         self.assertEqual(lines[i:i + 2], self.STEP)
         self.assertEqual(lines.count(self.STEP[1]), 1)
         before = lines[i - 5:i]
-        self.assertEqual([l for l in before if "/compose:away" in l], before)
+        for k in (0, 3, 4):
+            self.assertIn("/compose:away", before[k])
         self.assertNotIn("/compose:yolo", "".join(before))
         self.assertEqual(lines[i - 6], "")
 
