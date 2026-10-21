@@ -820,3 +820,43 @@ class LedgerRound(unittest.TestCase):
     def test_without_a_linear_key_it_returns_empty_and_calls_nothing(self):
         got, cu, say, order, tasks = self.round(ready=False)
         self.assertEqual((got, cu.call_count, say.call_count, order.call_count), (([], {}), 0, 0, 0))
+
+
+class LedgerRerun(unittest.TestCase):
+    def rounds(self, stages, after, fix=0, main=None):
+        """verify_rounds with its stages (ok per run), evidence record, sufficiency and after_round (one return per call) faked; the fixer is a mock.
+        Returns (exit code, call order, run_stages calls, rounds, after_round calls, fixer mock, passed from verify.json, the repo, the proj, the stage reports)."""
+        repo = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, repo, True); proj = repo / ".compose" / "p"; proj.mkdir(parents=True)
+        order, reports, rounds = [], [{"run": i} for i in range(len(stages))], []
+        def note(name, value=None): return mock.Mock(side_effect=lambda *a: order.append(name) or value)
+        run = mock.Mock(side_effect=lambda *a: (order.append("stages"), (stages[order.count("stages") - 1], reports[order.count("stages") - 1], "finding"))[1])
+        cu = mock.Mock(side_effect=lambda *a: (order.append("after_round"), after[order.count("after_round") - 1])[1]); fixer = mock.Mock()
+        with mock.patch.object(fc.fc_verify, "run_stages", run), mock.patch.object(importlib.import_module("fc_ledger"), "verify_record", note("record")), \
+             mock.patch.object(fc.fc_accept, "jev_sufficiency", note("sufficiency", "judged")), mock.patch.object(fc_reroute, "after_round", cu), mock.patch.object(fc.fc_implement, "implementer", fixer), \
+             mock.patch.object(fc.fc_worktree, "review_base", return_value="BASE"), mock.patch.object(fc.fc_worktree, "dirty_paths", return_value=[]), mock.patch.object(fc.fc_worktree, "ready_checkout"), \
+             mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc.fc_linear, "linear_reconcile"), mock.patch.object(fc.fc_core, "say"):
+            with self.assertRaises(SystemExit) as exit:
+                fc.fc_verify.verify_rounds(repo, proj, {"main_repo": main} if main else {}, SimpleNamespace(fix=fix, review_only=False), rounds, 0)
+        return exit.exception.code, order, run.call_args_list, rounds, cu.call_args_list, fixer, json.loads((proj / "results" / "verify.json").read_text())["passed"], repo, proj, reports
+
+    def test_without_a_raise_the_stages_run_once_and_after_round_follows_the_recorded_evidence_with_the_main_checkout_and_base(self):
+        for main in None, "/main/checkout":
+            with self.subTest(main=main):
+                code, order, ran, rounds, asked, _, passed, repo, proj, reports = self.rounds([True], [([], {})], main=main)
+                self.assertEqual((order, asked, rounds, (code, passed)), (["stages", "record", "sufficiency", "after_round"], [mock.call(main or repo, proj, "BASE")], reports, (0, True)))
+
+    def test_each_raise_reruns_the_stages_with_the_same_tests_records_each_run_and_ends_when_no_depth_rises(self):
+        code, order, ran, rounds, asked, _, passed, repo, proj, reports = self.rounds([True, True, True], [(["001"], {}), (["002"], {}), ([], {})])
+        self.assertEqual((order, len(asked), rounds, len({c.args[4] for c in ran}), (code, passed)), (["stages", "record", "sufficiency", "after_round"] * 3, 3, reports, 1, (0, True)))
+
+    def test_the_verdict_and_the_fix_decision_come_from_the_last_run(self):
+        code, order, ran, rounds, asked, fixer, passed, *_ = self.rounds([False, True], [(["001"], {}), ([], {})], fix=1)
+        self.assertEqual((code, passed, len(ran), fixer.call_count), (0, True, 2, 0))
+        code, order, ran, rounds, asked, fixer, passed, *_ = self.rounds([True, False], [(["001"], {}), ([], {})])
+        self.assertEqual((code, passed, len(rounds)), (1, False, 2))
+
+    def test_a_route_not_recorded_fails_with_exit_1_and_no_fix_round_even_when_every_stage_passed_and_a_raise_does_not_rerun(self):
+        for stages, after in ([True], [([], {"001": "Linear: down"})]), ([True], [(["002"], {"001": "Linear: down"})]), ([True, True], [(["002"], {}), ([], {"001": "Linear: down"})]):
+            with self.subTest(runs=len(stages)):
+                code, order, ran, rounds, asked, fixer, passed, *_ = self.rounds(stages, after, fix=1)
+                self.assertEqual((code, passed, len(ran), len(asked), fixer.call_count), (1, False, len(stages), len(stages), 0))
