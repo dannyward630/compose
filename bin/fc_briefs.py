@@ -388,14 +388,14 @@ def cmd_testcrews(a):
     contract, budget, redo = contract_file.read_text(), getattr(a, "budget", None), bool(getattr(a, "redo", False))
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
-    finished = lambda m: fc_tasks.task_finished(proj, m, redo)  # a finished task needs no test writer
+    finished = lambda m: fc_tasks.task_finished(proj, m, redo) or (not redo and test_collected(proj, m["id"]))  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
     rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
             why = finished(m) if m else "no such task"
-            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith("its result") else ""))
+            print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith(("its result", "its test")) else ""))
     brief = lambda m: test_brief(m, contract, budget, fc_core.commit_convention(proj), m["id"] in rebuilt)
     again = " --redo" if redo else ""
     if a.print_:
@@ -446,6 +446,12 @@ def test_branch(proj, tid):
 def test_open(proj, tid):
     """Whether a test writer's branch is still to be collected."""
     return fc_core.sh(["git", "rev-parse", "--verify", "-q", test_branch(proj, tid)], fc_herdr.project_worktree(proj), check=False).returncode == 0
+
+def test_collected(proj, tid):
+    """Why a task's test writer is over, or None: it reported done and its branch is collected, so a plain `testcrews` leaves it be.
+    Only --redo starts a writer again."""
+    last = (fc_crew.crew_reports(proj, fc_herdr.agent_name(proj.name, f"tests-{tid}")) or [{}])[-1]
+    return "its test is collected" if last.get("state") == "done" and not test_open(proj, tid) else None
 
 def waiting_writers(proj, update=None):
     """The test writers waiting for another writer of the same test file, by task id, with the contract, budget, and --redo to start

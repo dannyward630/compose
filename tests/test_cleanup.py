@@ -108,6 +108,14 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
         self.assertEqual(self.writer_branches(), [])
 
+    def test_a_collected_writer_is_not_started_again(self):
+        self.start_writers([])
+        self.crew_commits("001", "a_test.go", "a\n")
+        fc.fc_briefs.collect_tests(self.proj, "001")
+        started = []
+        self.start_writers(started)
+        self.assertEqual(started, ["tests-002"])  # 001's test is on the project branch; 002 was never collected
+
     def test_a_redone_writer_that_waits_for_another_writer_is_started_by_the_collect(self):
         """A re-plan changed passed tasks 001 and 003, which share a_test.go: --redo starts 001's writer, and the collect starts 003's."""
         self.add_task("003", "a_test.go")
