@@ -309,7 +309,6 @@ class LinearErrors(unittest.TestCase):
         self.assertEqual(self.gql(b'{"data": {"viewer": {"id": "u1"}}}'), {"viewer": {"id": "u1"}})
         self.assertEqual(self.rejected(b'{"errors": [{"message": "a"}, {"message": "b"}]}'), "a; b")
 
-
     def test_a_rate_limited_call_waits_as_long_as_linear_says_and_runs_again(self):
         limited = json.dumps({"errors": [{"message": "Rate limit exceeded", "extensions": {"code": "RATELIMITED"}}]}).encode()
         reset = str(int(time.time()) + 40)
@@ -340,6 +339,37 @@ class LinearErrors(unittest.TestCase):
         fields = fc.fc_linear.LINEAR_TREE_FIELDS
         self.assertEqual(sorted(re.findall(r"\w+\(first: (\d+)\)", fields)), ["20", "20", "50"])
         self.assertNotIn("labels { nodes", fields)
+
+
+class LinearUrl(unittest.TestCase):
+    DEFAULT = "https://api.linear.app/graphql"
+
+    def setUp(self):
+        p = mock.patch.object(fc.fc_config, "LINEAR_KEY", KEY); p.start(); self.addCleanup(p.stop)
+
+    def url(self, **env):
+        r = mock.MagicMock(); r.__enter__.return_value = io.BytesIO(b'{"data": {}}')
+        with mock.patch.dict(os.environ, env), mock.patch("urllib.request.urlopen", return_value=r) as op:
+            fc.fc_linear.linear_gql("query { viewer { id } }", {})
+        return op.call_args.args[0].full_url
+
+    def test_the_environment_url_is_used_when_set(self):
+        self.assertEqual(self.url(LINEAR_URL="http://127.0.0.1:9/graphql"), "http://127.0.0.1:9/graphql")
+
+    def test_unset_or_empty_falls_back_to_the_linear_api(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("LINEAR_URL", None)
+            self.assertEqual(self.url(), self.DEFAULT)
+        self.assertEqual(self.url(LINEAR_URL=""), self.DEFAULT)
+
+    def test_the_variable_is_read_on_every_call_and_the_constant_stays(self):
+        with mock.patch.dict(os.environ, {"LINEAR_URL": "http://127.0.0.1:1/a"}):
+            self.assertEqual(self.url(), "http://127.0.0.1:1/a")
+            os.environ["LINEAR_URL"] = "http://127.0.0.1:2/b"
+            self.assertEqual(self.url(), "http://127.0.0.1:2/b")
+            del os.environ["LINEAR_URL"]
+            self.assertEqual(self.url(), self.DEFAULT)
+        self.assertEqual(fc.fc_linear.LINEAR_URL, self.DEFAULT)
 
 
 if __name__ == "__main__":
