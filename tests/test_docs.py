@@ -1523,5 +1523,49 @@ class ManagerProseNamesPostures(unittest.TestCase):
         self.assertNotIn("—", "\n".join(self.lines))
 
 
+class SlashCommandsNamePostures(unittest.TestCase):
+    HINT = 'argument-hint: "[--push] [words] | --clear-words | digest | off"'
+    DESC = {"away": "description: Go away - the engineering manager answers with the recommendation and logs it; your first message ends it",
+            "yolo": "description: Yolo - the engineering manager answers with the recommendation and logs it until you say yolo:off; you can still steer"}
+    LAST = {"away": "Then continue under sections/0h.md's Away paragraph.",
+            "yolo": "Then continue under sections/0h.md's Yolo paragraph."}
+
+    def lines(self, p):
+        return read(f"commands/{p}.md").splitlines()
+
+    def test_frontmatter_and_last_line(self):
+        for p in ("away", "yolo"):
+            with self.subTest(p):
+                lines = self.lines(p)
+                self.assertEqual(lines[:5], ["---", self.DESC[p], self.HINT, f"allowed-tools: Bash(compose {p}:*)", "---"])
+                self.assertEqual(lines[-1], self.LAST[p])
+
+    def test_off_digest_and_otherwise_lines_in_order(self):
+        for p in ("away", "yolo"):
+            with self.subTest(p):
+                lines = self.lines(p)
+                off = [i for i, l in enumerate(lines) if l.startswith("If `$ARGUMENTS` is `off`, run ")]
+                digest = f"If `$ARGUMENTS` is `digest`, run `compose {p} digest --project <slug> < /dev/null` for each project and show each digest as is; {p} stays on."
+                other = f"Otherwise run `compose {p} --project <slug> $ARGUMENTS < /dev/null` for each project and show the announcement as is."
+                self.assertEqual(len(off), 1)
+                self.assertIn(f"`compose {p} off --project <slug> < /dev/null`", lines[off[0]])
+                self.assertEqual(lines.count(digest), 1)
+                self.assertEqual(lines.count(other), 1)
+                self.assertLess(off[0], lines.index(digest))
+                self.assertLess(lines.index(digest), lines.index(other))
+
+    def test_keeps_project_and_words_lines(self):
+        for p in ("away", "yolo"):
+            with self.subTest(p):
+                lines = self.lines(p)
+                self.assertIn("The project is the one this session runs; for an epic, every project of the epic.", lines)
+                self.assertIn("Do not reword, summarize, or widen the words: they pre-answer a question verbatim, never by analogy.", lines)
+
+    def test_away_never_names_yolo_and_no_em_dash(self):
+        self.assertNotIn("compose yolo", read("commands/away.md"))
+        for p in ("away", "yolo"):
+            self.assertNotIn("—", read(f"commands/{p}.md"))
+
+
 if __name__ == "__main__":
     unittest.main()
