@@ -610,6 +610,22 @@ class Guard(unittest.TestCase):
         for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
             self.assertIsNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
 
+    def test_a_crew_session_cannot_switch_branches_in_the_shared_project_worktree(self):
+        other = Path(tempfile.mkdtemp()); fc.fc_core.sh(["git", "init", "-q"], other)
+        decide = lambda command, cwd=self.repo, role="crew": fc.fc_hooks.switch_decision(command, str(cwd), role, str(self.repo))
+        for command in ("git checkout feature", "git switch -c work", "git -c core.x=1 checkout main", f"cd {other} && cd {self.repo} && git checkout x", "echo hi; git switch main"):
+            self.assertIn("move the team lead's HEAD", decide(command) or "", command)
+        for command in ("git checkout -- src/app.go", "git checkout -p", "git status", f"git -C {other} checkout x", f"cd {other} && git switch x", "echo git checkout"):
+            self.assertIsNone(decide(command), command)
+        self.assertIsNone(decide("git checkout x", cwd=other))  # the session works in a worktree of its own
+        for role in ("orchestrator", "planner", None):
+            self.assertIsNone(decide("git checkout x", role=role), role)
+        out = io.StringIO()
+        ev = json.dumps({"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": "git switch main"}})
+        with mock.patch.dict(os.environ, {"COMPOSE_ROLE": "crew", "COMPOSE_REPO": str(self.repo)}), mock.patch.object(sys, "stdin", io.StringIO(ev)), mock.patch.object(sys, "stdout", out):
+            fc.fc_hooks.cmd_guard(None)
+        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
         for role, denied in (("orchestrator", True), ("planner", True), ("wayfinder", False)):
