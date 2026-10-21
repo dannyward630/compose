@@ -719,18 +719,18 @@ class CodexArgv(unittest.TestCase):
 
 
 class CodexStart(unittest.TestCase):
-    def start(self, model=None, entry="codex:gpt-6.1-sol", trusted=True):
+    def start(self, model=None, entry="codex:gpt-6.1-sol", trusted=True, role="tester"):
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
         calls, ready = [], mock.Mock()
         skill = proj.parent / "skill"; skill.mkdir(); (skill / "SKILL.md").write_text("v1\n")
         def herdr(*args, **kw):
             calls.append(args)
             return {"agents": []} if args[:2] == ("agent", "list") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else {}
-        a = type("A", (), {"action": "start", "role": "tester", "title": "t", "brief": "b", "model": model})
+        a = type("A", (), {"action": "start", "role": role, "title": "t", "brief": "b", "model": model})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
-                mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {"tester": "high"}), \
+                mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {role: entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {role: "high"}), \
                 mock.patch.object(fc.fc_hooks, "SKILL_DIR", skill), mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
@@ -764,6 +764,33 @@ class CodexStart(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
         self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))
         with self.assertRaises(SystemExit): fc.fc_crew.crew_pick_full("tester", "grok:x")
+
+
+class CodexLead(unittest.TestCase):
+    def test_more_follows_work_and_leaves_out_none_and_repeats(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        cwd, res, a, b = (Path(d.name, n) for n in ("cwd", "res", "a", "b")); cwd.mkdir()  # a folder outside any repo: no git dirs
+        for fn, m in ((fc_harness.crew_argv, "codex:x"), (fc_harness._codex_argv, "x")):
+            argv = lambda **kw: [str(x) for x in fn(m, "high", "p", "/s/SKILL.md", cwd, res, **kw)]
+            add = lambda *dirs: [x for d in dirs for x in ("--add-dir", str(d))]
+            self.assertEqual(argv(more=()), argv())
+            self.assertEqual(argv(more=(a, b)), argv() + add(a, b))
+            self.assertEqual(argv(more=(a, None, a, b)), argv() + add(a, b))
+            self.assertEqual(argv(work=b, more=(a,)), argv(work=b) + add(a))
+            self.assertFalse([x for x in argv(more=(a, b)) if x == "danger-full-access" or x.startswith("--dangerously")])
+
+    def test_only_a_codex_team_lead_gets_the_folders_its_commands_write_to(self):
+        with mock.patch.object(fc.fc_worktree, "common_dir", return_value=Path("/r/.git")), mock.patch.object(fc.fc_worktree, "use_treehouse") as treehouse:
+            def check(role, entry, *more, pool=True):
+                treehouse.return_value = pool
+                start, _, rec, proj, _ = CodexStart.start(self, entry, role=role)
+                if not entry.startswith("codex"): return self.assertNotIn("--add-dir", start)
+                want = fc_harness.crew_argv(entry, rec["effort"], fc.fc_crew.TRUST_PROMPT, fc.fc_crew.CLI_REPO / "SKILL.md", rec["cwd"], fc.fc_crew.crew_dir(proj).parent, None, more)
+                self.assertEqual([str(x) for x in start[10:]], [str(x) for x in want], (role, pool))
+            check("orchestrator", "claude:claude-sonnet-5-5")
+            check("orchestrator", "codex:x", fc.fc_config.CONFIG_PATH.parent, Path("/r/.treehouse"))
+            check("orchestrator", "codex:x", fc.fc_config.CONFIG_PATH.parent, pool=False)  # no treehouse, no slot pool
+            for role in ("planner", "tester"): check(role, "codex:x")
 
 
 class HarnessTable(unittest.TestCase):

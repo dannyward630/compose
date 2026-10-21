@@ -71,6 +71,34 @@ class CodexFence(unittest.TestCase):
         self.assertIn("NEB-1515", p.stdout.split("\ncodex\n")[-1], p.stdout[-3000:])
 
 
+@unittest.skipUnless(CODEX, "codex is not installed")
+class CodexLeadFence(unittest.TestCase):
+    """The real codex, started as a team lead with crew_argv's fence and the folders `more` names, runs the commands a lead runs."""
+
+    def lead(self, cmd, expect, cfg=None):
+        tmp = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, tmp, True)
+        repo, scratch, cfg = tmp / "repo", tmp / "codex", cfg or tmp / "state/config.json"
+        (repo / ".compose/p/results").mkdir(parents=True); (repo / ".compose/p/verify.json").write_text("{}"); cfg.parent.mkdir(exist_ok=True); scratch.mkdir()
+        (scratch / "auth.json").symlink_to(SIGNED_IN / "auth.json")  # the sign-in is linked, never copied
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        env = {**os.environ, "HOME": pwd.getpwuid(os.getuid()).pw_dir, "CODEX_HOME": str(scratch), "COMPOSE_CONFIG": str(cfg), "COMPOSE_ROLE": "orchestrator", "PYTHONDONTWRITEBYTECODE": "1"}
+        argv = [CODEX, *fc_harness.crew_argv("codex", None, "Do exactly what the task says.", ROOT / "SKILL.md", repo, repo / ".compose/p/results", more=(cfg.parent, repo / ".treehouse")),
+                "exec", "--ephemeral", "--skip-git-repo-check", f"Run exactly this one shell command, then stop: ({cmd.format(root=ROOT, repo=repo)}) > out.txt 2>&1"]
+        p = subprocess.run(argv, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+        out = (repo / "out.txt").read_text() if (repo / "out.txt").is_file() else p.stdout[-2000:] + p.stderr[-1000:]
+        self.assertIn(expect, out, out[-2000:])
+
+    def test_tasks(self): self.lead("{root}/bin/compose tasks --repo {repo} --project p", "no tasks synced for p")
+
+    def test_watch_now(self): self.lead("{root}/bin/compose watch --now --repo {repo} --project p", "nothing running")
+
+    @unittest.skipUnless(shutil.which("herdr"), "herdr is not installed")
+    def test_herdr_agent_list(self): self.lead("herdr agent list", "agent_list")
+
+    @unittest.skipUnless(linear_key(), "no Linear key")
+    def test_linear_get(self): self.lead("{root}/bin/compose linear get NEB-1515 --any-project", "NEB-1515", hermetic.REAL / "config.json")
+
+
 @unittest.skipUnless(CODEX and os.environ.get("HERDR_SOCKET_PATH"), "codex or a herdr pane is missing")
 class CodexTeammate(unittest.TestCase):
     def test_reports_working(self):
