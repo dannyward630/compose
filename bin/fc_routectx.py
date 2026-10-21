@@ -1,7 +1,7 @@
 """What Jev is shown to route a task: the cheap context first, dependency analysis only on the retry, and the hash that
 tells a recorded route is still current."""
 
-import json, re, subprocess
+import hashlib, json, re, subprocess
 
 import fc_tasks
 
@@ -69,4 +69,9 @@ def dependency_context(repo, meta):
 
 def context_hash(repo, meta, policies):
     """16 hex chars of sha256 over the task body (Route left out), its files, their blobs at HEAD and the policies."""
-    raise NotImplementedError("context_hash")
+    blobs = []
+    for path in meta["files"]:
+        run = subprocess.run(["git", "-C", str(repo), "rev-parse", f"HEAD:{path}"], capture_output=True, text=True)
+        blobs.append(run.stdout.strip() if run.returncode == 0 else "-")
+    text = json.dumps([meta["body"], meta["files"], blobs, policies], sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
