@@ -352,4 +352,4 @@ def reflect_counts(rec):
     return broken, len(rec.get("flagged", [])) - broken
 
 
-REFLECT_ON = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered")
+REFLECT_ON = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered")

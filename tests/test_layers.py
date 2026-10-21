@@ -45,7 +45,7 @@ class Grouping(unittest.TestCase):
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "init")
         (r / "package.json").write_text('{"vite": "8"}\n'); (r / "yarn.lock").write_text("x\n" * 5000)
-        self.assertEqual(fc.fc_implement.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
+        self.assertEqual(fc.fc_gate.branch_budget(r, "main", allowed=["package.json", "yarn.lock"]), (1, [], []))
 
 
 class PrText(unittest.TestCase):
@@ -771,7 +771,7 @@ class DeletionBudget(unittest.TestCase):
         return r
 
     def budget(self, r, allowed, delete=()):
-        return fc.fc_implement.branch_budget(r, "main", allowed=allowed, delete=delete)
+        return fc.fc_gate.branch_budget(r, "main", allowed=allowed, delete=delete)
 
     def test_deleting_a_400_line_file_the_task_owns_counts_one_line(self):
         r = self.repo({"big.py": 400, "keep.py": 3})

@@ -103,7 +103,7 @@ def board(repo, proj):
     _board[proj] = (stamp, b)
     return b
 
-FAILED_STATES = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_tampered", "interrupted")
+FAILED_STATES = ("failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "interrupted")
 
 def verify_why(vd):
     """The few words behind a failed verify, from the last round of its verify.json: which stage failed and how many cases, and

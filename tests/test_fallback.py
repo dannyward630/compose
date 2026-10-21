@@ -1309,3 +1309,43 @@ class DeleteTasks(unittest.TestCase):
         seen = []
         result, repo, _ = self.run_one(self.edit(seen, lambda cwd: (cwd / "b.py").write_text("b\n")), {"files": []})
         self.assertEqual((result["status"], len(seen), self.tree(repo)), ("passed", 1, ["a.txt", "b.py"]))
+
+
+class SiblingStubs(unittest.TestCase):
+    """A task that passes its own test but removes what another task's stub in the same file owns must not pass."""
+    STUBS = "def one():\n    raise NotImplementedError\n\n\ndef two():\n    raise NotImplementedError\n"
+    TESTS = {"tests/test_one.py": "import unittest, m\n\n\nclass One(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(m.one(), 1)\n",
+             "tests/test_names.py": "import unittest, m\n\n\nclass Names(unittest.TestCase):\n    def test_two_is_defined(self):\n        self.assertTrue(hasattr(m, 'two'))\n"}
+
+    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",)):
+        root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        for f, t in {"m.py": self.STUBS, ".gitignore": "__pycache__/\n", **self.TESTS}.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        (proj / "verify.json").write_text(json.dumps({"checks": list(checks)}))
+        task = {"id": "001", "title": "one", "files": ["m.py"], "protected": ["tests/test_one.py"], "model": "pi:p/primary", "after": "", "linear": "ENG-1",
+                "test": "python3 -m unittest discover -s tests -p test_one.py", "body": "## Goal\nMake one() return 1."}
+        prompts, turn = [], iter(answers)
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            prompts.append(prompt); (Path(cwd) / "m.py").write_text(next(turn))
+            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            return fc.fc_implement.run_task(repo, proj, task, 2), prompts
+
+    def test_a_passing_task_that_deleted_a_sibling_stub_is_rejected_and_told_which_test_broke(self):
+        result, prompts = self.run_one(["def one():\n    return 1\n", "def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"])
+        self.assertEqual((result["status"], result["attempts"]), ("passed", 2))
+        self.assertEqual(result["log"][0]["test_exit"], 0)
+        self.assertIn("test_two_is_defined", " ".join(result["log"][0]["broke"]))
+        self.assertIn("test_two_is_defined", prompts[1])
+
+    def test_a_task_that_ends_with_a_sibling_stub_gone_does_not_pass(self):
+        result, _ = self.run_one(["def one():\n    return 1\n"] * 2)
+        self.assertEqual(result["status"], "rejected_regression")
+
+    def test_a_check_that_was_red_before_the_task_is_not_blamed_on_it(self):
+        result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("python3 -m unittest discover -s tests -p test_one.py && false",))
+        self.assertEqual(result["status"], "passed")
