@@ -80,11 +80,22 @@ def settings(cfg):
 def apply_config(move=True):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
     name, st = settings(read_config())
+    PROVIDERS = st.get("providers", {})
+    for pname, p in PROVIDERS.items():
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pname):
+            sys.exit(f"{CONFIG_PATH}: provider names are lowercase letters, digits, - and _: {pname!r}")
+        if pname in ("openrouter", "openrouter-fast"):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: openrouter models already route there")
+        if not (isinstance(p.get("base_url"), str) and p["base_url"].startswith(("http://", "https://"))):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} needs a base_url such as http://localhost:11434/v1")
+        ids = p.get("models")
+        if ids is not None and (not isinstance(ids, list) or any(not isinstance(i, str) for i in ids)):
+            sys.exit(f"{CONFIG_PATH}: providers.{pname}.models must be a list of model ids")
     PARALLEL = st.get("parallel")
     if PARALLEL is not None and (type(PARALLEL) is not int or PARALLEL < 1):
         sys.exit(f"{CONFIG_PATH}: parallel must be a whole number of 1 or more, not {PARALLEL!r}")
@@ -112,6 +123,10 @@ def apply_config(move=True):
     TEST_READER = models.get("test_reader", TEST_READER)
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
+    for m in [m for m in (models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader"), *CREW_MODELS.values(),
+                          *(f[0] for fs in CREW_FALLBACK.values() for f in fs)) if isinstance(m, str)]:
+        if (hit := provider_of(m)) and (ids := PROVIDERS[hit[0]].get("models")) and hit[1] not in ids:
+            sys.exit(f"{CONFIG_PATH}: {m} is not in providers.{hit[0]}.models: {', '.join(ids)}")
     os.environ.update({k: str(v) for k, v in st.get("env", {}).items()})
     fc_core.SECRET_VARS.update(k for k in st.get("env", {}) if k.endswith("_API_KEY"))
     if OPENROUTER_KEY:
@@ -160,7 +175,8 @@ def key_file(key):
 
 def provider_of(model) -> tuple[str, str] | None:
     """(name, id) for `pi:<name>/<id>` or `<name>/<id>` when `name` is a declared provider, else None."""
-    return None
+    name, _, mid = model.removeprefix("pi:").partition("/")
+    return (name, mid) if name in PROVIDERS and mid else None
 
 def provider_env(name) -> str:
     """The env var apply_config exports provider `name`'s auth.json key as."""
