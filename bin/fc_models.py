@@ -279,6 +279,11 @@ def model_available(model):
     mid, today = model.split(":", 1)[1] if ":" in model else "", time.strftime("%Y-%m-%d")
     if not mid:
         return True, "Claude Code's default model"
+    local = fc_config.provider_of(model)
+    if local:  # a local provider must be answering before anything else: no probe turn, no cache, when it is down
+        ok, why = fc_providers.reach(local[0])
+        if not ok:
+            return False, why
     if mid in _PROBED:
         return _PROBED[mid]
     try:
@@ -290,7 +295,7 @@ def model_available(model):
         _PROBED[mid] = (hit["ok"], hit["why"])
         return _PROBED[mid]
     ok, why, transient = probe_once(model, 60)
-    if transient:  # a slow start-up or a busy API says nothing about the account: retry once, longer
+    if transient and not local:  # a slow start-up or a busy API says nothing about the account: retry once, longer
         ok, why, transient = probe_once(model, 180)
     if ok:  # only a pass is cached: a failure is returned whole and the next call probes again, so a fixed key or preset works at once
         _PROBED[mid] = (ok, why)
