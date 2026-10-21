@@ -73,4 +73,10 @@ def doctor_rows() -> list[tuple]:
 
 def opencode_provider(model) -> dict:
     """The OpenCode provider entry for a local model."""
-    return {}
+    if model.startswith("pi:") or not (hit := fc_config.provider_of(model)):
+        return {}
+    name, mid = hit
+    options = {"baseURL": fc_config.PROVIDERS[name]["base_url"]}
+    if (env := fc_config.provider_env(name)) in os.environ:
+        options["apiKey"] = f"{{file:{fc_config.key_file(os.environ[env], f'{name}.key')}}}"
+    return {name: {"npm": "@ai-sdk/openai-compatible", "name": name, "options": options, "models": {mid: {"name": mid}}}}
