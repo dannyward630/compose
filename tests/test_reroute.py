@@ -475,3 +475,45 @@ class AfterRun(unittest.TestCase):
             with self.subTest(statuses=statuses):
                 got, cu, say = self.run_after(statuses)
                 self.assertEqual((got, cu.call_count, say.call_count), (None, 0, 0))
+
+
+class RunHook(unittest.TestCase):
+    def run_tasks(self, ids=("001", "002"), status=None, hook=None):
+        """run_tasks over fake tasks with after_run, triage and payment_halt recorded on one mock; returns (exit code, order, repo, proj, tasks)."""
+        repo = Path(tempfile.mkdtemp()); proj = repo / ".compose" / "p"; proj.mkdir(parents=True)
+        tasks = [{"id": t, "title": t, "after": "", "files": [], "protected": [], "test": "true", "model": "m", "body": ""} for t in ids]
+        pay = [{"payment_required": {"provider": "glm", "message": "pay"}}]
+        run_task = lambda r, p, meta, n: {"id": meta["id"], "title": meta["id"], "status": (status or {}).get(meta["id"], "passed"), "attempts": 1, "seconds": 1.0, "cost": 0.0,
+                                          "branch": f"b/{meta['id']}", "log": pay if (status or {}).get(meta["id"]) == "payment_required" else []}
+        order = mock.Mock(); order.after.return_value = hook
+        with mock.patch.object(fc.fc_proc, "keep_awake"), mock.patch.object(fc.fc_run, "preflight"), mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_core, "say"), \
+             mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc.fc_models, "payment_halt", order.halt), mock.patch.object(fc.fc_run, "triage", order.triage), \
+             mock.patch.object(fc_reroute, "after_run", order.after), mock.patch("builtins.print", order.print), self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(repo, proj, tasks, mock.Mock(trunk="main", attempts=1, parallel=1, no_stack=True))
+        return e.exception.code, order, repo, proj, tasks
+
+    def test_after_run_is_called_once_with_the_results_after_the_table_and_before_triage(self):
+        code, order, repo, proj, tasks = self.run_tasks()
+        names = [c[0] for c in order.mock_calls]
+        self.assertEqual(names.count("after"), 1)
+        self.assertLess(max(i for i, n in enumerate(names) if n == "print"), names.index("after"))
+        self.assertLess(names.index("after"), names.index("triage"))
+        args = order.after.call_args.args
+        self.assertEqual((args[0], args[1], [r["id"] for r in args[2]], args[3], args[4]), (repo, proj, ["001", "002"], tasks, "main"))
+        self.assertEqual((order.halt.call_count, code), (0, 0))
+
+    def test_a_returned_payment_required_halts_the_run_with_it_after_triage(self):
+        err = fc.fc_models.PaymentRequired("typesafe", "top up")
+        code, order, *_ = self.run_tasks(hook=err)
+        self.assertEqual([c.args[-1] for c in order.halt.call_args_list], [err])
+        self.assertEqual([c[0] for c in order.mock_calls if c[0] != "print"], ["after", "triage", "halt"])
+
+    def test_the_hook_runs_when_no_task_passed_and_the_exit_code_stays_failed(self):
+        code, order, *_ = self.run_tasks(("001",), {"001": "failed"})
+        self.assertEqual((order.after.call_count, order.triage.call_count, order.halt.call_count, code), (1, 0, 0, 1))
+
+    def test_a_providers_halt_is_kept_over_the_hooks(self):
+        mine = fc.fc_models.PaymentRequired("typesafe", "top up")
+        code, order, *_ = self.run_tasks(("001",), {"001": "payment_required"}, mine)
+        halted = order.halt.call_args.args[-1]
+        self.assertEqual((order.halt.call_count, halted.provider), (1, "glm"))
