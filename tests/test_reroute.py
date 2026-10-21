@@ -446,3 +446,32 @@ class Once(unittest.TestCase):
             return set()
         got, fi, re = self.once(fired)
         self.assertEqual((got, [c.args[2]["id"] for c in re.call_args_list]), ({"002": "Linear: boom"}, ["001", "003"]))
+
+
+class AfterRun(unittest.TestCase):
+    TASKS = [{"id": t, "linear": f"XX-{t}"} for t in ("001", "002", "003", "004")]
+
+    def run_after(self, statuses, **catch_up):
+        """after_run over results with these statuses, catch_up mocked; returns (its return value, catch_up mock, say mock)."""
+        results = [{"id": t, "status": s} for t, s in statuses]
+        with mock.patch.object(fc_reroute, "catch_up", **catch_up) as cu, mock.patch.object(fc.fc_core, "say") as say:
+            return fc_reroute.after_run("repo", "proj", results, self.TASKS, "main"), cu, say
+
+    def test_catch_up_gets_the_passed_ids_only_in_order_with_diff(self):
+        got, cu, say = self.run_after([("004", "passed"), ("002", "failed"), ("001", "passed"), ("003", "already_green")], return_value={})
+        self.assertEqual((got, cu.call_args_list, say.call_count), (None, [mock.call("repo", "proj", self.TASKS, ["004", "001"], "main", ("diff",))], 0))
+
+    def test_each_route_not_recorded_is_said_with_its_issue_and_why(self):
+        got, cu, say = self.run_after([("001", "passed"), ("002", "passed"), ("003", "passed")], return_value={"003": "Linear: down", "001": "policies unreadable: boom"})
+        self.assertEqual((got, [c.args[0] for c in say.call_args_list]), (None, ["linear XX-003: route not recorded (Linear: down)", "linear XX-001: route not recorded (policies unreadable: boom)"]))
+
+    def test_a_payment_required_is_returned_not_raised_and_nothing_is_said(self):
+        err = fc.fc_models.PaymentRequired("typesafe", "top up")
+        got, cu, say = self.run_after([("001", "passed")], side_effect=err)
+        self.assertEqual((got, say.call_count), (err, 0))
+
+    def test_with_no_passed_task_nothing_is_called_and_it_returns_none(self):
+        for statuses in ([], [("001", "failed"), ("002", "already_green")]):
+            with self.subTest(statuses=statuses):
+                got, cu, say = self.run_after(statuses)
+                self.assertEqual((got, cu.call_count, say.call_count), (None, 0, 0))
