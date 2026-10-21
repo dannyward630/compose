@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_proc, fc_readguard
+import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -13,6 +13,8 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     config = {}
     if key:  # the key reaches OpenCode as a file its config names, so the commands it runs never see it
         config["provider"] = {"openrouter": {"options": {"apiKey": f"{{file:{fc_config.key_file(key)}}}"}}}
+    if local := fc_providers.opencode_provider(model):
+        config["provider"] = {**config.get("provider", {}), **local}
     guard = fc_readguard.guard_file(cwd)  # the plugin asks the guard before each tool call; bash stays fenced to trail
     if guard.exists():
         config["plugin"] = [f"file://{fc_readguard.OC_PLUGIN}"]
@@ -56,8 +58,7 @@ def opencode(cwd, model, prompt, session=None, timeout=600):
     if errors and not text and not tools:
         # The model never ran: the provider refused (bad key, payment required, model missing). Retrying is pointless.
         raise RuntimeError(f"provider refused the request: {'; '.join(errors)[-400:]}")
-    if model in fc_config.PRICES:
-        usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
+    usage["cost"] = fc_providers.cost(model, usage)
     fc_core.LEDGER.add(model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     reply = "\n".join(text)
     # A provider 429 makes opencode compact the session into a "Work State / Next Move" summary and stop.
@@ -96,7 +97,8 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     guard = fc_readguard.guard_file(cwd)  # the extension asks the guard before each tool call
     cmd = ["pi", "-p", "--mode", "json", "--session-id", sid, "--session-dir", str(sdir), "--no-extensions", "--no-skills",
-           "--no-prompt-templates", "--thinking", "low", "--model", model]
+           "--no-prompt-templates", "--thinking", "low", *fc_providers.pi_args(model), "--model", model]
+    env.update(fc_providers.pi_env(model))
     if guard.exists():  # -e loads it despite --no-extensions; COMPOSE_READGUARD tells it which shell line runs the guard
         cmd += ["-e", str(fc_readguard.PI_EXT)]
         env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
@@ -138,8 +140,7 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     if not text and not tools and not usage["tokens_in"] and not busy:  # a 429 or a 503 refuses before any token, and passes
         real = [l for l in (p.stderr or "").splitlines() if l.strip() and not l.startswith("Warning:")]  # pi's session warnings are not the provider's answer
         raise RuntimeError(f"provider refused the request: {'; '.join(errors) or ' '.join(real)[-400:] or 'empty reply with no usage'}")
-    if model in fc_config.PRICES:
-        usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
+    usage["cost"] = fc_providers.cost(model, usage)
     fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
     if busy:
         raise RateLimited(usage, busy)
@@ -250,7 +251,7 @@ def pi_id(model):
 def probe_command(model):
     if model.startswith("pi:"):
         return ["pi", "-p", "--mode", "json", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
-                "--thinking", "off", "--model", pi_id(model), "Reply with exactly: ok"]
+                "--thinking", "off", *fc_providers.pi_args(pi_id(model)), "--model", pi_id(model), "Reply with exactly: ok"]
     return ["claude", "-p", "--model", fc_claude.claude_id(model), "--output-format", "json", "Reply with exactly: ok"]
 
 def probe_result(model, p):
@@ -279,6 +280,11 @@ def model_available(model):
     mid, today = model.split(":", 1)[1] if ":" in model else "", time.strftime("%Y-%m-%d")
     if not mid:
         return True, "Claude Code's default model"
+    local = fc_config.provider_of(model)
+    if local:  # a local provider must be answering before anything else: no probe turn, no cache, when it is down
+        ok, why = fc_providers.reach(local[0])
+        if not ok:
+            return False, why
     if mid in _PROBED:
         return _PROBED[mid]
     try:
@@ -290,7 +296,7 @@ def model_available(model):
         _PROBED[mid] = (hit["ok"], hit["why"])
         return _PROBED[mid]
     ok, why, transient = probe_once(model, 60)
-    if transient:  # a slow start-up or a busy API says nothing about the account: retry once, longer
+    if transient and not local:  # a slow start-up or a busy API says nothing about the account: retry once, longer
         ok, why, transient = probe_once(model, 180)
     if ok:  # only a pass is cached: a failure is returned whole and the next call probes again, so a fixed key or preset works at once
         _PROBED[mid] = (ok, why)
@@ -307,6 +313,8 @@ def probe_once(model, timeout):
         env = fc_claude.headless_env()
         if model.startswith("pi:") and "OPENROUTER_API_KEY" in os.environ:  # pi's custom providers read the key from env, never argv
             env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+        if model.startswith("pi:"):
+            env.update(fc_providers.pi_env(pi_id(model)))
         p = subprocess.run(probe_command(model), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         ok, why = probe_result(model, p)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:

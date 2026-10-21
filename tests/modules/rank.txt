@@ -3,6 +3,7 @@ fc_prompt
 fc_proc
 fc_auth
 fc_config
+fc_providers
 fc_tasks
 fc_plan
 fc_linear

@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -34,7 +34,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             fc_herdr.herdr("pane", "close", (old.get("agent") or old).get("pane_id"))
         guard = fc_readguard.guard_file(cwd)
         env = {**({"OPENROUTER_API_KEY": os.environ["OPENROUTER_API_KEY"]} if "OPENROUTER_API_KEY" in os.environ else {}),
-               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config()}
+               "GRAFT_NO_GITIGNORE": "1", "GRAFT_NO_IGNORE": "1", "COMPOSE_CONFIG": fc_core.scratch_config(), **fc_providers.pi_env(model)}
         if guard.exists():
             env["COMPOSE_READGUARD"] = fc_readguard.command(guard)
         pane = fc_herdr.herdr_implementer_pane(task["space"], cwd, env, fc_herdr.tab_label(proj, fc_herdr.IMPLEMENTERS_TAB))
@@ -43,7 +43,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         sdir.mkdir(exist_ok=True)
         import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
-                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []),
+                *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []), *fc_providers.pi_args(model),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
@@ -62,8 +62,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         if not session.get("sfile"):
             session["sfile"] = (((fc_herdr.herdr("agent", "get", session["name"]) or {}).get("agent") or {}).get("agent_session") or {}).get("value")
         session["seen"], text, tools, usage, errors = fc_models.parse_pi_session(session["sfile"] or "", session["seen"])
-        if model in fc_config.PRICES:
-            usage["cost"] = (usage["tokens_in"] * fc_config.PRICES[model][0] + usage["tokens_out"] * fc_config.PRICES[model][1]) / 1e6
+        usage["cost"] = fc_providers.cost(model, usage)
         fc_core.LEDGER.add("openrouter" if "openrouter" in model else model.split("/")[0], usage["tokens_in"], usage["tokens_out"], usage["cost"])
         return text, tools, usage, errors
     if err == "agent_prompt_stalled":  # herdr saw no work within its 5 s, which does not mean pi dropped the prompt

@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -116,6 +116,10 @@ def preflight(models):
         finally:
             shutil.rmtree(root, ignore_errors=True)
     models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
+    for name in sorted({p[0] for p in map(fc_config.provider_of, models) if p}):
+        ok, why = fc_providers.reach(name)
+        if not ok:
+            sys.exit("preflight stopped; nothing was cloned or run. " + why)
     # pi takes a provider's key from its own auth.json before the workspace key compose hands it, so such an entry bills elsewhere.
     shadowing = [p for p in fc_pi.pi_auth_overrides(fc_pi.PI_AUTH) if any(m.startswith(f"pi:{p}/") for m in models)]
     if shadowing:

@@ -120,6 +120,8 @@ There is no long context to rot and no room to drift.
 **Each job runs on the model that fits it.**
 By default the strongest model plans, Opus writes the tests, GLM 5.3 Flash types the code, and Haiku handles the chores.
 On a real seven-task project, GLM 5.3 Flash passed each task on its first try in 9 to 20 seconds.
+Any role can also run a model on your own machine: declare an OpenAI-compatible server under `providers` in `~/.compose/config.json`, then name `pi:<provider>/<model>` (pi) or `<provider>/<model>` (OpenCode).
+A local call costs `$0.0000`, and `compose` checks the server answers before it probes or runs; see [workspaces.md](docs/workspaces.md#local-models).
 
 **Teammates trust only their chain of command.**
 Each teammate treats its brief and messages from its team lead or the engineering manager as instructions.
