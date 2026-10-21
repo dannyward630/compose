@@ -30,7 +30,7 @@ class Yolo(unittest.TestCase):
     def yolo(self, *words, push=False, clear_words=False, snapshot=None, pane="w1:p1"):
         """Run as the engineering manager session in herdr pane `pane`."""
         out = io.StringIO()
-        a = SimpleNamespace(repo=".", project="hw", push=push, clear_words=clear_words, words=list(words))
+        a = SimpleNamespace(repo=".", project="hw", push=push, clear_words=clear_words, words=list(words), cmd="yolo")
         env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_ROLE", "HERDR_PANE_ID")} | {"HERDR_PANE_ID": pane}
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snapshot or snap()), \
@@ -330,6 +330,74 @@ class WatchNamesPosture(unittest.TestCase):
     def test_no_line_names_a_posture_when_none_is_on(self):
         event, ask, blocked = self.watch_now(posture=False)
         self.assertFalse([l for l in (event, ask, blocked) if "away=on" in l or "yolo=on" in l])
+
+
+class PostureEntry(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.file = self.proj / "results" / "yolo.json"
+
+    def put(self, mode, **extra):
+        self.file.write_text(json.dumps({"since": "2026-01-01 09:00:00", "push": False, "words": "", "mode": mode,
+                                         "decisions": [{"ts": "2026-01-01 09:30:00", "text": "db?: postgres"}]} | extra))
+
+    def run_as(self, cmd, *words, push=False, clear_words=False):
+        out = io.StringIO()  # stdout, plus the exit message when cmd_yolo exits
+        a = SimpleNamespace(repo=".", project="hw", push=push, clear_words=clear_words, words=list(words), cmd=cmd)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=snap()), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), mock.patch.object(fc.fc_cost, "rows", return_value=[]), contextlib.redirect_stdout(out):
+            try:
+                fc.fc_yolo.cmd_yolo(a)
+            except SystemExit as e:
+                print(e.code)
+        return out.getvalue()
+
+    def test_entry_stores_the_mode_and_names_it_in_the_entry_and_back_lines(self):
+        for p in ("away", "yolo"):
+            self.file.unlink(missing_ok=True)
+            out = self.run_as(p, "ship", "it")
+            d = json.loads(self.file.read_text())
+            self.assertEqual(d["mode"], p)
+            self.assertIn(f"{p} on for hw since {d['since']}: the engineering manager answers with the recommendation and logs each answer\n", out)
+            self.assertIn(f"back: `compose {p} off --project hw` prints what happened", out)
+            self.assertIn(fc.fc_yolo.YOLO_NEVER, out)
+            self.assertEqual("yolo" in out, p == "yolo")
+
+    def test_switching_keeps_since_decisions_and_words_and_push_unless_both_were_off(self):
+        saved = lambda: json.loads(self.file.read_text())
+        for old, new in (("away", "yolo"), ("yolo", "away")):
+            self.put(old, push=True, words="ship it")
+            before = saved()
+            self.run_as(new)
+            self.assertEqual({k: saved()[k] for k in before}, before | {"mode": new}, "keeps since, decisions, words, and push")
+            self.run_as(old, "fresh", "words")
+            self.assertEqual((saved()["mode"], saved()["words"], saved()["push"]), (old, "fresh words", True))
+            for was, now in ((False, False), (False, True)):
+                self.put(old, push=was)
+                self.run_as(new, push=now)
+                self.assertEqual((saved()["mode"], saved()["push"]), (new, was or now))
+
+    def test_decided_and_the_digest_name_the_posture_and_its_tag(self):
+        for p in ("away", "yolo"):
+            self.put(p)
+            out = self.run_as(p, "decided", "which db?: postgres")
+            self.assertIn(f"`{p}: <card id>: <answer>`", out)
+            self.assertIn(f"({p} recommendation, unconfirmed, {time.strftime('%Y-%m-%d')})", out)
+            confirm = self.run_as(p, "off").split("To confirm", 1)[1].split("Waiting on you", 1)[0]
+            self.assertIn(f"({p} recommendation, unconfirmed, <date>)", confirm)
+            self.assertEqual("yolo" in out + confirm, p == "yolo")
+
+    def test_the_refusals_name_the_posture(self):
+        for p in ("away", "yolo"):
+            for words, clear in (("off", False), ("decided", False), ("", True)):
+                self.assertIn(f"{p} is not on for hw; `compose {p} --project hw [--push] [words]` turns it on", self.run_as(p, *words.split(), clear_words=clear))
+            self.put(p)
+            msgs = [self.run_as(p, "decided"), self.run_as(p, "x", clear_words=True), self.run_as(p, "--project hw decided db?: postgres")]
+            self.assertIn(f'{p} decided needs "<question>: <answer taken>"', msgs[0])
+            self.assertIn(f"compose {p} --project hw --clear-words", msgs[1])
+            self.assertTrue(all(h in msgs[2] for h in (f'compose {p} --project hw [--push] "<words>"', f'compose {p} decided --project hw "<question>: <answer taken>"', f"mislaid `{p} decided`")), msgs[2])
+            self.assertEqual("yolo" in "".join(msgs), p == "yolo")
 
 
 if __name__ == "__main__":
