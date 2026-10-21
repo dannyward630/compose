@@ -88,12 +88,14 @@ class Fallback(unittest.TestCase):
         self.assertEqual((r["status"], calls), ("passed", [PRIMARY, BACKUP]))
         self.assertEqual(r["attempts"], 1)  # the refused turn cost no attempt
 
-    def busy_run(self, refusals, said, slept):
-        """One task with one attempt allowed and no fallback, whose provider turns the first `refusals` turns away as busy."""
-        busy = iter([fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
+    def busy_run(self, refusals, said, slept, err=None, nap=lambda: None):
+        """One task with one attempt allowed and no fallback, whose first `refusals` turns end as `err` (default: the provider turns
+        them away as busy), `nap` running just before each one ends."""
+        busy = iter([err or fc.fc_models.RateLimited({"cost": 0.0}, "provider busy: 503 overloaded_error")] * refusals)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             err = next(busy, None)
             if err:
+                nap()
                 raise err
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
@@ -120,6 +122,17 @@ class Fallback(unittest.TestCase):
         self.assertTrue(any(s.startswith("001 passed") and "attempts=1 " in s for s in said), said)
         r, _ = self.busy_run(5, [], [])  # the provider never answers: four waits, then the task gives up having spent none
         self.assertEqual((r["status"], r["attempts"], len(r["log"])), ("failed", 0, 5))
+
+    def test_a_turn_that_timed_out_across_a_sleep_costs_no_attempt(self):
+        t = {"wall": 1000.0, "awake": 50.0}  # the lid closes in the first turn: 90 minutes pass on the wall clock, 3 on the awake one
+        clock = types.SimpleNamespace(time=lambda: t["wall"], monotonic=lambda: t["awake"])
+        nap = lambda: t.update(wall=t["wall"] + 5400, awake=t["awake"] + 180)
+        said, slept = [], []
+        with mock.patch.object(fc.fc_proc, "time", clock):
+            r, _ = self.busy_run(1, said, slept, err=subprocess.TimeoutExpired("pi", 180), nap=nap)
+        self.assertEqual((r["status"], r["attempts"]), ("passed", 1))  # one attempt allowed, and the turn the machine slept in did not spend it
+        self.assertTrue(any(s.startswith("001 attempt 1 timeout") and "the machine slept for 87 minutes: it does not count" in s for s in said), said)
+        self.assertEqual(r["log"][0]["slept"], 5220)
 
     def test_a_turn_cut_short_is_tested_on_the_edit_it_left(self):
         r, calls = self.run_once("rate", edit="yes\n")
@@ -791,6 +804,41 @@ class PiKeyFromEnv(unittest.TestCase):
                 self.keyless(start)
 
 
+class PiCompaction(unittest.TestCase):
+    """A task's pi runs with an agent directory of its own that pins pi's default compaction, whatever the user's pi settings say:
+    a huge compaction.reserveTokens there made GLM compact every few tool calls until the 180 s turn limit."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.user = self.root / "user-agent"
+        self.user.mkdir()
+        (self.user / "models.json").write_text("{}")
+        (self.user / "settings.json").write_text(json.dumps({"compaction": {"enabled": True, "reserveTokens": 116072, "keepRecentTokens": 4000}}))
+        (self.root / "wt").mkdir()
+        p = mock.patch.object(fc.fc_models, "PI_AGENT_DIR", self.user)
+        p.start(); self.addCleanup(p.stop)
+
+    def check(self, adir):
+        self.assertEqual(json.loads((Path(adir) / "settings.json").read_text()), {"compaction": {"enabled": True, "reserveTokens": 16384, "keepRecentTokens": 20000}})
+        self.assertEqual((Path(adir) / "models.json").resolve(), (self.user / "models.json").resolve())  # the user's providers stay
+        self.assertFalse((Path(adir) / "auth.json").exists())  # the user has none, so no dangling link
+        self.assertEqual(Path(adir).parent, self.root)  # beside the clone, so `git add -A` never commits it
+        self.assertIn("reserveTokens\": 116072", (self.user / "settings.json").read_text())  # the user's own file is untouched
+
+    def test_pi_turn_runs_in_the_pinned_agent_dir(self):
+        run = mock.Mock(return_value=mock.Mock(stdout='{"type":"tool_execution_start"}', stderr="", returncode=0))
+        with mock.patch.object(fc.fc_proc, "run", run):
+            fc.fc_models.pi_turn(str(self.root / "wt"), "openrouter/x/y", "hi")
+        self.check(run.call_args[1]["env"]["PI_CODING_AGENT_DIR"])
+
+    def test_herdr_pi_pane_runs_in_the_pinned_agent_dir(self):
+        panes = []
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", side_effect=KeyboardInterrupt), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", lambda space, cwd, env, label: panes.append(env) or "p1"), self.assertRaises(KeyboardInterrupt):
+            fc.fc_implement.herdr_pi(str(self.root / "wt"), "openrouter/x/y", "hi", None, task)
+        self.check(panes[0]["PI_CODING_AGENT_DIR"])
+
+
 class ProbeKey(unittest.TestCase):
     """A pi probe gets the process's OpenRouter key in its env, the way pi_turn does; a claude probe keeps headless_env()."""
     KEY, PI, CLAUDE = "sk-or-test-probe", ("pi:openrouter-fast/z-ai/glm@preset/p", "pi:openrouter/x/y", "pi:x/y"), "claude:opus"
@@ -1121,7 +1169,7 @@ class ProcGroupTurns(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"PATH": f"{self.d / 'bin'}{os.pathsep}{os.environ['PATH']}"}); p.start(); self.addCleanup(p.stop)
 
     def test_both_turns_start_through_fc_proc_run_with_todays_argv_env_and_timeout(self):
-        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {}),
+        for name, turn, timeout, want, out, extra in (("pi", fc.fc_models.pi_turn, None, fc.fc_models.TURN_TIMEOUT, '{"type":"tool_execution_start"}', {"PI_CODING_AGENT_DIR": str(self.d / "wt.pi-agent")}),
                                                       ("opencode", fc.fc_models.opencode, 7, 7, '{"type":"text","sessionID":"s","part":{"text":"ok"}}',
                                                        {"OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1"})):
             with self.subTest(name), mock.patch.object(fc.fc_proc, "run", return_value=subprocess.CompletedProcess([], 0, out, "")) as run, \

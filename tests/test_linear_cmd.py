@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, time, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,7 +34,7 @@ class LinearProject(unittest.TestCase):
 
     def args(self, action, *target, **kw):
         return SimpleNamespace(**{**dict(repo=str(self.repo), project=None, action=action, target=list(target), body=False, comments=False, json=False,
-                                         append=False, description=False, any_project=False, label=None, parent=None, search=None, state=None,
+                                         append=False, description=False, any_project=False, fresh=False, label=None, parent=None, search=None, state=None,
                                          title=None, priority=None, blocked_by=None, file=None, section=None, expect=None, create=None), **kw})
 
     def fails(self, fn, *args):
@@ -208,6 +208,37 @@ class LinearGet(unittest.TestCase):
         self.assertEqual([v for q, v in self.calls if self.QUERY in q], [{"id": "ENG-7"}])
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get")), (1, "get needs an issue id"))
 
+    def test_the_same_issue_read_again_within_30_seconds_comes_from_the_cache_unless_fresh(self):
+        reads = lambda: len([1 for q, v in self.calls if self.QUERY in q])
+        first = self.get("ENG-7")
+        self.issue["title"] = "Changed in Linear"
+        with mock.patch.object(fc.fc_linear_cmd.time, "time", return_value=time.time() + 29):
+            self.assertEqual(self.get("ENG-7", body=True), first + ["Steps here."])  # other flags, same read
+            self.assertEqual(self.get("ENG-8"), ["ENG-7 In Progress bug Changed in Linear"])  # another issue is its own read
+        self.assertEqual(reads(), 2)
+        with mock.patch.object(fc.fc_linear_cmd.time, "time", return_value=time.time() + 31):
+            self.assertEqual(self.get("ENG-7"), ["ENG-7 In Progress bug Changed in Linear"])
+        self.assertEqual(reads(), 3)
+        self.issue["title"] = "Changed again"
+        self.assertEqual(self.get("ENG-7", fresh=True), ["ENG-7 In Progress bug Changed again"])
+        self.assertEqual(reads(), 4)
+
+    def test_a_write_forgets_the_cached_reads(self):
+        self.get("ENG-7")
+        self.issue["title"] = "Changed in Linear"
+        with mock.patch.object(fc.fc_linear_cmd, "verb_comment"):
+            fc.fc_linear_cmd.cmd_linear(self.args("comment", "ENG-7"))
+        self.assertEqual(self.get("ENG-7"), ["ENG-7 In Progress bug Changed in Linear"])
+
+    def test_another_linear_project_does_not_share_the_cache(self):
+        self.get("ENG-7")
+        other = Path(tempfile.mkdtemp()).resolve()
+        (other / ".compose").mkdir(); (other / ".compose" / "linear.json").write_text(json.dumps({"project": URL + "-other", "team": "Engineering"}))
+        self.issue["title"] = "Changed in Linear"
+        with redirect_stdout(io.StringIO()) as out:
+            fc.fc_linear_cmd.verb_get(self.args("get", "ENG-7", repo=str(other)))
+        self.assertIn("Changed in Linear", out.getvalue())
+
     def test_body_then_comments_oldest_first(self):
         line, ann, bob = "ENG-7 In Progress bug Fix the cart", ["--- Ann 2026-01-02", "first"], ["--- Bob 2026-03-04", "second"]
         self.assertEqual(self.get("ENG-7", body=True, comments=True), [line, "Steps here."] + ann + bob)
@@ -233,9 +264,9 @@ class LinearGet(unittest.TestCase):
         self.issue["project"] = {"id": "p9", "name": "Shop"}
         for kw in ({}, {"json": True}):
             with redirect_stdout(io.StringIO()) as out:
-                self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get", "ENG-7", **kw)), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
+                self.assertEqual(self.fails(fc.fc_linear_cmd.verb_get, self.args("get", "ENG-7", fresh=True, **kw)), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
             self.assertEqual(out.getvalue(), "")
-        self.assertEqual(self.get("ENG-7", any_project=True), ["ENG-7 In Progress bug Fix the cart"])
+        self.assertEqual(self.get("ENG-7", any_project=True, fresh=True), ["ENG-7 In Progress bug Fix the cart"])
 
 
 class LinearList(unittest.TestCase):
@@ -681,7 +712,7 @@ class LinearNoProject(unittest.TestCase):
         return [w for q, _ in self.calls for w in ("issueUpdate", "commentCreate") if w in q]
 
     def verbs(self):
-        return (("get", {}), ("get", {"json": True, "body": True}), ("update", {"title": "T"}), ("comment", {"file": str(self.repo / "body.md")}))
+        return (("get", {}), ("get", {"json": True, "body": True, "fresh": True}), ("update", {"title": "T"}), ("comment", {"file": str(self.repo / "body.md")}))
 
     def test_in_scope_refuses_no_project_or_another_unless_any_project(self):
         self.assertEqual(self.fails(fc.fc_linear_cmd.in_scope, self.issue, self.args("get", "ENG-7")), self.REFUSAL)

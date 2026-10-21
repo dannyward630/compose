@@ -40,9 +40,10 @@ class CommitConvention(unittest.TestCase):
     def test_message_problem_names_the_process_and_leaves_plain_words_alone(self):
         bad = fc.fc_layers.message_problem
         for m in ("Add search (task 004)", "Wire compose verify into CI", "Land wave 2 of the work", "Fix what the teammate broke", "Close the Linear issue first",
-                  "Add search\n\nCo-authored-by: A <a@b.c>", "001: Add search", "", "compose's retry loop", "Apply the fix round result"):
+                  "Add search\n\nCo-authored-by: A <a@b.c>", "001: Add search", "", "compose's retry loop", "Apply the fix round 2 result"):
             self.assertTrue(bad(m), m)
-        for m in ("Add search", "Pin composer version", "Fix docker-compose healthcheck", "Update compose.yaml port", "Add a wavelength slider"):
+        for m in ("Add search", "Pin composer version", "Fix docker-compose healthcheck", "Update compose.yaml port", "Add a wavelength slider",
+                  "Expect the sufficiency key on the last verify round when its cost events are built", "Keep the review round count in the summary"):
             self.assertEqual(bad(m), "", m)
         self.assertIn("no type prefix", bad("Add search", CONV))
         self.assertEqual(bad("feat(api)!: add search", CONV), "")

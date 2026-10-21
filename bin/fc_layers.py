@@ -26,7 +26,7 @@ PROCESS_RE = re.compile(
     rf"(?<![\w./-])compose(?=\s+(?:{COMPOSE_COMMANDS})\b)|\bby compose\b|(?<![\w./-])compose['’]s\b|`compose`"
     r"|\bwaves?\b(?=\s*[-#]?\d)|\b(?:this|next|last|first|second|third|each|every|previous) wave\b"
     r"|\btasks?[ -]?#?\d{2,3}\b|\blinear (?:issues?|tickets?|stor(?:y|ies)|tasks?|comments?|project)\b"
-    r"|\b(?:fix|verify|review) rounds?\b|^co-authored-by:", re.I | re.M)
+    r"|\b(?:fix|verify|review) rounds?(?=\s*[-#]?\d)|^co-authored-by:", re.I | re.M)
 ROLE_RE = re.compile(r"\bteammates?\b|\bimplementers?\b|\bteam lead\b", re.I)  # narration in a body ("done by the implementer"), plain nouns in a task title
 
 def typed_subject(subject, conv):
@@ -35,7 +35,7 @@ def typed_subject(subject, conv):
 
 def message_problem(message, conv=None, title=False):
     """Why a commit message breaks the commit rules, or "" when it keeps them: it names the process (compose and its commands,
-    waves, task ids, teammates, implementers, the team lead, Linear issues, verify or fix rounds, a co-author trailer), or the
+    waves, task ids, teammates, implementers, the team lead, Linear issues, a numbered verify or fix round, a co-author trailer), or the
     repo declares a commit convention (verify.json `commit_convention`) and the subject starts with none of its types. A task
     title (`title=True`) may use the role words (implementer, teammate, team lead): in a title they name a part of the code."""
     subject = (message or "").strip().split("\n")[0]
@@ -274,16 +274,17 @@ def rewords(proj):
     return json.loads(f.read_text()) if f.exists() else {}
 
 def layer_message(repo, proj, c, conv=None):
-    """The message commit c has in a layer when it differs from its own: the one `compose reword` chose for it, else its own with
-    the process scrubbed out when it breaks the commit rules (scrub_message). None when its own stands."""
+    """(message, why) for the message commit c has in a layer when it differs from its own: the one `compose reword` chose for it,
+    else its own with the process scrubbed out when it breaks the commit rules (scrub_message), `why` naming that rule.
+    None when its own stands."""
     own = fc_core.sh(["git", "show", "-s", "--format=%B", c], repo).stdout.strip()
     chosen = rewords(proj).get(commit_key(repo, c))
     if chosen:
-        return chosen["message"] if chosen["message"] != own else None
-    if not message_problem(own, conv):
+        return (chosen["message"], "chosen with compose reword") if chosen["message"] != own else None
+    if not (why := message_problem(own, conv)):
         return None
     files = fc_core.sh(["git", "show", "--name-only", "--no-renames", "--format=", c], repo).stdout.split()
-    return scrub_message(own, files, conv)
+    return scrub_message(own, files, conv), why
 
 def cherry_pick_same(wt, c, message=None):
     """Cherry-pick keeping the original committer and date, so a layer rebuilt from unchanged commits gets the same hashes and
@@ -360,9 +361,9 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
         for u in g:
             units.append([])
             for c in u["commits"]:
-                message = layer_message(repo, proj, c, conv)
+                message, why = layer_message(repo, proj, c, conv) or (None, "")
                 if message:
-                    fc_core.say(f"stack  note  {c[:7]} message: {first_line(c)!r} becomes {message.splitlines()[0]!r}")
+                    fc_core.say(f"stack  note  {c[:7]} message: {first_line(c)!r} becomes {message.splitlines()[0]!r}: {why}")
                 conflicts = cherry_pick_same(wt, c, message)
                 if conflicts is not None:
                     files = ", ".join(conflicts) or "no file git names"

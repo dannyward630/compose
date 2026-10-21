@@ -147,7 +147,7 @@ def main():
         if name == "linear":
             s.add_argument("action", choices=("get", "list", "create", "update", "comment", "labels", "project", "doc"))
             s.add_argument("target", nargs="*")
-            for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project"):
+            for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project", "--fresh"):
                 s.add_argument(flag, action="store_true")
             s.add_argument("--label", action="append")
             for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
