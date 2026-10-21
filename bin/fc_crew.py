@@ -268,7 +268,8 @@ def cmd_crew(a):
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--no-chrome", "--append-system-prompt", TRUST_PROMPT, "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=frame0)) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
-                  *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)")
+                  *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",
+                  *(["Bash(compose frame0:*)"] if frame0 else []))  # a wireframing session runs `compose frame0 ...` (draw, pages, lint) with no prompt; the flag swallows what follows, so it stays last
     except RuntimeError as e:
         if len(crew_reports(proj, name)) > seen or fc_herdr.pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")

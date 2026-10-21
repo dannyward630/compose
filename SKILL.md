@@ -190,7 +190,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - Keep the target repo's fixed context small: short AGENTS.md, no unneeded MCP servers, no duplicate skills.
 - Every turn re-sends the whole session, and every Claude teammate compacts at 150k tokens, so spend turns and context on purpose.
   Look at an image once, downscaled or cropped first (`sips -Z 1000 <png>`), and export or read it again only after it changed.
-  Draw Frame0 in `compose frame0 draw` lists, a page per call, never shape by shape.
+  Draw Frame0 in `compose frame0 draw` lists, a page per call, never shape by shape; reorder, delete, and lint its pages with `compose frame0 move|delete|links|lint`.
   A harness subagent gets a named model (`model: "sonnet"` for searches and fixes), never the session's by inheritance.
 - Build a trail graph in the repo (`trail build .`, free, git-ignored). The CLI prepends a `trail ask` context pack with exact `file:line` and source to every implementer and fixer prompt, and tells the model to use `trail ask` and `trail callers` instead of exploring. Without trail the fast model reads whole files and every extra tool call resends the full context.
 - Report honestly: attempts per task, what escalated, what teammates did outside `run`, and the verify output.

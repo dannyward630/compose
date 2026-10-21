@@ -55,7 +55,7 @@ DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: 
 target Figma file is {figma}.
 1. Read SKILL.md and sections/0d.md, then follow 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `compose linear list --search` search for "design system", "tokens",
-   "Figma"; the Frame0 pages (`compose frame0 up --project {slug}`, then `export_page_as_image` once per page); the repo's tokens through trail
+   "Figma"; the Frame0 pages (`compose frame0 up --project {slug}`, `compose frame0 pages`, then `export_page_as_image` once per page); the repo's tokens through trail
    (`trail ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
    (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
 3. """ + fc_figmaplan.PROBE_STEPS + """
@@ -73,7 +73,10 @@ target Figma file is {figma}.
    measured from the research or competitors, status styling, hierarchy. Each rule cites research, a Linear decision, or a measured
    value. Lowfi frames define flow and content only, never layout, spacing, or density; a card that only follows the lowfi on a
    visual question says so and gives the research-based alternative.
-9. """ + fc_figmaplan.PUBLISH_STEP + """
+9. Draw a flow's Frame0 pages when you draw that flow, never a skeleton of every flow; a journey's new page goes right behind its
+   pages (`add_page` takes `after`). Run `compose frame0 lint --project {slug}` before every review ask and fix it with
+   `compose frame0 move|delete|links`. Change Frame0 only through `compose frame0` commands, never `curl` on its API or token.
+10. """ + fc_figmaplan.PUBLISH_STEP + """
 """
 
 def cmd_designer(a):
