@@ -31,6 +31,16 @@ class CodexIds(unittest.TestCase):
         self.assertEqual(result(1, "a\nb\n\n", " \n"), (False, "b"))
         self.assertEqual(result(3, "", ""), (False, "exit 3"))
 
+    def test_calls_go_through_the_codex_row(self):
+        probe, result, p = mock.Mock(return_value=["x"]), mock.Mock(return_value=(False, "y")), subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.dict(fc_harness.HARNESSES["codex"], {"probe": probe, "result": result}):
+            self.assertEqual(fc_harness.probe_command("codex:gpt-6-sol"), ["x"])
+            probe.assert_called_once_with("gpt-6-sol")
+            fc_harness.probe_command("codex:")
+            probe.assert_called_with(None)
+            self.assertEqual(fc_harness.probe_result("codex:gpt-6-sol", p), (False, "y"))
+            result.assert_called_once_with(p)
+
 
 class CodexSkillLink(unittest.TestCase):
     def setUp(self):
