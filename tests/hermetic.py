@@ -127,7 +127,9 @@ def temp_home():
     is a day old or missing, and another to flush telemetry; each writes under HOME after the test removed it, so the home
     came back as an empty .graft. A cache checked now and DO_NOT_TRACK spawn neither. COMPOSE_NO_PREFLIGHT=1 keeps the preflight's
     key calls, gh login check and machine warnings (fc_init.start_checks) out of a test: they ask the network and read this machine.
-    COMPOSE_NO_AWAKE=1 keeps a test that reaches run, verify, watch or crew start from leaving a caffeinate on the suite's pid."""
+    COMPOSE_NO_AWAKE=1 keeps a test that reaches run, verify, watch or crew start from leaving a caffeinate on the suite's pid.
+    GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL give a test a git identity, because a temp
+    HOME has no ~/.gitconfig, so git would refuse its commits with "Author identity unknown"."""
     home = Path(tempfile.mkdtemp(prefix="compose-home-")).resolve()
     for rel, text in INSTALLED.items():
         f = home / rel
@@ -136,7 +138,8 @@ def temp_home():
         f.chmod(0o755)
     (home / ".graft").mkdir()
     (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None, "checkedAt": int(time.time() * 1000)}))
-    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1", "COMPOSE_NO_PREFLIGHT": "1", "COMPOSE_NO_AWAKE": "1"}
+    return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1", "COMPOSE_NO_PREFLIGHT": "1", "COMPOSE_NO_AWAKE": "1",
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
 def snapshot():
