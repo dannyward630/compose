@@ -1,10 +1,13 @@
 import hermetic  # first: no test sees the real home
-import os, pwd, shutil, subprocess, sys, unittest
+import json, os, pwd, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_setup_e2e import RECORD, TOOLS, SetupE2E
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+import fc_harness
 
+ROOT = Path(__file__).resolve().parents[1]
 CODEX = shutil.which("codex")
 # The account's Codex home holds its sign-in; a scratch one would lose it, and the sign-in is never copied or linked.
 SIGNED_IN = Path(os.environ.get("CODEX_HOME") or Path(pwd.getpwuid(os.getuid()).pw_dir) / ".codex")
@@ -26,6 +29,46 @@ class CodexCommandsE2E(SetupE2E, unittest.TestCase):
         p = subprocess.run([CODEX, "exec", "--ephemeral", "--skip-git-repo-check", "$compose-workspace --help"], cwd=r.home, env=env,
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
         self.assertIn("usage: compose workspace", p.stdout + p.stderr, p.stderr[-3000:])
+
+
+def linear_key():
+    try: return any(w.get("linear") for w in json.loads((hermetic.REAL / "auth.json").read_text()).get("workspaces", {}).values())
+    except (OSError, ValueError): return False
+
+
+@unittest.skipUnless(CODEX, "codex is not installed")
+class CodexFence(unittest.TestCase):
+    """The real codex, started with crew_argv's fence in a scratch home, still does a teammate's work."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve(); self.wt = Path(f"{self.repo}-wt"); self.res = self.repo / ".compose/p/results"
+        self.res.mkdir(parents=True); (self.res.parent / "verify.json").write_text("{}")
+        for a in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], ["worktree", "add", "-q", "-b", "t", str(self.wt)]):
+            subprocess.run(["git", "-C", str(self.repo), *a], check=True)
+
+    def codex(self, task, cwd, **env):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")} | {"CODEX_HOME": str(SIGNED_IN), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", **env}
+        # `codex exec` has no -a, so the fence goes before the subcommand (codex 0.163.0 accepts it there)
+        argv = [CODEX, *fc_harness.crew_argv("codex", None, "Do exactly what the task says.", ROOT / "SKILL.md", cwd, self.res), "exec", "--ephemeral", "--skip-git-repo-check", task]
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+
+    def test_commits_from_a_worktree(self):
+        p = self.codex("Create a.txt containing a, then git add and git commit it with the message 'fence ok'.", self.wt)
+        self.assertIn("fence ok", subprocess.run(["git", "-C", str(self.wt), "log", "--format=%s"], capture_output=True, text=True).stdout, p.stderr[-3000:])
+
+    def test_reports_into_results(self):
+        p = self.codex(f"Run: {ROOT}/bin/compose report --repo {self.repo} --project p --as t working hi", self.repo)
+        self.assertTrue((self.res / "crew/t.status").is_file(), p.stdout[-3000:])
+
+    def test_runs_unittest_with_its_caches(self):
+        (self.wt / "t.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test_a(self): open('ran', 'w').write('1')\n")
+        p = self.codex("Run: python3 -m unittest t", self.wt)
+        self.assertEqual(((self.wt / "ran").is_file(), (self.wt / "__pycache__").is_dir()), (True, True), p.stdout[-3000:])
+
+    @unittest.skipUnless(linear_key(), "no Linear key")
+    def test_linear_get(self):
+        p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515", self.repo, COMPOSE_CONFIG=str(hermetic.REAL / "config.json"))
+        self.assertIn("NEB-1515", p.stdout.split("\ncodex\n")[-1], p.stdout[-3000:])
 
 
 if __name__ == "__main__":

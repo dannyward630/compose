@@ -7,7 +7,7 @@ os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
-import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_steprun, fc_steps
+import fc_checks, fc_config, fc_harness, fc_init, fc_links, fc_models, fc_steprun, fc_steps, fc_worktree
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(fc)
 
@@ -590,3 +590,46 @@ class DoctorWithoutClaude(unittest.TestCase):
             self.assertEqual(lines["claude"], CLAUDE_LINE, tools)
             self.assertFalse(any(OPTIONAL in l for l in lines.values()), tools)
             self.assertEqual((len(waiting), "i-have-adhd skill" in waiting[0]), (1, True), tools)
+
+
+class CodexArgv(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        self.tmp, self.results = Path(d.name), Path(d.name, "results")
+        self.cwd, self.work = (self.tmp / n for n in ("cwd", "work"))
+        for r in (self.cwd, self.work): r.mkdir(); subprocess.run(["git", "init", "-q", str(r)], check=True)
+        self.gd, self.wd = (str(fc_worktree.common_dir(r)) for r in (self.cwd, self.work))
+
+    def argv(self, model="codex:gpt-6.1-sol", effort="high", prompt="p", cwd=None, work=None):
+        return [str(x) for x in fc_harness.crew_argv(model, effort, prompt, "/s/SKILL.md", cwd or self.cwd, self.results, work)]
+
+    def test_exact_list(self):
+        trust = "projects={%s={trust_level=\"trusted\"}}" % json.dumps(os.path.realpath(self.cwd))
+        text = json.dumps("p\n\nThe compose skill is the file /s/SKILL.md.")
+        self.assertEqual(self.argv(), ["-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"', "-s", "workspace-write", "-a", "never",
+                                       "-c", "sandbox_workspace_write.network_access=true", "-c", trust, "-c", "developer_instructions=" + text,
+                                       "--add-dir", str(self.results), "--add-dir", self.gd])
+
+    def test_bare_codex_and_no_effort(self):
+        for model in ("codex", "codex:"):
+            argv = self.argv(model, None)
+            self.assertNotIn("-m", argv)
+            self.assertFalse([a for a in argv if "model_reasoning_effort" in a])
+            self.assertEqual(argv[:2], ["-s", "workspace-write"])
+
+    def test_work_goes_last_and_repeats_or_missing_repos_are_left_out(self):
+        self.assertEqual(self.argv(work=self.work)[-4:], ["--add-dir", str(self.work), "--add-dir", self.wd])
+        self.assertEqual(self.argv(work=self.cwd)[-4:], ["--add-dir", self.gd, "--add-dir", str(self.cwd)])  # its git dir is already there
+        outside = self.tmp / "plain"; outside.mkdir()
+        self.assertEqual(self.argv(cwd=outside)[-2:], ["--add-dir", str(self.results)])  # no git dir to add
+
+    def test_values_parse_as_toml_through_a_symlink(self):
+        import tomllib
+        link, prompt = self.tmp / "link", 'say "hi"\nthen \\ stop'
+        link.symlink_to(self.cwd)
+        values = {a.split("=", 1)[0]: tomllib.loads(a) for a in self.argv(cwd=link, prompt=prompt) if a.startswith(("projects=", "developer_instructions="))}
+        self.assertEqual(values["projects"], {"projects": {os.path.realpath(self.cwd): {"trust_level": "trusted"}}})
+        self.assertEqual(values["developer_instructions"]["developer_instructions"], prompt + "\n\nThe compose skill is the file /s/SKILL.md.")
+
+    def test_no_unfenced_sandbox(self):
+        for a in self.argv(work=self.work): self.assertFalse(a == "danger-full-access" or a.startswith("--dangerously"), a)
