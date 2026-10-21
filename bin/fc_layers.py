@@ -15,6 +15,11 @@ def layer_prefix(repo, proj):
         return cfg["layer_prefix"]
     return fc_worktree.task_prefix(repo, proj)
 
+def layer_branches(repo, proj):
+    """The project's layer branches, bottom first. Only `<prefix>layer-<digits>` is a layer: a backup such as `layer-01-prerebase` is not."""
+    prefix = layer_prefix(repo, proj)
+    refs = fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo, check=False).stdout.split()
+    return sorted((r for r in refs if re.fullmatch(rf"{re.escape(prefix)}layer-\d+", r)), key=lambda r: int(r.rsplit("layer-", 1)[1]))
 
 COMPOSE_COMMANDS = "verify|run|stack|resume|status|clean|sync|init|done|watch|crew|change|linear|report|reword|land|doctor|setup|update|cli|skill|project|tasks?|waves?"
 PROCESS_RE = re.compile(
@@ -386,7 +391,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
             return None
     for l, tip in zip(layers, tips):
         fc_core.sh(["git", "branch", "-f", l["branch"], tip], repo)
-    for old in fc_core.sh(["git", "branch", "--list", f"{prefix}layer-*", "--format=%(refname:short)"], repo).stdout.split():
+    for old in layer_branches(repo, proj):
         if old not in {l["branch"] for l in layers}:
             fc_core.sh(["git", "branch", "-D", old], repo, check=False)
     return layers
