@@ -108,7 +108,7 @@ def spec_check(data, checks=()):
     desc = (data["feature"].get("description") or "")
     gaps = []
     m = re.search(r"## Not yet specified\n+([^\n]*)", desc)
-    if not m or m.group(1).strip() != "None":
+    if not m or m.group(1).strip().rstrip(".").strip().lower() != "none":
         gaps.append(f"`## Not yet specified` holds {m.group(1).strip() if m else 'nothing'}: say `None` when the plan is settled")
     if "### Codebase brief" not in desc:
         gaps.append("no `### Codebase brief` section")
