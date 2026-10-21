@@ -2,6 +2,7 @@
 
 import fc_ledger
 import fc_routecost
+import fc_tasks
 
 
 def detail(workflow, depth, numbers):
@@ -30,4 +31,9 @@ def run_event(proj, meta, result, final):
 
 def verify_events(proj, tasks, passed, cost, run_id, commit_sha):
     """Verify's cost events for its final batch: one per code task, then one for verify itself."""
-    raise NotImplementedError("verify_events")
+    rs = fc_routecost.rounds(proj)
+    code = fc_tasks.code_tasks(tasks)
+    base = {"run_id": run_id, "commit_sha": commit_sha, "criterion_id": [], "source": "verify", "result": "pass" if passed else "fail"}
+    evs = [cost_event(dict(base, task_ids=[t["id"]]), *fc_routecost.route(proj, t), {"attempts": 0, "escalations": 0, "fix_rounds": fc_routecost.counts({}, rs, t["id"])["fix_rounds"], "cost": 0.0}) for t in code]
+    evs.append(cost_event(dict(base, task_ids=[t["id"] for t in code]), "-", "-", {"attempts": 0, "escalations": 0, "fix_rounds": sum("fix_tasks" in r for r in rs), "cost": cost}))
+    return evs
