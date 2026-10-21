@@ -119,7 +119,7 @@ You can change that limit with `stall_seconds` in `verify.json` or with `watch -
 
 Each watcher remembers what it last reported in `results/watch-<who>.json`.
 The `<who>` is the watcher's `COMPOSE_ROLE` (`orchestrator` for the team lead), and `manager-<pane>` for an engineering manager session in herdr pane `<pane>` (`manager` outside herdr).
-`watch --now` and `status` also say whether yolo is on and which session set it, since one session's `compose yolo` changes how every session on the project answers.
+`watch --now` and `status` also say whether away or yolo is on and which session set it, since one session's `compose away` or `compose yolo` changes how every session on the project answers.
 A watch started later still reports what happened while none ran, and `watch --now` marks the current state as seen.
 A billing halt is an event too, shown as `event halt=payment`.
 
