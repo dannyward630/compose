@@ -400,6 +400,26 @@ class ToolErrors(unittest.TestCase):
         self.assertTrue(report["checks"][0]["tool_error"])
         self.assertEqual(findings, "")
 
+    def test_a_failing_check_the_machine_slept_through_is_run_again_and_its_first_run_is_no_finding(self):
+        d = tempfile.mkdtemp()
+        t = {"wall": 1000.0, "awake": 50.0}
+        clock = SimpleNamespace(time=lambda: t["wall"], monotonic=lambda: t["awake"])
+        real = fc.fc_core.sh
+        def sh(*a, **k):
+            p = real(*a, **k)
+            if not t.get("napped"):  # the lid closed while the first run waited on its network
+                t.update(napped=1, wall=t["wall"] + 5400, awake=t["awake"] + 60)
+            return p
+        said = []
+        cmd = f"echo x >> {d}/n; test $(wc -l < {d}/n) -gt 1"
+        with mock.patch.object(fc.fc_proc, "time", clock), mock.patch.object(fc.fc_verify, "time", clock), \
+                mock.patch.object(fc.fc_core, "sh", sh), mock.patch.object(fc.fc_core, "say", said.append):
+            ok, report, findings = self.check(cmd)
+        self.assertTrue(ok)
+        self.assertEqual((len((Path(d) / "n").read_text().split()), findings), (2, ""))
+        self.assertTrue(any("slept for 89 minutes" in s and "run again" in s for s in said), said)
+        self.assertEqual(report["checks"][0]["seconds"], 60.0)  # the minute the check ran, not the hour and a half the lid was closed
+
 
 class FixRoundChecks(unittest.TestCase):
     def stages(self, scoped, full, tests):

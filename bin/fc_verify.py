@@ -246,16 +246,18 @@ def run_stages(repo, proj, cfg, a, tests=None):
 
     def run_checks(cmds, into):
         for c in cmds:
-            t1 = time.time()
+            t1, clk = time.time(), fc_proc.clock()
             p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
             out = fc_core.scrub(p.stdout + p.stderr)[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
-            if p.returncode and fc_jev.tool_error(out):
-                fc_core.say(f"check  tool error; retrying once  {c}")
+            nap = fc_proc.slept(clk) if p.returncode else 0  # a check the machine slept through fails on the sleep: its network and its clocks stopped with it
+            if p.returncode and (nap or fc_jev.tool_error(out)):
+                fc_core.say(f"check  {fc_proc.slept_text(nap) + '; run again' if nap else 'tool error; retrying once'}  {c}")
                 p = fc_core.sh(c, repo, timeout=900, check=False, env=fc_core.clean_env())
                 out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
-            into.append({"cmd": c, "exit": p.returncode, "seconds": round(time.time() - t1, 1), "output": out, "tool_error": tool})
-            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {c}")
+            awake = time.time() - t1 - fc_proc.slept(clk)  # the time the check ran, not the time the lid was closed
+            into.append({"cmd": c, "exit": p.returncode, "seconds": round(awake, 1), "output": out, "tool_error": tool})
+            fc_core.say(f"check  {'ok  ' if p.returncode == 0 else 'TOOL ERROR' if tool else 'FAIL'} {fc_core.fmt(awake):>8}  {c}")
             if p.returncode and not tool:
                 findings.append(f"Command failed: {c}\n{out}")
         passed = all(c["exit"] == 0 for c in into)

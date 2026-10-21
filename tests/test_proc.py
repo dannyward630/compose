@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, threading, time, unittest
+import importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, tempfile, threading, time, types, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -151,6 +151,30 @@ class KeepAwake(unittest.TestCase):
         with mock.patch.dict(os.environ, {"COMPOSE_NO_AWAKE": "1"}):
             self.assertIsNone(fc.fc_proc.keep_awake())
         self.assertEqual(fc.fc_proc.AWAKE, {})
+
+
+class Slept(unittest.TestCase):
+    """fc_proc.clock and fc_proc.slept: the seconds a Mac slept, the wall clock's against the awake one (monotonic stops in sleep)."""
+
+    def at(self, wall, awake):
+        return mock.patch.object(fc.fc_proc, "time", types.SimpleNamespace(time=lambda: wall, monotonic=lambda: awake))
+
+    def test_it_is_the_wall_time_the_awake_clock_did_not_see(self):
+        with self.at(1000.0, 50.0):
+            since = fc.fc_proc.clock()
+        with self.at(1000.0 + 5400, 50.0 + 180):
+            self.assertEqual(fc.fc_proc.slept(since), 5220)
+
+    def test_a_short_gap_or_a_clock_set_back_is_no_sleep(self):
+        with self.at(1000.0, 50.0):
+            since = fc.fc_proc.clock()
+        for wall, awake in ((1000.0 + 30, 50.0), (1000.0 + 600, 50.0 + 590), (1000.0 - 3600, 50.0 + 10)):
+            with self.subTest(wall=wall), self.at(wall, awake):
+                self.assertEqual(fc.fc_proc.slept(since), 0)
+
+    def test_it_says_the_minutes(self):
+        self.assertEqual(fc.fc_proc.slept_text(5220), "the machine slept for 87 minutes")
+        self.assertEqual(fc.fc_proc.slept_text(90), "the machine slept for 2 minutes")
 
 
 if __name__ == "__main__":
