@@ -467,6 +467,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             sys.exit(1)
         rounds.append(report)
         fc_ledger.verify_record(proj, repo, report)
+        report["sufficiency"] = fc_accept.jev_sufficiency(cfg, proj, repo) if not a.skip_review and cfg.get("jev_acceptance", True) else None
         if ok or rnd == a.fix:
             break
         if not findings.strip():
