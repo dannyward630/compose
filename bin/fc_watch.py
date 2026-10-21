@@ -6,7 +6,7 @@ import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_st
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
 
 # ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
+FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "unproven", "broken_base", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
 
 AGENTS_INTERVAL = 10.0  # seconds between `herdr agent list` calls in one watch loop: a teammate's status moves at the pace of its turns
 
