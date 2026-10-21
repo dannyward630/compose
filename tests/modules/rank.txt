@@ -54,6 +54,7 @@ fc_gate
 fc_implement
 fc_jev
 fc_accept
+fc_reroute
 fc_verify
 fc_ship
 fc_prove
