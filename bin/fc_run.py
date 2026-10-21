@@ -102,7 +102,7 @@ def preflight(models):
     """One tiny turn per model a run can call, before any clone: a wrong model id or preset slug stops the run here with the
     provider's message, instead of failing every task (and, for a fallback, only on the first miss). A rate limit proves the
     model resolved, so it passes."""
-    import shutil
+    import fc_providers, shutil
     def probe(model):
         root = Path(tempfile.mkdtemp())
         (root / "p").mkdir()
@@ -116,6 +116,10 @@ def preflight(models):
         finally:
             shutil.rmtree(root, ignore_errors=True)
     models = sorted(m for m in models if m and not fc_claude.is_claude(m))  # Claude Code is the subscription; nothing to resolve
+    for name in sorted({p[0] for p in map(fc_config.provider_of, models) if p}):
+        ok, why = fc_providers.reach(name)
+        if not ok:
+            sys.exit("preflight stopped; nothing was cloned or run. " + why)
     # pi takes a provider's key from its own auth.json before the workspace key compose hands it, so such an entry bills elsewhere.
     shadowing = [p for p in fc_pi.pi_auth_overrides(fc_pi.PI_AUTH) if any(m.startswith(f"pi:{p}/") for m in models)]
     if shadowing:
