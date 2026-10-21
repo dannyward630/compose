@@ -80,3 +80,25 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     errors = [r for r in suspects if r.get("judge_error")]
     return {"pass": all(r["choice"] == "MET" for r in rows), "unclear": unclear, "criteria": rows, "failed": failed, "suspects": suspects, "model": model,
             **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
+
+VERDICTS = ()
+NEEDS = ()
+DETERMINISTIC = ()
+JEV_BATCH = 0
+JEV_EVENTS = 0
+
+def sufficiency_questions(meta, rows):
+    """Jev's questions per criterion: is it proven, what further verification it needs, and does each event test it."""
+    raise NotImplementedError("fc_accept.sufficiency_questions")
+
+def sufficiency_needs(answer):
+    """The further verification a needs answer asks for: the chosen value and every other likely one, in NEEDS order."""
+    raise NotImplementedError("fc_accept.sufficiency_needs")
+
+def sufficiency_events(meta, rows, answers, threshold, run_id, commit_sha):
+    """One sufficiency event per criterion, citing the events Jev ties to it, never proven past a deterministic fail."""
+    raise NotImplementedError("fc_accept.sufficiency_events")
+
+def jev_sufficiency(cfg, proj, repo):
+    """Jev judges each task's criteria from its counted evidence; the events are recorded on the task issue and returned."""
+    raise NotImplementedError("fc_accept.jev_sufficiency")
