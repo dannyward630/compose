@@ -188,7 +188,7 @@ def render_status(repo, projects):
         if ready.exists():
             out.append("  " + fc_linear.ready_line(json.loads(ready.read_text())))
         if y := fc_tasks.yolo_state(proj):
-            out.append(f"  yolo on{' (push)' if y.get('push') else ''} since {y['since']}" + (f", set by {by}" if (by := fc_tasks.yolo_by(y)) != "unknown" else ""))
+            out.append(f"  {y['mode']} on{' (push)' if y.get('push') else ''} since {y['since']}" + (f", set by {by}" if (by := fc_tasks.yolo_by(y)) != "unknown" else ""))
         t = fc_cost.total(fc_cost.rows(proj))
         out.append(f"  cost  {t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)")
         out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")

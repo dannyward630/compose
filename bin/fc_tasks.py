@@ -188,11 +188,13 @@ def held_behind(pending, hold, failed):
 
 
 def yolo_state(proj):
-    """The posture file, or None when yolo is off. Unreadable counts as off, so notifications keep firing."""
+    """The posture file, or None when yolo is off. Unreadable counts as off, so notifications keep firing. A file from
+    before the mode was recorded reads as away."""
     try:
-        return json.loads((proj / "results" / "yolo.json").read_text())
+        y = json.loads((proj / "results" / "yolo.json").read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    return {**y, "mode": y.get("mode") or "away"}
 
 def yolo_by(y):
     """Who turned yolo on or last changed it, as this session sees it (yolo is per project, so another engineering manager session
