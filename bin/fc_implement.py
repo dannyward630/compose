@@ -150,10 +150,10 @@ def task_base(repo, proj, meta):
             unmerged.append(b)
     if not unmerged:
         return "HEAD", head
-    # The project is one stack: linearize what has passed so far and build on the chain's top, which contains every dependency.
+    # The project is one stack: linearize through the last dependency only; a layer above may sit on one being rebuilt now
     trunk = fc_core.current_branch(repo)
     with fc_worktree.STACK_LOCK:  # read the base before another task's linearize rewrites it
-        chain = fc_layers.linearize(repo, proj, trunk, fc_worktree.stack_worktree(repo, proj, trunk))
+        chain = fc_layers.linearize(repo, proj, trunk, fc_worktree.stack_worktree(repo, proj, trunk), through=unmerged)
         missing = [b for b in unmerged if b not in chain]
         if missing:
             raise RuntimeError(f"after: {', '.join(missing)} could not be chained: {fc_layers.STACK_STOP or 'rebase conflict'}")
