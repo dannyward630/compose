@@ -269,6 +269,27 @@ def layer_base(repo, proj, trunk):
         base = trunk
     return base
 
+def head_problem(repo, proj):
+    """Why the stack must not be built from where `repo` stands, or "" when it can. task_branches reads the unmerged branches
+    against HEAD, so HEAD on one of the project's own task or layer branches (a checkout by hand, a teammate, a stuck rebase)
+    hides every task branch it contains: the chain is cut short and the layers above it are deleted. A HEAD on the project
+    branch, or anywhere that holds none of the project's unmerged tasks, is fine."""
+    branch = fc_core.project_branch(proj)
+    here = fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip()
+    own = [*fc_worktree.own_branches(repo, proj), *fc_core.sh(["git", "branch", "--list", f"{fc_layers.layer_prefix(repo, proj)}layer-*", "--format=%(refname:short)"], repo, check=False).stdout.split()]
+    fix = f"Switch back with `git switch {branch}` in {repo}, then re-run"
+    if here in own:
+        return f"HEAD is on {here}, one of the project's own branches, not on {branch}; the layers and the stack are left as they were. {fix}"
+    if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], repo, check=False).returncode:
+        return ""
+    prefix = fc_worktree.task_prefix(repo, proj)
+    held = fc_core.sh(["git", "for-each-ref", "--format=%(refname:short)", "--merged=HEAD", f"--no-merged={branch}", f"refs/heads/{prefix}*"], repo, check=False).stdout.split()
+    held = [b for b in held if re.fullmatch(rf"{re.escape(prefix)}\d+", b)]
+    if held:
+        return (f"HEAD holds the unmerged task branches {', '.join(held)}, which would be left out of the stack; the layers and the stack are "
+                f"left as they were. {fix}")
+    return ""
+
 def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
@@ -281,6 +302,10 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
     its unpushed commits into the PRs: the stack says so, and a submit stops before anything changes. `gate(repo, proj, layers,
     trunk, wt)` runs on a submit once the layers stand and before anything is pushed; the reason it returns, when it returns one,
     stops the submit the same way."""
+    if why := head_problem(repo, proj):
+        fc_layers.STACK_STOP = why
+        fc_core.say(f"stack  STOP  {why}")
+        return []
     fc_worktree.rename_legacy_branches(repo, proj)
     if not fc_worktree.stack_order(repo, proj):
         return []

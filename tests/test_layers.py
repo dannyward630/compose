@@ -312,6 +312,19 @@ class Layers(unittest.TestCase):
         self.assertIn(f"compose/p conflicts with main {main} in setup.txt; the layers and the stack are left as they were. "
                       "Rebase compose/p onto main, then re-run", stops[0])
 
+    def test_a_checkout_on_a_task_branch_stops_the_stack_and_keeps_every_layer(self):
+        for at in ("compose/p-003", "compose/p-002"):  # all task branches are in HEAD, or only the ones below
+            with self.subTest(at):
+                stops = self.stop(lambda: self.git("checkout", "-q", at))
+                self.assertEqual(len(stops), 1)
+                self.assertIn(f"HEAD is on {at}, one of the project's own branches, not on compose/p", stops[0])
+                self.git("checkout", "-q", "compose/p")
+
+    def test_a_detached_head_that_holds_task_branches_stops_the_stack_too(self):
+        stops = self.stop(lambda: self.git("checkout", "-q", "--detach", "compose/p-003"))
+        self.assertEqual(len(stops), 1)
+        self.assertIn("HEAD holds the unmerged task branches compose/p-001, compose/p-002, compose/p-003, which would be left out of the stack", stops[0])
+
     def test_a_chain_rebase_that_stops_stops_the_stack_verify_and_top_before_they_act_on_the_layers_below_it(self):
         def task_003_conflicts_with_002():
             self.git("checkout", "-q", "-B", "compose/p-003", "compose/p")

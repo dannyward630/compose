@@ -459,7 +459,7 @@ class Reenter(unittest.TestCase):
         hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
         cmds = lambda ev, m=None: [h["command"] for e in hooks.get(ev, []) if e.get("matcher") == m for h in e["hooks"]]
         self.assertTrue(any(c.endswith(" reenter") for c in cmds("SessionStart", "compact")), hooks.get("SessionStart"))
-        self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit")[0].endswith(" guard"))
+        self.assertTrue(cmds("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit|Bash")[0].endswith(" guard"))
         self.assertTrue(cmds("PostToolUse", "Skill")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("UserPromptSubmit")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("Stop")[0].endswith(" rewake"))
