@@ -1,5 +1,6 @@
 import contextlib, shlex, json, os, re, shutil, signal, subprocess, time
 from pathlib import Path
+from urllib.parse import urlsplit
 import fc_core, fc_proc, fc_config, fc_models, fc_implement
 
 
@@ -216,11 +217,40 @@ def jev_e2e(case, repo):
     # jev exits 0 only on a reached goal: then the assert decides; a run that did not reach it fails the case either way.
     code = a.returncode if a else 0
     r["exit"] = code if p.returncode == 0 else (code or p.returncode)
-    if record and r["exit"] == 0:
+    if record and r["exit"] == 0 and not case.get("keep_record"):  # a prototype capture keeps its steps: they are the point
         shutil.rmtree(record, ignore_errors=True)
     elif record and Path(record).is_dir():
         r["screenshots"] = str(record)
     return r
+
+ASSERT_BROKE_RE = re.compile(r"Traceback \(most recent call last\)|ModuleNotFoundError|FileNotFoundError|No such file or directory|command not found|"
+                             r"ECONNREFUSED|Connection refused|ENOENT|SyntaxError", re.I)
+LOAD_FAIL_RE = re.compile(r"ERR_[A-Z_]+|net::|chrome-error:|refused to connect|can.t be reached|ECONNREFUSED", re.I)
+LOGIN_PATH_RE = re.compile(r"/(?:log-?in|sign-?in|auth|sso|oauth)\b", re.I)
+
+def path_of(url):
+    return urlsplit(url or "").path
+
+def env_failure(case, r):
+    """(kind, why) when a failed case's own output shows the environment, not a missing feature, broke it: the page did not
+    load, the user was bounced to a login page or a password could not be typed, the assert script itself crashed, or the
+    harness did. None when the output alone cannot tell; a model then reads the steps (fc_prove.judge_failure)."""
+    run = r.get("run") or {}
+    why, url = str(run.get("stop_reason") or ""), str(run.get("url") or "")
+    out = (r.get("stderr") or "") + (r.get("stdout") or "")
+    if "skipped the password field" in why:
+        return "login", why
+    if r.get("assert_exit") not in (None, 0) and ASSERT_BROKE_RE.search(out):
+        return "assert", "the assert script itself failed: " + " ".join(out.split())[-200:]
+    if run.get("status") == "error":
+        return "harness", why or "jev crashed"
+    if not run and re.search(r"command not found|address already in use|EADDRINUSE|No module named|Chromium not found|did not open the debug port", out, re.I):
+        return "harness", " ".join(out.split())[-200:]
+    if LOAD_FAIL_RE.search(why + " " + url) or (run and url in ("", "about:blank") and run.get("steps", 0) == 0):
+        return "page did not load", why or url or "the browser never left a blank page"
+    if LOGIN_PATH_RE.search(path_of(url)) and not LOGIN_PATH_RE.search(path_of(case.get("url"))):
+        return "login", f"the run ended on {url}, a login page the case did not start on"
+    return None
 
 def say_case(name, r, verdict):
     """A case's verdict line, then the end of its output; for a jev run that did not reach its goal, why it stopped, where,

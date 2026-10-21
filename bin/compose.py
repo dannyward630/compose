@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_verify, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_herdr, fc_worktree, fc_layers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_toolbug, fc_init, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -291,12 +291,17 @@ def main():
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")
+            s.add_argument("--prove", action="store_true", help="before `run`: every e2e case against the project's base must fail because the feature is missing, never because of the environment")
+            s.add_argument("--review-only", action="store_true", help="right after `run`: only the diff review and the acceptance questions, no checks, e2e, or fixes")
+            s.add_argument("--prototype", action="store_true", help="after `run`: capture each verify.json `prototype` screen of the built app into results/prototype.md to compare with its reference")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
     if len(sys.argv) == 1:
         fc_herdr.herdr_attach()
         ap.print_help(sys.stderr)
         sys.exit(2)
     a, extra = ap.parse_known_args()
+    if a.cmd == "verify" and (a.prove or a.prototype):  # their own flows, with their own reports
+        a.fn = fc_prove.cmd_prove if a.prove else fc_prove.cmd_prototype
     if extra and a.cmd == "yolo":
         a.words += extra  # `yolo decided --project x "<q>: <a>"`: words after the flags are still words
     elif extra:

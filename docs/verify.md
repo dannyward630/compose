@@ -51,6 +51,42 @@ One that names no branch (a project made before init recorded it holds `main`, a
 Review, jev, and e2e run in parallel after checks.
 Every run ends with time and cost per provider.
 
+## Parts of the pipeline
+
+Three flags run one part of the pipeline at the point in the work where it pays off.
+None of them fixes anything or reconciles Linear, and none writes `results/verify.json`.
+
+`compose verify --project <name> --prove` runs before `run`, once the acceptance tests are collected.
+It runs every e2e case headless against the project branch as it is before `run` (trunk, the groundwork stubs and the tests, with each case's own setup and seed), once and without the retry.
+Each case must fail, and only because the feature is missing.
+A failure is classified from jev's stop reason, last steps, and final page: rules first (the page did not load, the user landed on a login page, jev skipped the password field, the assert script crashed, the harness failed), then a fast model that reads the rest and must find the app working up to the point the feature should appear.
+A case that fails for the environment (page did not load, login failed, a blocking overlay such as a cookie banner or tour, seed missing, wrong path), one the model cannot tell apart from that, and one that already passes all fail the step with the reason.
+Prove refuses once the stack holds the feature.
+It records `results/prove.json`.
+
+Prove also lints the cases for the real flag path.
+Every variant of a flag or experiment needs at least one case that reaches it through the real assignment (a seeded user, the flag service).
+A page whose cases all carry a URL override (a query or fragment key such as `variant`, `experiment`, `flag`, `force`, `bucket`, or a whole-word `ab`, `ff`, `exp`) is reported, and so fails the step.
+One case on the same path without an override covers it.
+A case that must force the variant says why in `"url_override": "<reason>"`; an empty reason is itself reported.
+
+`compose verify --project <name> --review-only` runs right after `run`.
+It runs the review and the jev acceptance, with no checks, e2e, or fix rounds, and records `results/review.json`.
+Findings then arrive while the stack is fresh, as tasks to fix, instead of after the whole pipeline.
+
+`compose verify --project <name> --prototype` runs right after `run` too.
+`verify.json` lists the screens that must match the prototype, one entry each:
+
+```json
+"prototype": [{"name": "settings", "url": "http://127.0.0.1:$E2E_PORT/settings", "goal": "Open the settings page.",
+               "reference": "Frame0 page Settings", "must_match": ["icons", "empty state copy", "row spacing"]}]
+```
+
+It drives jev to each screen of the built app at the top of the stack and keeps the screenshots in `results/prototype/e2e/`.
+It writes one report, `results/prototype.md`: per screen, the reference, the capture, and a `- [ ]` line for each `must_match`.
+The reader opens both images and ticks the lines, and a mismatch becomes a task before the first full verify.
+It fails only when a screen cannot be reached; whether it matches is for the reader to decide.
+
 ## e2e rules
 
 - Each stage gets fresh ports `$E2E_PORT` and `$E2E_CLIENT_PORT`.
