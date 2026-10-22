@@ -1320,3 +1320,45 @@ class CodexImplementer(unittest.TestCase):
         for model, k in (("claude:opus", "claude_once"), ("pi:a/b", "pi_turn"), ("openrouter/x/y", "opencode")):
             fc.fc_implement.implementer("/w", model, "x"); self.other[k].assert_called_once()
         self.run.assert_not_called(); self.cmd.assert_not_called(); self.res.assert_not_called()
+
+
+class CodexReader(unittest.TestCase):
+    USAGE = {"tokens_in": 1, "tokens_out": 2, "cost": 0.0}
+    META = {"test": "pytest -k thing", "files": ["a.py"]}
+
+    def setUp(self):
+        self.run, self.cmd = mock.Mock(return_value=subprocess.CompletedProcess([], 0, "", "")), mock.Mock(return_value=["codex", "x"])
+        self.res, self.claude = mock.Mock(return_value=(None, "  fix a.py:3  \n", 1, self.USAGE)), mock.Mock(return_value=("s", "claude reply", 0, self.USAGE))
+        patches = [(fc.fc_proc, "run", self.run), (fc.fc_claude, "headless_env", mock.Mock(return_value={"H": "1"})), (fc_harness, "once_command", self.cmd),
+                   (fc_harness, "once_result", self.res), (fc.fc_claude, "claude_once", self.claude)]
+        for obj, k, v in patches: p = mock.patch.object(obj, k, v); p.start(); self.addCleanup(p.stop)
+
+    def read(self, reader):
+        with mock.patch.object(fc.fc_config, "TEST_READER", reader):
+            return fc.fc_implement.read_failure("/w", self.META, "the output", "/tmp/log")
+
+    def test_a_codex_reader_runs_the_read_only_turn_in_the_clone(self):
+        self.assertEqual(self.read("codex:gpt-6-sol"), ("fix a.py:3", self.USAGE))
+        self.run.assert_called_once_with(["codex", "x"], cwd="/w", env={"H": "1"}, timeout=fc.fc_implement.READER_TIMEOUT)
+        self.assertEqual(self.cmd.call_args.args[:2], ("codex:gpt-6-sol", "/w")); self.assertIs(self.cmd.call_args.kwargs["read_only"], True)
+        prompt = self.cmd.call_args.args[2] if len(self.cmd.call_args.args) > 2 else self.cmd.call_args.kwargs["prompt"]
+        for part in ("pytest -k thing", "the output", "/tmp/log"): self.assertIn(part, prompt)
+        self.assertEqual(self.res.call_args.args, ("codex:gpt-6-sol", self.run.return_value)); self.claude.assert_not_called()
+
+    def test_the_brief_is_cut_to_1500_characters(self):
+        self.res.return_value = (None, "x" * 2000, 0, self.USAGE)
+        self.assertEqual(self.read("codex")[0], "x" * 1500)
+
+    def test_a_timeout_or_a_failed_turn_gives_nothing(self):
+        self.run.side_effect = subprocess.TimeoutExpired("codex", 120)
+        self.assertEqual(self.read("codex:gpt-6-sol"), ("", None))
+        self.run.side_effect = None; self.res.side_effect = RuntimeError("Codex failed: boom")
+        self.assertEqual(self.read("codex:gpt-6-sol"), ("", None)); self.run.assert_called()
+
+    def test_a_claude_reader_still_reads_with_read_tools_only(self):
+        self.assertEqual(self.read("claude:haiku"), ("claude reply", self.USAGE))
+        self.assertEqual(self.claude.call_args.kwargs["tools"], "Read,Grep,Glob"); self.run.assert_not_called()
+
+    def test_a_pi_reader_or_none_gives_nothing_and_runs_no_process(self):
+        for reader in ("pi:a/b", None, ""): self.assertEqual(self.read(reader), ("", None))
+        for m in (self.run, self.cmd, self.res, self.claude): m.assert_not_called()
