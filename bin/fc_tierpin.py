@@ -1,7 +1,7 @@
 """Story and project tier pins, kept in results/tier.json, and the model an implementer starts on."""
 import json
 
-import fc_core, fc_routecost, fc_tasks, fc_tiers
+import fc_budget, fc_core, fc_routecost, fc_tasks, fc_tiers
 
 
 def read(proj):
@@ -25,7 +25,7 @@ def start_model(proj, meta):
     """The model an implementer starts on: the task's own unless it chose auto, else the one its route depth and pin pick."""
     if not meta.get("model_auto"):
         return meta["model"]
-    return fc_tiers.implementer_model(fc_tiers.start_tier(fc_routecost.route(proj, meta)[1], pin(proj, meta)))
+    return fc_tiers.implementer_model(fc_budget.hold(proj, fc_tiers.start_tier(fc_routecost.route(proj, meta)[1], pin(proj, meta))))
 
 
 def cmd_tier(a):
