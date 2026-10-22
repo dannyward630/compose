@@ -789,6 +789,9 @@ class SignInCheck(unittest.TestCase):
             self.assertIs(fc_harness.signed_in("codex"), want, code)
             self.assertEqual(self.log.read_text(), f"{fc_harness.home_dir('codex')}|login status\n")
 
+    def test_no_codex_executable_is_not_signed_in(self):
+        with mock.patch.dict(os.environ, {"PATH": str(self.tmp / "bin")}): self.assertIs(fc_harness.signed_in("codex"), False)  # an empty folder: no codex to run
+
     def test_the_message_names_the_home_and_the_login_command(self):
         h = fc_harness.home_dir("codex")
         self.assertEqual(fc_harness.login_message("codex"), f"Codex is not signed in for CODEX_HOME={h}. compose never signs in for you: run `CODEX_HOME={h} codex login` yourself, then the same crew start again.")
