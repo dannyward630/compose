@@ -113,6 +113,8 @@ class Ship(unittest.TestCase):
                  for t in ("001", "002", "003")]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002", "003"):
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"status": "passed"}))  # done: a submit pushes their layers
+        for t in ("001", "002", "003"):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"Cover {t}")
         for t, size in (("001", 100), ("002", 120), ("003", 150)):
             self.git("checkout", "-q", "-b", f"compose/p-{t}", "compose/p")
@@ -133,7 +135,7 @@ class Ship(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
 
     def args(self, **kw):
-        return argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **kw)
+        return argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **{"update": False, **kw})
 
     def run_cmd(self, fn, **kw):
         """Run a command; its said lines, printed text, and exit code (0 when it returned)."""
