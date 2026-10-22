@@ -1452,3 +1452,41 @@ class HooksCheckBadFiles(unittest.TestCase):
         self.codex()
         with mock.patch.dict(fc_harness.HARNESSES, {"codex": {k: v for k, v in fc_harness.HARNESSES["codex"].items() if k != "hooks"}}):
             self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+
+
+class GuardRedirects(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        fc.fc_core.sh(["git", "init", "-q"], self.repo)
+
+    def denied(self, cmd, role="orchestrator"):
+        ev, out = {"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": cmd}}, io.StringIO()
+        with mock.patch.dict(os.environ, {"COMPOSE_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(ev))), mock.patch.object(sys, "stdout", out):
+            fc.fc_hooks.cmd_guard(None)
+        return json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"] if out.getvalue() else None
+
+    def targets(self, cmd):
+        return sorted(os.path.realpath(p) for p in fc.fc_hooks.edit_paths({"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": cmd}}))
+
+    def test_a_redirection_character_inside_quotes_is_not_a_redirection(self):
+        for cmd in ('echo "a -> b"', 'python3 -c "print(1 >= 0)"', "git log --format='%h -> %s'", "echo 'a > b.py' \"c >> d.py\""):
+            self.assertIsNone(self.denied(cmd), cmd)
+            self.assertEqual(self.targets(cmd), [], cmd)
+
+    def test_redirections_to_files_in_the_repo_are_denied(self):
+        for cmd in ("echo x > bin/a.py", "echo x >> bin/a.py", "echo x>bin/a.py", "echo x >| bin/a.py", "echo x &> bin/a.py", "echo x &>> bin/a.py",
+                    "echo x 2>&1 > bin/a.py", 'echo "a > b" > "bin/a.py"'):
+            self.assertIn("never edit code", self.denied(cmd) or "", cmd)
+            self.assertEqual(self.targets(cmd), [os.path.realpath(self.repo / "bin/a.py")], cmd)
+
+    def test_the_target_is_the_token_after_each_operator(self):
+        self.assertEqual(self.targets('echo x > "a b.txt"; echo y >> c.txt && ls 2>&1'), [os.path.realpath(self.repo / n) for n in ("a b.txt", "c.txt")])
+
+    def test_stream_merges_scratch_and_commands_the_shell_cannot_split_are_allowed(self):
+        for cmd in ("ls 2>&1", "echo hi > .compose/shop/scratch/x", "echo x > bin/a.py 'oops"):
+            self.assertIsNone(self.denied(cmd), cmd)
+        self.assertEqual(self.targets("ls 2>&1"), [])
+        self.assertEqual(self.targets('echo x > bin/a.py "oops'), [])
+
+    def test_other_roles_are_not_guarded(self):
+        self.assertIsNone(self.denied("echo x > bin/a.py", "crew"))
