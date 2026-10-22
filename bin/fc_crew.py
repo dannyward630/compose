@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -149,10 +149,14 @@ def crew_pick_full(role, explicit=None, pin=None):
         return "claude", None, "", []
     label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in fc_config.CREW_DEFAULTS and key not in fc_config.CREW_MODELS else "")
     for m, _ in chain:
-        if not (fc_claude.is_claude(m) or str(m).startswith("pi:")):
+        if not (fc_claude.is_claude(m) or str(m).startswith("pi:") or fc_harness.harness_of(m)):
             where = "" if key == "--model" else f" in {fc_config.CONFIG_PATH}"
-            sys.exit(f"{label} is {m!r}, but teammate sessions run in Claude Code or pi: use claude:<model-id> (e.g. claude:claude-sonnet-5-5) "
-                     f"or pi:<provider/model> (e.g. pi:openai/gpt-6-astra){where}; OpenCode ids are for implementers only")
+            rows = [fc_harness.HARNESSES[k] | {"key": k} for k in fc_harness.rows()]
+            names = ["Claude Code", "pi", *(r["name"] for r in rows)]
+            uses = ["claude:<model-id> (e.g. claude:claude-sonnet-5-5)", "pi:<provider/model> (e.g. pi:openai/gpt-6-astra)",
+                    *(f"{r['key']}:<model> (e.g. {r['key']}:{r['example']})" for r in rows)]
+            join = lambda xs: ", ".join(xs[:-1]) + ", or " + xs[-1]
+            sys.exit(f"{label} is {m!r}, but teammate sessions run in {join(names)}: use {join(uses)}{where}; OpenCode ids are for implementers only")
     skipped = []
     for model, effort in chain:
         if (ok := fc_models.model_available(model))[0]:
@@ -257,7 +261,8 @@ def cmd_crew(a):
     if repo and getattr(a, "cwd", None):
         sys.exit("crew start takes --cwd or --work-repo, not both")
     cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
-    if not model.startswith("pi:") and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
+    h = fc_harness.HARNESSES.get(fc_harness.harness_of(model))
+    if not (model.startswith("pi:") or h) and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
     frame0 = getattr(a, "frame0", False) or a.role == "designer"  # the designer's first step reads the wireframes through the frame0 tools
     work = None  # with --work-repo the session starts in the project worktree, which Claude Code trusts; only its work is in the repo
@@ -288,7 +293,7 @@ def cmd_crew(a):
     brief_file.write_text(fc_core.scrub(crew_preamble(proj, name, title, reports_to) + brief))
     first = f"Your brief is the file {brief_file}. Read it now and follow it."
     try:  # pi runs no Claude hooks: watch compares the skill files with these and tells the team lead when they changed
-        skill = {"skill": fc_hooks.skill_hashes()} if model.startswith("pi:") else {}
+        skill = {"skill": fc_hooks.skill_hashes()} if model.startswith("pi:") or h else {}
     except OSError:
         skill = {}
     fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, **({"worktree": str(work)} if work else {}), "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
@@ -296,7 +301,10 @@ def cmd_crew(a):
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
-        if model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
+        if h:
+            fc_herdr.herdr_start_crew(agent, "--kind", h["kind"], "--pane", pane, "--timeout", "60000", "--",
+                  *fc_harness.crew_argv(model, effort, TRUST_PROMPT, CLI_REPO / "SKILL.md", cwd, crew_dir(proj).parent, work))
+        elif model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
             fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
                   *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), *fc_providers.pi_args(fc_models.pi_id(model)), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
                   *(["--thinking", effort] if effort else []), "--model", fc_models.pi_id(model), "--append-system-prompt", TRUST_PROMPT)
@@ -313,7 +321,7 @@ def cmd_crew(a):
         else:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
             crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
             sys.exit(f"teammate {name} did not start: {e}")
-    if not model.startswith("pi:"):
+    if not model.startswith("pi:") and (h is None or h["herdr_ready"]):
         fc_herdr.herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
         fc_herdr.herdr("agent", "prompt", agent, first, check=True)
