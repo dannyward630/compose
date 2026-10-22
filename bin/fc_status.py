@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update, fc_routecost
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost
 
 
 def project_head(repo, proj):
@@ -203,6 +203,8 @@ def render_status(repo, projects):
             route = "-" if r["depth"] == "-" and r["workflow"] == "-" else f"{r['depth']} {r['workflow']}"
             out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {route:33} {r['attempts']:>3} {r['escalations']:>3} {r['fix_rounds']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
         out.extend(fc_routecost.summary(rows))
+        out.extend(fc_tierpin.lines(proj))
+        out.extend(fc_tierspend.lines(proj, fc_budget.limit(proj)))
         out.append("")
     return "\n".join(out)
 

@@ -41,6 +41,8 @@ crew
 report
 tool-bug
 toolsmith
+tier
+budget
 models
 frame0
 figma
