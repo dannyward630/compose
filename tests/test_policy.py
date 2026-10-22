@@ -103,8 +103,19 @@ class Read(unittest.TestCase):
     def test_second_failure_raises_unreadable_holdout_retry_from_the_start(self):
         with self.assertRaises(RuntimeError) as e:
             self.read([[("D1", TITLE)]], project=(PROJECT, SystemExit("Linear has no project x")), fail_get=(ValueError("timed out"),))
-        self.assertEqual(str(e.exception), "policies unreadable: Linear has no project x")
+        self.assertEqual(str(e.exception), "policies unreadable: Linear has no project x; check the link with `compose linear project --repo /repo`; or set COMPOSE_NO_POLICIES=1 to run without the project's policies")
         self.assertEqual(self.project.call_count, 2)
+
+    def test_a_missing_link_names_the_file_to_write_and_the_offline_override(self):
+        with mock.patch.object(fc_policy.fc_core, "repo_link", return_value=Path("/repo/.compose/linear.json")), self.assertRaises(RuntimeError) as e:
+            self.read([], project=(SystemExit("no .compose/linear.json in /repo"),) * 2)
+        self.assertEqual(str(e.exception), 'policies unreadable: no .compose/linear.json in /repo; write /repo/.compose/linear.json as {"project": "<Linear project URL>", "team": "Engineering"}, '
+                                           "then check it with `compose linear project --repo /repo`; or set COMPOSE_NO_POLICIES=1 to run without the project's policies")
+
+    def test_compose_no_policies_reads_nothing_and_says_so(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_POLICIES": "1"}):
+            self.assertEqual(self.read([[("D1", TITLE)]]), ([], "policies skipped: COMPOSE_NO_POLICIES is set"))
+        self.assertEqual((self.project.call_count, self.gql.call_count), (0, 0))
 
 
 if __name__ == "__main__":

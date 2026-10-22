@@ -1,5 +1,5 @@
 """`compose route`: each task's workflow and depth, project policies first, Jev for the rest; recorded on the task issue
-when the workspace has a Linear key, printed only without one."""
+when the workspace has a Linear key, printed only without one or with COMPOSE_NO_POLICIES=1."""
 import json, os, sys
 from pathlib import Path
 
@@ -33,7 +33,7 @@ def route_tasks(repo, proj, tasks, recalculate=False):
         route["reason"] = fc_routerec.route_reason(route, state)
         routes[m["id"]] = route
         print(f"{m['id']} {route['depth']} {route['workflow']}  {route['reason']}")
-        if fc_config.LINEAR_KEY and m.get("linear"):
+        if fc_config.LINEAR_KEY and m.get("linear") and not fc_policy.skipped():
             try:
                 record_route(proj, m, fc_routerec.route_section(route))
             except Exception as e:

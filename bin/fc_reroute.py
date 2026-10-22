@@ -146,7 +146,7 @@ def reassess(repo, proj, meta, tasks, triggers, run_id, base, branch):
 def catch_up(repo, proj, tasks, ids, trunk, kinds):
     """One reassessment per passed task for the triggers of `kinds` not yet fired; `{id: why}` for each route not recorded."""
     failed = {}
-    if not fc_config.LINEAR_KEY:
+    if not fc_config.LINEAR_KEY or fc_policy.skipped():
         return failed
     by_id = {m["id"]: m for m in tasks}
     for id in ids:
@@ -191,12 +191,19 @@ def after_run(repo, proj, results, tasks, trunk):
     return None
 
 
+def say_unrouted(whys):
+    """A `verify FAIL` line per task whose route Linear did not take, then the way to go on once."""
+    for id, why in whys.items():
+        fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+    if whys:
+        fc_core.say("verify FAIL  fix what Linear refused (`compose linear get <issue>` shows the task), or set COMPOSE_NO_POLICIES=1 to verify without recording routes")
+
+
 def before_verify(repo, proj, tasks, trunk):
     """`verify`'s hook before its first stage: catch up the stack, else fail closed."""
     ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in fc_worktree.stack_order(repo, proj, tasks)]
     whys = catch_up(repo, proj, tasks, ids, trunk, ("diff", "scope"))
-    for id, why in whys.items():
-        fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+    say_unrouted(whys)
     if whys:
         sys.exit(1)
 
@@ -237,8 +244,7 @@ def after_round(repo, proj, trunk):
 
     before = depths(fc_tasks.linear_cache(proj).get("issues", {}))
     failed = catch_up(repo, proj, tasks, ids, trunk, LEDGER)
-    for id, why in failed.items():
-        fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+    say_unrouted(failed)
     rank = lambda d: DEPTHS.index(d) if d in DEPTHS else -1
     after = depths(fc_tasks.linear_cache(proj).get("issues", {}))
     return [id for id in ids if rank(after[id]) > rank(before[id])], failed
