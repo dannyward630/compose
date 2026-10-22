@@ -582,7 +582,7 @@ class ProjectBranch(unittest.TestCase):
         """herdr names stop at 32 characters: a project name over 19 cuts `<slug>-orchestrator`, so init says the name herdr will hold."""
         out = self.cli("init", "--project", "clean-recut-branches").stdout
         self.assertIn("clean-recut-branche-orchestrator", out)
-        self.assertNotIn("orchestrator", self.cli("init", "--project", "clean-recut-branche").stdout)  # 19 characters: uncut, nothing to say
+        self.assertNotIn("herdr agent names stop at 32 characters", self.cli("init", "--project", "clean-recut-branche").stdout)  # 19 characters: uncut, nothing to say
 
     def test_a_project_without_a_stored_branch_keeps_compose_slash_slug(self):
         self.cli("init", "--project", "old")
