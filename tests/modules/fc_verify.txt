@@ -9,6 +9,8 @@ verify_root
 at_root
 cmd_verify
 fix_strays
+wrong_layer
+fix_answers
 fix_message
 changed_files
 verify_rounds
