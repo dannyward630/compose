@@ -208,3 +208,42 @@ class UnprovenWhy(unittest.TestCase):
         self.assertEqual(passed, ([("In Review",)], [("Passed: branch `fast/p/001`, 2 attempt(s), $0.0123, model `pi:x/glm`.",)]))
         failed = self.event("failed", dict(self.RESULT, status="failed", proof={}, log=[{"error": "boom"}]))
         self.assertEqual(failed, ([("In Progress",)], [("failed after 2 attempt(s) ($0.0123, model `pi:x/glm`): boom",)]))
+
+
+class CheckOnlyEvents(unittest.TestCase):
+    """A check-only run's rows name the check, end with a skipped regression-test row, and a held one has none."""
+    TEST = "python3 -m unittest tests/test_a.py"
+    META = {"id": "001", "test": TEST}
+
+    def setUp(self):
+        self.ledger = importlib.import_module("fc_ledger")  # the foundation's module, not on every branch
+        self.ev = lambda phase, result, detail, sha="abc", crit=("001.1:x", "001.2:y"): self.ledger.event("r1", sha, ["001"], list(crit), phase, "run", result, True if phase == "red" else None, detail)
+
+    def events(self, flow, rows, result=None):
+        with mock.patch.object(fc_fast, "workflow", return_value=flow), mock.patch.object(self.ledger, "run_events", return_value=rows):
+            return fc_fast.run_events(Path("p"), Path("r"), self.META, result or {"status": "passed"})
+
+    def named(self, e):  # the row rebuilt with the check in its detail
+        return self.ledger.event(e["run_id"], e["commit_sha"], e["task_ids"], e["criterion_id"], e["phase"], e["source"], e["result"], e["fails_on_base"], f"check-only: {self.TEST}: {e['detail']}")
+
+    def skipped(self):
+        return self.ledger.event("r1", "", ["001"], ["001.1:x", "001.2:y"], "red", "run", "skipped", None, "regression test skipped (check-only)")
+
+    def test_every_row_names_the_check_with_new_ids_and_one_skipped_red_row_ends_the_run(self):
+        rows = [self.ev("red", "fail_expected", "test fails before the change"), self.ev("attempt", "fail", "attempt 1 failed", "def"), self.ev("final", "pass", "passed after 2 attempts", "ghi")]
+        got = self.events("check-only", rows)
+        self.assertEqual(got, [*map(self.named, rows), self.skipped()])
+        self.assertEqual(got[0]["detail"], f"check-only: {self.TEST}: test fails before the change")
+        self.assertTrue(all(g["event_id"] != r["event_id"] for g, r in zip(got, rows)))
+
+    def test_an_already_green_run_gives_its_pass_row_and_the_skipped_row(self):
+        row = self.ev("red", "pass", "test already passes before the change")
+        self.assertEqual(self.events("check-only", [row], {"status": "already_green"}), [self.named(row), self.skipped()])
+
+    def test_a_held_run_has_no_rows(self):
+        self.assertEqual(self.events("check-only", [], {"status": "held"}), [])
+
+    def test_other_workflows_keep_the_ledgers_rows(self):
+        rows = [self.ev("red", "fail_expected", "test fails before the change"), self.ev("final", "pass", "passed after 1 attempts")]
+        for flow in ("test-first", IMPL, None):
+            self.assertEqual(self.events(flow, rows), rows)
