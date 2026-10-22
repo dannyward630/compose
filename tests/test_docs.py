@@ -1422,6 +1422,37 @@ class HarnessInstallDocs(unittest.TestCase):
             self.assertNotIn("\u2014", text)
 
 
+class HarnessCliRows(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.names = [fc_harness.HARNESSES[k]["name"] for k in fc_harness.rows()]
+        cli = read("docs/cli.md").splitlines()
+        self.setup, self.doctor, self.crew = ([l for l in cli if l.startswith(p)][0] for p in ("| `setup` |", "| `doctor` |", "| `crew start"))
+
+    def test_setup_row_exits_1_only_without_any_harness_and_says_what_codex_gets(self):
+        self.assertTrue(self.names)
+        self.assertNotRegex(self.setup, r"exits 1 when Claude Code is missing\.")
+        self.assertRegex(self.setup, r"exits 1 when Claude Code is missing and no other harness")
+        for word in (*self.names, "skill", "command", "hooks", "trust"):
+            self.assertIn(word, self.setup)
+
+    def test_doctor_row_names_the_claude_only_rows_as_optional_beside_another_harness(self):
+        for name in self.names:
+            self.assertIn(f"optional, {name} is set up", self.doctor)
+        for row in ("herdr skill", "compose skill link"):
+            self.assertIn(row, self.doctor)
+
+    def test_crew_row_names_each_harness_the_flag_the_env_the_sign_in_check_and_the_page(self):
+        for word in (*self.names, "pi", "--harness", "COMPOSE_HARNESS", "harnesses.<name>", "codex login status", "sign in"):
+            self.assertIn(word, self.crew)
+        self.assertIn("](harnesses.md", self.crew)
+
+    def test_the_three_rows_have_no_em_dash(self):
+        for row in (self.setup, self.doctor, self.crew):
+            self.assertNotIn("—", row)
+
+
 DRY_ROW = "| `compose setup --dry-run` | Walks the same setup and changes nothing: every install, write, and key save prints as a `would` line, and the last line counts them |"
 DRY_SENTENCE = " With `--dry-run` it asks the same questions and runs the same checks but changes nothing on the machine, prints each change as a `would` line, and ends with `dry run: nothing changed; N changes listed above`."
 UPDATE_ROW = "| `compose update` | Pulls this checkout (`--ff-only`), relinks what `compose` owns, and runs `doctor` |"
