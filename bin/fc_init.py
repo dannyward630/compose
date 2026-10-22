@@ -1,6 +1,6 @@
 import json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
-import fc_auth, fc_checks, fc_config, fc_core, fc_steps, fc_tasks, fc_linear, fc_providers, fc_herdr, fc_worktree, fc_layers, fc_crew
+import fc_auth, fc_checks, fc_config, fc_core, fc_harness, fc_steps, fc_tasks, fc_linear, fc_providers, fc_herdr, fc_worktree, fc_layers, fc_crew
 
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
@@ -55,11 +55,12 @@ def check_deps(role=None):
     bad, waiting, designer = [], [], False
     checkout = Path(__file__).resolve().parents[1]
     claude = bool(shutil.which("claude"))
+    other = fc_steps.other_harness(checkout)
     for row in (*fc_steps.STEPS, ("herdr config", lambda co: herdr_loud(), "compose setup", "default", False, "run"), *fc_providers.doctor_rows()):
         name, _, install, needed, needs_claude, mode = row
         if role and needed != role:
             continue
-        required = needed == "required" or (role is not None and needed == role)
+        required = fc_steps.required(row, other) or (role is not None and needed == role)
         ok, detail = fc_steps.check(row, checkout)
         if not ok:
             if needed == "designer" and role is None:
@@ -71,6 +72,8 @@ def check_deps(role=None):
                     bad.append(name)
                 continue
             note = "" if required else " - optional"
+            if not required and other and name in fc_steps.CLAUDE_ONLY:
+                note = f" - optional, {fc_harness.HARNESSES[other]['name']} is set up"
             why = "" if mode == "key" else f": {detail}" if detail else ""
             print(f"MISSING: {name}{why} (install: {install}){note}")
             if required:
