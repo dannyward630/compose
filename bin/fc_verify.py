@@ -469,6 +469,17 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         rounds.append(report)
         fc_ledger.verify_record(proj, repo, report)
         report["sufficiency"] = fc_accept.jev_sufficiency(cfg, proj, repo) if not a.skip_review and cfg.get("jev_acceptance", True) else None
+        while True:
+            raised, failed = fc_reroute.after_round(cfg.get("main_repo") or repo, proj, base)
+            if failed or not raised:
+                break
+            ok, report, findings = run_stages(repo, proj, cfg, a, tests)
+            rounds.append(report)
+            fc_ledger.verify_record(proj, repo, report)
+            report["sufficiency"] = fc_accept.jev_sufficiency(cfg, proj, repo) if not a.skip_review and cfg.get("jev_acceptance", True) else None
+        if failed:
+            ok = False
+            break
         if ok or rnd == a.fix:
             break
         if not findings.strip():
