@@ -1,7 +1,7 @@
 from __future__ import annotations  # the X | None annotations on /usr/bin/python3 3.9
 import json, os, re, sys
 from pathlib import Path
-import fc_auth, fc_core
+import fc_auth, fc_core, fc_harness
 
 
 # ---------- global config and workspaces ----------
@@ -116,6 +116,8 @@ def apply_config(move=True, harness=None):
             sys.exit(f"{CONFIG_PATH}: provider names are lowercase letters, digits, - and _: {pname!r}")
         if pname in ("openrouter", "openrouter-fast"):
             sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: openrouter models already route there")
+        if pname in fc_harness.RESERVED:
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: {', '.join(fc_harness.RESERVED)} name harnesses, not providers")
         if not (isinstance(p.get("base_url"), str) and p["base_url"].startswith(("http://", "https://"))):
             sys.exit(f"{CONFIG_PATH}: providers.{pname} needs a base_url such as http://localhost:11434/v1")
         ids = p.get("models")
