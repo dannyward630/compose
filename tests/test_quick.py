@@ -58,3 +58,33 @@ class Quick(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", ""), self.assertRaises(SystemExit) as e:
             self.quick("ENG-3")
         self.assertEqual((e.exception.code, self.cache.read_text(), self.calls, self.route_tasks.call_count), ("quick: no Linear key for this workspace, so no pin was written", before, [], 0))
+
+    def fails(self, *ids):
+        with self.assertRaises(SystemExit) as e:
+            self.quick(*ids)
+        self.assertEqual((type(e.exception.code), "\n" in e.exception.code), (str, False))  # one line, so no traceback
+        return e.exception.code
+
+    def test_an_issue_without_a_compose_block_or_a_failing_linear_call_exits_with_one_line(self):
+        self.live["ENG-3"] = "## Goal\nx\n"
+        self.assertEqual(self.fails("ENG-3", "ENG-7"), "quick: ENG-3 has no compose block on Linear; nothing was pinned")
+        self.assertEqual((self.route_tasks.call_count, [q for q, v in self.calls if "mutation" in q]), (0, []))
+        self.linear_gql.side_effect = RuntimeError("Linear rate limit")
+        self.assertEqual(self.fails("ENG-3"), "quick: Linear failed reading ENG-3 (Linear rate limit); nothing was pinned")
+        self.linear_gql.side_effect = OSError("HTTP Error 500")
+        self.assertIn("(HTTP Error 500)", self.fails("ENG-3"))
+
+    def test_a_failure_after_a_pin_keeps_that_pin_cached_and_says_what_to_route(self):
+        self.live["ENG-7"] = "## Goal\nx\n"
+        self.assertEqual(self.fails("ENG-3", "ENG-7"), "quick: ENG-7 has no compose block on Linear; pinned before it: 001, not routed yet (`compose route --only 001`)")
+        self.assertEqual(([t.get("route") for t in json.loads(self.cache.read_text())["tasks"] if t["id"] == "001"], self.route_tasks.call_count), (["check-only"], 0))
+        self.live["ENG-7"] = task("ENG-7", "005")["description"]
+        def gql(q, v):
+            if "mutation" in q: raise RuntimeError("down")
+            return {"issue": {"id": v["id"], "description": self.live[v["id"]]}}
+        self.linear_gql.side_effect = gql
+        self.assertEqual(self.fails("ENG-7"), "quick: Linear failed writing the pin on ENG-7 (down); nothing was pinned")
+
+    def test_policies_that_cannot_be_read_exit_with_one_line(self):
+        self.read_policies.side_effect = RuntimeError("policies unreadable: x")
+        self.assertEqual(self.fails("ENG-3"), "quick: policies unreadable: x; nothing was pinned")

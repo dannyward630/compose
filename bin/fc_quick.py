@@ -30,8 +30,11 @@ def cmd_quick(a):
                     chosen[t["id"]] = t
         else:
             print(f"{i} skipped: no such task")
-    policies = fc_policy.read_policies(repo)[0]
-    pinned = []
+    try:
+        policies = fc_policy.read_policies(repo)[0]
+    except RuntimeError as e:
+        sys.exit(f"quick: {e}; nothing was pinned")
+    pinned, failure = [], ""
     for m in sorted(chosen.values(), key=lambda t: t["id"]):
         if m["linear_state"] not in ("Todo", "Backlog"):
             print(f"{m['id']} skipped: already dispatched ({m['linear_state']})")
@@ -40,16 +43,31 @@ def cmd_quick(a):
         elif matched := fc_policy.glob_matches(policies, m["files"]):
             print(f"{m['id']} skipped: policy {', '.join(p['name'] for p in matched)} applies")
         else:
-            issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id description } }", {"id": m["linear"]})["issue"]
-            block = re.search(r"^```compose\n(.*?)^```", issue.get("description") or "", re.M | re.S)
+            try:
+                issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id description } }", {"id": m["linear"]})["issue"]
+            except (RuntimeError, OSError) as e:  # urllib errors name the status, never the key
+                failure = f"quick: Linear failed reading {m['linear']} ({str(e)[:200]})"
+                break
+            block = re.search(r"^```compose\n(.*?)^```", (issue or {}).get("description") or "", re.M | re.S)
+            if not block:
+                failure = f"quick: {m['linear']} has no compose block on Linear"
+                break
             lines = [l for l in block.group(1).splitlines() if not l.startswith("route:")] + ["route: check-only"]
             new = issue["description"][:block.start(1)] + "\n".join(lines) + "\n" + issue["description"][block.end(1):]
-            fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }",
-                                 {"id": m["linear"], "in": {"description": new}})
+            try:
+                fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }",
+                                     {"id": m["linear"], "in": {"description": new}})
+            except (RuntimeError, OSError) as e:
+                failure = f"quick: Linear failed writing the pin on {m['linear']} ({str(e)[:200]})"
+                break
             issues[m["linear"]]["description"] = new
             m["route"] = "check-only"
             pinned.append(m)
             print(f"{m['id']} pinned check-only")
     if pinned:
         fc_core.atomic_write(proj / "results" / "tasks.json", json.dumps(cache, indent=2))
+    if failure:  # what was pinned before it stays pinned and cached; the rest was not touched
+        ids = ",".join(m["id"] for m in pinned)
+        sys.exit(f"{failure}; " + (f"pinned before it: {ids}, not routed yet (`compose route --only {ids}`)" if pinned else "nothing was pinned"))
+    if pinned:
         fc_route.route_tasks(repo, proj, pinned, recalculate=True)
