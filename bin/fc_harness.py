@@ -1,6 +1,8 @@
 """Harnesses other than Claude Code and pi: one table of them, and the accessors every other module reads it through."""
+import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -51,11 +53,19 @@ def _codex_once(cid, cwd, prompt, read_only=False):
     raise NotImplementedError
 
 def _codex_hash(event, group):
-    raise NotImplementedError
+    o = {"event_name": re.sub(r"(?<=[a-z])(?=[A-Z])", "_", event).lower(),
+         "hooks": [{"type": h["type"], "command": h["command"], "timeout": h.get("timeout", 600), "async": h.get("async", False),
+                    **({"statusMessage": h["statusMessage"]} if h.get("statusMessage") else {})} for h in group["hooks"]]}
+    if group.get("matcher"):
+        o["matcher"] = group["matcher"]
+    return "sha256:" + hashlib.sha256(json.dumps(o, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
-              "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv},
+              "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
+              "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": _codex_hash,
+              "hooks": (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"),
+                        ("UserPromptSubmit", None, "skillcheck"), ("SessionStart", "compact", "reenter"))},
     "gemini": {},
     "grok": {},
 }
@@ -80,11 +90,11 @@ def installed():
     return [k for k in rows() if shutil.which(HARNESSES[k]["exe"])]
 
 def home_dir(key):
-    raise NotImplementedError
+    row = HARNESSES[key]
+    return Path(os.environ.get(row["home_env"]) or os.path.expanduser(row["home"]))
 
 def skills_dir(key):
-    row = HARNESSES[key]
-    return Path(os.environ.get(row["home_env"]) or os.path.expanduser(row["home"])) / "skills"
+    return home_dir(key) / "skills"
 
 def probe_command(model):
     return HARNESSES[harness_of(model)]["probe"](model_id(model))
@@ -102,4 +112,10 @@ def once_result(model, p):
     raise NotImplementedError
 
 def hook_groups(key, checkout):
-    raise NotImplementedError
+    out = {}
+    for ev, matcher, sub in HARNESSES[key].get("hooks", ()):
+        g = {"hooks": [{"type": "command", "command": f'"{checkout}/bin/compose" {sub}', "timeout": 10}]}
+        if matcher:
+            g["matcher"] = matcher
+        out.setdefault(ev, []).append(g)
+    return out
