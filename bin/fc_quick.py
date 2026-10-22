@@ -2,7 +2,7 @@
 import json, re, sys
 from pathlib import Path
 
-import fc_config, fc_core, fc_linear, fc_policy, fc_route, fc_routerec, fc_tasks
+import fc_config, fc_core, fc_linear, fc_policy, fc_route, fc_tasks
 
 
 def cmd_quick(a):

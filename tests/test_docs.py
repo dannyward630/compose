@@ -987,7 +987,7 @@ class ConfigKeysDocs(unittest.TestCase):
 
 
 class ReadyDocs(unittest.TestCase):
-    TASKS = ["sync", "linear <verb>", "tasks", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "bench"]
+    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "bench"]
 
     def tasks_rows(self):
         sec = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]

@@ -184,6 +184,8 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose doctor` | Checks every setup step and prints the fix for each missing one, then the preflight of `run`: rejected keys, uncommitted changes, a loaded machine; `init` runs it first |
 | `compose init --project <name> [--branch <branch>]` | Creates the project's branch (`compose/<name>` unless `--branch` names it) and worktree; with `--branch` on an existing project, renames its branch |
 | `compose tasks --project <name>` | Shows the task list for you to review before dispatch |
+| `compose route --project <name>` | Routes each task to a workflow and a depth, project policies first, and records it on the task's Linear issue |
+| `compose quick --project <name> <id>...` | Pins check-only on small tasks, a story's tasks, or the feature's code tasks, then routes them |
 | `compose run --project <name>` | Dispatches the tasks to parallel implementers |
 | `compose verify --project <name>` | Runs the local verify pipeline |
 | `compose status [--project <name>] [--watch]` | Shows every project and every task |
