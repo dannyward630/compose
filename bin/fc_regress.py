@@ -3,7 +3,15 @@ import json
 import re
 
 import fc_core
+import fc_crew
+import fc_fast
+import fc_herdr
 import fc_linear
+import fc_regproof
+import fc_regwriter
+import fc_tasks
+import fc_unproven
+import fc_worktree
 
 
 def pinned(desc, paths, command):
@@ -48,14 +56,54 @@ def pin_test(proj, meta, paths, command):
 
 def fast_fix(proj, meta, result):
     """True for an unproven fix-then-regression-test result with no proof yet."""
-    raise NotImplementedError("fast_fix")
+    return result["status"] == "unproven" and "proof" not in result and fc_fast.workflow(proj, meta) == fc_tasks.WORKFLOWS[2]
 
 
 def end_writer(repo, proj, tid):
     """Release the writer's checkout and branch and report it done."""
-    raise NotImplementedError("end_writer")
+    if fc_worktree.use_treehouse():
+        fc_worktree.release_slot(repo, fc_worktree.slots(proj)[f"regress-{tid}"])
+        fc_worktree.slots(proj, {f"regress-{tid}": None})
+    else:
+        fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"regress-{tid}")], repo)
+    fc_core.sh(["git", "branch", "-D", fc_regwriter.writer_branch(proj, tid)], repo)
+    fc_crew.write_report(proj, fc_herdr.agent_name(proj.name, f"tests-{tid}"), "done", "regression test proven")
 
 
 def regress(repo, proj, meta, result, attempts=1):
     """Prove the fix's regression test; the result, `passed` once its proof is saved."""
-    raise NotImplementedError("regress")
+    tid, proof, saved, passed = meta["id"], result.get("proof"), True, False
+    name = fc_herdr.agent_name(proj.name, f"tests-{tid}")
+    since = len(fc_crew.crew_reports(proj, name))
+    try:
+        if proof and fc_unproven.writer_live(proj, tid):
+            fc_unproven.reprompt(proj, tid, fc_unproven.prompt_text(proof))
+        else:
+            fc_regwriter.start_writer(repo, proj, meta, result)
+        for n in range(attempts):
+            ready = fc_regwriter.wait_ready(proj, tid, since)
+            if not ready:
+                break
+            proof = fc_regproof.prove(repo, proj, meta, result, *ready)
+            saved = fc_regproof.record_proof(proj, meta, proof)
+            if saved is not True:
+                break
+            if proof["proven"]:
+                passed = True
+                break
+            if n + 1 < attempts:
+                since = len(fc_crew.crew_reports(proj, name))
+                fc_unproven.reprompt(proj, tid, fc_unproven.prompt_text(proof))
+    except (Exception, SystemExit):
+        pass
+    out = {**result, "proof": proof}
+    if passed and proof and proof["proven"] and saved is True:
+        pin_test(proj, meta, proof["paths"], proof["command"])
+        end_writer(repo, proj, tid)
+        out["status"] = "passed"
+    else:
+        out["status"] = "unproven"
+        out["log"] = [*result.get("log", []), {"error": fc_unproven.reason(proof, saved)}]
+    fc_core.atomic_write(proj / "results" / f"{tid}.json", json.dumps(out, indent=2))
+    fc_linear.linear_event(proj, meta, out["status"], out)
+    return out

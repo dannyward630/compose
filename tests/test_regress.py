@@ -82,7 +82,8 @@ class Regress(unittest.TestCase):
     def round(self, ready=("abc1234", "true"), proof=PROOF, saved=True, start=None):
         with mock.patch.object(fc_regwriter, "start_writer", side_effect=start, return_value=self.repo), mock.patch.object(fc_regwriter, "wait_ready", return_value=ready), \
              mock.patch.object(fc_regproof, "prove", return_value=proof), mock.patch.object(fc_regproof, "record_proof", return_value=saved), \
-             mock.patch.object(fc_regress, "pin_test") as pin, mock.patch.object(fc_regress, "end_writer") as end, mock.patch.object(fc.fc_linear, "linear_event") as ev:
+             mock.patch.object(fc_regress, "pin_test") as pin, mock.patch.object(fc_regress, "end_writer") as end, mock.patch.object(fc.fc_linear, "linear_event") as ev, \
+             mock.patch.object(fc_unproven, "reason", return_value="why"):
             out = fc_regress.regress(self.repo, self.proj, self.meta, self.res)
         self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["status"], out["status"])
         ev.assert_called_once_with(self.proj, self.meta, out["status"], out)

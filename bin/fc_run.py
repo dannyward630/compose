@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -187,6 +187,7 @@ def run_tasks(repo, proj, tasks, a):
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
     results, pending, failed_ids, halt, reflecting, capped = [], dict(deps), set(), None, [], set()
+    unproven = set()
     waits = fc_tasks.waiting(tasks, released)  # an outside blocker git does not place in the trunk holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
@@ -202,14 +203,22 @@ def run_tasks(repo, proj, tasks, a):
                     fc_core.say(f"{p} waits   {fc_config.CLAUDE_PARALLEL} Claude tasks already run (claude_parallel in {fc_config.CONFIG_PATH})")
             for p in starts:
                 del pending[p]
-                running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
+                prior = None if getattr(a, "redo", False) else fc_unproven.restartable(proj, metas[p]["id"])
+                if prior:
+                    fc_core.say(f"{p} regress  fix kept on {prior['branch']}; restarting its regression test writer")
+                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)] = p
+                else:
+                    running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
                 break  # a payment halt: leave the rest pending, do not mark them blocked
             if not running:
                 stuck = fc_tasks.held_behind(pending, hold, failed_ids)
+                behind = {p for p in pending if set(pending[p]) & unproven}
+                while more := {p for p in pending if set(pending[p]) & behind} - behind:
+                    behind |= more
                 for p in pending:
-                    if p in stuck:  # left pending for the run after the re-plan, not blocked
-                        fc_core.say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after held " + ",".join(sorted(set(pending[p]) & stuck))))
+                    if p in stuck or p in behind:  # left pending for the run after the re-plan, not blocked
+                        fc_core.say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after unproven " + ",".join(sorted(set(pending[p]) & unproven)) if set(pending[p]) & unproven else "after held " + ",".join(sorted(set(pending[p]) & (stuck | behind)))))
                         continue
                     results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
                                     "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
@@ -234,8 +243,15 @@ def run_tasks(repo, proj, tasks, a):
                 if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
                     pending[p] = []
                     continue
+                if "proof" in r:  # a proof round's result replaces the task's row
+                    results[:] = [r if x["id"] == r["id"] else x for x in results]
+                    if r["status"] == "passed":
+                        unproven.discard(metas[p]["id"])
+                        for q in pending:
+                            pending[q] = [d for d in pending[q] if d != metas[p]["id"]]
+                    continue
                 results.append(r)
-                events = fc_ledger.run_events(proj, repo, metas[p], r)
+                events =fc_fast.run_events(proj, repo, metas[p], r)
                 cost = fc_costevent.run_event(proj, metas[p], r, events[-1]) if events else None
                 fc_ledger.record_task(repo, proj, metas[p], events + ([cost] if cost else []))
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
@@ -245,10 +261,14 @@ def run_tasks(repo, proj, tasks, a):
                 if r["status"] == "payment_required":
                     pay = next(x["payment_required"] for x in r["log"] if "payment_required" in x)
                     halt = halt or fc_models.PaymentRequired(pay["provider"], pay["message"])
-                if r["status"] != "passed":
+                if r["status"] == "unproven":
+                    unproven.add(tid)
+                elif r["status"] != "passed":
                     failed_ids.add(tid)
                 for q in pending:
-                    pending[q] = [d for d in pending[q] if d != tid or d in failed_ids]
+                    pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
+                if fc_regress.fast_fix(proj, metas[p], r):
+                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)] = p
     for t in reflecting:  # every screen is on disk before the run reports its end
         t.join()
     if any(m.get("linear") for m in tasks):
