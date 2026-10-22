@@ -614,6 +614,7 @@ class LandedLayers(Ship):
         self.assertEqual(code, 0, out)
         self.assertIn("stack  landed compose/p-layer-01; building on origin/main", out)
         self.assertFalse(any("STOP" in l for l in out), out)
+        self.assertIn("stack  ok    (main) <- compose/p-layer-02 <- compose/p-layer-03", out)
         self.assertEqual(self.git("rev-parse", "main"), self.git("--git-dir", str(self.origin), "rev-parse", "main"))
         self.assert_built_on_main("compose/p-layer-02", "002.src")
         self.assert_built_on_main("compose/p-layer-03", "003.src", "compose/p-layer-02")
@@ -623,6 +624,7 @@ class LandedLayers(Ship):
         out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
         self.assertEqual(code, 0, out)
         self.assertIn("stack  landed compose/p-layer-01, compose/p-layer-02; building on origin/main", out)
+        self.assertIn("stack  ok    (main) <- compose/p-layer-03", out)
         self.assert_built_on_main("compose/p-layer-03", "003.src")
 
     def test_open_pull_requests_or_no_layers_file_fetch_nothing(self):
