@@ -478,11 +478,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "contradiction"
             break
         test = run_test(meta, wt)
-        broke = fc_gate.regressions(ahead, fc_gate.check_state(timed, checks, wt, limit)) if ahead and test.returncode == 0 else []  # the task's own test is not the only one that must hold
+        broke, red_on_base = fc_gate.regressions(ahead, fc_gate.check_state(timed, checks, wt, limit), fc_gate.touches(wt, base)) if ahead and test.returncode == 0 else ([], [])  # the task's own test is not the only one that must hold
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
         lines, new_docs, stray = fc_gate.branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
         entry = {"attempt": n, **({"cut_short": True} if cut else {}), "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
-                 "test_exit": test.returncode, "tampered": tampered, **({"broke": broke} if broke else {}), "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "test_exit": test.returncode, "tampered": tampered, **({"broke": broke} if broke else {}), **({"red on base (baseline unknown)": red_on_base} if red_on_base else {}), "lines": lines, "new_docs": new_docs, "stray": stray,
                  "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)

@@ -2,7 +2,10 @@ branch_budget
 FAILING_RE
 BASELINES
 BASELINE_LOCK
+CHECKS_TIMEOUT
 check_state
 baseline_state
+IMPORT_RE
+touches
 regressions
 advice
