@@ -1492,3 +1492,82 @@ class GuardRedirects(unittest.TestCase):
 
     def test_other_roles_are_not_guarded(self):
         self.assertIsNone(self.denied("echo x > bin/a.py", "crew"))
+
+
+class OldPythonTrust(unittest.TestCase):
+    BIN = str(Path(__file__).resolve().parents[1] / "bin")
+    SCENE = r'''
+import json, os, re, sys
+sys.path.insert(0, sys.argv[1])
+import fc_checks, fc_links
+home = os.environ["CODEX_HOME"]; trust = os.path.join(home, "config.toml")
+def put(text): open(trust, "w").write(text)
+ok = lambda: list(fc_checks.hooks_ok("codex", "/c"))
+write = lambda: [str(p) for p in fc_links.trust_hooks("codex", "/c")]
+os.makedirs(home, exist_ok=True)
+for f in ("hooks.json", "config.toml"):
+    if os.path.exists(os.path.join(home, f)): os.remove(os.path.join(home, f))
+fc_links.write_hooks("codex", "/c")
+if sys.argv[2]: put(sys.argv[2])
+r = {"first": write(), "ok": ok(), "again": write(), "text": open(trust).read()}
+put(r["text"][:r["text"].rindex("[hooks.state.")])
+r["lost"], r["fix"], r["fixed"], r["fixed_text"] = ok(), write(), ok(), open(trust).read()
+i = r["fixed_text"].index("[hooks.state.")
+put(r["fixed_text"][:i] + re.sub(r'trusted_hash = "[^"]*"', 'trusted_hash = "sha256:bad"', r["fixed_text"][i:], count=1))
+r["bad"], r["fix2"], r["fixed2"], r["fixed2_text"] = ok(), write(), ok(), open(trust).read()
+print(json.dumps(r))
+'''
+    STATES = ['[hooks.state."a:b"]\ntrusted_hash = "h1"\n\n[hooks.state."c"]\nenabled = true\n\n[other]\ntrusted_hash = "x"\n',
+              '[hooks.state."a"]\n[other]\ntrusted_hash = "x"\n[hooks.state."b"]\ntrusted_hash = "y"\n', "",
+              '[hooks.state."/t/we ird].d#x/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:ab"\n', 'm = 1\n[hooks.state.nokey]\ntrusted_hash = "z"\n', "[unclosed"]
+
+    def setUp(self):
+        import shutil
+        found = (p for p in ("/usr/bin/python3", shutil.which("python3.9"), shutil.which("python3.10")) if p and os.access(p, os.X_OK)
+                 and subprocess.run([p, "-c", "import sys; sys.exit(sys.version_info >= (3, 11))"]).returncode == 0)
+        self.old = next(found, None) or self.skipTest("no Python older than 3.11 (/usr/bin/python3, python3.9 or python3.10)")
+        tmp = Path(tempfile.mkdtemp()); self.home, self.bin = tmp / "home", tmp / "bin"; self.home.mkdir(); self.bin.mkdir()
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+
+    def py(self, exe, *args, codex=".codex", stdin=None):
+        env = {"HOME": str(self.home), "CODEX_HOME": str(self.home / codex), "PATH": str(self.bin), "COMPOSE_CONFIG": str(self.home / "c.json"), "HERDR_ENV": "", "PYTHONDONTWRITEBYTECODE": "1"}
+        p = subprocess.run([exe, *args], env=env, input=stdin, capture_output=True, text=True, cwd=self.home)
+        self.assertEqual(p.returncode, 0, p.stderr); return p.stdout
+
+    def scene(self, exe, pre="", codex=".codex"): return json.loads(self.py(exe, "-c", self.SCENE, self.BIN, pre, codex=codex))
+
+    def test_compose_starts(self): self.assertIn("usage", self.py(self.old, str(Path(self.BIN) / "compose.py"), "--help").lower())
+
+    def test_the_trust_answers_and_bytes_are_the_same_as_on_3_11(self):
+        r, trust = self.scene(self.old), str(self.home / ".codex/config.toml")
+        want = "~/.codex/config.toml has no trust record for compose's %s hook"
+        self.assertEqual((r["first"], r["ok"], r["again"]), ([trust], [True, ""], []))
+        self.assertEqual((r["lost"], r["fix"], r["fixed"]), ([False, want % "reenter"], [trust], [True, ""]))
+        self.assertEqual((r["bad"], r["fix2"], r["fixed2"]), ([False, want % "guard"], [trust], [True, ""]))
+        self.assertNotIn("sha256:bad", r["fixed2_text"])
+        self.assertEqual(r, self.scene(sys.executable))
+
+    def test_a_path_with_brackets_dots_hash_and_quote_and_other_content_in_the_file(self):
+        pre, odd = '# mine\nmodel = "x"\n\n[other]\ntrusted_hash = "keep"\n', 'we ird].d#"e'
+        r = self.scene(self.old, pre, odd)
+        self.assertEqual((r["ok"], r["again"], r["fixed2"]), ([True, ""], [], [True, ""]))
+        self.assertTrue(r["text"].startswith(pre)); self.assertIn('trusted_hash = "keep"', r["fixed2_text"])
+        self.assertEqual(r, self.scene(sys.executable, pre, odd))
+
+    def test_trust_state_without_tomllib_reads_the_state_tables_and_never_raises(self):
+        got = json.loads(self.py(self.old, "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import fc_checks\n"
+                                 "print(json.dumps([fc_checks.trust_state(t) for t in json.load(sys.stdin)]))", self.BIN, stdin=json.dumps(self.STATES)))
+        self.assertEqual(got[:4], [{"a:b": {"trusted_hash": "h1"}, "c": {}}, {"a": {}, "b": {"trusted_hash": "y"}}, {},
+                                   {"/t/we ird].d#x/hooks.json:session_start:0:0": {"trusted_hash": "sha256:ab"}}])
+        self.assertTrue(all(isinstance(g, dict) for g in got))
+
+    def test_trust_state_with_tomllib_returns_its_tables_and_raises_value_error(self):
+        self.assertEqual(fc_checks.trust_state(self.STATES[0]), tomllib.loads(self.STATES[0])["hooks"]["state"])
+        self.assertEqual((fc_checks.trust_state(""), fc_checks.trust_state('model = "x"\n')), ({}, {}))
+        with self.assertRaises(ValueError): fc_checks.trust_state("[unclosed")
+
+    def test_no_bin_module_imports_tomllib_at_module_level(self):
+        import ast
+        for f in sorted(Path(self.BIN).glob("*.py")):
+            names = [a.name for n in ast.parse(f.read_text()).body if isinstance(n, ast.Import) for a in n.names] + [n.module for n in ast.parse(f.read_text()).body if isinstance(n, ast.ImportFrom)]
+            self.assertNotIn("tomllib", names, f.name)
