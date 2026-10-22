@@ -73,6 +73,7 @@ fc_regress
 fc_run
 fc_status
 fc_spec
+fc_sleep
 fc_watch
 fc_yolo
 fc_bench

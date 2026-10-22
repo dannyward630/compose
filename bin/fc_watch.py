@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs, fc_sleep
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
@@ -128,9 +128,10 @@ def watch_lock(proj, key, wait=True):
         f.close()
         return None
 
-def watch_stalls(proj, snap, limit, now_s=None, key="all"):
+def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None):
     """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once per watcher
-    (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence."""
+    (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence.
+    `woke` is the [start, end] of a sleep: for `limit` seconds after it the silence rules wait, since nothing could move while the Mac slept."""
     now_s = now_s or time.time()
     orch = fc_herdr.agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
@@ -169,7 +170,8 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         r = snap.get("crew", {}).get(n) or []
         if r and r[-1]["state"] != "done" and not (re.search(r"-tests-\d+$", n) and fc_briefs.test_ready(r[-1])):  # collect closes a writer after its test ready
             fire(f"ended:{n}:{r[-1]['at']}", f"ended agent={n} its tab closed with its last report {r[-1]['state']}")
-    if not (last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values())):  # finished, or waiting on the product owner: silence is expected
+    just_woke = bool(woke) and now_s - woke[1] < limit
+    if not (just_woke or last.get(orch, ("",))[0] == "done" or any(st == "needs-user" for st, _ in last.values())):  # finished, or waiting on the product owner: silence is expected
         lt, what = snap.get("last") or (0, "")
         if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
             fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
@@ -263,7 +265,7 @@ def is_info(e):
     m = re.match(r"event crew=\S+ state=working message=(.*)$", e)
     return bool(m) and "test ready" not in m.group(1).lower()
 
-URGENT = re.compile(r"event (?:stall=|halt=|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
+URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
 def yolo_mark(proj, events):
     """Under the posture on (yolo or away), a question line tells the engineering manager it answers it itself, and who set the posture when another session did."""
@@ -283,7 +285,7 @@ def watch_filter(events, slug, sources, direct=(), others=()):
     if others := [n for n in others if n not in sources]:
         events = [e for e in events if not any(f"crew={n} " in e or f"agent={n} " in e for n in others)]
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
-        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith(("event stall=", "event ready=", "event tell="))
+        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith(("event stall=", "event ready=", "event tell=", "event sleep="))
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
     me = fc_herdr.agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
@@ -352,7 +354,8 @@ def cmd_watch(a, rewake=False):
             cfg_stall = None
         limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
         settle, held_since = getattr(a, "settle", 0), None
-        agents = Agents()
+        agents, tick = Agents(), time.time()
+        woke = watch_mem(proj, key).get("woke")  # the last sleep this watcher saw: a run found dead after it is the sleep's
         scope = lambda snap: watch_scope(proj, snap)
         def look(after, stalls):
             lines = watch_events(before, after) + (owner_lines(proj.name, before, after) if not os.environ.get("COMPOSE_ROLE") else [])
@@ -362,7 +365,13 @@ def cmd_watch(a, rewake=False):
             if rewake and os.getppid() != parent:
                 return  # the session that parked this hook is gone
             after = watch_snapshot(repo, proj, agents)
-            stalls = watch_stalls(proj, after, limit, key=key)
+            now = time.time()
+            slept, woke_was = fc_sleep.wake_events(repo, proj, woke, tick, now)
+            tick = now
+            if woke_was != woke:
+                woke = woke_was
+                watch_save(proj, key, woke=woke)
+            stalls = slept + watch_stalls(proj, after, limit, key=key, woke=woke)
             ev = look(after, stalls)
             if ev and all(is_info(e) for e in ev):  # progress pings alone: they wait for a wake to travel with, `before` stays put
                 held_since = held_since or time.time()
@@ -372,7 +381,7 @@ def cmd_watch(a, rewake=False):
                 if settle and not any(URGENT.search(e) for e in ev):  # the rest of the burst joins this wake
                     time.sleep(settle)
                     after = watch_snapshot(repo, proj, agents)
-                    stalls += watch_stalls(proj, after, limit, key=key)
+                    stalls += watch_stalls(proj, after, limit, key=key, woke=woke)
                     ev = look(after, stalls)
                 fc_crew.manager_attention(proj, ev)
                 if rewake:
