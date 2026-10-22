@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers
+import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers, fc_tiers
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -165,8 +165,10 @@ def pi_turn(cwd, model, prompt, session=None, timeout=None):
     return sid, "\n".join(text), tools, usage
 
 def fallback_for(model):
-    """The model to switch to after FALLBACK_AFTER failed attempts or a rate limit, or None when there is nothing to fall back to (the fallback itself, Claude, or none set)."""
-    return fc_config.FALLBACK_MODEL if fc_config.FALLBACK_MODEL and model != fc_config.FALLBACK_MODEL and not fc_claude.is_claude(model) else None
+    """The model to switch to after FALLBACK_AFTER failed attempts or a rate limit, or None when there is nothing to fall back to (a tiered model has only its escalation; otherwise the fallback itself, Claude, or none set)."""
+    if fc_tiers.tier_of(model) is None:
+        return fc_config.FALLBACK_MODEL if fc_config.FALLBACK_MODEL and model != fc_config.FALLBACK_MODEL and not fc_claude.is_claude(model) else None
+    return fc_tiers.escalate(model)
 
 
 class PaymentRequired(Exception):
