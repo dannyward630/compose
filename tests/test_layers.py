@@ -248,6 +248,27 @@ class Layers(unittest.TestCase):
         self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
+    def test_a_redone_test_writer_owns_only_the_commits_of_its_own_runs_not_the_gap_between_them(self):
+        """Tests-003 ran at 10:10 and again at 12:00. Tests-001, redone at 11:00 in between, made the commit at 11:02 on their shared
+        file: it lands in 001's layer, not in 003's, whose first and last report would otherwise span it."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test", "shared.test"], "files": ["003.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        for t, runs in (("001", (("10:00:00", "started"), ("10:05:00", "test ready"), ("10:06:00", "done"), ("11:00:00", "started"), ("11:05:00", "done"))),
+                        ("003", (("10:10:00", "started"), ("10:15:00", "done"), ("12:00:00", "started"), ("12:05:00", "done")))):
+            (crew / f"{fc.fc_herdr.agent_name('p', f'tests-{t}')}.status").write_text("".join(
+                json.dumps({"at": f"2026-01-01 {at}", "state": "done" if m == "done" else "working", "message": m}) + "\n" for at, m in runs))
+        part = lambda a, b: f"class A\n{a}" + "-\n" * 8 + f"class B\n{b}"
+        for at, a, b in (("10:02:00", "a\n" * 5, ""), ("10:12:00", "a\n" * 5, "b\n" * 5), ("11:02:00", "a\n" * 4 + "x\n", "b\n" * 5)):
+            self.write("shared.test", part(a, b)); self.git("add", "-A"); self.git("commit", "-qm", f"tests at {at}", "--date", f"2026-01-01T{at}")
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.git("show", "compose/p-layer-02:shared.test") + "\n", part("a\n" * 4 + "x\n", ""))
+        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
+
     def test_a_task_over_the_budget_is_never_split(self):
         out = self.stack(review_layer_lines=130)
         self.assertEqual(len(self.layers()), 4)

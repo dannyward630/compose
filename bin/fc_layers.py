@@ -195,15 +195,25 @@ def group_units(units, budget):
     return layers
 
 def test_writers(proj, tasks):
-    """(task id, first report, last report) of each task's test-writing teammate `tests-NNN`, in epoch seconds, the latest started
-    first: it made its commits between its first and last report. Writers of one test file never run at once, and a later one
-    starts only once the earlier one's commits are collected, so the latest whose span holds a commit's author date made it."""
+    """(task id, first report, last report) of each run of a task's test-writing teammate `tests-NNN`, in epoch seconds, the latest
+    started first: it made its commits between its first and last report, and a run ends with its `done`. A writer redone later has
+    one span per run, never one over the gap between them, which holds other writers' commits. Writers of one test file never run
+    at once, and a later one starts only once the earlier one's commits are collected, so the latest whose span holds a commit's
+    author date made it."""
     spans = []
     for t in tasks:
         f = Path(proj) / "results" / "crew" / f"{fc_herdr.agent_name(proj.name, f'tests-{t}')}.status"
-        ats = [time.mktime(time.strptime(json.loads(l)["at"], "%Y-%m-%d %H:%M:%S")) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
-        if ats:
-            spans.append((t, min(ats), max(ats)))
+        run = []
+        for l in f.read_text().splitlines() if f.exists() else []:
+            if not l.strip():
+                continue
+            r = json.loads(l)
+            run.append(time.mktime(time.strptime(r["at"], "%Y-%m-%d %H:%M:%S")))
+            if r.get("state") == "done":
+                spans.append((t, min(run), max(run)))
+                run = []
+        if run:
+            spans.append((t, min(run), max(run)))
     return sorted(spans, key=lambda s: -s[1])
 
 def applies_without(repo, c, drop, files):
