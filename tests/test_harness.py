@@ -1226,3 +1226,54 @@ class CodexEvents(unittest.TestCase):
 
     def test_the_codex_row_names_the_parser(self):
         self.assertIs(fc_harness.HARNESSES["codex"]["events"], fc_harness._codex_events)
+
+
+class CodexOnce(unittest.TestCase):
+    HEAD = ["codex", "-a", "never", "exec", "--json", "--ephemeral", "--skip-git-repo-check"]
+    WRITE = ["-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        self.tmp = Path(d.name)
+        git = lambda *a, cwd: subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True, text=True).stdout.strip()
+        main, self.wt, self.clone = self.tmp / "main", self.tmp / "wt", self.tmp / "clone"
+        for f in (main, self.clone): f.mkdir(); git("init", "-q", cwd=f)
+        git("commit", "-q", "--allow-empty", "-m", "i", cwd=main); git("worktree", "add", "-q", "-b", "wt", str(self.wt), cwd=main)
+        self.dirs = [str(Path(git(*a, cwd=self.wt)).resolve()) for a in (("rev-parse", "--path-format=absolute", "--git-common-dir"), ("rev-parse", "--absolute-git-dir"))]
+        self.ledger = fc.fc_core.Ledger()
+        p = mock.patch.object(fc.fc_core, "LEDGER", self.ledger); p.start(); self.addCleanup(p.stop)
+
+    def argv(self, model="codex:gpt-6-sol", cwd=None, **kw): return [str(x) for x in fc_harness.once_command(model, cwd or self.wt, "do it", **kw)]
+
+    def done(self, text, code=0, err=""):
+        out = [{"type": "item.completed", "item": {"id": "i", "type": "agent_message", "text": text}}, {"type": "turn.completed", "usage": {"input_tokens": 7, "output_tokens": 3}}]
+        return subprocess.CompletedProcess([], code, "\n".join(map(json.dumps, out)) + "\n", err)
+
+    def test_write_argv_and_the_row(self):
+        self.assertEqual(self.argv(), self.HEAD + ["-m", "gpt-6-sol", *self.WRITE, "--add-dir", self.dirs[0], "--add-dir", self.dirs[1], "do it"])
+        self.assertEqual(self.argv("codex"), self.HEAD + [*self.WRITE, "--add-dir", self.dirs[0], "--add-dir", self.dirs[1], "do it"])
+        self.assertIs(fc_harness.HARNESSES["codex"]["once"], fc_harness._codex_once)
+
+    def test_one_git_dir_for_a_clone_and_none_outside_git(self):
+        self.assertEqual(self.argv(cwd=self.clone)[-3:], ["--add-dir", os.path.realpath(self.clone / ".git"), "do it"])
+        self.assertNotIn("--add-dir", self.argv(cwd=self.tmp / "gone"))
+
+    def test_read_only_has_no_write_access_and_no_dirs(self):
+        self.assertEqual(self.argv(read_only=True), self.HEAD + ["-m", "gpt-6-sol", "-s", "read-only", "do it"])
+
+    def test_no_unfenced_sandbox_and_approval_is_top_level(self):
+        for argv in (self.argv(), self.argv(read_only=True)):
+            self.assertLess(argv.index("-a"), argv.index("exec"))
+            for a in argv: self.assertFalse(a == "danger-full-access" or a.startswith("--dangerously"), a)
+
+    def test_result_returns_the_tail_and_adds_a_free_ledger_row(self):
+        usage = {"tokens_in": 7, "tokens_out": 3, "cost": 0.0}
+        self.assertEqual(fc_harness.once_result("codex:x", self.done("ok")), (None, "ok", 0, usage))
+        self.assertEqual(fc_harness.once_result("codex:x", self.done("a" * 1600 + "tail"))[1], "a" * 1496 + "tail")
+        self.assertEqual(self.ledger.rows, {"codex-subscription": {"calls": 2, "tokens_in": 14, "tokens_out": 6, "cost": 0.0, "priced": True}})
+
+    def test_failing_exit_without_a_reply_raises_but_with_a_reply_returns(self):
+        with self.assertRaises(RuntimeError) as cm: fc_harness.once_result("codex:x", subprocess.CompletedProcess([], 1, "", "ERROR: boom\n"))
+        self.assertEqual(str(cm.exception), "Codex failed: boom")
+        self.assertEqual(self.ledger.rows, {})
+        self.assertEqual(fc_harness.once_result("codex:x", self.done("partial", code=1, err="ERROR: late\n"))[1], "partial")
