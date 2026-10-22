@@ -1435,7 +1435,7 @@ class HooksCheckBadFiles(unittest.TestCase):
         self.codex(); os.environ["CODEX_HOME"] = str(self.home / "elsewhere"); (self.home / "elsewhere").mkdir()
         (self.home / "elsewhere/hooks.json").write_text("{")
         self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/elsewhere/hooks.json is not valid JSON"))
-        fc_links.write_hooks("codex", "/c"); (self.home / "elsewhere/config.toml").write_text("[hooks")
+        (self.home / "elsewhere/hooks.json").unlink(); fc_links.write_hooks("codex", "/c"); (self.home / "elsewhere/config.toml").write_text("[hooks")
         self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/elsewhere/config.toml is not valid TOML"))
 
     def test_a_missing_hook_is_named_before_the_trust_file_is_read(self):
