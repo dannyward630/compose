@@ -6,16 +6,25 @@ def route_reason(route, state):
     """The recorded reason: Jev's answers or the fallback, the context, the Bug flags, the floor, and the policy note."""
     pin = state["pin"]
     if route["fallback"] is None:
-        d = route["answers"]["depth"]
-        part1 = f"Jev: depth {d['choice']} (p {d['probabilities'][d['choice']]:.2f}, confidence {d['confidence']:.2f})"
         w = route["answers"].get("workflow")
-        if pin:
-            part1 += f", workflow {pin} pinned"
-        elif w:
-            part1 += (f", workflow {w['choice'].lower().replace('_', '-')}"
-                      f" (p {w['probabilities'][w['choice']]:.2f}, confidence {w['confidence']:.2f})")
+        if (w and w["choice"] == "CHECK_ONLY") or (pin and "depth" not in route["answers"]):
+            if pin:
+                part1 = f"workflow {pin} pinned"
+            else:
+                part1 = (f"Jev: workflow {w['choice'].lower().replace('_', '-')}"
+                         f" (p {w['probabilities'][w['choice']]:.2f}, confidence {w['confidence']:.2f})")
+            part1 += (", refused by the floor" if route["decided_by"] == "floor"
+                      else f", depth {route['depth']} from check-only")
         else:
-            part1 += f", workflow {route['workflow']}"
+            d = route["answers"]["depth"]
+            part1 = f"Jev: depth {d['choice']} (p {d['probabilities'][d['choice']]:.2f}, confidence {d['confidence']:.2f})"
+            if pin:
+                part1 += f", workflow {pin} pinned"
+            elif w:
+                part1 += (f", workflow {w['choice'].lower().replace('_', '-')}"
+                          f" (p {w['probabilities'][w['choice']]:.2f}, confidence {w['confidence']:.2f})")
+            else:
+                part1 += f", workflow {route['workflow']}"
     else:
         part1 = f"fallback {route['depth']} {route['workflow']}"
         if pin:
