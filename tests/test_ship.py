@@ -113,6 +113,8 @@ class Ship(unittest.TestCase):
                  for t in ("001", "002", "003")]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002", "003"):
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"status": "passed"}))  # done: a submit pushes their layers
+        for t in ("001", "002", "003"):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"Cover {t}")
         for t, size in (("001", 100), ("002", 120), ("003", 150)):
             self.git("checkout", "-q", "-b", f"compose/p-{t}", "compose/p")
@@ -133,7 +135,7 @@ class Ship(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main", **cfg}))
 
     def args(self, **kw):
-        return argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **kw)
+        return argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **{"update": False, **kw})
 
     def run_cmd(self, fn, **kw):
         """Run a command; its said lines, printed text, and exit code (0 when it returned)."""
@@ -415,6 +417,226 @@ class Land(Ship):
         self.config(land_method="rebase")
         self.land()
         self.assertEqual([c for c in self.log() if c.startswith("pr merge")][0], "pr merge 1 --rebase")
+
+
+class PartialSubmit(Ship):
+    def result(self, tid, status):
+        (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"status": status}))
+
+    def origin_git(self, *a):
+        return subprocess.run(["git", "--git-dir", str(self.origin), *a], check=True, capture_output=True, text=True).stdout.split()
+
+    def pushed(self):
+        """Origin's layer refs and SHAs, and every file in any ref but main."""
+        refs = {r.removeprefix("refs/heads/"): s for s, r in zip(*[iter(self.origin_git("for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/compose"))] * 2)}
+        return refs, {f for r in refs for f in self.origin_git("ls-tree", "-r", "--name-only", r)}
+
+    def test_a_failed_task_holds_it_and_the_ones_after_back_and_a_later_submit_adds_them(self):
+        self.result("002", "failed")
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(any("stack  hold  002 is failed; 002, 003 not submitted" in l for l in out), out)
+        before, files = self.pushed()
+        self.assertTrue({"setup.txt", "001.src", "t001.test"} <= files)
+        self.assertFalse(files & {"002.src", "003.src", "t002.test", "t003.test"})
+        self.assertEqual(set(json.loads((self.proj / "results" / "prs.json").read_text())), set(before))
+        self.result("002", "passed")
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        after, files = self.pushed()
+        self.assertTrue({"002.src", "003.src", "t002.test", "t003.test"} <= files)
+        self.assertEqual({b: after[b] for b in before}, before)
+        self.assertEqual(json.loads((self.proj / "results" / "prs.json").read_text()), {p["branch"]: int(n) for n, p in self.prs().items()})
+
+    def test_every_task_done_pushes_every_layer_and_maps_each_to_its_pr(self):
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(any("stack  hold" in l for l in out))
+        self.assertEqual(json.loads((self.proj / "results" / "prs.json").read_text()), {f"compose/p-layer-0{i}": i for i in (1, 2, 3)})
+
+    def test_a_task_done_on_linear_is_not_held_whatever_its_result(self):
+        self.result("002", "failed")
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"][1]["linear_state"] = "Done"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertTrue({"002.src", "003.src"} <= self.pushed()[1])
+        self.assertTrue((self.proj / "results" / "prs.json").exists())
+
+    def test_a_pending_first_task_stops_with_nothing_pushed(self):
+        (self.proj / "results" / "001.json").unlink()
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("stack  STOP  nothing to submit: 001 is pending" in l for l in out), out)
+        self.assertEqual(self.pushed()[0], {})
+        self.assertFalse(any("stack submit" in c for c in self.log()))
+
+
+class ChangedLayer(Ship):
+    LAYERS = [f"compose/p-layer-0{i}" for i in (1, 2, 3)]
+
+    def heads(self, local=False):
+        git = (lambda *a: self.git(*a)) if local else (lambda *a: self.git("--git-dir", str(self.origin), *a))
+        return [git("rev-parse", b if local else f"refs/heads/{b}") for b in self.LAYERS]
+
+    def stop_line(self, i, before, cause):
+        b, tip = self.LAYERS[i - 1], self.heads(local=True)[i - 1]
+        return (f"stack  STOP  layer {i} ({b}) changed since PR #{i}: GitHub has {before[i - 1][:9]}, here {tip[:9]}; {cause}. Nothing was pushed. "
+                "`compose stack --submit --update` pushes it with --force-with-lease")
+
+    def change_001(self):
+        self.assertEqual(self.submit()[1], 0)
+        self.git("checkout", "-q", "compose/p-001"); self.write("001.src", "d\n"); self.commit("Change 001"); self.git("checkout", "-q", "compose/p")
+        return self.heads()
+
+    def test_an_unchanged_stack_pushes_as_before(self):
+        self.submit()
+        before = self.heads()
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.heads(), before)
+
+    def test_a_layer_whose_own_file_changed_stops_the_submit_with_nothing_pushed(self):
+        before = self.change_001()
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertIn(self.stop_line(2, before, "its own files changed: 001.src"), out)
+        self.assertEqual(self.heads(), before)
+
+    def test_a_layer_that_moved_with_the_base_is_named_as_such(self):
+        self.submit()
+        before = self.heads()
+        self.git("checkout", "-q", "main"); self.write("base.txt", "b\n"); self.commit("Move the base"); self.git("push", "-q", "origin", "main"); self.git("checkout", "-q", "compose/p")
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertIn(self.stop_line(1, before, "a layer below it or the base moved"), out)
+        self.assertEqual(self.heads(), before)
+
+    def test_update_pushes_each_changed_layer_bottom_up_and_opens_no_pull_request(self):
+        before = self.change_001()
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=True, update=True)
+        self.assertEqual(code, 0, out)
+        tips = self.heads(local=True)
+        self.assertEqual(self.heads(), tips)
+        lines = [f"submit update {b} {tips[i][:9]} (was {before[i][:9]})" for i, b in enumerate(self.LAYERS) if i]
+        at = [next(n for n, l in enumerate(out) if want in l) for want in lines]
+        self.assertEqual(at, sorted(at))
+        self.assertEqual(len(self.prs()), 3)
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+
+    def test_a_layer_whose_pull_request_is_not_open_is_not_compared(self):
+        before = self.change_001()
+        self.set_pr(2, state="CLOSED")
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertIn(self.stop_line(3, before, "a layer below it or the base moved"), out)
+
+    def test_a_refused_push_is_the_reason_and_pushes_nothing_after_it(self):
+        before = self.change_001()
+        hook = self.origin / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho nope >&2\nexit 1\n"); hook.chmod(0o755)
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=True, update=True)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("stack  STOP  push of compose/p-layer-02 refused: " in l for l in out), out)
+        self.assertEqual(self.heads(), before)
+
+
+class PartialLand(Ship):
+    def partial(self):
+        """Submitted, then layer 3 loses its PR and its branch on origin."""
+        self.assertEqual(self.submit()[1], 0)
+        self.drop_pr(3)
+        subprocess.run(["git", "--git-dir", str(self.origin), "update-ref", "-d", "refs/heads/compose/p-layer-03"], check=True)
+
+    def drop_pr(self, n):
+        st = json.loads(self.state.read_text()); del st["prs"][str(n)]; self.state.write_text(json.dumps(st))
+
+    def test_the_plan_lists_only_the_submitted_layers(self):
+        self.partial()
+        out, code = self.land(yes=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("land   plan  2 of 3 layer(s) submitted, verify not run; landing 2 into main by squash, bottom up:", out)
+        self.assertTrue(any("compose/p-layer-02" in l for l in out))
+        self.assertFalse(any("compose/p-layer-03" in l for l in out))
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
+
+    def test_yes_merges_the_submitted_layers_bottom_up_and_leaves_the_rest(self):
+        self.partial()
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c for c in self.log() if c.startswith("pr merge")], ["pr merge 1 --squash", "pr merge 2 --squash"])
+        self.assertFalse(self.origin_has("refs/heads/compose/p-layer-03"))
+        self.assertEqual(out[-3:], ["land   done  2 layer(s) merged into main",
+                                    "land   left  1 layer(s) not submitted: they rebuild on main at the next compose stack",
+                                    "next: compose stack --submit --project p"])
+
+    def test_the_plan_reports_the_last_verify(self):
+        self.submit()
+        for passed, word in ((True, "PASS"), (False, "FAIL")):
+            (self.proj / "results" / "verify.json").write_text(json.dumps({"passed": passed}))
+            out, _ = self.land(yes=False)
+            self.assertIn(f"land   plan  3 of 3 layer(s) submitted, verify {word}; landing 3 into main by squash, bottom up:", out)
+
+    def test_a_fully_submitted_stack_lands_as_today(self):
+        self.submit()
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out[-2:], ["land   done  3 layer(s) merged into main", "next: compose clean --project p"])
+        self.assertFalse(any("land   left" in l for l in out))
+
+    def test_a_bottom_layer_without_a_pull_request_stops(self):
+        self.submit()
+        self.drop_pr(1)
+        out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertTrue(any(l.startswith("land   STOP  compose/p-layer-01") and l.endswith("has no pull request: `compose stack --submit` first") for l in out), out)
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
+
+
+class LandedLayers(Ship):
+    def merge(self, n):
+        subprocess.run(["gh", "pr", "edit", str(n), "--base", "main"], cwd=self.repo, check=True)
+        subprocess.run(["gh", "pr", "merge", str(n), "--squash"], cwd=self.repo, check=True)
+
+    def tree(self, ref):
+        return self.git("ls-tree", "-r", "--name-only", ref).splitlines()
+
+    def assert_built_on_main(self, branch, file, below="main"):
+        self.assertIn(file, self.tree(branch))
+        self.assertTrue(self.git("rev-list", f"{below}..{branch}"), f"{branch} adds nothing over {below}")
+        self.assertEqual(subprocess.run(["git", "merge-base", "--is-ancestor", "main", branch], cwd=self.repo).returncode, 0)
+
+    def test_the_layers_above_a_merged_bottom_build_on_the_new_base(self):
+        self.submit(); self.merge(1)
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stack  landed compose/p-layer-01; building on origin/main", out)
+        self.assertFalse(any("STOP" in l for l in out), out)
+        self.assertIn("stack  ok    (main) <- compose/p-layer-02 <- compose/p-layer-03", out)
+        self.assertEqual(self.git("rev-parse", "main"), self.git("--git-dir", str(self.origin), "rev-parse", "main"))
+        self.assert_built_on_main("compose/p-layer-02", "002.src")
+        self.assert_built_on_main("compose/p-layer-03", "003.src", "compose/p-layer-02")
+
+    def test_two_merged_layers_are_both_named_and_the_last_one_builds_on_the_base(self):
+        self.submit(); self.merge(1); self.merge(2)
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stack  landed compose/p-layer-01, compose/p-layer-02; building on origin/main", out)
+        self.assertIn("stack  ok    (main) <- compose/p-layer-03", out)
+        self.assert_built_on_main("compose/p-layer-03", "003.src")
+
+    def test_open_pull_requests_or_no_layers_file_fetch_nothing(self):
+        self.submit()
+        old = self.git("rev-parse", "main")
+        self.git("checkout", "-q", "main"); self.write("base.txt", "b\n"); self.commit("Move the base"); self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "compose/p"); self.git("branch", "-f", "main", old)
+        for _ in range(2):
+            out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+            self.assertFalse(any("landed" in l for l in out), out)
+            self.assertEqual(self.git("rev-parse", "main"), old)
+            (self.proj / "layers.json").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

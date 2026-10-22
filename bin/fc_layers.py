@@ -216,7 +216,7 @@ def applies_without(repo, c, drop, files):
         return git("read-tree", f"{c}^") and all(git("apply", "--cached", "-R", patch=diff(p, *sorted(files))) for p in reversed(drop)) \
             and git("apply", "--cached", patch=diff(c))
 
-def review_units(repo, proj, base, trunk, chain):
+def review_units(repo, proj, base, trunk, chain, held=()):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; when its author date falls in the span of a test
@@ -241,6 +241,8 @@ def review_units(repo, proj, base, trunk, chain):
         files = set(commit_facts(repo, c)[0])
         writer = next((t for t, a, b in writers if a <= int(at) <= b and files and files <= protected[t]), None)
         owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set()) and writer in (None, t)]
+        if not owners and files and any(files <= protected[t] for t in held):
+            continue
         if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
             owners = [len(ids) - 1]
         on = [(p, s) for p, s, f in placed if f & files]
@@ -307,7 +309,7 @@ def record_layers(proj, layers):
     (Path(proj) / "results" / "land.json").unlink(missing_ok=True)
     fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l.get("keys", l["tasks"]))) for l in layers}, indent=2))
 
-def group_by_record(proj, units, budget, max_prs=None):
+def group_by_record(proj, units, budget, max_prs=None, landed=()):
     """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork, or
     groundwork above that task), and
     units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap): while the
@@ -334,13 +336,13 @@ def group_by_record(proj, units, budget, max_prs=None):
         groups[i:i + 2] = [(None, groups[i][1] + groups[i + 1][1], True)]
     return groups
 
-def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
+def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=(), landed=()):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
     generated, commits, units}] (units: the commits of each entry of tasks, in order). The layers are built on a detached HEAD and
     the layer branches move only once all of them are built and add up to the same tree as the task chain; else nothing is
     changed, STACK_STOP says why, and it returns None."""
-    units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
+    units = review_units(repo, proj, base, trunk, chain, held)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs)
     layers, tips, prev, prefix = [], [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
@@ -386,7 +388,8 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
         tips.append(prev)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0:
-        differ = fc_core.sh(["git", "diff", "--name-only", prev, chain[-1]], repo).stdout.split()
+        skip = {f for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) if m["id"] in held for f in m["protected"]}
+        differ = [f for f in fc_core.sh(["git", "diff", "--name-only", prev, chain[-1]], repo).stdout.split() if f not in skip]
         if differ:
             stop(f"the layers differ from {chain[-1]} in {', '.join(differ)}; {kept}")
             return None

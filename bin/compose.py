@@ -201,6 +201,7 @@ def main():
         if name == "stack":
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes the layers and opens a draft PR per layer as a GitHub stack")
+            s.add_argument("--update", action="store_true", help="with --submit: push submitted layers that changed, with --force-with-lease on the PR head")
         if name in ("reword", "land"):
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
         if name == "reword":
