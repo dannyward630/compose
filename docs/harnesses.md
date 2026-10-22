@@ -9,6 +9,7 @@ This page says how a model id picks the harness, which harnesses exist, and whic
 - [The harness table](#the-harness-table)
 - [Which roles run where](#which-roles-run-where)
 - [Models per harness](#models-per-harness)
+- [Safety](#safety)
 - [How to add a row](#how-to-add-a-row)
 - [What is not covered yet](#what-is-not-covered-yet)
 
@@ -85,7 +86,26 @@ A block with no `designer` entry still gets the built-in designer default, `clau
 
 The block, its keys and what a bad entry does are in [config.md](config.md), so this page does not repeat them.
 
-<!-- Safety: the fences, hook trust, homes, sign-in and Python 3.9 sections go here. -->
+## Safety
+
+A harness session runs tools on this machine, so this section is the page's safety half: what a session may do, and what compose never does.
+For Codex, the only row in `HARNESSES` so far, the fences live in `bin/fc_harness.py`: `_codex_argv` for a crew session and `_codex_once` for a one-shot turn.
+
+- A Codex teammate or the team lead runs in MH-9's fence: `-s workspace-write -a never`, the network on, and the cwd trusted.
+- `--add-dir` gives the session the results folder and the checkout's git dirs, and the team lead also gets compose's config folder and the treehouse pool.
+- A session may therefore write inside its cwd and every folder the fence adds, and it may use the network; with `-a never` it never waits on an approval prompt.
+- The one-shot fence is a departure from MH-9's words the product owner confirmed (NEB-1533, 2026-10-22): the test reader's turn gets `-s read-only`, and every other one-shot turn gets `-s workspace-write` with the network on and `--add-dir` for the git dirs only.
+
+- `compose setup` writes compose's hooks into the harness home's `hooks.json` and their trust records into its `config.toml`, merged into whatever is already there, never replaced.
+- Each trust record is keyed by the resolved `hooks.json` path, so a symlinked `CODEX_HOME` still matches.
+- compose never passes `--dangerously-bypass-hook-trust`.
+
+- herdr gives every new pane the row's `home_env` (`CODEX_HOME`) when the caller has it set, and `PATH`; the pane rules are in [herdr.md](herdr.md).
+- Before a Codex `crew start`, it runs the row's read-only sign-in check, `codex login status`, with the pane's home.
+- compose never signs in, and it never presses a key on a sign-in screen: a failed check exits with `login_message`'s text, which names the `codex login` to run yourself.
+
+- compose still starts on Python 3.9, so no module imports `tomllib` at module level.
+- `trust_state` in `bin/fc_checks.py` reads the trust file's TOML by trying `import tomllib` inside the function, falling back to a line parser when the Python has no `tomllib` (3.9 does not).
 
 ## How to add a row
 
