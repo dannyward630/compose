@@ -1811,3 +1811,53 @@ class HarnessSafetyPage(unittest.TestCase):
 
     def test_no_em_dash(self):
         self.assertNotIn("—", self.page)
+
+
+class HarnessModelConfig(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_config, fc_harness
+        self.fc_config, self.reserved = fc_config, fc_harness.RESERVED
+        self.config, self.workspaces = read("docs/config.md"), read("docs/workspaces.md")
+
+    def section(self, title):
+        self.assertEqual(self.config.count(f"\n## {title}\n"), 1, title)
+        return self.config.split(f"\n## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+    def rows(self, first):
+        return [l for l in self.config.splitlines() if l.startswith(f"| {first}")]
+
+    def test_the_harnesses_example_is_valid_and_codex_crew_models_come_from_its_block(self):
+        sec = self.section("Harnesses")
+        for word in ("harnesses.md", "models.crew.default", "one level deep"):
+            self.assertIn(word, sec, word)
+        cfg = json.loads(sec.split("```json\n", 1)[1].split("```", 1)[0])
+        block = cfg["harnesses"]["codex"]["models"]["crew"]
+        self.assertIn("default", block)
+        name, merged = self.fc_config.settings(cfg, "codex")
+        self.assertEqual(merged["models"]["crew"], block)
+        self.assertNotIn("harnesses", merged)
+
+    def test_keys_and_model_ids_tables_cover_harnesses_and_codex(self):
+        self.assertTrue(self.rows("`harnesses`"))
+        self.assertRegex("".join(self.rows("`models.test_reader`")), r"`claude:`.*`codex:`")
+        ids = self.section("Model ids")
+        self.assertTrue(self.rows("`codex:<model>`") and self.rows("`codex`"))
+        self.assertRegex(self.workspaces, r"(?m)^\| `codex:<model>`")
+        self.assertIn("harnesses.md", self.workspaces)
+        self.assertNotRegex(ids, r"(?i)must be a `claude:`")
+
+    def test_error_table_has_the_harness_block_and_reserved_name_lines(self):
+        errors = self.section("When the config is wrong")
+        for line in ('no "harnesses.<name>" block', 'harnesses.<name>.models.crew has no "default"',
+                     "providers.<name> is reserved: codex, gemini, grok name harnesses, not providers"):
+            self.assertIn(f"`{line}`", errors, line)
+        self.assertTrue(self.reserved)
+        self.assertTrue(all(n in "codex, gemini, grok" for n in self.reserved), self.reserved)
+        refusal = re.search(r"teammate sessions run in ([^:]+):", read("bin/fc_crew.py")).group(0)
+        self.assertIn(refusal, errors)
+
+    def test_neither_page_has_the_stale_lines_or_an_em_dash(self):
+        for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
+            self.assertNotRegex(text, r"(?i)must be a `claude:` model|run in (pi or Claude Code|Claude Code or pi)\b", rel)
+            self.assertNotIn("—", text, rel)
