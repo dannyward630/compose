@@ -627,6 +627,42 @@ class LandedLayers(Ship):
         self.assertIn("stack  ok    (main) <- compose/p-layer-03", out)
         self.assert_built_on_main("compose/p-layer-03", "003.src")
 
+    def test_the_layers_build_on_the_new_base_while_the_primary_checkout_is_on_it(self):
+        self.submit(); self.merge(1)
+        self.git("checkout", "-q", "main")  # a branch checked out in a worktree cannot be fetched into
+        self.write("mine.txt", "not committed\n")
+        before = self.git("rev-parse", "main")
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertFalse(any("STOP" in l or "cannot be fetched" in l for l in out), out)
+        self.assertIn("stack  landed compose/p-layer-01; building on origin/main", out)
+        self.assertIn("stack  ok    (main) <- compose/p-layer-02 <- compose/p-layer-03", out)
+        self.assertEqual(self.git("rev-parse", "main"), before)  # the user's branch and files are not moved under them
+        self.assertEqual(self.git("status", "--porcelain"), "?? mine.txt")
+        origin_main = self.git("--git-dir", str(self.origin), "rev-parse", "main")
+        self.assertNotEqual(origin_main, before)
+        self.assertEqual(self.git("merge-base", "compose/p-layer-02", origin_main), origin_main)  # cut on origin's base, not the stale local one
+        self.assertIn("002.src", self.tree("compose/p-layer-02"))
+        self.assertEqual(self.git("merge-base", "compose/p-layer-03", "compose/p-layer-02"), self.git("rev-parse", "compose/p-layer-02"))
+
+    def test_the_layers_build_on_the_new_base_while_another_worktree_holds_it(self):
+        self.submit(); self.merge(1)
+        other = Path(tempfile.mkdtemp()).resolve() / "wt"
+        self.git("worktree", "add", "-q", str(other), "main")
+        before = self.git("rev-parse", "main")
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertFalse(any("STOP" in l for l in out), out)
+        self.assertEqual(self.git("rev-parse", "main"), before)
+        origin_main = self.git("--git-dir", str(self.origin), "rev-parse", "main")
+        self.assertEqual(self.git("merge-base", "compose/p-layer-02", origin_main), origin_main)
+
+    def test_a_missing_base_on_origin_stops_the_stack_and_names_it(self):
+        self.submit(); self.merge(1)
+        self.git("remote", "set-url", "origin", str(self.origin) + "-gone")
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertTrue(any("STOP" in l and "landed but main cannot be fetched from origin" in l for l in out), out)
+
     def test_open_pull_requests_or_no_layers_file_fetch_nothing(self):
         self.submit()
         old = self.git("rev-parse", "main")

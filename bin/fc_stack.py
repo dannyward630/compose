@@ -290,6 +290,15 @@ def head_problem(repo, proj):
                 f"left as they were. {fix}")
     return ""
 
+def fetch_landed_base(wt, base):
+    """Bring the base a layer landed on in from origin: (the ref the layers are cut on, the fetch). The local branch is moved
+    along when no checkout holds it. One that does (the user's tree) is never moved under them, and git would refuse anyway, so
+    the layers are cut on origin/<base>, fetched on its own."""
+    held = f"branch refs/heads/{base}" in fc_core.sh(["git", "worktree", "list", "--porcelain"], wt, check=False).stdout.splitlines()
+    if held:
+        return f"origin/{base}", fc_core.sh(["git", "fetch", "-q", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], wt, check=False)
+    return base, fc_core.sh(["git", "fetch", "-q", "origin", f"{base}:{base}"], wt, check=False)
+
 def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
     """Make the project's passed task branches one gh stack, layer by layer, without touching the user's checkout. Branches built
     in parallel from trunk are rebased onto the layer below (tasks own disjoint files, so this is normally clean; a conflict
@@ -347,8 +356,9 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
         v = subprocess.run(["gh", "pr", "view", b, "--json", "state"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if v.returncode == 0 and json.loads(v.stdout).get("state") == "MERGED":
             landed.append(b)
+    built = base  # the ref the layers are cut on
     if landed:
-        f = fc_core.sh(["git", "fetch", "-q", "origin", f"{base}:{base}"], wt, check=False)
+        built, f = fetch_landed_base(wt, base)
         if f.returncode:
             fc_layers.STACK_STOP = f"{', '.join(landed)} landed but {base} cannot be fetched from origin: {(f.stderr or f.stdout).strip()[-300:]}; nothing was built or pushed"
             fc_core.say(f"stack  STOP  {fc_layers.STACK_STOP}")
@@ -359,7 +369,7 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
         return []
     budget = int(cfg.get("review_layer_lines") or fc_layers.REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
-    layers = fc_layers.build_layers(repo, proj, base, trunk, linear, wt, budget, cap, held=held, landed=landed)
+    layers = fc_layers.build_layers(repo, proj, built, trunk, linear, wt, budget, cap, held=held, landed=landed)
     if layers is None:
         return []
     stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)
