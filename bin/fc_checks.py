@@ -49,7 +49,7 @@ def hook_records(key, checkout):
                 out.append((sub, None, None))
                 continue
             snake = re.sub(r"(?<=[a-z])(?=[A-Z])", "_", ev).lower()
-            out += [(sub, f"{path}:{snake}:{i}:{j}", row["hash"](ev, g)) for j in range(len(g["hooks"]))]
+            out += [(sub, f"{path.resolve()}:{snake}:{i}:{j}", row["hash"](ev, g)) for j in range(len(g["hooks"]))]
     return out
 
 def hooks_ok(key, checkout):
