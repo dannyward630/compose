@@ -18,6 +18,7 @@ is_slot
 default_branch
 review_base
 release_slot
+checked_out
 clear_leftovers
 common_dir
 shared_checkout
