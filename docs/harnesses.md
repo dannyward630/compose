@@ -79,7 +79,9 @@ Which model each role gets under a harness comes from that harness's `harnesses.
 The block is merged over the top level, one level deep, so it only names what differs.
 The session's harness is the `crew start --harness <name>` flag.
 Without the flag it is `COMPOSE_HARNESS`.
-Without that it is `claude` under Claude Code (`CLAUDECODE=1`), and `claude` has no block.
+Without that it is the harness whose own session variable is set, which for Codex is `CODEX_THREAD_ID`, so a session started by hand in Codex picks the `codex` block with no flag.
+That check comes before `CLAUDECODE`, because a Codex started from a Claude Code shell still carries `CLAUDECODE=1`.
+With none of them it is `claude` under Claude Code (`CLAUDECODE=1`), and `claude` has no block.
 A harness other than `claude` with no block stops with a line saying so, and a block whose `models.crew` has no `default` stops too.
 
 A block with no `designer` entry still gets the built-in designer default, `claude:claude-opus-5-5`, which needs Claude Code.
@@ -110,7 +112,7 @@ For Codex, the only row in `HARNESSES` so far, the fences live in `bin/fc_harnes
 ## How to add a row
 
 1. Add a non-empty row to `HARNESSES` in `bin/fc_harness.py`, under its reserved key when it has one.
-   A row names the executable, the home variable and its default, the sigil that starts the skill, an example model id, the probe, the headless command, the parser of its events, the sign-in check and the hooks.
+   A row names the executable, the home variable and its default, the session variable, the sigil that starts the skill, an example model id, the probe, the headless command, the parser of its events, the sign-in check and the hooks.
 2. Nothing else lists harnesses.
    `RESERVED` and `rows()` read the table, and `harness_of`, `crew_argv` and `once_command` choose the row from the model id.
 3. Document the row key on this page, in the prefix rule and the table.
