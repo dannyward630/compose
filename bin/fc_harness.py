@@ -47,7 +47,28 @@ def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None, more=()):
     return argv
 
 def _codex_events(text):
-    raise NotImplementedError
+    """Parse `codex exec --json` stdout, one JSON event per line: (reply, tools, usage). Lines that are not JSON and
+    unknown event types are skipped. reply is the item.text of the last item.completed agent_message; tools counts the
+    other item.completed items but reasoning; usage sums input_tokens and output_tokens over every turn.completed
+    (input already covers cached input), and cost is 0.0: Codex runs on the ChatGPT subscription."""
+    reply, tools, tin, tout = "", 0, 0, 0
+    for line in text.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        t = ev.get("type")
+        if t == "item.completed":
+            item = ev.get("item") or {}
+            if item.get("type") == "agent_message":
+                reply = item.get("text", "")
+            elif item.get("type") != "reasoning":
+                tools += 1
+        elif t == "turn.completed":
+            u = ev.get("usage") or {}
+            tin += u.get("input_tokens", 0)
+            tout += u.get("output_tokens", 0)
+    return reply, tools, {"tokens_in": tin, "tokens_out": tout, "cost": 0.0}
 
 def _codex_once(cid, cwd, prompt, read_only=False):
     raise NotImplementedError
@@ -63,6 +84,7 @@ def _codex_hash(event, group):
 HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
+              "events": _codex_events,
               "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": _codex_hash,
               "hooks": (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"),
                         ("UserPromptSubmit", None, "skillcheck"), ("SessionStart", "compact", "reenter"))},
