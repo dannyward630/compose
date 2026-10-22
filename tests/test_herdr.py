@@ -302,7 +302,7 @@ elif args[:2] in (["tab", "create"], ["pane", "split"], ["workspace", "create"])
     pane = f"w1:p{{len(panes) + 1}}"; panes[pane] = env_of(args); json.dump(panes, open(state, "w"))
     print(json.dumps({{"result": {{"root_pane": {{"pane_id": pane}}, "pane": {{"pane_id": pane}}, "workspace": {{"workspace_id": "w1"}}}}}}))
 elif args[:2] == ["pane", "run"]:  # the pane's shell has the server's env plus what its creation passed, never the caller's
-    subprocess.run(["sh", "-c", args[3]], env={{"PATH": os.environ["PATH"], "HOME": {server_home!r}, **panes[args[2]]}})
+    subprocess.run(["sh", "-c", args[3]], env={{"PATH": os.environ.get("FAKE_SERVER_PATH", os.environ["PATH"]), "HOME": {server_home!r}, **panes[args[2]]}})
     print(json.dumps({{"result": {{}}}}))
 else:
     print(json.dumps({{"result": {{}}}}))
@@ -331,10 +331,34 @@ class CallerEnv(unittest.TestCase):
 
     def test_the_pane_id_stays_right_after_pane_split(self):
         # herdr 0.9.5 reads `pane split`'s pane id only as its first argument: `pane split --env K=V w4:p5 ...` is "unknown option: w4:p5"
-        with mock.patch.dict(os.environ, {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home"}):
+        with mock.patch.dict(os.environ, {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "PATH": "/c/bin:/usr/bin"}):
             self.assertEqual(fc.fc_herdr.herdr_argv(["pane", "split", "w4:p5", "--direction", "down", "--no-focus"]),
                              ["herdr", "pane", "split", "w4:p5", "--direction", "down", "--no-focus",
-                              "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home"])
+                              "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home", "--env", "PATH=/c/bin:/usr/bin"])
+
+    def test_every_pane_maker_carries_the_callers_path_last_and_other_calls_do_not(self):
+        env = {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "PATH": "/c/bin:/usr/bin"}
+        tail = ["--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home", "--env", "PATH=/c/bin:/usr/bin"]
+        with mock.patch.dict(os.environ, env):
+            for args in (["tab", "create", "--cwd", "/x"], ["pane", "split", "w1:p1"], ["workspace", "create", "--label", "x"]):
+                self.assertEqual(fc.fc_herdr.herdr_argv(args), ["herdr", *args, *tail])
+            self.assertEqual(fc.fc_herdr.herdr_argv(["pane", "run", "w1:p1", "ls"]), ["herdr", "pane", "run", "w1:p1", "ls"])
+            self.assertEqual(fc.fc_herdr.herdr_argv(["tab", "list"]), ["herdr", "tab", "list"])
+        with mock.patch.dict(os.environ, {"HOME": "/s/home"}, clear=True):  # an unset PATH is not passed
+            self.assertEqual(fc.fc_herdr.herdr_argv(["tab", "create"]), ["herdr", "tab", "create", "--env", "HOME=/s/home"])
+
+    def test_a_command_only_on_the_callers_path_runs_in_a_new_pane(self):
+        d = Path(tempfile.mkdtemp()); (d / "bin").mkdir(); (d / "tools").mkdir()
+        (d / "bin" / "herdr").write_text(FAKE_HERDR.format(py=sys.executable, state=str(d / "panes.json"), server_home=str(d / "real-home")))
+        (d / "bin" / "herdr").chmod(0o755)
+        (d / "tools" / "only-here").write_text(f"#!/bin/sh\necho ran >> {d / 'ran'}\n"); (d / "tools" / "only-here").chmod(0o755)
+        server = f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}"  # the herdr server's PATH lacks d/tools
+        caller = {"PATH": f"{d / 'tools'}{os.pathsep}{server}", "FAKE_SERVER_PATH": server, "HERDR_ENV": "1", "HERDR_SOCKET_PATH": str(d / "sock")}
+        with mock.patch.dict(os.environ, caller):
+            for make in (["tab", "create", "--cwd", str(d)], ["pane", "split", "w1:p1"], ["workspace", "create", "--cwd", str(d)]):
+                pane = fc.fc_herdr.herdr(*make)["pane"]["pane_id"]
+                fc.fc_herdr.herdr("pane", "run", pane, "only-here")
+        self.assertEqual((d / "ran").read_text().split() if (d / "ran").exists() else [], ["ran"] * 3)
 
 
 class AgentStartRace(unittest.TestCase):
