@@ -222,4 +222,23 @@ def ledger_triggers(repo, proj, meta, rows):
 
 def after_round(repo, proj, trunk):
     """After a verify round's stages: (the ids whose recorded depth rose, `{id: why}`)."""
-    raise NotImplementedError("after_round")
+    if not fc_linear.linear_ready():
+        return [], {}
+    tasks = fc_tasks.load_tasks(proj)
+    ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in fc_worktree.stack_order(repo, proj, tasks)]
+    by_id = {m["id"]: m for m in tasks}
+
+    def depths(issues):
+        got = {}
+        for id in ids:
+            desc = (issues.get(by_id.get(id, {}).get("linear")) or {}).get("description")
+            got[id] = ((fc_routerec.parse_route(desc) or {}) if desc else {}).get("depth")
+        return got
+
+    before = depths(fc_tasks.linear_cache(proj).get("issues", {}))
+    failed = catch_up(repo, proj, tasks, ids, trunk, LEDGER)
+    for id, why in failed.items():
+        fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+    rank = lambda d: DEPTHS.index(d) if d in DEPTHS else -1
+    after = depths(fc_tasks.linear_cache(proj).get("issues", {}))
+    return [id for id in ids if rank(after[id]) > rank(before[id])], failed
