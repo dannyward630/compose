@@ -2023,3 +2023,40 @@ class HarnessConfigClaims(unittest.TestCase):
     def test_neither_page_has_an_em_dash(self):
         for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
             self.assertNotIn("—", text, rel)
+
+
+class HarnessSessionOrder(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.session_env = fc_harness.HARNESSES["codex"]["session_env"]
+        self.page = read("docs/harnesses.md")
+        self.lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+
+    def first(self, word):
+        return next(i for i, l in enumerate(self.lines) if word in l)
+
+    def test_the_session_variable_lines_come_in_order_and_codex_names_its_block(self):
+        flag, codex, claude = (self.first(w) for w in ("`COMPOSE_HARNESS`", "CODEX_THREAD_ID", "CLAUDECODE"))
+        self.assertLess(flag, codex)
+        self.assertLess(codex, claude)
+        self.assertIn("`codex`", self.lines[codex])
+        self.assertRegex(self.lines[codex], r"(?i)block")
+        self.assertEqual(re.findall(r"`([A-Z][A-Z_]+)`", self.lines[codex]), [self.session_env])
+
+    def test_the_codex_check_comes_before_claudecode_and_says_why(self):
+        i = self.first("CODEX_THREAD_ID")
+        self.assertEqual(self.lines[i - 1], "Without the flag it is `COMPOSE_HARNESS`.")
+        self.assertRegex(self.lines[i + 1], r"before `CLAUDECODE`")
+        self.assertRegex(self.lines[i + 1], r"`CLAUDECODE=1`")
+        self.assertRegex(self.lines[i + 1], r"(?i)codex")
+        self.assertRegex(self.lines[i + 2], r"`CLAUDECODE=1`.*`claude` has no block")
+        self.assertNotRegex("\n".join(self.lines), r"(?m)^Without that it is `claude`")
+
+    def test_how_to_add_a_row_names_the_session_variable_before_the_hooks(self):
+        row = [l for l in self.page.splitlines() if "the home variable and its default" in l]
+        self.assertEqual(len(row), 1, row)
+        self.assertRegex(row[0], r"home variable and its default,.*session variable.*hooks")
+
+    def test_no_em_dash(self):
+        self.assertNotIn("—", self.page)
