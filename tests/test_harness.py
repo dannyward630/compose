@@ -1178,3 +1178,51 @@ class CodexPreflight(unittest.TestCase):
         fc.fc_run.preflight({"pi:r/x", "claude", "claude:opus", "codex:a"})
         self.assertEqual([c.args[1] for c in self.turn.call_args_list], ["pi:r/x"])
         self.avail.assert_called_once_with("codex:a")
+
+
+class CodexEvents(unittest.TestCase):
+    def ev(self, kind, item=None, **more):
+        return json.dumps({"type": kind, **({"item": item} if item else {}), **more})
+
+    def done(self, kind, **item):
+        return self.ev("item.completed", {"id": "i", "type": kind, **item})
+
+    def turn(self, tin, tout):
+        return self.ev("turn.completed", usage={"input_tokens": tin, "cached_input_tokens": 1, "output_tokens": tout})
+
+    def parse(self, *lines):
+        return fc_harness._codex_events("\n".join(lines) + "\n")
+
+    def test_the_sample_gives_the_last_message_one_tool_and_the_usage(self):
+        sample = self.parse(
+            '{"type":"thread.started","thread_id":"t"}', '{"type":"turn.started"}',
+            self.done("agent_message", text="I will run it.\n"),
+            self.ev("item.started", {"id": "i", "type": "command_execution", "status": "in_progress"}),
+            self.done("command_execution", command="echo hi", exit_code=0, status="completed"),
+            self.done("agent_message", text="ok"),
+            '{"type":"turn.completed","usage":{"input_tokens":29828,"cached_input_tokens":27008,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0}}')
+        self.assertEqual(sample, ("ok", 1, {"tokens_in": 29828, "tokens_out": 50, "cost": 0.0}))
+
+    def test_two_turns_sum(self):
+        self.assertEqual(self.parse(self.turn(10, 1), self.turn(5, 2))[2], {"tokens_in": 15, "tokens_out": 3, "cost": 0.0})
+
+    def test_no_events_give_zeros_and_an_empty_reply(self):
+        for text in ("", "\n\n", self.ev("turn.started") + "\n"):
+            self.assertEqual(fc_harness._codex_events(text), ("", 0, {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}))
+
+    def test_non_json_lines_and_unknown_events_are_skipped(self):
+        got = self.parse("Reading additional input from stdin...", "", self.done("agent_message", text="hi"), "{not json",
+                         self.ev("something.new", {"id": "i", "type": "command_execution"}), self.ev("mystery"), self.turn(3, 4))
+        self.assertEqual(got, ("hi", 0, {"tokens_in": 3, "tokens_out": 4, "cost": 0.0}))
+
+    def test_every_item_except_messages_and_reasoning_is_a_tool(self):
+        got = self.parse(self.done("reasoning", text="hm"), self.done("command_execution"), self.done("file_change"),
+                         self.done("mcp_tool_call"), self.done("agent_message", text="x"))
+        self.assertEqual(got[:2], ("x", 3))
+
+    def test_the_reply_is_the_last_message_even_before_trailing_tools(self):
+        self.assertEqual(self.parse(self.done("agent_message", text="a"), self.done("agent_message", text="b"), self.done("command_execution"))[:2], ("b", 1))
+        self.assertEqual(self.parse(self.done("reasoning", text="r"), self.done("command_execution"))[0], "")
+
+    def test_the_codex_row_names_the_parser(self):
+        self.assertIs(fc_harness.HARNESSES["codex"]["events"], fc_harness._codex_events)
