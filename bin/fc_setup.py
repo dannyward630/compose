@@ -9,6 +9,7 @@ MODES = ("Quick start (every default, designer extras off)", "Custom (choose eac
 
 def walk_steps(checkout, custom, yes, dry=False):
     claude = shutil.which("claude") is not None
+    other = fc_steps.other_harness(checkout)
     results, designer = [], False
     for row in fc_steps.STEPS:
         name, _, install, level, _, mode = row
@@ -19,7 +20,7 @@ def walk_steps(checkout, custom, yes, dry=False):
             state = "ok"
         elif custom and not fc_prompt.confirm(f"Set up {name}?", level != "designer"):
             state = "skipped"
-            if level == "required":
+            if fc_steps.required(row, other):
                 lines = [f"compose stops working without it; by hand: {install}"]
         elif not custom and level == "designer":
             state, lines = "skipped", ["designer extra, skipped"]
