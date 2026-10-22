@@ -31,6 +31,7 @@ TEST_READER = "claude:claude-haiku-5-5"
 JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent verify's e2e cases drive: its own uv project
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin.
+BUILTIN_PRICES = {}
 PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fast/openai/gpt-oss-120b@preset/gpt-oss-120b-cerebras": (0.35, 0.75),
           "openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast": (0.15, 0.50)}
 CONFIG_PATH = Path(os.environ.get("COMPOSE_CONFIG", Path.home() / ".compose" / "config.json"))
@@ -55,6 +56,9 @@ CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order wh
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
+TIER_NAMES = ()
+DEFAULT_TIERS = {}
+TIERS = {}
 PROVIDERS = {}  # name -> the active settings' providers entry (base URL, optional models list), set by apply_config
 
 

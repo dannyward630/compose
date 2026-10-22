@@ -99,10 +99,10 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"Scratch copies and temporary files go under {scratch_dir(proj, name)}, never /tmp or your home. Stop every server, "
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
-def crew_pick(role, explicit=None):
+def crew_pick(role, explicit=None, pin=None):
     return crew_pick_full(role, explicit)[:3]
 
-def crew_chain(role, explicit=None):
+def crew_chain(role, explicit=None, pin=None):
     """(key, chain): the models.crew entry a role resolves to and its (model, effort) list in order, unprobed; (None, []) means bare `claude`."""
     if explicit and explicit not in fc_config.CREW_MODELS:
         key, chain = "--model", [(explicit, None)]
@@ -117,7 +117,7 @@ def crew_chain(role, explicit=None):
             if key in fc_config.CREW_MODELS else [fc_config.CREW_DEFAULTS[key]]
     return key, chain
 
-def crew_pick_full(role, explicit=None):
+def crew_pick_full(role, explicit=None, pin=None):
     """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under models.crew such as `small`) wins,
     then models.crew[<role>], then `planner` for the planning role (the wayfinder teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""

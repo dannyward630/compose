@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -123,6 +123,8 @@ def main():
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
+                            ("tier", fc_tierpin.cmd_tier, "pin a story's or the project's tier: compose tier --project <slug> [--story <id>] cheap|standard|frontier|no-frontier|clear"),
+                            ("budget", fc_budget.cmd_budget, "set a project's frontier spend limit: compose budget --project <slug> frontier <dollars>"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
                             ("frame0", fc_f0pages.cmd_frame0_pages, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go; pages | move | delete | links | lint list, reorder, remove, and check its pages"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge | publish: store the target Figma file key, prove Framelink reads it, record the plan's limits; save a task's node tree; judge it with Jev; say whether a library publish is pending"),
@@ -155,6 +157,12 @@ def main():
                 s.add_argument(flag)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
+        if name == "tier":
+            s.add_argument("value", choices=(*fc_tiers.PINS, "clear"))
+            s.add_argument("--story")
+        if name == "budget":
+            s.add_argument("tier", choices=("frontier",))
+            s.add_argument("dollars", type=float)
         if name == "route":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--recalculate", action="store_true", help="recompute every route, even one whose context is unchanged")
