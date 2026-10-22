@@ -133,6 +133,8 @@ def apply_config(move=True):
             sys.exit(f"{CONFIG_PATH}: models.tiers.{t}: tiers are cheap, standard, frontier")
     TIERS = {t: [entry(e) for e in tiers.get(t, DEFAULT_TIERS[t])] for t in TIER_NAMES}
     user_prices = st.get("prices", {})
+    if not isinstance(user_prices, dict):
+        sys.exit(f"{CONFIG_PATH}: prices must be an object of model id to 2 or 4 numbers, not {user_prices!r}")
     for m, p in user_prices.items():
         if not (isinstance(p, list) and len(p) in (2, 4) and all(isinstance(n, (int, float)) for n in p)):
             sys.exit(f"{CONFIG_PATH}: prices.{m} must be 2 or 4 numbers")
