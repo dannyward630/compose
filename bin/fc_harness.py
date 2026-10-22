@@ -94,6 +94,7 @@ def _codex_hash(event, group):
 
 HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
+              "session_env": "CODEX_THREAD_ID",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
               "events": _codex_events, "once": _codex_once,
               "login_check": ("login", "status"), "login": ("login",),
@@ -123,6 +124,11 @@ def rows():
 
 def installed():
     return [k for k in rows() if shutil.which(HARNESSES[k]["exe"])]
+
+def detected(env=None):
+    """The harness whose session_env names a variable that is set and non-empty in `env` (the process env by default), else
+    None: a session started by hand has no flag and no $COMPOSE_HARNESS, so it is read out of its own environment."""
+    return next((k for k in rows() if (os.environ if env is None else env).get(HARNESSES[k]["session_env"])), None)
 
 def home_dir(key):
     row = HARNESSES[key]

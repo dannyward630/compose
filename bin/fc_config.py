@@ -78,8 +78,9 @@ def write_config(cfg):
     CONFIG_PATH.chmod(0o600)  # settings stay private
 
 def session_harness(flag=None):
-    """The session's harness: the flag, else $COMPOSE_HARNESS, else "claude" under Claude Code ($CLAUDECODE=1), else None."""
-    return flag or os.environ.get("COMPOSE_HARNESS") or ("claude" if os.environ.get("CLAUDECODE") == "1" else None)
+    """The session's harness: the flag, else $COMPOSE_HARNESS, else what its own environment names, else "claude" under
+    Claude Code ($CLAUDECODE=1), else None."""
+    return flag or os.environ.get("COMPOSE_HARNESS") or fc_harness.detected() or ("claude" if os.environ.get("CLAUDECODE") == "1" else None)
 
 def settings(cfg, harness=None):
     """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep, then
