@@ -302,8 +302,10 @@ def cmd_crew(a):
     write_report(proj, name, "working", "started")  # before the agent starts: a fast teammate's own report must come after it
     try:
         if h:
+            pool = (fc_worktree.common_dir(cwd).parent / ".treehouse",) if a.role == "orchestrator" and fc_worktree.use_treehouse() else ()
             fc_herdr.herdr_start_crew(agent, "--kind", h["kind"], "--pane", pane, "--timeout", "60000", "--",
-                  *fc_harness.crew_argv(model, effort, TRUST_PROMPT, CLI_REPO / "SKILL.md", cwd, crew_dir(proj).parent, work))
+                  *fc_harness.crew_argv(model, effort, TRUST_PROMPT, CLI_REPO / "SKILL.md", cwd, crew_dir(proj).parent, work,
+                                        more=(fc_config.CONFIG_PATH.parent, *pool) if a.role == "orchestrator" else ()))
         elif model.startswith("pi:"):  # the same teammate in pi: its skills dir is this repo, its thinking level is the entry's effort
             fc_herdr.herdr_start_crew(agent, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", "--tui-mode", "regular", "--no-extensions",
                   *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []), *fc_providers.pi_args(fc_models.pi_id(model)), "--skill", str(CLI_REPO / "SKILL.md"), "--no-prompt-templates",
