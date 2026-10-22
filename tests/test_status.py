@@ -115,7 +115,7 @@ class StackNote(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": t, "title": f"Build {t}", "after": ""} for t in ("001", "002", "003")]}))
         for t in ("001", "002", "003"):
             self.git("checkout", "-q", "-b", f"compose/p-{t}", "compose/p"); (self.repo / f"{t}.src").write_text("c\n"); self.git("add", "-A"); self.git("commit", "-qm", t); self.git("checkout", "-q", "compose/p")
-            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"status": "passed"}))
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"status": "passed", "model": "pi:p/m"}))
         for n in ("01", "02", "03"):
             self.git("branch", f"compose/p-layer-{n}", "compose/p-003")
         (self.proj / "layers.json").write_text(json.dumps({"compose/p-layer-01": ["groundwork"], "compose/p-layer-02": ["001", "002"], "compose/p-layer-03": ["003"]}))

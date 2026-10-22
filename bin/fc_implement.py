@@ -274,8 +274,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
     import shutil
-    if wt.exists():
-        shutil.rmtree(wt)
+    if wt.exists(): shutil.rmtree(wt)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))
     if why:
@@ -347,8 +346,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.\n"
               "If a fact this brief states is wrong (a function, file, or API it names is missing or behaves differently), do not "
               "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
-    log, session, started, status, cost = [], None, time.time(), "failed", 0.0
-    reference_cost = 0.0
+    log, session, started, status, cost, reference_cost = [], None, time.time(), "failed", 0.0, 0.0
     original_prompt = prompt
     # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
     spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
