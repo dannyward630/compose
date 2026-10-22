@@ -142,10 +142,11 @@ class Tidy(unittest.TestCase):
         crew = F.fc_defaults.DEFAULT_MODELS["crew"]
         self.cfg.write_text(json.dumps({"models": {"implementer": "pi:mine", "crew": {}}}))
         lines, code = self.run_finish(ALL)
-        self.assertEqual(([l for l in lines if "models" in l and l not in F.fc_defaults.PRESET_STEPS], code),
-                         ([f"{ADDED}fallback, crew ({len(crew)} roles)"], 0))
+        added = [l for l in lines if "models" in l and l not in F.fc_defaults.PRESET_STEPS]
+        self.assertEqual((len(added), code), (1, 0))
+        self.assertEqual(set(added[0][len(ADDED):].split(", ")), {"fallback", "tiers", f"crew ({len(crew)} roles)"})
         self.cfg.write_text(json.dumps({"models": {"implementer": "pi:mine", "crew": crew}}))
-        self.assertIn(ADDED + "fallback", self.run_finish(ALL)[0])
+        self.assertEqual([sorted(l[len(ADDED):].split(", ")) for l in self.run_finish(ALL)[0] if l.startswith(ADDED)], [["fallback", "tiers"]])
         self.cfg.unlink(); lines, _ = self.run_finish(ALL)  # fresh: no config.json yet
         added = [l for l in lines if l.startswith(ADDED)]
         self.assertEqual(len(added), 1); self.assertIn("implementer", added[0]); self.assertTrue(added[0].endswith(f"crew ({len(crew)} roles)"))
