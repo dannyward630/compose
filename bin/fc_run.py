@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -238,8 +238,15 @@ def run_tasks(repo, proj, tasks, a):
                 if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
                     pending[p] = []
                     continue
+                if "proof" in r:  # a proof round's result replaces the task's row
+                    results[:] = [r if x["id"] == r["id"] else x for x in results]
+                    if r["status"] == "passed":
+                        unproven.discard(metas[p]["id"])
+                        for q in pending:
+                            pending[q] = [d for d in pending[q] if d != metas[p]["id"]]
+                    continue
                 results.append(r)
-                events = fc_fast.run_events(proj, repo, metas[p], r)
+                events =fc_fast.run_events(proj, repo, metas[p], r)
                 cost = fc_costevent.run_event(proj, metas[p], r, events[-1]) if events else None
                 fc_ledger.record_task(repo, proj, metas[p], events + ([cost] if cost else []))
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
@@ -255,6 +262,8 @@ def run_tasks(repo, proj, tasks, a):
                     failed_ids.add(tid)
                 for q in pending:
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
+                if fc_regress.fast_fix(proj, metas[p], r):
+                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)] = p
     for t in reflecting:  # every screen is on disk before the run reports its end
         t.join()
     if any(m.get("linear") for m in tasks):
