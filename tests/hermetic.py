@@ -4,7 +4,7 @@ On import the process gets a temp HOME and COMPOSE_CONFIG and loses the key vari
 the bin modules compute at import land there; each test then runs with its own fresh temp HOME (see temp_home) and COMPOSE_CONFIG, and its environment is restored after.
 A test that still changes the real ~/.compose files that hold keys or config (created, written, moved or deleted, from the test
 process or any subprocess) fails, naming the files, never their content."""
-import atexit, hashlib, json, os, pwd, shutil, tempfile, time, unittest
+import atexit, hashlib, json, os, pwd, shutil, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -161,6 +161,41 @@ def untouched(before):
 
 
 _run = unittest.TestCase.run
+_own = unittest.TestCase.__dict__.get("__init_subclass__")  # TestCase's own, when this Python has one
+_init_subclass = _own.__func__ if _own else lambda cls, **kw: super(unittest.TestCase, cls).__init_subclass__(**kw)
+_world = {}  # test module name -> {name: module} of the fc_* modules in sys.modules when its last test class was defined
+
+
+def fc_modules():
+    return {n: m for n, m in sys.modules.items() if n.startswith("fc_")}
+
+
+def remember_world(cls, **kw):
+    """A test file reloads every fc_* module at import, so with several files in one process the bin modules' own lazy
+    `import fc_x` would find the last file's copies while an earlier file patches its own. The classes are defined after
+    the file's reload, so the modules then in sys.modules are the file's world; its tests run in it (see run)."""
+    _init_subclass(cls, **kw)
+    _world[cls.__module__] = fc_modules()
+
+
+class in_world:
+    """sys.modules holds the fc_* modules of the file a test belongs to for the test, and what it held before after."""
+    def __init__(self, test):
+        self.world = _world.get(type(test).__module__)
+
+    def __enter__(self):
+        if self.world is not None:
+            self.before = fc_modules()
+            for n in self.before.keys() - self.world.keys():
+                del sys.modules[n]
+            sys.modules.update(self.world)
+
+    def __exit__(self, *exc):
+        if self.world is not None:
+            self.world.update({n: m for n, m in fc_modules().items() if n not in self.world})  # a module first imported by a test stays the file's
+            for n in fc_modules().keys() - self.before.keys():
+                del sys.modules[n]
+            sys.modules.update(self.before)
 
 
 def run(self, result=None):
@@ -169,7 +204,8 @@ def run(self, result=None):
     env.start()
     try:
         self.addCleanup(untouched, snapshot())  # the first cleanup added runs last, after the test's own
-        return _run(self, result)
+        with in_world(self):
+            return _run(self, result)
     finally:
         env.stop()
         remove_made(made)  # the test's temp home and every directory it or its setUp made
@@ -181,3 +217,4 @@ if not getattr(unittest.TestCase.run, "hermetic", False):
         os.environ.pop(k, None)
     os.environ.update(temp_home())
     unittest.TestCase.run = run
+    unittest.TestCase.__init_subclass__ = classmethod(remember_world)
