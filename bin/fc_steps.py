@@ -4,7 +4,7 @@ manual (never run), write (compose's own writer; install is `compose setup`), ke
 written by fc_perms.offer only on the user's yes)."""
 import json, re, shutil
 from pathlib import Path
-import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_pi, fc_keys, fc_perms
+import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_harness, fc_pi, fc_keys, fc_perms
 
 
 FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
@@ -99,6 +99,10 @@ STEPS = (  # the rows, in setup order
     ("pi openrouter-fast provider", lambda co: (fc_pi.provider_declared(fc_pi.PI_MODELS), ""), "compose setup", "required", False, "write"),
     ("compose CLI link", lambda co: owned_link("compose CLI link", co), "compose setup", "required", False, "write"),
     ("compose skill link", lambda co: owned_link("compose skill link", co), "compose setup", "required", False, "write"),
+    *((f"{r['name']} skill link",
+       lambda co, r=r: owned_link(f"{r['name']} skill link", co) if shutil.which(r["exe"]) else (True, ""),
+       "compose setup", "default", False, "write")
+      for k in fc_harness.rows() for r in (fc_harness.HARNESSES[k],)),
     ("~/.local/bin on PATH", lambda co: (fc_checks.local_bin_on_path(), ""), 'put `export PATH="$HOME/.local/bin:$PATH"` in your shell profile', "required", False, "manual"),
     ("OpenRouter key", lambda co: key_ok("openrouter"), "get one at openrouter.ai/keys; compose setup stores it", "required", False, "key"),
     ("TypeSafe key", lambda co: key_ok("typesafe"), "get one from TypeSafe; compose setup stores it", "required", False, "key"),
