@@ -71,7 +71,17 @@ def _codex_events(text):
     return reply, tools, {"tokens_in": tin, "tokens_out": tout, "cost": 0.0}
 
 def _codex_once(cid, cwd, prompt, read_only=False):
-    raise NotImplementedError
+    argv = ["codex", "-a", "never", "exec", "--json", "--ephemeral", "--skip-git-repo-check"] + (["-m", cid] if cid is not None else [])
+    if read_only:
+        argv += ["-s", "read-only"]
+    else:
+        argv += ["-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
+        seen = set()
+        for d in _git_dirs(cwd):
+            if str(d) not in seen:
+                seen.add(str(d))
+                argv += ["--add-dir", str(d)]
+    return argv + [prompt]
 
 def _codex_hash(event, group):
     o = {"event_name": re.sub(r"(?<=[a-z])(?=[A-Z])", "_", event).lower(),
@@ -84,7 +94,7 @@ def _codex_hash(event, group):
 HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
-              "events": _codex_events,
+              "events": _codex_events, "once": _codex_once,
               "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": _codex_hash,
               "hooks": (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"),
                         ("UserPromptSubmit", None, "skillcheck"), ("SessionStart", "compact", "reenter"))},
@@ -128,10 +138,15 @@ def crew_argv(model, effort, prompt, skill, cwd, results, work=None, more=()):
     return HARNESSES[harness_of(model)]["argv"](model_id(model), effort, prompt, skill, cwd, results, work, more)
 
 def once_command(model, cwd, prompt, read_only=False):
-    raise NotImplementedError
+    return HARNESSES[harness_of(model)]["once"](model_id(model), cwd, prompt, read_only)
 
 def once_result(model, p):
-    raise NotImplementedError
+    key = harness_of(model)
+    reply, tools, usage = HARNESSES[key]["events"](p.stdout)
+    if p.returncode != 0 and not reply:
+        raise RuntimeError(f"{HARNESSES[key]['name']} failed: {HARNESSES[key]['result'](p)[1][:300]}")
+    fc_core.LEDGER.add(f"{key}-subscription", usage["tokens_in"], usage["tokens_out"], 0.0)
+    return None, reply[-1500:], tools, usage
 
 def hook_groups(key, checkout):
     out = {}
