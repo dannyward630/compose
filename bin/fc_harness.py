@@ -24,10 +24,25 @@ def _codex_result(p):
     return False, tail[-1] if tail else f"exit {p.returncode}"
 
 def _git_dirs(f):
-    raise NotImplementedError
+    p = fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"], f, check=False) if Path(f).is_dir() else None
+    return [Path(l).resolve() for l in p.stdout.splitlines()[:2]] if p and p.returncode == 0 else []
 
 def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None, more=()):
-    raise NotImplementedError
+    argv = []
+    if cid is not None:
+        argv += ["-m", cid]
+    if effort:
+        argv += ["-c", f"model_reasoning_effort={json.dumps(effort)}"]
+    argv += ["-s", "workspace-write", "-a", "never", "-c", "sandbox_workspace_write.network_access=true",
+             "-c", 'projects={%s={trust_level="trusted"}}' % json.dumps(os.path.realpath(cwd)),
+             "-c", "developer_instructions=" + json.dumps(prompt + "\n\nThe compose skill is the file " + str(skill) + ".")]
+    seen = set()
+    for d in [results, *_git_dirs(cwd)] + ([work, *_git_dirs(work)] if work is not None else []) + list(more):
+        if d is None or (r := str(Path(d).resolve())) in seen:
+            continue
+        seen.add(r)
+        argv += ["--add-dir", str(d)]
+    return argv
 
 def _codex_events(text):
     raise NotImplementedError
@@ -78,7 +93,7 @@ def probe_result(model, p):
     return HARNESSES[harness_of(model)]["result"](p)
 
 def crew_argv(model, effort, prompt, skill, cwd, results, work=None, more=()):
-    raise NotImplementedError
+    return HARNESSES[harness_of(model)]["argv"](model_id(model), effort, prompt, skill, cwd, results, work, more)
 
 def once_command(model, cwd, prompt, read_only=False):
     raise NotImplementedError
