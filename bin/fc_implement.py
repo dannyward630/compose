@@ -348,6 +348,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "If a fact this brief states is wrong (a function, file, or API it names is missing or behaves differently), do not "
               "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
     log, session, started, status, cost = [], None, time.time(), "failed", 0.0
+    reference_cost = 0.0
     original_prompt = prompt
     # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
     spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
@@ -408,6 +409,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                                                            timeout=fc_models.TURN_TIMEOUT)
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
+            reference_cost += e.usage.get("reference_cost") or 0
             if fall():
                 log.append({"attempt": attempt, "rate_limited": True, "seconds": round(time.time() - t0, 1), "usage": e.usage})
                 switch(e.why, original_prompt)
@@ -437,6 +439,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                         + (f", and {fc_proc.slept_text(nap)}: it does not count" if nap else "") + "; fresh session")
             cut_usage = getattr(e, "usage", {"cost": 0.0, "tokens_in": 0, "tokens_out": 0})  # what the cut turn cost is counted here, as for a rate limit
             cost += cut_usage["cost"]
+            reference_cost += cut_usage.get("reference_cost") or 0
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "error": "implementer timed out", "tool_calls": getattr(e, "tools", 0), "usage": cut_usage,
                         **({"slept": round(nap)} if nap else {})})
             session, prompt, cut = None, original_prompt, attempt
@@ -468,6 +471,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             reply, tools, usage = "", 0, {"cost": 0.0, "tokens_in": 0, "tokens_out": 0}
         n = cut or attempt
         cost += usage["cost"]
+        reference_cost += usage.get("reference_cost") or 0
         found = None if cut else contradiction(reply)
         if found:  # the brief states something the code disproves: more attempts would only work around it
             log.append({"attempt": attempt, "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
@@ -498,6 +502,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if reader:
                 entry["reader"] = {"model": fc_config.TEST_READER, "usage": reader}
                 cost += reader["cost"]
+                reference_cost += reader.get("reference_cost") or 0
                 progress("running")
         fc_core.say(f"{tid} attempt {n} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
@@ -577,7 +582,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_herdr.herdr("pane", "close", session["pane"])
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": spent(),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
-              "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
+              "reference_cost": round(reference_cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
     if not reset_files and not tag:
