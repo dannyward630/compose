@@ -108,6 +108,24 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual((self.repo / "a_test.go").read_text(), "a\nc\n")
         self.assertEqual(self.writer_branches(), [])
 
+    def test_a_test_that_cannot_load_stays_on_its_writer_branch_until_the_writer_reports_again(self):
+        f = self.proj / "results" / "tasks.json"
+        tasks = json.loads(f.read_text())["tasks"]
+        tasks[0]["test"] = f"{sys.executable} -c 'import no_such_module_xyz'"
+        f.write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.start_writers([])
+        wt = self.crew_commits("001", "a_test.go", "a\n")
+        sent = []
+        with mock.patch.object(fc.fc_herdr, "live_agents", lambda: [{"name": "p-tests-001"}]), mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: sent.append(a) or {}):
+            fc.fc_briefs.collect_tests(self.proj, "001")
+            self.assertTrue(self.run("branch", "--list", "*tests-001", cwd=wt).stdout.strip())  # not collected: its branch is kept
+            self.assertFalse((self.repo / "a_test.go").exists())
+            self.assertEqual(len(sent), 1)
+            fc.fc_crew.write_report(self.proj, "p-tests-001", "working", "test ready: y")
+            fc.fc_briefs.collect_tests(self.proj, "001")  # sent back once already: collected
+        self.assertTrue((self.repo / "a_test.go").exists())
+        self.assertEqual(len(sent), 1)
+
     def test_a_collected_writer_is_not_started_again(self):
         self.start_writers([])
         self.crew_commits("001", "a_test.go", "a\n")

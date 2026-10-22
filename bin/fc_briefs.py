@@ -1,7 +1,7 @@
 import argparse, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug
+import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug, fc_testred
 
 
 # ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
@@ -541,7 +541,8 @@ def collect_tests(proj, only=None):
     collected, and the collect exits naming every conflict."""
     wt = fc_herdr.project_worktree(proj)
     want = {x.strip() for x in only.split(",")} if only else None
-    ids = sorted(m["id"] for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want)
+    by_id = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want}
+    ids = sorted(by_id)
     conflicts = []
     for tid in ids:
         branch = test_branch(proj, tid)
@@ -551,6 +552,8 @@ def collect_tests(proj, only=None):
         last = (fc_crew.crew_reports(proj, writer) or [{}])[-1]
         if not test_ready(last):
             fc_core.say(f"tests-{tid} skipped: it has not reported test ready (last: {last.get('state', 'nothing')} {last.get('message', '')!r}); its branch and worktree are kept")
+            continue
+        if fc_testred.gate(proj, by_id[tid], writer):  # a test that cannot load goes back to its writer once
             continue
         # a commit already on the branch is skipped: the same patch, or picked by hand (a cherry-pick keeps the author, the author
         # date, and the subject through a conflict resolution and any later edit, where no patch or content check would match)
