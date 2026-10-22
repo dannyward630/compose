@@ -9,6 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_harness
 
 
 class AgentNames(unittest.TestCase):
@@ -312,6 +313,10 @@ else:
 class CallerEnv(unittest.TestCase):
     """A pane compose opens through herdr gets the herdr server's env, not the caller's: a scratch COMPOSE_CONFIG and HOME
     must travel with it, or the CLI it runs there works on the real ~/.compose."""
+    def setUp(self):
+        p = mock.patch.dict(os.environ); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)  # the argv tests pin the exact list, so a CODEX_HOME where the suite runs must not show
+
     def test_a_scratch_config_and_home_reach_the_panes_command(self):
         d = Path(tempfile.mkdtemp()); (d / "bin").mkdir()
         herdr = d / "bin" / "herdr"
@@ -359,6 +364,29 @@ class CallerEnv(unittest.TestCase):
                 pane = fc.fc_herdr.herdr(*make)["pane"]["pane_id"]
                 fc.fc_herdr.herdr("pane", "run", pane, "only-here")
         self.assertEqual((d / "ran").read_text().split() if (d / "ran").exists() else [], ["ran"] * 3)
+
+    def argv(self, env, args):
+        table = {"codex": {"name": "Codex", "home_env": "CODEX_HOME"}, "other": {"name": "Other", "home_env": "OTHER_HOME"}, "bare": {"name": "Bare", "home_env": ""}}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.dict(fc_harness.HARNESSES, table, clear=True):
+            return fc.fc_herdr.herdr_argv(args)
+
+    def test_a_harness_home_set_in_the_caller_goes_after_home_and_before_path(self):
+        env = {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        for args in (["tab", "create", "--cwd", "/x"], ["pane", "split", "w1:p1", "--direction", "down"], ["workspace", "create", "--label", "x"]):
+            self.assertEqual(self.argv(env, args), ["herdr", *args, "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home",
+                                                    "--env", "CODEX_HOME=/s/codex", "--env", "PATH=/c/bin"])
+
+    def test_an_unset_or_empty_home_is_not_passed_and_a_second_row_is_passed_in_table_order(self):
+        for env in ({"HOME": "/s/home"}, {"HOME": "/s/home", "CODEX_HOME": ""}):
+            self.assertEqual(self.argv(env, ["tab", "create"]), ["herdr", "tab", "create", "--env", "HOME=/s/home"])
+        env = {"HOME": "/s/home", "OTHER_HOME": "/s/other", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        self.assertEqual(self.argv(env, ["pane", "split", "w1:p1"]), ["herdr", "pane", "split", "w1:p1", "--env", "HOME=/s/home",
+                         "--env", "CODEX_HOME=/s/codex", "--env", "OTHER_HOME=/s/other", "--env", "PATH=/c/bin"])
+
+    def test_other_calls_do_not_carry_a_harness_home(self):
+        env = {"HOME": "/s/home", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        self.assertEqual(self.argv(env, ["pane", "run", "w1:p1", "ls"]), ["herdr", "pane", "run", "w1:p1", "ls"])
+        self.assertEqual(self.argv(env, ["tab", "list"]), ["herdr", "tab", "list"])
 
 
 class AgentStartRace(unittest.TestCase):
