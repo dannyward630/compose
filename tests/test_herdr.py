@@ -537,6 +537,48 @@ class BareUsage(unittest.TestCase):
         self.assertIn("unrecognized arguments: --bogus", err)
 
 
+class SignInScreen(unittest.TestCase):
+    """Waiting for a harness to start never presses a key or re-sends the brief on a sign-in screen."""
+    CODEX = ("Sign in with ChatGPT", "Finish signing in via your browser")
+
+    def await_start(self, screen, first="go"):  # -> (keys and prompts sent, the RuntimeError text, the herdr_text calls); the agent never leaves idle
+        calls, reads = [], []
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            return {"agent": {"agent_status": "idle"}} if args[:2] == ("agent", "get") else {}
+        def text(*args, **kw):
+            reads.append(args)
+            return screen(calls) if callable(screen) else screen
+        err = ""
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_text", text), mock.patch.object(time, "sleep"):
+            try:
+                fc.fc_herdr.herdr_await_start("a", first)
+            except RuntimeError as e:
+                err = str(e)
+        return [c[:2] for c in calls if c[:2] in (("agent", "send-keys"), ("agent", "prompt"))], err, reads
+
+    def test_a_sign_in_screen_gets_no_key_and_no_brief_and_the_error_names_it(self):
+        for text in self.CODEX:
+            sent, err, reads = self.await_start(f"$ codex\n  {text}\n")
+            self.assertEqual((sent, text in err, "did not start" in err), ([], True, False))
+            self.assertTrue(all("visible" in r for r in reads) and reads)
+        self.assertEqual(self.await_start(self.CODEX[0], first=None)[0], [])
+
+    def test_a_sign_in_screen_that_shows_after_the_enter_stops_the_brief_being_sent_again(self):
+        sent, err, _ = self.await_start(lambda calls: self.CODEX[1] if any(c[:2] == ("agent", "send-keys") for c in calls) else "")
+        self.assertEqual((sent, self.CODEX[1] in err), ([("agent", "send-keys")], True))
+
+    def test_a_row_patched_into_the_harness_table_is_read_too(self):
+        with mock.patch.dict(fc_harness.HARNESSES, {"zed": {"name": "Zed", "login_screens": ("Zed: log in first",)}}):
+            sent, err, _ = self.await_start("Zed: log in first")
+            self.assertEqual((sent, "Zed: log in first" in err), ([], True))
+
+    def test_a_pane_without_a_sign_in_text_retries_as_before(self):
+        sent, err, _ = self.await_start("$ codex\n› Ask Codex\n")
+        self.assertEqual((sent, "did not start" in err), ([("agent", "send-keys"), ("agent", "prompt")] * 3, True))
+        self.assertEqual(self.await_start("", first=None)[0], [("agent", "send-keys")] * 3)
+
+
 class HerdrPromptSession(unittest.TestCase):
     """Task 004 (NEB-921): herdr_error runs the herdr client in a session of its own; return values unchanged."""
 

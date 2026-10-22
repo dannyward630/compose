@@ -8,6 +8,7 @@ herdr_error
 herdr_text
 herdr_ready
 herdr_dialog
+herdr_login_screen
 herdr_await_start
 herdr_start_crew
 pane_processes
