@@ -253,10 +253,15 @@ def cmd_land(a):
         rec = {"orig": {b: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip() for b in names}, "pr": {}}
     infos = {b: pr_info(rec["pr"].get(b) or b, repo) for b in names}
     missing = [b for b in names if not infos[b]]
-    if missing:
+    cut = next((i for i, b in enumerate(names) if not infos[b]), len(names))
+    if not cut:
         stop(f"{', '.join(missing)} has no pull request: `compose stack --submit` first")
+    m = len(names)
+    names = names[:cut]
     rec["pr"] = {b: infos[b]["number"] for b in names}
-    print(f"land   plan  {len(names)} layer(s) into {base} by {method}, bottom up:")
+    v = Path(proj) / "results" / "verify.json"
+    verify = "not run" if not v.exists() else ("PASS" if json.loads(v.read_text())["passed"] else "FAIL")
+    print(f"land   plan  {len(names)} of {m} layer(s) submitted, verify {verify}; landing {len(names)} into {base} by {method}, bottom up:")
     for i, b in enumerate(names, 1):
         i_ = infos[b]
         print(f"  {i}  {b}  #{i_['number']}  {i_['state'].lower()}{' (draft)' if i_['isDraft'] else ''}  {i_['url']}")
@@ -275,4 +280,9 @@ def cmd_land(a):
     finally:
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     kept.unlink(missing_ok=True)
-    print(f"land   done  {len(names)} layer(s) merged into {base}\nnext: compose clean --project {proj.name}")
+    print(f"land   done  {len(names)} layer(s) merged into {base}")
+    if len(names) < m:
+        print(f"land   left  {m - len(names)} layer(s) not submitted: they rebuild on {base} at the next compose stack")
+        print(f"next: compose stack --submit --project {proj.name}")
+    else:
+        print(f"next: compose clean --project {proj.name}")
