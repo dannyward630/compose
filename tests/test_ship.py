@@ -419,10 +419,6 @@ class Land(Ship):
         self.assertEqual([c for c in self.log() if c.startswith("pr merge")][0], "pr merge 1 --rebase")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PartialSubmit(Ship):
     def result(self, tid, status):
         (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"status": status}))
@@ -475,3 +471,7 @@ class PartialSubmit(Ship):
         self.assertTrue(any("stack  STOP  nothing to submit: 001 is pending" in l for l in out), out)
         self.assertEqual(self.pushed()[0], {})
         self.assertFalse(any("stack submit" in c for c in self.log()))
+
+
+if __name__ == "__main__":
+    unittest.main()
