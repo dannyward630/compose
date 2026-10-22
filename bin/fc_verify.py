@@ -258,7 +258,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
     review_only = getattr(a, "review_only", False)
     e2e_cases = [] if a.skip_e2e or review_only else cfg.get("e2e", [])
     stages = (["checks"] if (cfg.get("checks") or tests) and not review_only else []) + [f"e2e {c.get('name', i)}"[:40] for i, c in enumerate(e2e_cases)] \
-        + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) else []))
+        + ([] if a.skip_review else (["review"] if cfg.get("review", True) else []) + (["jev"] if cfg.get("jev_acceptance", True) and cfg.get("depth") != "FAST" else []))
     panes = fc_herdr.herdr_verify_panes(fc_herdr.herdr_space(proj), repo, stages, fc_herdr.tab_label(proj, "verify"))
 
     def run_checks(cmds, into):
@@ -318,7 +318,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
         for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
                             + (f"\nMust read: {i['fix'] or '(remove the line)'}" if "fix" in i else ""))
-    if not a.skip_review and cfg.get("jev_acceptance", True):
+    if not a.skip_review and cfg.get("jev_acceptance", True) and cfg.get("depth") != "FAST":
         t1 = time.time()
         fc_herdr.herdr_stage(panes, "jev", "working")
         diff, _, _, _ = review_inputs(repo, proj, cfg)
@@ -410,10 +410,15 @@ def cmd_verify(a):
     # e2e read only verify.json, so groundwork proves them before planning with --skip-review --fix 0.
     tasks = fc_tasks.load_tasks(proj, required=not a.skip_review or a.fix > 0,
                                 hint=f"; checks and e2e alone run without one: `compose verify --project {proj.name} --skip-review --fix 0`")
+    import fc_depth
+    base_cfg = cfg
+    cfg, depth, deep = fc_depth.depth_config(cfg, proj, tasks)
+    fc_core.say(f"verify depth {depth}" + (f" (deepest task {deep})" if deep and depth != "STANDARD" else ""))
     left_out = (["tasks"] if not tasks else []) + (["review"] if a.skip_review else []) + (["e2e"] if a.skip_e2e and not review_only else []) + (["checks", "e2e"] if review_only else [])
     fc_core.say(f"verify start project={proj.name} fix_rounds={a.fix}")
     rounds = []
     root, base, wt = verify_root(repo, proj, cfg)
+    fc_depth.record_depth(proj, root, base_cfg, cfg, depth, deep)
     cfg = {**cfg, "review_base": base}
     if root != repo:
         # Checks and e2e cases (setup, driver, assert, env, every string) may name the main checkout or the project worktree
