@@ -626,7 +626,7 @@ class Timed(unittest.TestCase):
 
     def test_timed_runs_at_most_the_machines_slots_at_once_and_says_so_while_it_waits(self):
         """Five teammates each running a suite at once leave the machine doing little else: a timed command holds one of
-        COMPOSE_TEST_SLOTS (default 2) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
+        COMPOSE_TEST_SLOTS (default a quarter of the cores, at least 2) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
         import subprocess as sp, time
         d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
         script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")

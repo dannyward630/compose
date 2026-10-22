@@ -89,7 +89,7 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"Never write the feature's implementation, not even a throwaway reference to prove tests pass: the implementers write it, "
             f"and a test failing on the stubs plus the team lead's read of it is the proof.\n"
             f"Run tests and the project's own commands through `compose timed <seconds> -- <command>`: it gives them a scratch "
-            f"~/.compose and says if your real one changes, and at most two suites run at once on this machine "
+            f"~/.compose and says if your real one changes, and at most {fc_proc.suite_slots()} suites run at once on this machine "
             f"(`COMPOSE_TEST_SLOTS`), beside two quick runs (a `-k`/`-run` filter or one test file) that never wait on a suite: one that waits for a slot says so. "
             f"While you work run only the tests of what you changed; run the whole suite once, before you report `done`. Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) "
             f"directly: under `compose timed` they get that scratch config, with no workspace and no keys.\n"

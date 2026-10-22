@@ -462,7 +462,9 @@ class Crew(unittest.TestCase):
         self.assertIn("Fact-check before you say it", pre)
         self.assertIn("not verified", pre)
         self.assertIn("through `compose timed <seconds> -- <command>`", pre)
-        self.assertIn("at most two suites run at once on this machine", pre)
+        self.assertIn(f"at most {fc.fc_proc.suite_slots()} suites run at once on this machine", pre)
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "3"}):
+            self.assertIn("at most 3 suites run at once on this machine", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
         self.assertIn("two quick runs", pre); self.assertIn("run the whole suite once, before you report `done`", pre)
         self.assertIn("Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) directly", pre)
 

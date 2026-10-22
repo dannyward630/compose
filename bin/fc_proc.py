@@ -131,7 +131,6 @@ def slept_text(seconds):
     return f"the machine slept for {round(seconds / 60)} minutes"
 
 
-SLOTS = 2  # full-suite `timed` commands that run at once on this machine; COMPOSE_TEST_SLOTS overrides
 QUICK_SLOTS = 2  # every other command (see `suite`), in lanes of their own so a short run never waits on a suite; COMPOSE_QUICK_SLOTS overrides
 SLOT_SAY_AFTER = 1.0  # seconds a wait for a slot stays silent
 
@@ -143,7 +142,7 @@ SCOPED_RE = re.compile(  # a name filter flag | one test file (python, go, ruby,
 
 SUITE_RE = re.compile(  # a test runner by name | a build tool or package manager asked for its tests or checks
     r"(?:^|[\s/])(?:pytest|py\.test|tox|nox|jest|vitest|mocha|rspec|playwright|cypress|phpunit|ctest)(?:\s|$)"
-    r"|\bunittest\b|\bnode\s+(?:\S+\s+)*--test\b"
+    r"|\bunittest\b|\btests\.run\b|\bnode\s+(?:\S+\s+)*--test\b"
     r"|\b(?:npm|yarn|pnpm|bun|deno|go|cargo|swift|dotnet|rake|make|mix|mvn|gradlew?|sbt|bazel|xcodebuild|flutter)\b.*?\s(?:test|tests|check|verify|nextest)(?:[\s:]|$)")
 
 
@@ -160,14 +159,22 @@ def scoped(cmd):
 
 def suite(cmd):
     """Whether the shell line `cmd` runs a whole test suite: a test runner or a `test`/`check` target of a build tool, with no
-    filter or file on it. Only a suite takes a suite slot (SLOTS); anything else (`--help`, `uv sync`, a scoped run) is short or
+    filter or file on it. Only a suite takes a suite slot (suite_slots); anything else (`--help`, `uv sync`, a scoped run) is short or
     bounded by the caller and takes a quick lane (QUICK_SLOTS), so it never queues behind other teams' suites."""
     return any(SUITE_RE.search(x) and not SCOPED_RE.search(x) for x in _parts(cmd))
 
 
+def suite_slots():
+    """How many full-suite `timed` commands run at once on this machine: COMPOSE_TEST_SLOTS, else a quarter of the cores, never under 2.
+    A suite runs its test files in parallel (tests/run.py: half the cores), so one slot per four cores keeps a machine with every slot
+    taken at about twice its core count, where one slot per suite left most of a 16-core machine idle; the floor of 2 keeps one long
+    suite from blocking every other teammate."""
+    return max(1, int(os.environ.get("COMPOSE_TEST_SLOTS") or max(2, (os.cpu_count() or 8) // 4)))
+
+
 @contextlib.contextmanager
 def slot(say=None, quick=False):
-    """One of SLOTS machine-wide slots (lock files under ~/.compose/test-slots), held while a timed command runs: five teammates
+    """One of suite_slots() machine-wide slots (lock files under ~/.compose/test-slots), held while a timed command runs: five teammates
     each running a suite at once leave the machine doing little else. A `quick` command (anything but a `suite`) takes one of QUICK_SLOTS
     in a lane of its own (files `q0`, `q1`, ...), so it waits only on other quick runs; the two lanes together bound the load.
     Yields the slot's number, which goes in the command's env as COMPOSE_TEST_SLOT so a compose it runs takes none: a suite under
@@ -178,7 +185,7 @@ def slot(say=None, quick=False):
     if held:
         yield held
         return
-    n = max(1, int((os.environ.get("COMPOSE_QUICK_SLOTS") or QUICK_SLOTS) if quick else (os.environ.get("COMPOSE_TEST_SLOTS") or SLOTS)))
+    n = max(1, int(os.environ.get("COMPOSE_QUICK_SLOTS") or QUICK_SLOTS)) if quick else suite_slots()
     prefix = "q" if quick else ""
     d = os.path.join(os.path.expanduser("~"), ".compose", "test-slots")
     os.makedirs(d, exist_ok=True)
