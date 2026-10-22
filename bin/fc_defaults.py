@@ -20,6 +20,7 @@ DEFAULT_MODELS = {
         **{role: {"model": "claude:claude-opus-5-5", "effort": "high"}
            for role in ("orchestrator", "designer", "designer-plan", "explore", "research", "perf", "toolsmith")},
     },
+    "tiers": fc_config.DEFAULT_TIERS,
 }
 
 PRESET_STEPS = (
