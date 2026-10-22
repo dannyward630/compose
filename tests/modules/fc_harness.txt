@@ -2,6 +2,8 @@ _codex_probe
 _codex_result
 _git_dirs
 _codex_argv
+_codex_events
+_codex_once
 _codex_hash
 HARNESSES
 RESERVED
@@ -14,4 +16,6 @@ skills_dir
 probe_command
 probe_result
 crew_argv
+once_command
+once_result
 hook_groups

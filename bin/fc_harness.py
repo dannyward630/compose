@@ -13,6 +13,12 @@ def _git_dirs(f):
 def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None, more=()):
     raise NotImplementedError
 
+def _codex_events(text):
+    raise NotImplementedError
+
+def _codex_once(cid, cwd, prompt, read_only=False):
+    raise NotImplementedError
+
 def _codex_hash(event, group):
     raise NotImplementedError
 
@@ -46,6 +52,12 @@ def probe_result(model, p):
     raise NotImplementedError
 
 def crew_argv(model, effort, prompt, skill, cwd, results, work=None, more=()):
+    raise NotImplementedError
+
+def once_command(model, cwd, prompt, read_only=False):
+    raise NotImplementedError
+
+def once_result(model, p):
     raise NotImplementedError
 
 def hook_groups(key, checkout):
