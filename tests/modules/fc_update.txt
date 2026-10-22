@@ -1,7 +1,10 @@
 live_dir
 hold
 live_work
+live_on
 refuse_while_verifying
+SHARED_STATE
+refuse_while_running
 local_commits
 listing
 diverged
