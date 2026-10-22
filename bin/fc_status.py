@@ -104,6 +104,15 @@ def board(repo, proj):
     b = {"trunk": fc_core.current_branch(repo), "trunk_head": trunk_head,
          "rows": [task_state(repo, proj, m, trunk_head, facts) for m in tasks],
          "layers": {x: i + 1 for i, x in enumerate(fc_worktree.stack_order(repo, proj, tasks))}}
+    lay = json.loads((proj / "layers.json").read_text()) if (proj / "layers.json").exists() else {}
+    prs = json.loads((proj / "results" / "prs.json").read_text()) if (proj / "results" / "prs.json").exists() else {}
+    for i, (br, keys) in enumerate(lay.items()):
+        if isinstance(prs.get(br), int):
+            for r in b["rows"]:
+                if r["id"] in keys:
+                    r["note"] = f"{facts['prefix']}{r['id']}  layer {i + 1}  PR #{prs[br]}"
+    blist = fc_layers.layer_branches(repo, proj)
+    b["stack"] = f"  stack {sum(isinstance(prs.get(x), int) for x in blist)}/{len(blist)} submitted" if blist else ""
     _board[proj] = (stamp, b)
     return b
 
@@ -187,7 +196,7 @@ def render_status(repo, projects):
                (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> compose resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {fc_core.project_after(proj)})" if fc_core.project_after(proj) else ""
-        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{fc_change.change_line(proj)}")
+        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{b['stack']}{htxt}{fc_change.change_line(proj)}")
         ready = proj / "results" / "ready.json"
         if ready.exists():
             out.append("  " + fc_linear.ready_line(json.loads(ready.read_text())))
