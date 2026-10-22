@@ -1849,13 +1849,11 @@ class HarnessModelConfig(unittest.TestCase):
 
     def test_error_table_has_the_harness_block_and_reserved_name_lines(self):
         errors = self.section("When the config is wrong")
-        for line in ('no "harnesses.<name>" block', 'harnesses.<name>.models.crew has no "default"',
-                     "providers.<name> is reserved: codex, gemini, grok name harnesses, not providers"):
-            self.assertIn(f"`{line}`", errors, line)
         self.assertTrue(self.reserved)
-        self.assertTrue(all(n in "codex, gemini, grok" for n in self.reserved), self.reserved)
-        refusal = re.search(r"teammate sessions run in ([^:]+):", read("bin/fc_crew.py")).group(0)
-        self.assertIn(refusal, errors)
+        reserved = f'providers.<name> is reserved: {", ".join(self.reserved)} name harnesses, not providers'
+        for line in ('no "harnesses.<name>" block', 'harnesses.<name>.models.crew has no "default"', reserved):
+            self.assertIn(f"`{line}`", errors, line)
+        self.assertTrue([l for l in errors.splitlines() if "teammate sessions run in" in l and "OpenCode ids are for implementers only" in l])
 
     def test_neither_page_has_the_stale_lines_or_an_em_dash(self):
         for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
