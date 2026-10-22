@@ -1782,3 +1782,32 @@ class OneSuiteAfterARebase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessSafetyPage(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.rows = [v for v in fc_harness.HARNESSES.values() if v and v.get("login_check")]
+        self.page = read("docs/harnesses.md")
+
+    def test_page_names_each_rows_hook_files_home_env_and_sign_in_check(self):
+        self.assertTrue(self.rows)
+        for row in self.rows:
+            check = " ".join([row["exe"], *row["login_check"]])
+            for word in (row["home_env"], row["hooks_file"], row["trust_file"], f"`{check}`"):
+                self.assertIn(word, self.page, word)
+
+    def test_page_says_what_compose_never_does(self):
+        flag = [l for l in self.page.splitlines() if "--dangerously-bypass-hook-trust" in l]
+        self.assertTrue(flag and all("never" in l.lower() for l in flag), flag)
+        self.assertRegex(self.page, r"(?i)never signs? in")
+        self.assertRegex(self.page, r"(?i)never presses? a key")
+
+    def test_page_names_both_fences_and_the_confirmed_departure(self):
+        for word in ("workspace-write", "-a never", "--add-dir", "read-only", "Python 3.9", "NEB-1533"):
+            self.assertIn(word, self.page, word)
+        self.assertRegex(self.page, r"(?is)departure.{0,300}product owner.{0,100}confirm|product owner.{0,100}confirm.{0,300}departure")
+
+    def test_no_em_dash(self):
+        self.assertNotIn("—", self.page)
