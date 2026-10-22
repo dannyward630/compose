@@ -47,7 +47,7 @@ class FormatOnPass(unittest.TestCase):
         (wt / "bin.dat").write_bytes(b"\0\2")
         (wt / "old.mjs").write_bytes(b"a\n\n\n")
         git("add", "-A")
-        fc.fc_implement.format_files(wt, ["new.mjs", "bare.txt", "bin.dat", "old.mjs"], "HEAD")
+        fc.fc_format.format_files(wt, ["new.mjs", "bare.txt", "bin.dat", "old.mjs"], "HEAD")
         self.assertEqual((wt / "new.mjs").read_bytes(), b"export {}\n")
         self.assertEqual((wt / "old.mjs").read_bytes(), b"a\n")
         self.assertEqual((wt / "bare.txt").read_bytes(), b"still none")
@@ -226,9 +226,9 @@ class PrettierOptIn(unittest.TestCase):
         prettier.parent.mkdir(parents=True)
         prettier.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\nprintf "pretty\\n\\n" > "$2"\n'); prettier.chmod(0o755)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
-        fc.fc_implement.format_files(wt, ["web/a.js"], "HEAD")
+        fc.fc_format.format_files(wt, ["web/a.js"], "HEAD")
         self.assertEqual((log.read_text().replace(str(wt), "<wt>") if log.exists() else "", (wt / "web" / "a.js").read_text()), (calls, text))
-        return fc.fc_implement.prettier_opted_in(wt, wt / "web" / "a.js")
+        return fc.fc_format.prettier_opted_in(wt, wt / "web" / "a.js")
 
     def test_hoisted_prettier_alone_never_runs_and_the_file_keeps_its_text(self):
         for files in [{}, {"clone/.editorconfig": "root = true\n", "clone/web/.prettierignore": "dist\n", "clone/other/.prettierrc": ""},
