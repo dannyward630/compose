@@ -6,6 +6,7 @@ cmd_stack
 layer_commits
 cmd_reword
 gh
+pr_view
 pr_info
 required_checks
 wait

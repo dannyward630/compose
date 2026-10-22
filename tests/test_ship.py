@@ -52,7 +52,10 @@ if a[0] == "stack":
     done()
 n, p = find(a[2]) if len(a) > 2 else (None, None)
 if a[:2] == ["pr", "view"]:
-    if not p: done(1)
+    if os.environ.get("FAKE_GH_VIEW_FAIL"):
+        print(os.environ["FAKE_GH_VIEW_FAIL"], file=sys.stderr); done(1)
+    if not p:
+        print('no pull requests found for branch "' + a[2] + '"', file=sys.stderr); done(1)
     print(json.dumps({"number": int(n), "baseRefName": p["base"], "state": p["state"], "isDraft": p["draft"], "headRefOid": head(p),
                       "url": "https://github.com/o/r/pull/" + n, "mergeStateStatus": "BEHIND" if p.get("behind") else "CLEAN", "title": p["title"], "body": p["body"]}))
 elif a[:2] == ["pr", "edit"]:
@@ -308,6 +311,15 @@ class Land(Ship):
             fc.fc_ship.cmd_land(self.args(yes=True, method=None, timeout=1))
         self.assertIn(f"verify is running on p (pid {proc.pid}", str(e.exception))
         self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
+
+    def test_a_gh_failure_is_told_apart_from_a_missing_pull_request(self):
+        self.submit()
+        with mock.patch.dict(os.environ, {"FAKE_GH_VIEW_FAIL": "error connecting to api.github.com"}):
+            out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertIn("land   STOP  gh pr view failed for compose/p-layer-01: error connecting to api.github.com", out)
+        self.assertFalse(any("has no pull request" in l for l in out))
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
 
     def test_a_stack_that_was_not_submitted_names_the_missing_pull_request(self):
         self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
