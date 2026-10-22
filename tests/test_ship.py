@@ -543,5 +543,57 @@ class ChangedLayer(Ship):
         self.assertEqual(self.heads(), before)
 
 
+class PartialLand(Ship):
+    def partial(self):
+        """Submitted, then layer 3 loses its PR and its branch on origin."""
+        self.assertEqual(self.submit()[1], 0)
+        self.drop_pr(3)
+        subprocess.run(["git", "--git-dir", str(self.origin), "update-ref", "-d", "refs/heads/compose/p-layer-03"], check=True)
+
+    def drop_pr(self, n):
+        st = json.loads(self.state.read_text()); del st["prs"][str(n)]; self.state.write_text(json.dumps(st))
+
+    def test_the_plan_lists_only_the_submitted_layers(self):
+        self.partial()
+        out, code = self.land(yes=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("land   plan  2 of 3 layer(s) submitted, verify not run; landing 2 into main by squash, bottom up:", out)
+        self.assertTrue(any("compose/p-layer-02" in l for l in out))
+        self.assertFalse(any("compose/p-layer-03" in l for l in out))
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
+
+    def test_yes_merges_the_submitted_layers_bottom_up_and_leaves_the_rest(self):
+        self.partial()
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c for c in self.log() if c.startswith("pr merge")], ["pr merge 1 --squash", "pr merge 2 --squash"])
+        self.assertFalse(self.origin_has("refs/heads/compose/p-layer-03"))
+        self.assertEqual(out[-3:], ["land   done  2 layer(s) merged into main",
+                                    "land   left  1 layer(s) not submitted: they rebuild on main at the next compose stack",
+                                    "next: compose stack --submit --project p"])
+
+    def test_the_plan_reports_the_last_verify(self):
+        self.submit()
+        for passed, word in ((True, "PASS"), (False, "FAIL")):
+            (self.proj / "results" / "verify.json").write_text(json.dumps({"passed": passed}))
+            out, _ = self.land(yes=False)
+            self.assertIn(f"land   plan  3 of 3 layer(s) submitted, verify {word}; landing 3 into main by squash, bottom up:", out)
+
+    def test_a_fully_submitted_stack_lands_as_today(self):
+        self.submit()
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out[-2:], ["land   done  3 layer(s) merged into main", "next: compose clean --project p"])
+        self.assertFalse(any("land   left" in l for l in out))
+
+    def test_a_bottom_layer_without_a_pull_request_stops(self):
+        self.submit()
+        self.drop_pr(1)
+        out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertTrue(any(l.startswith("land   STOP  compose/p-layer-01") and l.endswith("has no pull request: `compose stack --submit` first") for l in out), out)
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
+
+
 if __name__ == "__main__":
     unittest.main()
