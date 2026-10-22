@@ -26,7 +26,7 @@ def branch_budget(wt, base, allowed=None, delete=()):
              and not any(f == p or f.startswith(p + "/") for p in del_paths)]
     return lines, new_docs, stray
 
-FAILING_RE = re.compile(r"^\s*(?:(?:FAIL|ERROR): |FAILED |not ok \d+ - |--- FAIL: )(\S.*?)(?: \(\d[\d.]*s\))?\s*$", re.M)  # unittest, pytest, node --test, go test
+FAILING_RE = re.compile(r"^\s*(?:(?:FAIL|ERROR): |FAILED (?!\()|not ok \d+ - |--- FAIL: )(\S.*?)(?: \(\d[\d.]*s\))?\s*$", re.M)  # unittest, pytest, node --test, go test; not unittest's "FAILED (failures=3)" summary
 BASELINES, BASELINE_LOCK = {}, threading.Lock()
 
 def check_state(run, cmds, wt, limit):
