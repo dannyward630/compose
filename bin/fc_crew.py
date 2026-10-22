@@ -260,8 +260,11 @@ def cmd_crew(a):
     repo = getattr(a, "work_repo", None)
     if repo and getattr(a, "cwd", None):
         sys.exit("crew start takes --cwd or --work-repo, not both")
+    key = fc_harness.harness_of(model)
+    h = fc_harness.HARNESSES.get(key)
+    if h and not fc_harness.signed_in(key):
+        sys.exit(fc_harness.login_message(key))
     cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
-    h = fc_harness.HARNESSES.get(fc_harness.harness_of(model))
     if not (model.startswith("pi:") or h) and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
     frame0 = getattr(a, "frame0", False) or a.role == "designer"  # the designer's first step reads the wireframes through the frame0 tools
@@ -323,6 +326,9 @@ def cmd_crew(a):
         else:  # no agent came up: leave nothing registered, and fail with the reason rather than a traceback
             crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
             sys.exit(f"teammate {name} did not start: {e}")
+    if h and fc_herdr.herdr_login_screen(agent):
+        crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
+        sys.exit(fc_harness.login_message(key))
     if not model.startswith("pi:") and (h is None or h["herdr_ready"]):
         fc_herdr.herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
@@ -345,6 +351,9 @@ def cmd_crew(a):
         try:
             fc_herdr.herdr_await_start(agent, first)
         except RuntimeError:  # a session left idle without its brief would block every retry as already running
+            if h and fc_herdr.herdr_login_screen(agent):
+                crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
+                sys.exit(fc_harness.login_message(key))
             if len(crew_reports(proj, name)) <= seen and ((fc_herdr.herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") not in ("working", "blocked", "done"):
                 crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
                 sys.exit(f"teammate {name} did not start on its brief: Enter and sending it again did nothing; its tab is closed and nothing is left registered: run the same crew start again")
