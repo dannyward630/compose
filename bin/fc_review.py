@@ -75,18 +75,23 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
                 'copied verbatim, nothing else. "fixed_line": that line as it must read to meet the requirement ("" if it must go). '
                 '"confirmed": true only if wrong_line really breaks the requirement. If the code already does what the requirement says, '
                 "the claim's own text says the code is correct, or the claim contradicts the plan or the design context, confirmed is "
-                "false. If the claim is wrong, speculative, contradicted by passing tests, or about style, reject it. " + SIMPLICITY_BAR,
+                "false. If the claim is wrong, speculative, contradicted by passing tests, or about style, reject it. "
+                '"proof": the name of a test in the code, copied verbatim, whose assertions already prove the code does what the claim says it '
+                'does not ("" if no test does). ' + SIMPLICITY_BAR,
                 (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
                 f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nCLAIM: [{i['severity']}] {i['file']}{':' + str(i['line']) if i.get('line') else ''}: {i['note']}\n\n"
                 f"CODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n" + (f"DOCS:\n{docs}\n\n" if docs else "")
                 + ("The tests currently pass." if tests_pass else ""),
-                '{"requirement": str, "wrong_line": str, "fixed_line": str, "confirmed": bool}', "confirmed")
+                '{"requirement": str, "wrong_line": str, "fixed_line": str, "proof": str, "confirmed": bool}', "confirmed")
             wrong, i["fix"] = str(v.get("wrong_line") or ""), str(v.get("fixed_line") or "")
             i["confirmed"], i["evidence"] = bool(v["confirmed"]), wrong[:300]
             if i["confirmed"] and (not flat(wrong) or flat(wrong) not in flat(diff + "\n" + docs)):
                 i["confirmed"], i["evidence"] = False, "evidence is not a quote from the code: " + wrong[:300]
             elif i["confirmed"] and flat(i["fix"]) == flat(wrong):
                 i["confirmed"], i["evidence"] = False, "the line as it must read is the line as it is: " + wrong[:300]
+            proof = flat(v.get("proof") or "")
+            if i["confirmed"] and tests_pass and proof and proof in flat(diff + "\n" + docs):  # a claim a passing test disproves is no finding, however it reads
+                i["confirmed"], i["evidence"] = False, "a passing test already proves it: " + proof[:300]
         except fc_models.PaymentRequired:
             raise
         except fc_models.BadReply:  # the claim went unjudged: the model's reply is not the code's defect, and it must not fail verify
