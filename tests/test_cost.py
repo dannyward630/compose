@@ -227,7 +227,7 @@ class CostCommand(unittest.TestCase):
 
     def fake(self):
         stack = contextlib.ExitStack()
-        stack.enter_context(mock.patch.object(fc_cost, "rows", side_effect=lambda proj: [dict(self.ROWS[0], name=proj.name)]))
+        stack.enter_context(mock.patch.object(fc_cost, "rows", side_effect=lambda proj, runs=(): [dict(self.ROWS[0], name=proj.name)]))
         stack.enter_context(mock.patch.object(fc_cost, "total", side_effect=lambda rows: dict(self.TOTAL, teammates=len(rows[0]["name"]))))
         stack.enter_context(mock.patch.object(fc_cost, "render", return_value="TABLE"))
         return stack

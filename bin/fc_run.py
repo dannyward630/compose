@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -219,6 +219,7 @@ def run_tasks(repo, proj, tasks, a):
         fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": started_at, "closed": closed, "reads_queue": True,
             "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
     write_marker()
+    fc_history.record(proj, repo, "run-start", tasks=len(tasks), parallel=a.parallel, attempts=a.attempts)
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
@@ -288,6 +289,7 @@ def run_tasks(repo, proj, tasks, a):
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 fc_proc.stop()
                 fc_tasks.mark_interrupted(proj)
+                fc_history.record(proj, repo, "run-end", tasks=len(results), outcome="interrupted", seconds=round(time.time() - t0, 1))
                 print(f"\n[{fc_core.now()}] run stopped by Ctrl-C; `compose resume` continues it", file=sys.stderr)
                 os._exit(130)
             for f in finished:
@@ -310,6 +312,7 @@ def run_tasks(repo, proj, tasks, a):
                             pending[q] = [d for d in pending[q] if d != metas[p]["id"]]
                     continue
                 results.append(r)
+                fc_history.record(proj, repo, "task", task=r["id"], model=metas[p].get("model"), attempts=r["attempts"], seconds=round(r["seconds"], 1), cost=r["cost"], outcome=r["status"])
                 events =fc_fast.run_events(proj, repo, metas[p], r)
                 cost = fc_costevent.run_event(proj, metas[p], r, events[-1]) if events else None
                 fc_ledger.record_task(repo, proj, metas[p], events + ([cost] if cost else []))
@@ -348,6 +351,8 @@ def run_tasks(repo, proj, tasks, a):
         triage(repo, proj, [r["id"] for r in results if r["status"] == "passed"])
     fc_core.say(f"run done   {passed}/{len(results)} passed  wall {fc_core.fmt(total)}  sum of task time {fc_core.fmt(sum(r['seconds'] for r in results))}")
     fc_core.say(fc_core.LEDGER.line())
+    fc_history.record(proj, repo, "run-end", tasks=len(results), passed=passed, seconds=round(total, 1), cost=fc_core.LEDGER.snapshot()["total"],
+                      providers=fc_history.providers(fc_core.LEDGER.snapshot()), outcome="halted" if halt else "passed" if passed == len(results) else "failed")
     if passed and not a.no_stack:
         fc_stack.register_stack(repo, proj, a.trunk)
     if halt:
