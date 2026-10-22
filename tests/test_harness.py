@@ -732,7 +732,7 @@ class CodexStart(unittest.TestCase):
         self.calls, self.proj = calls, proj
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_login_screen", return_value=screen), \
                 mock.patch.object(fc_harness, "signed_in", return_value=signed) if signed is not None else contextlib.nullcontext(), \
- mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
+                mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {role: entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {role: "high"}), \
