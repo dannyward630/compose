@@ -1146,3 +1146,35 @@ class ReservedNames(unittest.TestCase):
         names = ("ollama", "codexx", "my-codex")
         self.apply({"providers": {n: self.URL for n in names}})
         self.assertEqual(tuple(fc_config.PROVIDERS), names)
+
+
+class CodexPreflight(unittest.TestCase):
+    def setUp(self):
+        self.avail = mock.Mock(return_value=(True, "answered"))
+        self.turn = mock.Mock(return_value=("s", "OK", 0, {"cost": 0.0}))
+        for obj, k, v in ((fc.fc_models, "model_available", self.avail), (fc.fc_implement, "implementer", self.turn), (fc.fc_core, "say", mock.Mock())):
+            p = mock.patch.object(obj, k, v); p.start(); self.addCleanup(p.stop)
+
+    def test_a_codex_id_is_probed_not_run(self):
+        self.turn.side_effect = AssertionError("implementer")
+        fc.fc_run.preflight({"codex:gpt-6-sol"})
+        self.avail.assert_called_once_with("codex:gpt-6-sol")
+
+    def test_bare_codex_is_probed_too(self):
+        fc.fc_run.preflight({"codex"})
+        self.avail.assert_called_once_with("codex")
+        self.turn.assert_not_called()
+
+    def test_a_failing_probe_stops_the_run_and_lists_the_id(self):
+        self.avail.side_effect = lambda m: (m == "codex:good", "model is not available")
+        with self.assertRaises(SystemExit) as cm:
+            fc.fc_run.preflight({"codex:good", "codex:gpt-6-sol"})
+        msg = str(cm.exception)
+        self.assertIn("preflight failed; nothing was cloned or run.", msg)
+        self.assertIn("codex:gpt-6-sol: model is not available", [l.strip() for l in msg.splitlines()])
+        self.assertNotIn("codex:good:", msg)
+
+    def test_pi_ids_are_still_run_and_claude_ids_skipped(self):
+        fc.fc_run.preflight({"pi:r/x", "claude", "claude:opus", "codex:a"})
+        self.assertEqual([c.args[1] for c in self.turn.call_args_list], ["pi:r/x"])
+        self.avail.assert_called_once_with("codex:a")
