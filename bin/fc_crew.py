@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -100,7 +100,7 @@ def crew_preamble(proj, name, title, reports_to=None):
             f"watcher, and browser you start before you report done; teardown kills what is left listening there.\n\n")
 
 def crew_pick(role, explicit=None, pin=None):
-    return crew_pick_full(role, explicit)[:3]
+    return crew_pick_full(role, explicit, pin)[:3]
 
 def crew_chain(role, explicit=None, pin=None):
     """(key, chain): the models.crew entry a role resolves to and its (model, effort) list in order, unprobed; (None, []) means bare `claude`."""
@@ -115,13 +115,15 @@ def crew_chain(role, explicit=None, pin=None):
                            "default" if "default" in fc_config.CREW_MODELS else None)
         chain = [] if key is None else [(fc_config.CREW_MODELS[key], fc_config.CREW_EFFORT.get(key)), *fc_config.CREW_FALLBACK.get(key, [])] \
             if key in fc_config.CREW_MODELS else [fc_config.CREW_DEFAULTS[key]]
+        if key is not None and (tier := fc_tiers.tier_for(fc_tiers.ceiling(role) or fc_tiers.ceiling(key), pin)) is not None:
+            chain = fc_tiers.chain(tier, chain)
     return key, chain
 
 def crew_pick_full(role, explicit=None, pin=None):
     """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under models.crew such as `small`) wins,
     then models.crew[<role>], then `planner` for the planning role (the wayfinder teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""
-    key, chain = crew_chain(role, explicit)
+    key, chain = crew_chain(role, explicit, pin)
     if key is None:
         return "claude", None, "", []
     label = "--model" if key == "--model" else f"models.crew.{key}" + (" default" if key == role and role in fc_config.CREW_DEFAULTS and key not in fc_config.CREW_MODELS else "")
@@ -208,7 +210,9 @@ def cmd_crew(a):
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
         print(f"teammate {name} stopped")
         return
-    model, effort, why_model, skipped = crew_pick_full(a.role, getattr(a, "model", None))
+    explicit = getattr(a, "model", None)
+    pin = None if explicit and explicit not in fc_config.CREW_MODELS else fc_budget.hold(proj, fc_tiers.tier_for(fc_tiers.ceiling(a.role), fc_tierpin.read(proj).get("project")))
+    model, effort, why_model, skipped = crew_pick_full(a.role, explicit, pin)
     if not fc_herdr.herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
     agent = name  # the herdr agent name: `name`, or a numbered one when a stranger outside this space already holds it
