@@ -1976,3 +1976,28 @@ class HarnessModelConfig(unittest.TestCase):
         for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
             self.assertNotRegex(text, r"(?i)must be a `claude:` model|run in (pi or Claude Code|Claude Code or pi)\b", rel)
             self.assertNotIn("—", text, rel)
+
+
+class HarnessConfigClaims(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_config
+        self.fc_config = fc_config
+        self.config, self.workspaces = read("docs/config.md"), read("docs/workspaces.md")
+
+    def test_the_test_reader_bills_by_its_harness(self):
+        para = self.workspaces.split("`test_reader` reads each failed test run", 1)[1].split("\n\n", 1)[0].splitlines()
+        self.assertFalse([l for l in para if re.search(r"(?i)claude code subscription", l) and "`claude:`" not in l], para)
+        self.assertTrue([l for l in para if re.search(r"(?i)chatgpt subscription", l) and "`codex:`" in l], para)
+
+    def test_the_codex_example_default_is_bare_codex_or_marked_not_verified(self):
+        sec = self.config.split("\n## Harnesses\n", 1)[1].split("\n## ", 1)[0]
+        cfg = json.loads(sec.split("```json\n", 1)[1].split("```", 1)[0])
+        default = cfg["harnesses"]["codex"]["models"]["crew"]["default"]
+        self.assertEqual(self.fc_config.settings(cfg, "codex")[1]["models"]["crew"]["default"], default)
+        if default != "codex":
+            self.assertTrue([l for l in sec.splitlines() if default in l and "not verified" in l], default)
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
+            self.assertNotIn("—", text, rel)
