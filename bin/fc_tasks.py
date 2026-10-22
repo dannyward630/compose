@@ -142,15 +142,19 @@ def code_tasks(tasks):
 
 FINISHED = ("passed", "hand_done")  # a layer whose branch is the record: a run keeps it unless told to --redo
 
-def task_finished(proj, meta, redo=False):
+def task_finished(proj, meta, redo=False, since=None):
     """Why a task needs no more work, or None: the one rule `run`, `resume`, and `testcrews` share. Done or Canceled on Linear,
     always; else, unless --redo, a passed result (its branch kept, or gone because it landed, which `status` reads as merged) or
-    a hand_done one (finished by hand, wherever its commits are: it needs no branch and never moves Linear again)."""
+    a hand_done one (finished by hand, wherever its commits are: it needs no branch and never moves Linear again).
+    With --redo, `since` (epoch seconds) is when the redo run started: a result written after it is that run's own and stands,
+    an older one describes a branch the redo set aside."""
     if meta.get("linear_state") in ("Done", "Canceled"):
         return f"its state is {meta['linear_state']}"
     f = proj / "results" / f"{meta['id']}.json"
     status = json.loads(f.read_text()).get("status") if f.exists() else None
-    return f"its result is {status}" if status in FINISHED and not redo else None
+    if status in FINISHED and (not redo or (since is not None and f.stat().st_mtime >= since)):
+        return f"its result is {status}"
+    return None
 
 
 def parse_criteria(text):

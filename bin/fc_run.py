@@ -179,7 +179,7 @@ def run_tasks(repo, proj, tasks, a):
     t0 = time.time()
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}}, indent=2))
+        "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
@@ -270,7 +270,7 @@ def run_tasks(repo, proj, tasks, a):
     if halt:
         done_ids = {r["id"] for r in results if r["status"] in (*fc_tasks.FINISHED, "already_green")}
         remaining = sorted(metas[p]["id"] for p in metas if metas[p]["id"] not in done_ids)
-        fc_models.payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack}, halt)
+        fc_models.payment_halt(repo, proj, "run", remaining, {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}, halt)
     (proj / "results" / "resume.json").unlink(missing_ok=True)
     (proj / "results" / "run.json").unlink(missing_ok=True)
     fc_core.atomic_write((proj / "results" / "run-cost.json"), json.dumps(fc_core.LEDGER.snapshot(), indent=2))
@@ -295,6 +295,13 @@ def reflect_task(proj, r):
         fc_core.say(f"{r['id']} reflect failed ({str(e)[:200]}); the run goes on")
 
 
+def since_of(stamp):
+    """Epoch seconds of a `%Y-%m-%d %H:%M:%S` local time stamp as the run and halt files write it, None when it is not one."""
+    try:
+        return time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, TypeError):
+        return None
+
 def cmd_resume(a):
     """Continue a run or verify that stopped on PAYMENT REQUIRED, from the saved state in results/resume.json."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
@@ -303,7 +310,8 @@ def cmd_resume(a):
         m = fc_tasks.run_marker(proj)
         if not m or fc_tasks.pid_alive(m.get("pid")):
             sys.exit("nothing to resume: no payment halt and no interrupted run recorded for this project" + (" (a run is live)" if m else ""))
-        done = {t["id"] for t in fc_tasks.load_tasks(proj, required=True) if fc_tasks.task_finished(proj, t)}
+        redo = bool(m["args"].get("redo"))
+        done = {t["id"] for t in fc_tasks.load_tasks(proj, required=True) if fc_tasks.task_finished(proj, t, redo, since_of(m["started_at"]))}
         state = {"command": "run", "remaining": [t for t in m["tasks"] if t not in done], "args": m["args"], "halted_at": m["started_at"], "provider": "interrupted run"}
         (proj / "results" / "run.json").unlink(missing_ok=True)
     else:
@@ -312,7 +320,10 @@ def cmd_resume(a):
     ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
     if state["command"] == "run":
         require_committed(repo, not getattr(ns, "no_stack", False))
-        tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not fc_tasks.task_finished(proj, m)]
+        redo, since = bool(state["args"].get("redo")), since_of(state["halted_at"])
+        if redo:  # the tasks that had not started still read passed from before the redo; only a result newer than the stop is new
+            os.environ["COMPOSE_REDO"] = "1"
+        tasks = [m for m in fc_tasks.load_tasks(proj, required=True) if m["id"] in set(state["remaining"]) and not fc_tasks.task_finished(proj, m, redo, since)]
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
