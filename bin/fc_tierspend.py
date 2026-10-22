@@ -32,13 +32,14 @@ def spend(proj):
     res = proj / "results"
     for f in sorted(res.glob("[0-9][0-9][0-9].json")) if res.is_dir() else []:
         r = json.loads(f.read_text())
-        tier = fc_tiers.tier_of(r["model"])
+        model = r.get("model") or ""  # a blocked task's result has no model
+        tier = fc_tiers.tier_of(model)
         if tier:
             cell = out[tier]
             cell["real"] += r.get("cost") or 0.0
             if r.get("reference_cost") is not None:
                 cell["ref"] += r["reference_cost"]
-            elif r["model"].startswith("claude"):
+            elif model.startswith("claude"):
                 cell["unpriced"] = True
     return out
 
