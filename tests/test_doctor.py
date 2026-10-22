@@ -576,6 +576,16 @@ class Preflight(unittest.TestCase):
         self.assertEqual(msg.splitlines()[0], "preflight stopped, nothing was cloned or run. Fix this, then run again:")
         self.assertIn("uncommitted changes (new_test.py); commit or discard them", msg)
 
+    def test_a_low_battery_stops_the_start_with_the_fix_unless_forced_and_doctor_only_warns(self):
+        self.fake("gh", "gh version 2.94.0")
+        low = "the Mac is on battery at 12%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway"
+        with self.serve(openrouter=Answer({}), linear=Answer({})), mock.patch.object(fc_checks, "battery_report", return_value="Now drawing from 'Battery Power'\n 12%; discharging"):
+            msg, _ = self.stop()
+            self.assertEqual(msg.splitlines()[1:], ["  " + low])
+            fc.fc_init.start_checks(self.repo, force=True)
+            problems, _ = fc.fc_init.start_problems(self.repo)
+        self.assertEqual(problems, [])  # doctor reports the machine as a warning: only a start refuses
+
     def test_the_opt_out_keeps_only_the_tree_check(self):
         (self.repo / "new_test.py").write_text("x\n")
         self.fake("gh", "gh version 2.94.0", body="exit 1")
@@ -594,10 +604,13 @@ class Preflight(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 fc.fc_verify.cmd_verify(type("A", (), {"repo": str(self.repo), "project": "p", "skip_review": True, "fix": 0})())
             self.assertEqual(awake.call_count, 2)
-            checks.assert_called_once_with(self.repo, stack=False, tree=False)  # verify tolerates a dirty tree and submits nothing
+            checks.assert_called_once_with(self.repo, stack=False, tree=False, force=False)  # verify tolerates a dirty tree and submits nothing
             with self.assertRaises(RuntimeError):
                 fc.fc_run.cmd_run(type("A", (), {"repo": str(self.repo), "project": "p", "only": None, "no_stack": True})())
-            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them")  # --no-stack: gh need not be logged in
+            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=False)  # --no-stack: gh need not be logged in
+            with self.assertRaises(RuntimeError):
+                fc.fc_run.cmd_run(type("A", (), {"repo": str(self.repo), "project": "p", "only": None, "no_stack": True, "force": True})())
+            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=True)  # --force starts on a low battery
 
     def doctor(self, args, rows=()):
         out, code = io.StringIO(), 0

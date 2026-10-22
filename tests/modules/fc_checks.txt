@@ -8,7 +8,10 @@ chromium_installed
 LOAD_FACTOR
 CRASH_RESTARTS
 CRASH_WINDOW
+battery_report
 on_battery
+LOW_BATTERY
+battery_stop
 busiest_process
 restarting_containers
 machine_warnings

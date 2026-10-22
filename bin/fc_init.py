@@ -168,11 +168,14 @@ def start_problems(repo, tree=True, hint="commit or discard them"):
         problems.insert(0, f"repo has uncommitted changes ({shown}); {hint}")
     return problems, warnings
 
-def start_checks(repo, stack=True, tree=True, hint="commit or discard them"):
+def start_checks(repo, stack=True, tree=True, hint="commit or discard them", force=False):
     """The start of run, resume and verify: print the warnings and stop with every problem at once (nothing is cloned or run
     yet), so the work never stops later to ask. With `stack` (the work will be submitted as a gh stack), a gh that is not
-    logged in is one more problem; COMPOSE_NO_PREFLIGHT=1 skips that with the calls and machine checks."""
+    logged in is one more problem; a Mac on battery below fc_checks.LOW_BATTERY percent is one too, unless `force` (--force).
+    COMPOSE_NO_PREFLIGHT=1 skips that with the calls and machine checks."""
     problems, warnings = start_problems(repo, tree, hint)
+    if low := fc_checks.battery_stop(force):
+        problems.append(low)
     if stack and not os.environ.get("COMPOSE_NO_PREFLIGHT") and shutil.which("gh") and not fc_checks.gh_authed():
         problems.append("gh is not logged in, so the stack cannot be submitted: gh auth login (or run with --no-stack)")
     for w in warnings:
