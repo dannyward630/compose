@@ -202,7 +202,7 @@ class ReviewGate(unittest.TestCase):
         high = {"file": "s.go", "severity": "high", "note": "a query per answer", "confirmed": True}
         rv = {"pass": False, "issues": [high], "confirmed": [high]}
         a = SimpleNamespace(skip_e2e=True, skip_review=False)
-        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_verify, "llm_review", return_value=rv), \
+        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), mock.patch.object(fc.fc_verify.fc_review, "llm_review", return_value=rv), \
                 mock.patch.object(fc.fc_verify, "review_inputs", return_value=("diff", "plan", "", [])):
             ok, _, findings = fc.fc_verify.run_stages(proj, proj, {"review": True, "jev_acceptance": False}, a)
         self.assertFalse(ok); self.assertIn("a query per answer", findings)

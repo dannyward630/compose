@@ -440,7 +440,7 @@ class FixScope(unittest.TestCase):
             return {"issues": [{"file": "a.mjs", "severity": "medium", "note": "handle Windows paths"}]} if "strict code reviewer" in system \
                 else {"confirmed": True, "evidence": "e"}
         with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
-            fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
+            fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness"]}, "diff", "THE PLAN", "", True)
         review, confirm = systems
         self.assertIn("hardening", review[0])
         self.assertIn("hardening", confirm[0])
@@ -455,7 +455,7 @@ class FixScope(unittest.TestCase):
                 short = budgets[-1] < need
                 return {"choices": [{"message": {"content": full[:20] if short else full}, "finish_reason": "length" if short else "stop"}]}
             with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
-                rv = fc.fc_verify.llm_review({"perspectives": ["spec"]}, "diff", "plan", "", True)
+                rv = fc.fc_verify.fc_review.llm_review({"perspectives": ["spec"]}, "diff", "plan", "", True)
             self.assertEqual(budgets, [1500, 1500 * fc.fc_models.CUT_RETRY])
             self.assertIn(found, rv["issues"][0]["note"])
 
@@ -467,7 +467,7 @@ class FixScope(unittest.TestCase):
                 asked.append(json.loads(req.data)["max_tokens"])
                 return {"choices": [{"message": {"content": replies[len(asked) - 1]}, "finish_reason": "stop"}]}
             with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
-                rv = fc.fc_verify.llm_review({"perspectives": ["docs"]}, "diff", "plan", "docs", True)
+                rv = fc.fc_verify.fc_review.llm_review({"perspectives": ["docs"]}, "diff", "plan", "docs", True)
             self.assertEqual(asked, [1500, 1500])
             self.assertIn(found, rv["issues"][0]["note"])
 
@@ -479,7 +479,7 @@ class FixScope(unittest.TestCase):
             def http(req, provider, timeout=90, replies=replies):
                 return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
             with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
-                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+                rv = fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
             self.assertEqual(([i["evidence"] for i in rv["confirmed"]], rv["pass"]), (["return a - b"], False), reply)
 
     def test_a_confirm_reply_that_stays_unparseable_is_not_judged_and_does_not_fail_verify(self):
@@ -489,7 +489,7 @@ class FixScope(unittest.TestCase):
             def http(req, provider, timeout=90, replies=replies):
                 return {"choices": [{"message": {"content": replies.pop(0)}, "finish_reason": "stop"}]}
             with mock.patch.object(fc.fc_models, "http_json", http), mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL_API_KEY": "k"}):
-                rv = fc.fc_verify.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
+                rv = fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness"]}, "return a - b", "plan", "", True)
             i = rv["issues"][0]
             self.assertEqual((replies, i["confirmed"], i["evidence"], i.get("judge_error"), rv["pass"], "error" in rv),
                              ([], False, "confirm unparseable, not judged", None, True, False), bad)
@@ -502,7 +502,7 @@ class FixScope(unittest.TestCase):
                 (users if users is not None else []).append(user)
                 return reply
             with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
-                return fc.fc_verify.llm_review({"perspectives": [perspective], **(cfg or {})}, code, "plan", "==== README.md ====\nREAD ME", True)
+                return fc.fc_verify.fc_review.llm_review({"perspectives": [perspective], **(cfg or {})}, code, "plan", "==== README.md ====\nREAD ME", True)
         rv = review({"wrong_line": "fileName:   'x.js',", "fixed_line": "fileName: 'x.mjs',", "confirmed": True})
         self.assertEqual([(i["evidence"], i["fix"]) for i in rv["confirmed"]], [("fileName:   'x.js',", "fileName: 'x.mjs',")])
         for reply in ({"wrong_line": "lib output defaults to main.js", "fixed_line": "x", "confirmed": True},  # not a quote of the code

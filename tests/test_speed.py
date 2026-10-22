@@ -124,7 +124,7 @@ class E2EBesideReview(unittest.TestCase):
         with mock.patch.object(fc.fc_herdr, "herdr_verify_panes", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_space", return_value=None), \
                 mock.patch.object(fc.fc_verify, "review_inputs", return_value=("", "", "", [])), \
                 mock.patch.object(fc.fc_jev, "jev_e2e", slow("e2e", {"exit": 0, "stdout": "", "stderr": ""})), \
-                mock.patch.object(fc.fc_verify, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \
+                mock.patch.object(fc.fc_verify.fc_review, "llm_review", slow("review", {"pass": True, "issues": [], "confirmed": []})), \
                 mock.patch.object(fc.fc_accept, "jev_acceptance", lambda *a, **k: {"pass": True, "criteria": [], "failed": []}):
             ok, report, _ = fc.fc_verify.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, args)
         self.assertTrue(ok)

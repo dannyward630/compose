@@ -1,7 +1,3 @@
-SIMPLICITY_BAR
-PERSPECTIVES
-well_formed
-llm_review
 verify_failed
 review_inputs
 e2e_stage

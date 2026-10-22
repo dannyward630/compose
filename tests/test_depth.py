@@ -176,7 +176,7 @@ class VerifyDepth(unittest.TestCase):
         """run_stages with the review and Jev calls patched; the Jev acceptance mock."""
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
         with mock.patch.object(fc.fc_accept, "jev_acceptance", return_value={"pass": True, "criteria": []}) as jev, mock.patch.object(fc.fc_verify, "review_inputs", return_value=("d", "p", "", [])), \
-                mock.patch.object(fc.fc_verify, "llm_review", return_value={"pass": True, "confirmed": [], "issues": []}) as rv, mock.patch.object(fc.fc_core, "say"):
+                mock.patch.object(fc.fc_verify.fc_review, "llm_review", return_value={"pass": True, "confirmed": [], "issues": []}) as rv, mock.patch.object(fc.fc_core, "say"):
             ok, report, _ = fc.fc_verify.run_stages(proj, proj, cfg, type("A", (), {"skip_e2e": True, "skip_review": False}))
         return jev, rv, report, ok
 

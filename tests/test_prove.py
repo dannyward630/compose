@@ -362,7 +362,7 @@ class ReviewOnly(Repo):
         bad = {"pass": False, "issues": [], "confirmed": []}
         calls = []
         with mock.patch.object(fc.fc_verify, "review_inputs", return_value=("diff", "plan", "", [])), \
-                mock.patch.object(fc.fc_verify, "llm_review", side_effect=lambda *a: calls.append(a) or bad), \
+                mock.patch.object(fc.fc_verify.fc_review, "llm_review", side_effect=lambda *a: calls.append(a) or bad), \
                 mock.patch.object(fc.fc_verify, "fix_tests", side_effect=AssertionError("a fix round ran")):
             code, out = self.verify(fix=2, cfg={"review": True})
         self.assertEqual(code, 1, out)

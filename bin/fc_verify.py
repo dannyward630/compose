@@ -1,102 +1,8 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review
 
-
-SIMPLICITY_BAR = ("A finding must be a defect against the plan's requirements. Hardening the requirements do not ask for (portability, "
-                  "extra error handling, defensive guards, retries) is no defect: no hardening.")
-
-PERSPECTIVES = {
-    "correctness": "Find bugs: wrong logic, unhandled inputs, off-by-one, broken edge cases, error paths that lose data. Ignore style.",
-    "security": "Find security and data-loss risks: injection, secrets in code, unsafe eval, missing validation at trust boundaries, "
-                "destructive operations without guards, credentials leaving the client.",
-    "spec": "Check the diff against the plan and acceptance criteria: unmet criteria, scope creep, gamed or weakened tests, "
-            "hardcoded site-specific or example-specific logic where general behavior was required.",
-    "docs": "Check whether the diff changes behavior, commands, config, or interfaces that the provided docs describe, "
-            "and whether those docs were updated to match. Only flag real mismatches.",
-}
-
-def well_formed(i):
-    """A finding in the shape the reviewer is asked for. The reply is always valid JSON, so a model that spends it on its
-    reasoning returns objects of loose thoughts or the schema echoed back; those are not findings."""
-    return (isinstance(i, dict) and isinstance(i.get("file"), str) and i["file"].strip() != "" and i.get("severity") in ("high", "medium", "low")
-            and isinstance(i.get("note"), str) and i["note"].strip() != "" and (i.get("line") is None or type(i["line"]) is int))
-
-def llm_review(cfg, diff, plan, docs_text, tests_pass):
-    """Parallel fast-model reviews, one per perspective, then a confirmation pass on each high or medium finding.
-    Only confirmed findings count. Fails on any confirmed high."""
-    env = {**fc_core.load_env(cfg.get("env_file", fc_config.ENV_FILE)), **os.environ}
-    wanted = cfg.get("perspectives", ["correctness", "security", "spec"] + (["docs"] if docs_text else []))
-    schema = ('Return JSON {"issues": [{"file": str, "line": int|null, "severity": "high|medium|low", "note": str}]}. '
-              "Be concrete and terse. An empty list means clean. Never invent files not in the input. "
-              "Severity: high only for a bug that breaks a stated requirement, loses data, or is a security hole. Performance or style "
-              "concerns at the scale this project runs at are low, never high. " + SIMPLICITY_BAR + " Report it as low if you must mention it. "
-              + ("The tests currently PASS; do not report anything the tests already prove works." if tests_pass else ""))
-    user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
-            f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
-    def one(name):
-        """(well-formed findings, how many other entries the reply held)."""
-        try:
-            out = fc_models.fast_json_whole(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
-                            user + (f"\n\nDOCS:\n{docs_text[:20000]}" if name == "docs" else ""))
-            # Small models sometimes return the issues array bare, or something else entirely; never let that crash the stage.
-            issues = out.get("issues", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
-            issues = issues if isinstance(issues, list) else []
-            kept = [i for i in issues if well_formed(i)]
-            malformed = len(issues) - len(kept)
-        except fc_models.PaymentRequired:
-            raise
-        except Exception as e:  # noqa: BLE001
-            # A reviewer that fails to answer is a coverage gap to report, not a defect in the code under review.
-            kept, malformed = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}], 0
-        for i in kept:
-            i["perspective"] = name
-        return kept, malformed
-    with ThreadPoolExecutor(max_workers=len(wanted)) as ex:
-        batches = list(ex.map(one, wanted))
-    raw, malformed = [i for kept, _ in batches for i in kept], sum(n for _, n in batches)
-    # Confirmation pass: an independent call must name the line that breaks a requirement and how it must read, or the claim is dropped.
-    flat = lambda s: " ".join(str(s).split())
-    def confirm(i):
-        if i.get("confirmed") or i.get("severity") not in ("high", "medium"):
-            i.setdefault("confirmed", False)
-            return i
-        docs = docs_text[:20000] if i.get("perspective") == "docs" else ""
-        try:
-            # The verdict comes last, so the model compares the line with the requirement before it decides.
-            v = fc_models.fast_object(
-                env, "You are verifying one code-review claim against the actual code, the plan, and the design context. Fill the fields "
-                'in order. "requirement": the words of the plan, design context, or docs the claim says are broken, copied verbatim; for a '
-                'crash, data loss, or security hole, one sentence naming it. "wrong_line": the line of the code or docs that breaks it, '
-                'copied verbatim, nothing else. "fixed_line": that line as it must read to meet the requirement ("" if it must go). '
-                '"confirmed": true only if wrong_line really breaks the requirement. If the code already does what the requirement says, '
-                "the claim's own text says the code is correct, or the claim contradicts the plan or the design context, confirmed is "
-                "false. If the claim is wrong, speculative, contradicted by passing tests, or about style, reject it. " + SIMPLICITY_BAR,
-                (f"DESIGN CONTEXT (authoritative):\n{cfg.get('review_context')}\n\n" if cfg.get("review_context") else "") +
-                f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nCLAIM: [{i['severity']}] {i['file']}{':' + str(i['line']) if i.get('line') else ''}: {i['note']}\n\n"
-                f"CODE (may be cut off at the end; truncation is not evidence):\n{diff[:150000]}\n\n" + (f"DOCS:\n{docs}\n\n" if docs else "")
-                + ("The tests currently pass." if tests_pass else ""),
-                '{"requirement": str, "wrong_line": str, "fixed_line": str, "confirmed": bool}', "confirmed")
-            wrong, i["fix"] = str(v.get("wrong_line") or ""), str(v.get("fixed_line") or "")
-            i["confirmed"], i["evidence"] = bool(v["confirmed"]), wrong[:300]
-            if i["confirmed"] and (not flat(wrong) or flat(wrong) not in flat(diff + "\n" + docs)):
-                i["confirmed"], i["evidence"] = False, "evidence is not a quote from the code: " + wrong[:300]
-            elif i["confirmed"] and flat(i["fix"]) == flat(wrong):
-                i["confirmed"], i["evidence"] = False, "the line as it must read is the line as it is: " + wrong[:300]
-        except fc_models.PaymentRequired:
-            raise
-        except fc_models.BadReply:  # the claim went unjudged: the model's reply is not the code's defect, and it must not fail verify
-            i["confirmed"], i["evidence"], i["unjudged"] = False, "confirm unparseable, not judged", True
-        except Exception as e:  # noqa: BLE001
-            i["confirmed"], i["evidence"], i["judge_error"] = False, str(e), True
-        return i
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        issues = list(ex.map(confirm, raw))
-    confirmed = [i for i in issues if i["confirmed"]]
-    errors = [i for i in issues if i.get("judge_error")]
-    return {"pass": not errors and not any(i["severity"] == "high" for i in confirmed), "issues": issues, "confirmed": confirmed, "malformed": malformed,
-            **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
 
 def verify_failed(proj, rounds, findings):
     """verify ended FAIL after its fix rounds: screen the settled lines against the confirmed findings. Tool errors are not
@@ -302,7 +208,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
         t1 = time.time()
         fc_herdr.herdr_stage(panes, "review", "working")
         diff, plan, docs, _ = review_inputs(repo, proj, cfg)
-        rv = llm_review(cfg, diff, plan, docs, bool(checks_pass))
+        rv = fc_review.llm_review(cfg, diff, plan, docs, bool(checks_pass))
         rv["seconds"] = round(time.time() - t1, 1)
         report["review"] = rv
         ok &= rv["pass"]  # review always gates; the jev acceptance stage below is advisory unless asked to gate
@@ -506,7 +412,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                   (f"CONTEXT PACK from trail (exact file:line). Use it instead of exploring.\n{pack}\n\n" if pack else "") +
                   "Verification of this repository failed. Fix ONLY the findings below with the smallest change. "
                   f"Do not edit these files: {', '.join(protected) or 'none'}. Do not weaken or delete tests. "
-                  "Keep behavior the tests already cover. Keep the code simple; do not restructure; " + SIMPLICITY_BAR.replace("no hardening.", "no hardening beyond the findings.") + " "
+                  "Keep behavior the tests already cover. Keep the code simple; do not restructure; " + fc_review.SIMPLICITY_BAR.replace("no hardening.", "no hardening beyond the findings.") + " "
                   + (f"DESIGN CONTEXT (authoritative; never contradict it): {cfg['review_context']} " if cfg.get("review_context") else "") +
                   "Fix the app for a real user, never for the test harness: do not add labels, text, attributes, or "
                   "shortcuts aimed at the test bot or the e2e script; if a finding is the harness's fault, change nothing. "
