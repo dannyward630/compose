@@ -241,6 +241,8 @@ def review_units(repo, proj, base, trunk, chain, held=()):
         files = set(commit_facts(repo, c)[0])
         writer = next((t for t, a, b in writers if a <= int(at) <= b and files and files <= protected[t]), None)
         owners = [i for i, t in enumerate(ids) if files and files <= protected.get(t, set()) and writer in (None, t)]
+        if not owners and files and any(files <= protected[t] for t in held):
+            continue
         if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
             owners = [len(ids) - 1]
         on = [(p, s) for p, s, f in placed if f & files]
@@ -340,7 +342,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
     generated, commits, units}] (units: the commits of each entry of tasks, in order). The layers are built on a detached HEAD and
     the layer branches move only once all of them are built and add up to the same tree as the task chain; else nothing is
     changed, STACK_STOP says why, and it returns None."""
-    units = review_units(repo, proj, base, trunk, chain)  # groundwork is layers of its own, never mixed into a task's
+    units = review_units(repo, proj, base, trunk, chain, held)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs)
     layers, tips, prev, prefix = [], [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
@@ -386,7 +388,8 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
         tips.append(prev)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     if layers and fc_core.sh(["git", "merge-base", "--is-ancestor", base, chain[-1]], repo, check=False).returncode == 0:
-        differ = fc_core.sh(["git", "diff", "--name-only", prev, chain[-1]], repo).stdout.split()
+        skip = {f for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) if m["id"] in held for f in m["protected"]}
+        differ = [f for f in fc_core.sh(["git", "diff", "--name-only", prev, chain[-1]], repo).stdout.split() if f not in skip]
         if differ:
             stop(f"the layers differ from {chain[-1]} in {', '.join(differ)}; {kept}")
             return None
