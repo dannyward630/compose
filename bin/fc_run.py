@@ -187,6 +187,7 @@ def run_tasks(repo, proj, tasks, a):
     ids = set(metas)
     deps = {p: [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids] for p, m in metas.items()}
     results, pending, failed_ids, halt, reflecting, capped = [], dict(deps), set(), None, [], set()
+    unproven = set()
     waits = fc_tasks.waiting(tasks, released)  # an outside blocker git does not place in the trunk holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
@@ -207,9 +208,12 @@ def run_tasks(repo, proj, tasks, a):
                 break  # a payment halt: leave the rest pending, do not mark them blocked
             if not running:
                 stuck = fc_tasks.held_behind(pending, hold, failed_ids)
+                behind = {p for p in pending if set(pending[p]) & unproven}
+                while more := {p for p in pending if set(pending[p]) & behind} - behind:
+                    behind |= more
                 for p in pending:
-                    if p in stuck:  # left pending for the run after the re-plan, not blocked
-                        fc_core.say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after held " + ",".join(sorted(set(pending[p]) & stuck))))
+                    if p in stuck or p in behind:  # left pending for the run after the re-plan, not blocked
+                        fc_core.say(f"{p} held    " + (hold[p]["reason"] if p in hold else "after unproven " + ",".join(sorted(set(pending[p]) & unproven)) if set(pending[p]) & unproven else "after held " + ",".join(sorted(set(pending[p]) & (stuck | behind)))))
                         continue
                     results.append({"id": metas[p]["id"], "title": metas[p].get("title"), "status": "blocked_by_" + ",".join(deps[p]),
                                     "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
@@ -235,7 +239,7 @@ def run_tasks(repo, proj, tasks, a):
                     pending[p] = []
                     continue
                 results.append(r)
-                events = fc_ledger.run_events(proj, repo, metas[p], r)
+                events = fc_fast.run_events(proj, repo, metas[p], r)
                 cost = fc_costevent.run_event(proj, metas[p], r, events[-1]) if events else None
                 fc_ledger.record_task(repo, proj, metas[p], events + ([cost] if cost else []))
                 if r["status"] in fc_change.REFLECT_ON:  # the screen runs beside the run; dispatch never waits on it
@@ -245,10 +249,12 @@ def run_tasks(repo, proj, tasks, a):
                 if r["status"] == "payment_required":
                     pay = next(x["payment_required"] for x in r["log"] if "payment_required" in x)
                     halt = halt or fc_models.PaymentRequired(pay["provider"], pay["message"])
-                if r["status"] != "passed":
+                if r["status"] == "unproven":
+                    unproven.add(tid)
+                elif r["status"] != "passed":
                     failed_ids.add(tid)
                 for q in pending:
-                    pending[q] = [d for d in pending[q] if d != tid or d in failed_ids]
+                    pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
     for t in reflecting:  # every screen is on disk before the run reports its end
         t.join()
     if any(m.get("linear") for m in tasks):

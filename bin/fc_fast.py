@@ -44,4 +44,13 @@ def broken_base(proj, meta, red, base_name, branch, wt):
 
 def run_events(proj, repo, meta, result):
     """The task's run events for the ledger: a FAST task's carry no `red` event and end `unproven` when it is."""
-    raise NotImplementedError("run_events")
+    import fc_ledger
+    if workflow(proj, meta) != "fix-then-regression-test":
+        return fc_ledger.run_events(proj, repo, meta, result)
+    unproven = result["status"] == "unproven"
+    events = fc_ledger.run_events(proj, repo, meta, {**result, "status": "passed"} if unproven else result)
+    events = [e for e in events if e["phase"] != "red"]
+    if unproven:
+        e = events[-1]
+        events[-1] = fc_ledger.event(e["run_id"], e["commit_sha"], e["task_ids"], e["criterion_id"], "final", "run", "unproven", None, f"unproven after {result['attempts']} attempts")
+    return events
