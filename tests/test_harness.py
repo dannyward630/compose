@@ -288,6 +288,8 @@ class HarnessBlock(unittest.TestCase):
     def setUp(self):
         for k in ("HARNESS", "DEFAULT_MODEL", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK", "WORKSPACE"):
             p = mock.patch.object(fc_config, k, getattr(fc_config, k)); p.start(); self.addCleanup(p.stop)
+        path = fc_config.CONFIG_PATH; before = path.read_bytes() if path.exists() else None
+        self.addCleanup(lambda: path.write_bytes(before) if before is not None else path.unlink(missing_ok=True))
 
     def apply(self, cfg, harness=None, **env):
         fc_config.write_config(cfg)
