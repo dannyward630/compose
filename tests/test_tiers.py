@@ -47,10 +47,11 @@ class Tiers(unittest.TestCase):
         self.assertEqual(T.start_tier("DEEP", "no-frontier"), "standard")
 
     def test_chain_is_a_ceiling(self):
-        self.assertEqual(T.chain("standard", [HAIKU, SONNET, OPUS]), [HAIKU, SONNET])
-        self.assertEqual(T.chain("cheap", [OPUS]), list(C.TIERS["cheap"]))
-        self.assertEqual(T.chain("cheap", [OPUS, "pi:a/b"]), ["pi:a/b"])
-        self.assertEqual(T.chain("frontier", [OPUS, HAIKU]), [OPUS, HAIKU])
+        h, s, o, p = (HAIKU, None), (SONNET, None), (OPUS, "high"), ("pi:a/b", None)
+        self.assertEqual(T.chain("standard", [h, s, o]), [h, s])
+        self.assertEqual(T.chain("cheap", [o]), list(C.TIERS["cheap"]))
+        self.assertEqual(T.chain("cheap", [o, p]), [p])
+        self.assertEqual(T.chain("frontier", [o, h]), [o, h])
 
     def test_implementer_model_and_escalate(self):
         self.assertEqual((T.implementer_model("cheap"), T.implementer_model("frontier")), (C.DEFAULT_MODEL, OPUS))
