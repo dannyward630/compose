@@ -1401,3 +1401,54 @@ class HookWriters(unittest.TestCase):
         self.assertEqual([g["hooks"][0]["command"] for g in pre[4:]], ['"/c/bin/compose" guard'] * 2)
         self.assertEqual([g["matcher"] for g in pre[4:]], ["Write|Edit|MultiEdit|NotebookEdit", "Bash"])
         self.assertEqual(fc_links.write_hooks("codex", "/c"), [])
+
+
+class HooksCheckBadFiles(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.home, self.bin = tmp / "home", tmp / "bin"
+        self.home.mkdir(); self.bin.mkdir()
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home), "PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        self.hooks, self.trust = self.home / ".codex/hooks.json", self.home / ".codex/config.toml"
+        self.hooks.parent.mkdir()
+
+    def codex(self): (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+
+    def test_a_hooks_file_that_is_not_json_is_named_and_left_alone(self):
+        self.codex()
+        for text in ("{", ""):
+            self.hooks.write_text(text)
+            self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/.codex/hooks.json is not valid JSON"))
+            self.assertEqual(self.hooks.read_text(), text)
+
+    def test_the_hooks_file_is_read_before_the_trust_file(self):
+        self.codex(); self.hooks.write_text("{"); self.trust.write_text("[hooks")
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/.codex/hooks.json is not valid JSON"))
+
+    def test_a_trust_file_that_is_not_toml_is_named_and_left_alone(self):
+        self.codex(); fc_links.write_hooks("codex", "/c"); self.trust.write_text("[hooks")
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/.codex/config.toml is not valid TOML"))
+        self.assertEqual(self.trust.read_text(), "[hooks")
+
+    def test_the_names_follow_codex_home(self):
+        self.codex(); os.environ["CODEX_HOME"] = str(self.home / "elsewhere"); (self.home / "elsewhere").mkdir()
+        (self.home / "elsewhere/hooks.json").write_text("{")
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/elsewhere/hooks.json is not valid JSON"))
+        fc_links.write_hooks("codex", "/c"); (self.home / "elsewhere/config.toml").write_text("[hooks")
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, "~/elsewhere/config.toml is not valid TOML"))
+
+    def test_a_missing_hook_is_named_before_the_trust_file_is_read(self):
+        self.codex(); self.trust.write_text("[hooks")
+        for hooks in (None, {"hooks": {}}):
+            self.hooks.unlink(missing_ok=True)
+            if hooks is not None: self.hooks.write_text(json.dumps(hooks))
+            ok, why = fc_checks.hooks_ok("codex", "/c")
+            self.assertFalse(ok); self.assertTrue(why.endswith("lacks compose's guard hook"), why)
+
+    def test_without_codex_or_without_hooks_neither_file_is_read(self):
+        self.hooks.write_text("{"); self.trust.write_text("[hooks")
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+        self.codex()
+        with mock.patch.dict(fc_harness.HARNESSES, {"codex": {k: v for k, v in fc_harness.HARNESSES["codex"].items() if k != "hooks"}}):
+            self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
