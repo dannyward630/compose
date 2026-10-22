@@ -7,6 +7,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_tierspend  # noqa: E402
 
 
 class TestTierPins(unittest.TestCase):
@@ -56,3 +57,39 @@ class TestTierPins(unittest.TestCase):
         self.assertEqual(self.T.lines(self.proj), [])
         self.file.write_text(json.dumps({"project": "no-frontier", "stories": {"NEB-9": "cheap", "NEB-10": "frontier"}}))
         self.assertEqual(self.T.lines(self.proj), ["  tier pins  project no-frontier, NEB-10 frontier, NEB-9 cheap"])
+
+
+class TestBudgetHold(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "p"; (self.proj / "results").mkdir(parents=True)
+        issue = {"description": "## Route\n\n* workflow: test-first\n* depth: DEEP\n", "parentId": "NEB-9"}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [], "issues": {"NEB-1": issue}}))
+        self.status = self.proj / "results" / "crew" / "frontier-budget.status"
+
+    def start(self, spend, **kw):
+        meta = {"id": "001", "linear": "NEB-1", "model": "pi:a/b", "model_auto": True, **kw}
+        with mock.patch.object(fc_tierspend, "frontier", return_value=spend):
+            return fc.fc_tierpin.start_model(self.proj, meta)
+
+    def test_a_frontier_task_starts_at_standard_once_the_limit_is_reached_and_at_frontier_under_it(self):
+        self.assertEqual(self.start(1e6, tier="frontier"), "claude:claude-sonnet-5-5")
+        self.assertEqual(self.start(0.0, tier="frontier"), "claude:claude-opus-5-5")
+
+    def test_a_story_frontier_pin_is_held_too(self):
+        (self.proj / "results" / "tier.json").write_text(json.dumps({"stories": {"NEB-9": "frontier"}}))
+        self.assertEqual(self.start(1e6), "claude:claude-sonnet-5-5")
+        self.assertEqual(self.start(0.0), "claude:claude-opus-5-5")
+
+    def test_other_starts_ignore_the_limit(self):
+        for pin in ("cheap", "standard", "no-frontier", None):
+            with self.subTest(pin=pin):
+                self.assertEqual(self.start(1e6, tier=pin), self.start(0.0, tier=pin))
+
+    def test_a_task_without_model_auto_keeps_its_model_and_is_not_held(self):
+        self.assertEqual(self.start(1e6, tier="frontier", model_auto=False), "pi:a/b")
+        self.assertFalse(self.status.exists())
+
+    def test_holding_reports_to_the_user_and_staying_under_the_limit_does_not(self):
+        self.start(0.0, tier="frontier"); self.assertFalse(self.status.exists())
+        self.start(1e6, tier="frontier")
+        self.assertEqual(json.loads(self.status.read_text().splitlines()[-1])["state"], "needs-user")
