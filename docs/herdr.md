@@ -2,7 +2,8 @@
 
 Inside [herdr](https://herdr.dev) you can see every agent in the fleet and steer any of them.
 `compose` with no command, run on a terminal outside herdr, opens the herdr session `compose` for you: `herdr session attach compose`, which creates the session when it is missing.
-It prints one hint line first, then you run `claude` in a pane and type `/compose`.
+It prints one hint line first, then you run `claude` in a pane and type `/compose`, or run `codex` and type `$compose`.
+Each harness is described in [harnesses.md](harnesses.md).
 `COMPOSE_NO_HERDR=1` turns that off, and inside herdr it keeps every command headless too: no space, tab, pane, or agent.
 Every subcommand runs headless as before, and a team lead started outside herdr works in one session.
 
@@ -13,7 +14,7 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 
 | Role | Who | Where |
 |---|---|---|
-| engineering manager | the Claude session you started; creates the project, then only relays | the pane you started it in |
+| engineering manager | the session you started; creates the project, then only relays | the pane you started it in |
 | team lead | runs the project from wayfinder to a verified stack | tab `orchestrator`, agent `<slug>-orchestrator` |
 | designer | continues design work in Figma from where it stopped | tab `designer`, agent `<slug>-designer` |
 | design-NNN | one builder per design task, Claude only | tab `design NNN` |
@@ -24,6 +25,9 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 herdr agent names stop at 32 characters, so a longer `<slug>-<role>` keeps its role and cuts the slug.
 Project `clean-recut-branches` has team lead `clean-recut-branche-orchestrator`, and `init` says so when it creates such a project.
 Use the name `compose crew list` shows in every `herdr agent` command; `watch --from` takes the role.
+
+New panes get `PATH` and each harness row's `home_env` (`CODEX_HOME` for Codex) from the caller.
+A pane on a sign-in screen gets no key: compose stops naming it.
 
 The engineering manager is the session you started, so compose sets neither its model nor its compaction.
 It relays and supervises while planning goes to the wayfinder on the strongest model, so Sonnet serves it well.
@@ -137,10 +141,11 @@ The 4-minute quiet alarm for the team lead is unchanged, and time asleep does no
 The team lead never starts `watch` itself.
 Its tab carries `COMPOSE_ROLE`, `COMPOSE_PROJECT`, and `COMPOSE_REPO`, and the plugin's Stop hook (`compose rewake`) parks a watch whenever one of its turns ends.
 The watch's event wakes the idle session (Claude Code's `asyncRewake`), and the next turn end parks the next watch.
+A Codex session has no background wake, so it runs `compose watch ... --timeout 240` in the foreground.
 A lock keeps one watch per watcher.
 A second hook exits at once, and a second `watch` waits its turn.
 The hook does nothing in any other session, and its watch ends with the session that parked it.
-Every Claude teammate compacts at 150k tokens, since every turn re-sends the whole session and a long one pays for its size on each of them.
+Every Claude Code teammate compacts at 150k tokens, since every turn re-sends the whole session and a long one pays for its size on each of them.
 The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the session's `--settings` env, because that variable outranks the `--autocompact` flag and would let a value in your own settings win.
 After a context compaction, the plugin's SessionStart hook (`compose reenter`) points any teammate back at its own brief, `results/crew/<agent>.brief.md`.
 Every teammate's tab carries its name in `COMPOSE_TEAMMATE` for that, since `COMPOSE_ROLE` is `crew` for all but the team lead and the planner.
