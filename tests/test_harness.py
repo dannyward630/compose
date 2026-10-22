@@ -1362,3 +1362,42 @@ class CodexReader(unittest.TestCase):
     def test_a_pi_reader_or_none_gives_nothing_and_runs_no_process(self):
         for reader in ("pi:a/b", None, ""): self.assertEqual(self.read(reader), ("", None))
         for m in (self.run, self.cmd, self.res, self.claude): m.assert_not_called()
+
+
+class HookWriters(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.home, self.bin = tmp / "home", tmp / "bin"
+        self.home.mkdir(); self.bin.mkdir()
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+        p = mock.patch.dict(os.environ, {"HOME": str(self.home), "PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)
+        self.codex = self.home / ".codex"
+
+    def test_a_missing_home_folder_is_made_by_each_writer(self):
+        written = fc_links.write_hooks("codex", "/c")
+        self.assertEqual(written, [self.codex / "hooks.json"]); self.assertIsInstance(written[0], Path)
+        self.assertTrue((self.codex / "hooks.json").is_file())
+        self.assertEqual(fc_links.trust_hooks("codex", "/c"), [self.codex / "config.toml"])
+        self.assertTrue((self.codex / "config.toml").is_file())
+
+    def test_a_missing_nested_codex_home_is_made_with_its_parents(self):
+        os.environ["CODEX_HOME"] = str(self.home / "a/b/codex")
+        self.assertEqual(fc_links.write_hooks("codex", "/c"), [self.home / "a/b/codex/hooks.json"])
+
+    def test_a_call_that_returns_nothing_makes_no_folder(self):
+        self.assertEqual(fc_links.trust_hooks("codex", "/c"), [])
+        row = {"name": "Other", "home_env": "CODEX_HOME", "home": "~/.codex", "hooks_file": "hooks.json"}
+        with mock.patch.dict(fc_harness.HARNESSES, {"other": row}): self.assertEqual(fc_links.write_hooks("other", "/c"), [])
+        self.assertFalse(self.codex.exists())
+
+    def test_foreign_bash_groups_of_any_shape_are_kept_at_their_index_and_compose_appends(self):
+        foreign = [{"matcher": "Bash", "hooks": []}, {"matcher": "Bash"}, {"matcher": "Bash", "hooks": [{"type": "command"}]}, {"matcher": "Bash", "hooks": None}]
+        self.codex.mkdir()
+        (self.codex / "hooks.json").write_text(json.dumps({"hooks": {"PreToolUse": foreign}}))
+        self.assertEqual(len(fc_links.write_hooks("codex", "/c")), 1)
+        pre = json.loads((self.codex / "hooks.json").read_text())["hooks"]["PreToolUse"]
+        self.assertEqual(pre[:4], foreign)
+        self.assertEqual([g["hooks"][0]["command"] for g in pre[4:]], ['"/c/bin/compose" guard'] * 2)
+        self.assertEqual([g["matcher"] for g in pre[4:]], ["Write|Edit|MultiEdit|NotebookEdit", "Bash"])
+        self.assertEqual(fc_links.write_hooks("codex", "/c"), [])
