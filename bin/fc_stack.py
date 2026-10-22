@@ -342,12 +342,24 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
                 return []
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    rec_file, landed = proj / "layers.json", []  # recorded layers whose PR was merged: the rest is built on the base they moved
+    for b in json.loads(rec_file.read_text()) if rec_file.exists() else []:
+        v = subprocess.run(["gh", "pr", "view", b, "--json", "state"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if v.returncode == 0 and json.loads(v.stdout).get("state") == "MERGED":
+            landed.append(b)
+    if landed:
+        f = fc_core.sh(["git", "fetch", "-q", "origin", f"{base}:{base}"], wt, check=False)
+        if f.returncode:
+            fc_layers.STACK_STOP = f"{', '.join(landed)} landed but {base} cannot be fetched from origin: {(f.stderr or f.stdout).strip()[-300:]}; nothing was built or pushed"
+            fc_core.say(f"stack  STOP  {fc_layers.STACK_STOP}")
+            return []
+        fc_core.say(f"stack  landed {', '.join(landed)}; building on origin/{base}")
     linear = fc_layers.linearize(repo, proj, trunk, wt, through=through)
     if not linear or fc_layers.STACK_STOP:  # a stack of the layers below the stop would leave the rest out of review
         return []
     budget = int(cfg.get("review_layer_lines") or fc_layers.REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
-    layers = fc_layers.build_layers(repo, proj, base, trunk, linear, wt, budget, cap, held=held)
+    layers = fc_layers.build_layers(repo, proj, base, trunk, linear, wt, budget, cap, held=held, landed=landed)
     if layers is None:
         return []
     stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)

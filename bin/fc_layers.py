@@ -315,7 +315,7 @@ def group_by_record(proj, units, budget, max_prs=None, landed=()):
     units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap): while the
     groups outnumber it, the adjacent unrecorded pair of the same kind (both all-groundwork, or both holding tasks) with the
     fewest combined lines folds, the lower pair on a tie, else the adjacent pair of any kind with the fewest; recorded layers
-    never fold.
+    never fold. A `landed` layer gets no group: the units its keys hold are on the base already.
     [(recorded branch or None, units, folded)]."""
     rec_file = Path(proj) / "layers.json"
     rec = json.loads(rec_file.read_text()) if rec_file.exists() else {}
@@ -323,7 +323,7 @@ def group_by_record(proj, units, budget, max_prs=None, landed=()):
     for b, keys in rec.items():
         held = [i for i, u in enumerate(units) if i not in seen and u.get("key", u["name"]) in keys]
         seen.update(held)
-        if held:
+        if held and b not in landed:
             groups.append((b, [units[i] for i in held], False))
     groups += [(None, g, False) for g in group_units([u for i, u in enumerate(units) if i not in seen], budget)]
     kind = lambda g: "groundwork" if all(u["name"] == "groundwork" for u in g[1]) else "task"
@@ -343,7 +343,7 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
     the layer branches move only once all of them are built and add up to the same tree as the task chain; else nothing is
     changed, STACK_STOP says why, and it returns None."""
     units = review_units(repo, proj, base, trunk, chain, held)  # groundwork is layers of its own, never mixed into a task's
-    groups = group_by_record(proj, units, budget, max_prs)
+    groups = group_by_record(proj, units, budget, max_prs, landed)
     layers, tips, prev, prefix = [], [], base, layer_prefix(repo, proj)
     cfg_file = Path(proj) / "verify.json"
     if cfg_file.exists() and fc_core.project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
@@ -356,8 +356,9 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
         STACK_STOP = why
         fc_core.say(f"stack  STOP  {why}")
-    for i, (rec_branch, g, folded) in enumerate(groups, 1):
-        branch = rec_branch or f"{prefix}layer-{i:02d}"
+    recorded = {b for b, _, _ in groups}
+    for i, (rec_branch, g, folded) in enumerate(groups, 1):  # a new layer is numbered above the landed ones, and never takes a recorded name
+        branch = rec_branch or next(f"{prefix}layer-{n:02d}" for n in range(i + len(landed), 1000) if f"{prefix}layer-{n:02d}" not in recorded)
         fc_core.sh(["git", "checkout", "-q", "--detach", prev], wt)
         units = []
         for u in g:
@@ -377,6 +378,8 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
                         stop(f"{c[:7]} does not apply on layer {i} (conflicts in {files}); {kept}")
                     return None
                 units[-1].append(fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
+        if landed and len(set(fc_core.sh(["git", "rev-parse", "HEAD", prev], wt).stdout.split())) == 1:  # nothing over the layer below: the base holds it
+            continue
         gen = {}
         for u in g:
             for f, n in u["generated"].items():

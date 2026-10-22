@@ -293,7 +293,7 @@ class Land(Ship):
         before, log = refs(), self.log()
         out, code = self.land(yes=False)
         self.assertEqual(code, 0)
-        self.assertTrue(any("land   plan  3 layer(s) into main by squash" in l for l in out))
+        self.assertTrue(any("land   plan  3 of 3 layer(s) submitted, verify not run; landing 3 into main by squash, bottom up:" in l for l in out))
         self.assertTrue(any("nothing was merged or pushed" in l and "--yes" in l for l in out))
         self.assertEqual(refs(), before)
         self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])

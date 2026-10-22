@@ -296,13 +296,13 @@ class Layers(unittest.TestCase):
         fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": [b]} for b in self.layers()])
         refs = lambda: self.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/compose/p-layer-*")
         before = (refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text())
-        calls = (self.repo / ".git" / "fake-gh-calls").read_text()
-        out = []
+        calls = lambda: [c for c in (self.repo / ".git" / "fake-gh-calls").read_text().splitlines() if not c.startswith("pr view")]  # reading a PR's state changes nothing
+        out, seen = [], calls()
         with mock.patch.object(fc.fc_core, "say", out.append), self.assertRaises(SystemExit) as e:
             fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False, update=False))
         self.assertTrue(e.exception.code)
         self.assertEqual((refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text()), before)
-        self.assertEqual((self.repo / ".git" / "fake-gh-calls").read_text(), calls)
+        self.assertEqual(calls(), seen)
         return [l for l in out if "STOP" in l]
 
     def test_a_project_branch_behind_its_base_stops_the_stack_with_layers_and_gh_stack_untouched(self):
