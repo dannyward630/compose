@@ -1,4 +1,6 @@
 issue_line
+STDIN_SECONDS
+read_stdin
 read_body
 linear_project
 in_scope

@@ -1,5 +1,6 @@
 import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 import sys
@@ -155,11 +156,15 @@ class UnprovenRun(unittest.TestCase):
         for flow in ("test-first", IMPL, None):
             self.assertEqual(events(flow, "unproven"), [self.ev(p, "unproven" if p == "final" else "passed") for p in ("red", "green", "final")])
 
-    def run_tasks(self, specs, statuses):
-        """Runs tasks (id, after) whose run_task answers `statuses`; returns (say lines, {id: status} of the rows, exit code, record_task (issue, events) calls)."""
+    def run_tasks(self, specs, statuses, on_start=None):
+        """Runs tasks (id, after) whose run_task answers `statuses` and calls on_start(proj, task id) first; returns (say lines, {id: status} of the rows, exit code, record_task (issue, events) calls)."""
         repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        self.started = []
         tasks = [{"id": t, "title": t, "after": after, "files": [], "protected": [], "test": "true", "model": "m", "linear": f"ENG-{t}"} for t, after in specs]
-        run_task = lambda repo, proj, task, attempts: {"id": task["id"], "title": task["id"], "status": statuses[task["id"]], "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "b", "log": []}
+        def run_task(repo, proj, task, attempts):
+            self.started.append(task["id"])
+            on_start and on_start(proj, task["id"])
+            return {"id": task["id"], "title": task["id"], "status": statuses[task["id"]], "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "b", "log": []}
         a = mock.Mock(trunk="trunk", attempts=1, parallel=1, no_stack=True, redo=False)
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_run, "reflect_task"), mock.patch.object(fc.fc_linear, "linear_reconcile"), \
@@ -176,6 +181,38 @@ class UnprovenRun(unittest.TestCase):
         self.assertEqual([l for l in say if " held " in l], ["002 held    after unproven 001,007", "003 held    after held 002"])
         self.assertEqual(record, [(f"ENG-{t}", [t, s]) for t, s in (("001", "unproven"), ("004", "failed"), ("006", "passed"), ("007", "unproven"))])  # fc_fast.run_events' events
         self.assertEqual(self.run_tasks([("001", ""), ("002", "001")], {"001": "unproven"})[2], 1)
+
+    def test_a_task_queued_on_the_live_run_joins_it_and_starts_once_its_after_task_has_passed(self):
+        def queue(proj, tid):
+            if tid == "001":  # `compose run --only` hands these over while 001 runs
+                (proj / "results" / "run-queue").mkdir(exist_ok=True)
+                for t, after in (("002", "001"), ("003", "")):
+                    fc.fc_core.atomic_write(proj / "results" / "run-queue" / f"{t}.json", json.dumps({"id": t, "title": t, "after": after, "files": [], "protected": [], "test": "true", "model": "m", "linear": f"ENG-{t}"}))
+        mock.patch.object(fc.fc_run, "QUEUE_POLL", 0.05).start()
+        say, rows, code, _ = self.run_tasks([("001", "")], {"001": "passed", "002": "passed", "003": "passed"}, queue)
+        self.assertEqual((rows, code), ({"001": "passed", "002": "passed", "003": "passed"}, 0))
+        self.assertLess(self.started.index("001"), self.started.index("002"))
+        self.assertEqual([l for l in say if " joined " in l], ["002 joined  added to the run while it goes on", "003 joined  added to the run while it goes on"])
+
+    def test_run_only_on_a_project_with_a_live_run_queues_its_tasks_there_and_the_lock_stays_for_everything_else(self):
+        repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        a = SimpleNamespace(cmd="run", repo=str(repo), project="p", only="004")
+        mock.patch.object(fc.fc_core, "project_dir", lambda a: proj).start()
+        marker = lambda **kw: (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getppid(), "tasks": ["001"], **kw}))
+        self.assertFalse(fc.fc_run.joins_live_run(a))  # no run
+        marker()
+        self.assertTrue(fc.fc_run.joins_live_run(a))
+        for other in (dict(only=None), dict(cmd="verify"), dict(cmd="resume")):
+            self.assertFalse(fc.fc_run.joins_live_run(SimpleNamespace(**{**vars(a), **other})))
+        marker(closed=True)  # the run is ending: it takes no more
+        self.assertFalse(fc.fc_run.joins_live_run(a))
+        marker()
+        tasks = [{"id": "001", "model": "m"}, {"id": "004", "model": "m"}]
+        with mock.patch.object(fc.fc_run, "preflight") as pre, mock.patch.object(fc.fc_core, "say") as say:
+            fc.fc_run.run_tasks(repo, proj, tasks, a)
+        self.assertEqual(sorted(f.name for f in (proj / "results" / "run-queue").glob("*.json")), ["004.json"])  # 001 is in the run already
+        self.assertEqual(pre.call_args.args[0] - {None}, {"m", fc.fc_models.fallback_for("m")} - {None})
+        self.assertIn("001 keep    already in the live run", say.call_args_list[0].args[0])
 
 
 class UnprovenWhy(unittest.TestCase):

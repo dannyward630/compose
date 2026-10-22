@@ -61,6 +61,35 @@ def require_committed(repo, stack=True):
     and with `stack` on a gh that is not logged in. A Mac on battery, a loaded machine or a crash-looping container only warns."""
     fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them")
 
+QUEUE = "run-queue"  # results/run-queue/<id>.json: a task `compose run --only` added to the live run
+QUEUE_POLL = 2  # seconds the live run waits for a task to finish before it looks at the queue again
+
+def joins_live_run(a):
+    """Whether this `compose run --only` adds its tasks to a run that is live on the project, instead of starting a second one."""
+    if getattr(a, "cmd", None) != "run" or not a.only:
+        return False
+    m = fc_tasks.run_marker(fc_core.project_dir(a))
+    return bool(m and m["pid"] != os.getpid() and fc_tasks.pid_alive(m["pid"]) and not m.get("closed"))
+
+def queue_tasks(proj, tasks):
+    """Hand the prepared tasks to the live run, which starts each one as soon as its `after` tasks allow."""
+    live = fc_tasks.run_marker(proj)
+    queue = proj / "results" / QUEUE
+    queue.mkdir(exist_ok=True)
+    have = set(live["tasks"]) | {f.stem for f in queue.glob("*.json")}
+    new = [m for m in tasks if m["id"] not in have]
+    for m in tasks:
+        if m not in new:
+            fc_core.say(f"{m['id']} keep    already in the live run (pid {live['pid']})")
+    preflight({m["model"] for m in new} | {fc_models.fallback_for(m["model"]) for m in new})  # here, where a wrong model stops only this command
+    for m in new:
+        fc_core.atomic_write(queue / f"{m['id']}.json", json.dumps(m))
+        fc_core.say(f"{m['id']} queued  added to the live run (pid {live['pid']}); it starts once its `after` tasks have passed")
+    if (fc_tasks.run_marker(proj) or {}).get("closed"):  # the run ended meanwhile: nothing will read the queue
+        for m in new:
+            (queue / f"{m['id']}.json").unlink(missing_ok=True)
+        sys.exit("STOP  the run ended before it could take the task; start it again: compose run --project " + proj.name + " --only " + ",".join(m["id"] for m in new))
+
 def cmd_run(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     only = set(a.only.split(",")) if a.only else None
@@ -155,6 +184,8 @@ def claude_capped(ready, running_models, free, metas):
     return out
 
 def run_tasks(repo, proj, tasks, a):
+    if joins_live_run(a):
+        return queue_tasks(proj, tasks)
     fc_proc.keep_awake()  # a run lasts hours; a sleeping Mac stops every agent and fails every check that waits on a timeout
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
@@ -178,8 +209,11 @@ def run_tasks(repo, proj, tasks, a):
     fc_herdr.herdr_space(proj)
     t0 = time.time()
     (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
+    started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    def write_marker(closed=False):  # closed: the queue below takes no more tasks
+        fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": started_at, "closed": closed,
+            "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
+    write_marker()
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
@@ -190,9 +224,29 @@ def run_tasks(repo, proj, tasks, a):
     unproven = set()
     waits = fc_tasks.waiting(tasks, released)  # an outside blocker git does not place in the trunk holds its task like a hold
     from concurrent.futures import wait, FIRST_COMPLETED
+    queue = proj / "results" / QUEUE
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         running = {}
-        while pending or running:
+        def adopt():
+            """The tasks `compose run --only` queued on this run join it, and start once their `after` tasks have passed. Whether any did."""
+            joined = False
+            for f in sorted(queue.glob("*.json")):
+                m = json.loads(f.read_text())
+                f.unlink()
+                if m["id"] in metas:
+                    continue
+                settled = ids - set(pending) - set(running.values())  # passed or ended already: a passed one holds nothing back
+                tasks.append(m)
+                metas[m["id"]] = m
+                ids.add(m["id"])
+                deps[m["id"]] = [d for d in (x.strip() for x in str(m.get("after") or "").split(",")) if d in ids]
+                pending[m["id"]] = [d for d in deps[m["id"]] if d not in settled or d in failed_ids or d in unproven]
+                waits.update(fc_tasks.waiting([m], released))
+                write_marker()
+                fc_core.say(f"{m['id']} joined  added to the run while it goes on")
+                joined = True
+            return joined
+        while adopt() or pending or running:  # a task queued as the last one ends still starts
             hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
             free = a.parallel - len(running)
@@ -224,7 +278,7 @@ def run_tasks(repo, proj, tasks, a):
                                     "attempts": 0, "seconds": 0.0, "cost": 0.0, "branch": "-"})  # it waits on something that failed
                 break
             try:
-                finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+                finished, _ = wait(list(running), timeout=QUEUE_POLL, return_when=FIRST_COMPLETED)
             except KeyboardInterrupt:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 fc_proc.stop()
@@ -269,6 +323,10 @@ def run_tasks(repo, proj, tasks, a):
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
                 if fc_regress.fast_fix(proj, metas[p], r):
                     running[ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)] = p
+    write_marker(closed=True)  # then a task queued in the instant before is told, never lost
+    for f in queue.glob("*.json"):
+        fc_core.say(f"{f.stem} not run  queued as the run ended; start it again: compose run --project {proj.name} --only {f.stem}")
+        f.unlink()
     for t in reflecting:  # every screen is on disk before the run reports its end
         t.join()
     if any(m.get("linear") for m in tasks):

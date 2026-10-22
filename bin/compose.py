@@ -331,7 +331,7 @@ def main():
     if a.cmd in DETACHED:
         fc_proc.restore_sigint()  # the long commands are stopped with a SIGINT, even when whoever started them ignored it
     detached = os.environ.pop("COMPOSE_DETACHED", None)  # the marker is for this process alone: a compose run by anything it starts must detach on its own
-    if a.cmd in DETACHED and not detached:
+    if a.cmd in DETACHED and not detached and not fc_run.joins_live_run(a):  # it only queues its tasks on the live run: nothing to outlive the terminal
         return detach(a)
     if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it
         fc_update.hold(a.cmd, fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project)).name, a.repo)
