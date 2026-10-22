@@ -54,18 +54,25 @@ def hook_records(key, checkout):
 
 def hooks_ok(key, checkout):
     """(ok, detail): (True, "") for a row without hooks or without its exe on PATH; else the first hook the hooks file lacks or
-    the first hook with no trust record (a wrong hash counts as none) in the trust file."""
+    the first hook with no trust record (a wrong hash counts as none) in the trust file; a file that does not parse is named
+    instead of raising (a hooks file that is not valid JSON, a trust file that is not valid TOML)."""
     row = fc_harness.HARNESSES[key]
     if not row.get("hooks") or not shutil.which(row["exe"]):
         return True, ""
     home = fc_harness.home_dir(key)
-    recs = hook_records(key, checkout)
+    try:
+        recs = hook_records(key, checkout)
+    except json.JSONDecodeError:
+        return False, f"{fc_core.tilde(home / row['hooks_file'])} is not valid JSON"
     for sub, k, h in recs:
         if k is None:
             return False, f"{fc_core.tilde(home / row['hooks_file'])} lacks compose's {sub} hook"
     import tomllib
     trust = home / row["trust_file"]
-    state = tomllib.loads(trust.read_text()).get("hooks", {}).get("state", {}) if trust.exists() else {}
+    try:
+        state = tomllib.loads(trust.read_text()).get("hooks", {}).get("state", {}) if trust.exists() else {}
+    except tomllib.TOMLDecodeError:
+        return False, f"{fc_core.tilde(trust)} is not valid TOML"
     for sub, k, h in recs:
         if state.get(k, {}).get("trusted_hash") != h:
             return False, f"{fc_core.tilde(trust)} has no trust record for compose's {sub} hook"
