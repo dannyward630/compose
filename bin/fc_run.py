@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -203,7 +203,12 @@ def run_tasks(repo, proj, tasks, a):
                     fc_core.say(f"{p} waits   {fc_config.CLAUDE_PARALLEL} Claude tasks already run (claude_parallel in {fc_config.CONFIG_PATH})")
             for p in starts:
                 del pending[p]
-                running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
+                prior = None if getattr(a, "redo", False) else fc_unproven.restartable(proj, metas[p]["id"])
+                if prior:
+                    fc_core.say(f"{p} regress  fix kept on {prior['branch']}; restarting its regression test writer")
+                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)] = p
+                else:
+                    running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
                 break  # a payment halt: leave the rest pending, do not mark them blocked
             if not running:
