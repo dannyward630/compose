@@ -76,13 +76,18 @@ def check(row, checkout):
             return False, f"{'.'.join(map(str, v))} is older than {floor}"
     return True, ""
 
-CLAUDE_ONLY = ()
+CLAUDE_ONLY = ("claude", "herdr skill", "i-have-adhd skill", "compose skill link")
 
 def other_harness(checkout):
-    raise NotImplementedError
+    """The first installed harness whose skill link points at this checkout (e.g. "codex"), else None."""
+    for key in fc_harness.installed():
+        if owned_link(f"{fc_harness.HARNESSES[key]['name']} skill link", checkout)[0]:
+            return key
+    return None
 
 def required(row, other):
-    raise NotImplementedError
+    """Whether the row must be set up: level required, unless it feeds only Claude Code and another harness is set up."""
+    return row[3] == "required" and not (other and row[0] in CLAUDE_ONLY)
 
 STEPS = (  # the rows, in setup order
     ("Homebrew", "brew", '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', "default", False, "interactive"),
