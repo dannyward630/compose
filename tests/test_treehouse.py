@@ -105,7 +105,7 @@ class Treehouse(unittest.TestCase):
     def test_testcrews_skips_finished_tasks_and_a_full_pool_stops_before_any_lease(self):
         self.cap(2)
         wt, proj = self.init()  # the project holds one of the two slots
-        task = lambda tid, **kw: {"id": tid, "title": tid, "files": [], "protected": [], "test": "true", "body": "", **kw}
+        task = lambda tid, **kw: {"id": tid, "title": tid, "files": [], "protected": [f"{tid}_test.txt"], "test": "true", "body": "", **kw}
         (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [
             task("001"), task("002", linear_state="Canceled"), task("003"), task("004"), task("005", linear_state="Done")]}))
         (proj / "results" / "001.json").write_text(json.dumps({"id": "001", "status": "hand_done"}))

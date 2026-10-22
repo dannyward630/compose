@@ -378,7 +378,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
 
 def cmd_testcrews(a):
-    """Start one test-writing teammate per task, in parallel, each briefed with its task and the groundwork's shared contract.
+    """Start one test-writing teammate per task that has a protected test, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
     their briefs needs their tests rewritten first. `--parallel N` starts up to N writers now, Claude Code or not, over the config's caps."""
     proj = fc_core.project_dir(a)
@@ -392,9 +392,13 @@ def cmd_testcrews(a):
     tasks = fc_tasks.load_tasks(proj, required=True)
     finished = lambda m: fc_tasks.task_finished(proj, m, redo) or (not redo and test_collected(proj, m["id"]))  # a finished task needs no test writer
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
+    no_test = [m["id"] for m in metas if not (m.get("protected") or [])]  # nothing protected to write: no writer starts for it
+    metas = [m for m in metas if m["id"] not in no_test]
     rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
-    for tid in sorted(only or ()):  # a named id that is skipped says why
-        if not any(m["id"] == tid for m in metas):
+    for tid in sorted(only or no_test):  # a skipped task says why; with --only, only the named ones
+        if tid in no_test:
+            print(f"{tid} skipped: no protected test to write")
+        elif not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
             why = finished(m) if m else "no such task"
             print(f"{tid} skipped: {why}" + ("; pass --redo to rewrite its test" if why.startswith(("its result", "its test")) else ""))
