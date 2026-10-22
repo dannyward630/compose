@@ -56,9 +56,12 @@ CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order wh
 PLANNING_ROLES = ("wayfinder",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
-TIER_NAMES = ()
-DEFAULT_TIERS = {}
-TIERS = {}
+TIER_NAMES = ("cheap", "standard", "frontier")
+DEFAULT_TIERS = {"cheap": ["claude:claude-haiku-5-5", "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"],
+                 "standard": ["claude:claude-sonnet-5-5"],
+                 "frontier": [{"model": "claude:claude-opus-5-5", "effort": "high"}, {"model": "claude:claude-fable-5-1", "effort": "high"},
+                              {"model": "pi:openai/gpt-6-astra", "effort": "high"}]}
+TIERS = {t: [((e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)) for e in es] for t, es in DEFAULT_TIERS.items()}
 PROVIDERS = {}  # name -> the active settings' providers entry (base URL, optional models list), set by apply_config
 
 
@@ -84,7 +87,7 @@ def settings(cfg):
 def apply_config(move=True):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -121,6 +124,11 @@ def apply_config(move=True):
     entry = lambda e: (e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)
     CREW_FALLBACK = {k: [entry(f) for f in (v["fallback"] if isinstance(v["fallback"], list) else [v["fallback"]])]
                      for k, v in crew.items() if isinstance(v, dict) and v.get("fallback")}  # one entry or an ordered list
+    tiers = models.get("tiers") or {}
+    for t in tiers:
+        if t not in TIER_NAMES:
+            sys.exit(f"{CONFIG_PATH}: models.tiers.{t}: tiers are cheap, standard, frontier")
+    TIERS = {t: [entry(e) for e in tiers.get(t, DEFAULT_TIERS[t])] for t in TIER_NAMES}
     DEFAULT_MODEL = models.get("implementer", DEFAULT_MODEL)
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     FALLBACK_AFTER = int(models.get("fallback_after", FALLBACK_AFTER))
