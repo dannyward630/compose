@@ -130,6 +130,7 @@ Everything a run produces lands in `.compose/<project>/results/`.
 Each task run writes `.compose/<project>/results/NNN.json` with every attempt's test output, timing, and cost.
 Verify writes `results/verify.json`.
 A run that dies shows as `interrupted` in `status`.
+A check-only task whose check already passes shows as `already_green`, whether or not it has a branch, and counts as done.
 `resume` re-runs what did not pass and keeps passed layers.
 `run`, `verify`, and `resume` work in their own session and write `results/<command>.log`.
 The terminal that started one only streams that log.

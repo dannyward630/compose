@@ -43,8 +43,8 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
         state = "merged"  # done on Linear (another story's task, or finished earlier): never run again, never a stall
     elif state == "running" and not fc_tasks.run_alive(proj):
         state = "interrupted"  # the run died without writing a final state; `compose resume` re-runs it
-    elif state in ("passed", "already_green") and (merged or not has_branch) and meta.get("kind") != "design":
-        state = "merged"
+    elif state == "passed" and (merged or not has_branch) and meta.get("kind") != "design":
+        state = "merged"  # an already_green task keeps its own state: its check passed with nothing to merge
     elif state == "hand_done":
         state = "hand_done" if has_branch and not merged else "merged (hand)"
     note = branch if has_branch and not merged else linear_note
