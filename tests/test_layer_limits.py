@@ -160,6 +160,12 @@ class UnknownBaseline(unittest.TestCase):
             (wt / "tests" / "test_other.py").write_text("import unittest\nx = 1\n")
             self.assertTrue(fc.fc_gate.touches(wt, "HEAD")(status))
             self.assertFalse(fc.fc_gate.touches(wt, "HEAD")("TestUnnamed"))
+            sh("git", "add", "-A")
+            check = fc.fc_gate.touches(wt, "HEAD", ["bin/fc_status.py"])  # the changed files given: the diff of the checkout is not read
+            self.assertEqual((check(ship), check(status), check(other)), (False, False, False))
+            check = fc.fc_gate.touches(wt, "HEAD", ["tests/test_other.py", "bin/fc_ship.py"])
+            self.assertEqual((check(ship), check(status), check(other)), (True, True, True))
+            self.assertFalse(fc.fc_gate.touches(wt, "HEAD", [])(ship))
 
 
 if __name__ == "__main__":

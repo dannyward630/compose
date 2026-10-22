@@ -109,7 +109,7 @@ class Ship(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         self.write("setup.txt", "s\n" * 20); self.commit("Add the setup files")
-        tasks = [{"id": t, "protected": [f"t{t}.test"], "files": [f"{t}.src"], "after": "", "test": f"make {t}", "title": f"Build {t}", "linear": f"ENG-{t}", "body": f"## Goal\nBuild {t}.\n"}
+        tasks = [{"id": t, "protected": [f"t{t}.test"], "files": [f"{t}.src"], "after": "", "test": f"test -f {t}.src", "title": f"Build {t}", "linear": f"ENG-{t}", "body": f"## Goal\nBuild {t}.\n"}
                  for t in ("001", "002", "003")]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002", "003"):

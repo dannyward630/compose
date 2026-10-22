@@ -56,11 +56,12 @@ def baseline_state(run, cmds, wt, base, limit):
 
 IMPORT_RE = re.compile(r"^\s*(?:import|from|use|require|#include)\b|\b(?:require|import)\s*\(", re.M)
 
-def touches(wt, base):
+def touches(wt, base, changed=None):
     """A function: does the diff of `wt` against `base` touch the test file a failing id names, or a module that file imports?
-    An id that names no file in the checkout touches nothing."""
-    fc_core.sh(["git", "add", "-A"], wt, check=False)
-    changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
+    An id that names no file in the checkout touches nothing. `changed`: the changed files when they are not the diff of `wt`."""
+    if changed is None:
+        fc_core.sh(["git", "add", "-A"], wt, check=False)
+        changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
     def test_file(tid):
         m = re.search(r"[\w./-]+\.(?:py|js|mjs|ts|tsx|jsx|go|rs|rb)\b", tid)
         if m:

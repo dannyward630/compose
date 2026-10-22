@@ -1,51 +1,116 @@
 """Shipping a verified stack: check every layer before it is submitted, reword its commits, land it on the base."""
 import hashlib, json, os, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_worktree, fc_layers, fc_stack, fc_jev, fc_verify, fc_update
+import fc_core, fc_proc, fc_tasks, fc_worktree, fc_layers, fc_stack, fc_gate, fc_jev, fc_verify, fc_update
 
 LAND_POLL = 20      # seconds between looks at a pull request that is not ready yet
 LAND_SETTLE = 15    # seconds after a push before its required checks are read: GitHub registers them a moment later
 LAND_METHODS = ("squash", "merge", "rebase")
 
+def run_check(wt, c):
+    """(exit code, scrubbed output) of the check `c` in `wt`: 124 past CHECKS_TIMEOUT, and one more run after a tool error."""
+    for attempt in (1, 2):
+        try:
+            p = fc_core.sh(c, wt, timeout=fc_gate.CHECKS_TIMEOUT, check=False, env=fc_core.clean_env())
+            code, out = p.returncode, fc_core.scrub(p.stdout + p.stderr)
+        except subprocess.TimeoutExpired:
+            code, out = 124, f"timed out after {fc_gate.CHECKS_TIMEOUT}s"
+        if not (code and attempt == 1 and fc_jev.tool_error(out[-3000:])):
+            return code, out
+        fc_core.say(f"layers tool error; retrying once  {c}")
+
+def checked(label, outs):
+    """A `run` for fc_gate.check_state that runs each check with run_check, says how it went under `label`, and keeps its output in `outs`."""
+    def run(c, wt, limit, env=None):
+        t1 = time.time()
+        code, outs[c] = run_check(wt, c)
+        fc_core.say(f"layers {'ok  ' if code == 0 else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {label}  {c}")
+        return subprocess.CompletedProcess(c, code, outs[c], "")
+    return run
+
+def layer_commands(proj, layer, checks, top):
+    """What the gate runs on a layer: the `test` of each task the layer holds, then every check on the top layer or only the cheap ones
+    (all but a whole test suite) below it, so a layer is held to its own tasks and the full suite runs once, on the stack as a whole."""
+    tests = {m["id"]: m.get("test") for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
+    return list(dict.fromkeys([c for c in checks if top or not fc_proc.suite(c)] + [tests[t] for t in layer["tasks"] if tests.get(t)]))
+
+def against_base(repo, cfg, wt, base, top, failed, ran):
+    """{command: (new, touched, accepted, unknown)} for the failing ids of a layer (`failed`: command -> ids), judged by what the same
+    command does on `base`, the commit the stack grows from. `new`: ids that pass there; `touched`: ids that fail there too, in a test or
+    module the stack's diff (base to `top`) changes; `accepted`: ids that fail there too and the stack does not touch; `unknown`: the
+    base run timed out or named no failing test, so nothing can be told apart. The base runs each command once (`ran`)."""
+    todo = [c for c in failed if c not in ran]
+    if todo:
+        fc_core.sh(["git", "checkout", "-q", "--detach", base], wt)
+        fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
+        ran.update(fc_gate.check_state(checked(f"base {base[:9]}", {}), todo, wt, 0))
+    touched, verdict = fc_gate.touches(wt, base, fc_core.sh(["git", "diff", "--name-only", base, top], repo).stdout.split()), {}
+    for c, ids in failed.items():
+        old = [t for t in ids if t in ran[c]["failing"]]
+        hit = [t for t in old if touched(t)]
+        verdict[c] = ([t for t in ids if t not in old], hit, [t for t in old if t not in hit], ran[c]["unknown"])
+    return verdict
+
+def ids_text(ids, limit=8):
+    return ", ".join(ids[:limit]) + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
+
+def layer_refusal(name, c, out, why=""):
+    """The reason a layer is refused for the check `c`: `why` says which tests, `out` is the tail of its output."""
+    return (f"{name} fails `{c}` on its own tree" + (f" ({why})" if why else "") + (f":\n{out[-800:]}\n" if out.strip() else ". ") +
+            f"Nothing was pushed. A layer must pass without the layers above it: put what it needs in this layer or below "
+            f"(a task's `after`), fix it, then run `compose stack --submit` again")
+
 def layer_checks(repo, proj, layers, trunk, wt):
     """The gate on a submit: verify.json `checks` (the cheap ones, never e2e) on each layer's own tree, bottom up, in the CLI's
-    worktree. The first layer that fails is the reason returned, with nothing pushed; "" when every layer passes. A layer
-    that passed once is not run again while its tip and the checks stay the same."""
+    worktree. Each layer runs the tests of its own tasks; the top layer also every check, a layer below it only the cheap ones (layer_commands).
+    A failing test that fails on the stack's base too, in a test the stack does not touch, was red before this work: it is accepted
+    and reported (against_base). One that passes on the base, or that the stack touches, refuses the submit, as does a failure that
+    names no test. The first layer refused is the reason returned, with nothing pushed; "" when every layer passes. A layer that
+    passed once is not run again while its tip and its commands stay the same, and one that leaned on the base also the base and top."""
     cfg = fc_core.project_config(proj)
     checks = cfg.get("checks") or []
     if not checks:
         fc_core.say("layers no checks in verify.json: the layers are not checked before submit")
         return ""
-    checks = fc_verify.at_root(checks, (repo, fc_core.worktrees(repo)[0]), wt)
+    roots = (repo, fc_core.worktrees(repo)[0])
+    checks = fc_verify.at_root(checks, roots, wt)
     kept = Path(proj) / "results" / "layer-checks.json"
     seen = json.loads(kept.read_text()) if kept.exists() else {}
-    stamp = hashlib.sha1(json.dumps(checks).encode()).hexdigest()[:12]
+    top, below = fc_core.sh(["git", "rev-parse", layers[-1]["branch"]], repo).stdout.strip(), fc_stack.layer_base(repo, proj, trunk)
+    base = fc_core.sh(["git", "merge-base", below, top], repo, check=False).stdout.strip() or fc_core.sh(["git", "rev-parse", below], repo).stdout.strip()
+    on_base, accepted = {}, 0
     for i, l in enumerate(layers, 1):
         tip = fc_core.sh(["git", "rev-parse", l["branch"]], repo).stdout.strip()
         name = f"layer {i} of {len(layers)} ({l['branch']})"
-        if seen.get(l["branch"]) == f"{tip}:{stamp}":
+        cmds = fc_verify.at_root(layer_commands(proj, l, checks, i == len(layers)), roots, wt)
+        stamp = f"{tip}:{hashlib.sha1(json.dumps(cmds).encode()).hexdigest()[:12]}"
+        lean = f"{stamp}:{base}:{top}"
+        if seen.get(l["branch"]) in (stamp, lean):
             fc_core.say(f"layers ok    {name}  unchanged since its checks passed")
             continue
+        fc_core.say(f"layers scope {name}  " + ("its tasks' tests and every check" if i == len(layers) else "its tasks' tests and the cheap checks") + (": " + "; ".join(cmds) if cmds else ": nothing to run"))
         fc_core.sh(["git", "checkout", "-q", "--detach", tip], wt)
         fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
-        for c in checks:
-            t1 = time.time()
-            for attempt in (1, 2):
-                try:
-                    p = fc_core.sh(c, wt, timeout=900, check=False, env=fc_core.clean_env())
-                    out = fc_core.scrub(p.stdout + p.stderr)[-3000:]
-                except subprocess.TimeoutExpired:
-                    p, out = subprocess.CompletedProcess(c, 124), "timed out after 900s"
-                if not (p.returncode and attempt == 1 and fc_jev.tool_error(out)):
-                    break
-                fc_core.say(f"layers tool error; retrying once  {c}")
-            fc_core.say(f"layers {'ok  ' if p.returncode == 0 else 'FAIL'} {fc_core.fmt(time.time() - t1):>8}  {name}  {c}")
-            if p.returncode:
-                return (f"{name} fails `{c}` on its own tree" + (f":\n{out[-800:]}\n" if out.strip() else ". ") +
-                        f"Nothing was pushed. A layer must pass without the layers above it: put what it needs in this layer or below "
-                        f"(a task's `after`), fix it, then run `compose stack --submit` again")
-        seen[l["branch"]] = f"{tip}:{stamp}"
+        failed, outs = {}, {}
+        for c in cmds:
+            state = fc_gate.check_state(checked(name, outs), [c], wt, 0)[c]
+            if state["unknown"]:
+                return layer_refusal(name, c, outs[c], "" if state["exit"] == 124 else "it names no failing test, so it cannot be compared with the base")
+            if state["exit"]:
+                failed[c] = state["failing"]
+        leaned = False
+        for c, (new, hit, ok, unknown) in (against_base(repo, cfg, wt, base, top, failed, on_base).items() if failed else ()):
+            if unknown or new or hit:
+                why = (f"its run on the base {base[:9]} timed out or names no failing test" if unknown else
+                       "; ".join(x for x in (f"passes on the base {base[:9]}, fails here: {ids_text(new)}" if new else "",
+                                             f"fails on the base too, in what this stack changes: {ids_text(hit)}" if hit else "",
+                                             f"{len(ok)} more already fail on the base and are ignored" if ok else "") if x))
+                return layer_refusal(name, c, outs[c], why)
+            accepted, leaned = accepted + len(ok), True
+            fc_core.say(f"layers base  {name}  `{c}` fails on the base {base[:9]} too and the stack does not touch it, accepted: {ids_text(ok)}")
+        seen[l["branch"]] = lean if leaned else stamp
         fc_core.atomic_write(kept, json.dumps(seen, indent=2))
+    fc_core.say(f"layers ok    {len(layers)} layer(s): every check on the top, the cheap ones below, each layer's own tasks' tests" + (f"; {accepted} failing test(s) already red on the base accepted" if accepted else ""))
     return ""
 
 def cmd_stack(a):

@@ -25,6 +25,10 @@ Verify reads `.compose/<project>/verify.json`.
 
 `commit_convention` (`{"types": [...], "example": "feat: ..."}`) makes every commit the CLI makes, and every teammate brief, start with a type prefix: tests are `test`, docs `docs`, dependencies and config `chore` or `build`, fixes `fix`, the rest `feat`.
 `checks` also gate `compose stack --submit`: each layer is checked on its own tree, bottom up, and a failing layer refuses the submit.
+The top layer runs every check and the `test` of its own tasks.
+A lower layer runs the `test` of its own tasks and the cheap checks, the ones that are not a whole test suite, so the full suite runs once, on the stack as a whole.
+A failing test that fails on the stack's base too, in a test or module the stack does not change, was red before this work: the submit goes on and the test is listed as accepted.
+A test that passes on the base, or that the stack touches, refuses the submit, as does a failure that names no test or a base run that timed out.
 `land_method` (`squash`, `merge`, or `rebase`; default `squash`) is how `compose land` merges each PR.
 `review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.
 One that names no branch (a project made before init recorded it holds `main`, also in a repository whose trunk is `master`) reads as the repository's default branch.
