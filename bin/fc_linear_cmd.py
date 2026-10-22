@@ -20,7 +20,7 @@ def read_stdin():
     chunks = []
     while True:
         if not select.select([fd], [], [], STDIN_SECONDS)[0]:
-            sys.exit(f"no body on stdin after {STDIN_SECONDS}s: pass the text as the last argument, or --file <path>")
+            sys.exit(f"no body on stdin after {STDIN_SECONDS}s: pass --file <path>, or pipe the text in")
         chunk = os.read(fd, 65536)
         if not chunk:
             return b"".join(chunks).decode(errors="replace")
@@ -276,13 +276,15 @@ def verb_update(a):
 def verb_comment(a):
     if not a.target:
         sys.exit("comment needs an issue id")
+    if len(a.target) > 1:  # words after the id were once dropped silently while the command waited on stdin
+        sys.exit("comment takes the body from --file <path> or stdin, not from the command line: "
+                 f"compose linear comment {a.target[0]} --file <path>")
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier project { id name } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
-    text = " ".join(a.target[1:])
-    body = (text if text and not a.file else read_body(a)).strip()
+    body = read_body(a).strip()
     if not body:
-        sys.exit("comment needs a body: the text as the last argument, --file <path>, or stdin")
+        sys.exit("comment needs a body: --file <path>, or stdin")
     fc_linear.linear_comment(issue, body)
     print(f"commented on {issue['identifier']}")
 

@@ -626,15 +626,16 @@ class LinearCommentLabelsDoc(unittest.TestCase):
         self.assertEqual([c.args for c in fc.fc_linear.linear_comment.call_args_list], [(self.issue, "Looks good."), (self.issue, "piped note")])
         self.assertEqual(self.sent(self.ISSUE), [{"id": "ENG-7"}] * 2)
 
-    def test_comment_takes_the_text_as_an_argument_and_never_waits_on_a_stdin_that_does_not_end(self):
-        self.run_verb("comment", "ENG-7", "Looks", "good.")  # stdin is a terminal here: reading it would fail the test
-        self.run_verb("comment", "ENG-7", "ignored", body="from the file")
-        self.assertEqual([c.args for c in fc.fc_linear.linear_comment.call_args_list], [(self.issue, "Looks good."), (self.issue, "from the file")])
+    def test_comment_refuses_words_after_the_id_and_never_waits_on_a_stdin_that_does_not_end(self):
+        for kw in ({}, {"body": "from the file"}):  # stdin is a terminal here: reading it would fail the test
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", "Looks", "good.", **kw)),
+                             (1, "comment takes the body from --file <path> or stdin, not from the command line: compose linear comment ENG-7 --file <path>"))
+        fc.fc_linear.linear_comment.assert_not_called()
         r, w = os.pipe()  # a pipe whose writer stays open: what an agent's shell can hand a command
         self.addCleanup(os.close, w)
         with os.fdopen(r) as held, mock.patch("sys.stdin", held), mock.patch.object(fc.fc_linear_cmd, "STDIN_SECONDS", 0.2):
             self.assertEqual(self.fails(fc.fc_linear_cmd.read_body, self.a("comment", "ENG-7")),
-                             (1, "no body on stdin after 0.2s: pass the text as the last argument, or --file <path>"))
+                             (1, "no body on stdin after 0.2s: pass --file <path>, or pipe the text in"))
         r, w2 = os.pipe()
         os.write(w2, b"piped note\n")
         os.close(w2)
@@ -643,7 +644,7 @@ class LinearCommentLabelsDoc(unittest.TestCase):
 
     def test_comment_refuses_an_empty_body_or_another_project(self):
         for kw in ({"body": " \n\n"}, {}):
-            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", **kw)), (1, "comment needs a body: the text as the last argument, --file <path>, or stdin"))
+            self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", **kw)), (1, "comment needs a body: --file <path>, or stdin"))
         self.issue["project"] = {"id": "p9", "name": "Shop"}
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_comment, self.a("comment", "ENG-7", body="hi")), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
         fc.fc_linear.linear_comment.assert_not_called()
