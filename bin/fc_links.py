@@ -66,7 +66,7 @@ def write_hooks(key, checkout):
         for g in groups:
             sub = g["hooks"][0]["command"].rsplit('" ', 1)[1]
             i = next((j for j, e in enumerate(existing) if e.get("matcher") == g.get("matcher")
-                      and e["hooks"][0]["command"].endswith(f'/bin/compose" {sub}')), None)
+                      and (e.get("hooks") or [{}])[0].get("command", "").endswith(f'/bin/compose" {sub}')), None)
             if i is None:
                 existing.append(g)
                 changed = True
@@ -76,6 +76,7 @@ def write_hooks(key, checkout):
         hooks[ev] = existing
     if not changed:
         return []
+    path.parent.mkdir(parents=True, exist_ok=True)
     fc_core.atomic_write(path, json.dumps(doc, indent=2) + "\n")
     return [path]
 
@@ -105,6 +106,7 @@ def trust_hooks(key, checkout):
         text = text[:m.start(1)] + body + text[m.end(1):]
     if text == old:
         return []
+    path.parent.mkdir(parents=True, exist_ok=True)
     fc_core.atomic_write(path, text)
     return [path]
 
