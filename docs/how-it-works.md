@@ -190,6 +190,7 @@ Without a fallback, such a turn gets a fresh session after 20 s, then 40 s, 60 s
 A refusal that stays, such as a wrong model id, a missing preset, or a bad key, ends the task, or moves it to the fallback.
 Implementers never run tests: an implementer waiting on a test run pays for the wait, and every later turn re-reads the output as input tokens.
 The CLI runs the test after each turn, and on a failure the test reader (`models.test_reader`, default `claude:claude-haiku-5-5`) writes the implementer's fix brief.
+One implementer turn may take 300 s; a turn that runs past it is cut, costs one attempt, and starts again in a fresh session.
 An implementer reads only the files its context pack names, its task's files and its test, through a guard on every tool call of pi, OpenCode and Claude alike.
 The Read, Grep and Glob tools work on those files.
 In bash it may run `trail ask` and `trail callers`, and `wc`, `awk`, `cat`, `head`, `tail`, `sed -n 'a,bp'` and `grep` on those files, alone or ended by `| head` or `| tail`, which is the same view the Read tool gives.

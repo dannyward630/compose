@@ -67,6 +67,10 @@ class Fallback(unittest.TestCase):
             fc.fc_implement.run_task(repo, proj, task, 3)
         self.assertEqual(limits[0], fc.fc_models.TURN_TIMEOUT)  # compose runs the test after the turn, never inside it
 
+    def test_a_turn_may_run_five_minutes_before_it_is_cut(self):
+        """43 turns were cut at 180 s mid-work (7 to 18 tool calls in), most of them Sonnet's, and each cost an attempt and a fresh session."""
+        self.assertEqual(fc.fc_models.TURN_TIMEOUT, 300)
+
     def test_error_falls_back_after_two(self):
         r, calls = self.run_once("error")
         self.assertEqual(r["status"], "passed")
