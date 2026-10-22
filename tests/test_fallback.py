@@ -391,6 +391,23 @@ class FixScope(unittest.TestCase):
         self.verify({"a.go": "fixed\n"}, tasks=[])
         self.assertEqual(self.scopes, [None, None])  # a file no task names: only the full checks cover it
 
+    def test_a_committed_fix_records_fix_tasks_on_the_round_it_fixed(self):
+        tasks = [{"id": "001", "files": ["a.go"], "protected": [], "test": "ta"},
+                 {"id": "002", "files": ["b.go"], "protected": ["a.go"], "test": "tb"},
+                 {"id": "003", "kind": "design", "files": ["a.go"], "protected": [], "test": "td"}]
+        fix_tasks = lambda res: [r.get("fix_tasks", "absent") for r in res["rounds"]]
+        code, _, res = self.verify({"a.go": "fixed\n"}, tasks=tasks)
+        self.assertEqual((code, fix_tasks(res)), (0, [["001", "002"], "absent"]))  # task order, never the design task; the passing round has none
+        _, _, res = self.verify({"a.go": "fixed\n"}, tasks=tasks[:1])
+        self.assertEqual(fix_tasks(res), [["001"], "absent"])
+        _, _, res = self.verify({"a.go": "fixed\n"}, tasks=[])
+        self.assertEqual(fix_tasks(res), [[], "absent"])  # a file no task names
+        code, _, res = self.verify({"b.go": "new\n"}, tasks=tasks[:1])
+        self.assertEqual((code, res["rejected_fixes"], fix_tasks(res)), (1, [{"round": 1, "files": ["b.go"]}], ["absent"]))
+        code, _, res = self.verify({}, tasks=tasks)
+        self.assertEqual((code, fix_tasks(res)), (1, ["absent"]))  # the fixer changed nothing
+        self.assertEqual(sorted(res), ["cost", "passed", "rejected_fixes", "rounds", "seconds"])  # nothing else in verify.json changed
+
     def test_fix_tests_cover_every_changed_file_or_fall_back_to_the_full_checks(self):
         tasks = [{"id": "001", "files": ["a.go"], "protected": ["a_test.go"], "test": "ta"},
                  {"id": "002", "files": ["b.go", "c.go"], "protected": ["b_test.go"], "test": "tb"}]

@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update, fc_routecost
 
 
 def project_head(repo, proj):
@@ -54,9 +54,12 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta], (facts or {}).get("released", ())).get(tid)
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
+    wf, dp = fc_routecost.route(proj, meta)
+    n = fc_routecost.counts(r, fc_routecost.rounds(proj), tid)
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
             "cost": r.get("cost", 0.0), "note": note, "model": (r.get("model") or ("" if design else meta.get("model", ""))).split("/")[-1],
-            "linear": str(meta.get("linear") or "")}
+            "linear": str(meta.get("linear") or ""), "workflow": wf, "depth": dp,
+            "escalations": n["escalations"], "fix_rounds": n["fix_rounds"]}
 
 _git_dirs = {}
 
@@ -192,12 +195,14 @@ def render_status(repo, projects):
             out.append(f"  {y['mode']} on{' (push)' if y.get('push') else ''} since {y['since']}" + (f", set by {by}" if (by := fc_tasks.yolo_by(y)) != "unknown" else ""))
         t = fc_cost.total(fc_cost.rows(proj))
         out.append(f"  cost  {t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)")
-        out.append(f"  {'id':4} {'title':38} {'state':16} {'att':>3} {'time':>8} {'cost':>8}  {'model':14} note")
+        out.append(f"  {'id':4} {'title':38} {'state':16} {'route':33} {'att':>3} {'esc':>3} {'fix':>3} {'time':>8} {'cost':>8}  {'model':14} note")
         for r in rows:
             note = r["note"]
             if note in layers:
                 note = f"{note}  layer {layers[note]}"
-            out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {r['attempts']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
+            route = "-" if r["depth"] == "-" and r["workflow"] == "-" else f"{r['depth']} {r['workflow']}"
+            out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {route:33} {r['attempts']:>3} {r['escalations']:>3} {r['fix_rounds']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
+        out.extend(fc_routecost.summary(rows))
         out.append("")
     return "\n".join(out)
 

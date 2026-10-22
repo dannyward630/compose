@@ -195,5 +195,140 @@ class ReadyList(unittest.TestCase):
         self.line.assert_not_called()
 
 
+class RouteColumns(unittest.TestCase):
+    """`status` shows each task's route, its fallback switches and the verify rounds that fixed it, aligned under the header."""
+
+    HEADER = "  id   title                                  state            route                             att esc fix     time     cost  model          note"
+    FALL = {"fallback": {"from": "a", "to": "b", "why": "x"}}
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init"), ("checkout", "-q", "-b", "compose/p")):
+            subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+
+    def write(self, name, data):
+        (self.proj / "results" / name).write_text(json.dumps(data))
+
+    def table(self):
+        """{task id: (route, att, esc, fix, cost)}, each cell cut at the header's own column."""
+        lines = fc.fc_status.render_status(self.repo, [self.proj]).splitlines()
+        self.assertIn(self.HEADER, lines)
+        h, rows = self.HEADER, lines[lines.index(self.HEADER) + 1:]
+        cut = lambda l, a, b: l[h.index(a):h.index(a) + b].strip()
+        return {l[2:6].strip(): (l[h.index("route"):h.index("att")].strip(), cut(l, "att", 3), cut(l, "esc", 3), cut(l, "fix", 3), l[h.index("cost") - 4:h.index("cost") + 4].strip())
+                for l in rows if l[2:5].isdigit()}
+
+    def test_each_row_shows_its_route_escalations_and_fix_rounds_under_the_header(self):
+        route = lambda body: {"description": "## Route\n\n" + body}
+        self.write("tasks.json", {"feature": {}, "tasks": [
+            {"id": "001", "title": "routed", "linear": "XX-1"}, {"id": "002", "title": "unrouted"},
+            {"id": "003", "title": "a title that is far longer than the thirty-eight characters it gets", "linear": "XX-3"},
+            {"id": "004", "title": "partly routed", "linear": "XX-4"}],
+            "issues": {"XX-1": route("* workflow: test-first\n* depth: FAST\n"), "XX-3": route("* workflow: fix-then-regression-test\n* depth: STANDARD\n"),
+                       "XX-4": route("* depth: DEEP\n")}})
+        self.write("001.json", {"status": "passed", "attempts": 3, "cost": 0.42, "log": [{"attempt": 1}, self.FALL, {"attempt": 2}, self.FALL]})
+        self.write("003.json", {"status": "passed", "log": [{"attempt": 1}]})
+        self.write("verify.json", {"rounds": [{"fix_tasks": ["001", "002"]}, {"fix_tasks": ["001"]}, {}, {"fix_tasks": ["003"]}]})
+        self.assertEqual(self.table(), {"001": ("FAST test-first", "3", "2", "2", "$0.4200"), "002": ("-", "0", "0", "1", "$0.0000"),
+                                        "003": ("STANDARD fix-then-regression-test", "0", "0", "1", "$0.0000"), "004": ("DEEP -", "0", "0", "0", "$0.0000")})
+
+    def test_status_needs_no_verify_json_and_no_sync_cache_and_reads_no_linear(self):
+        self.write("tasks.json", {"feature": {}, "tasks": [{"id": "001", "title": "t", "linear": "XX-1"}]})
+        self.write("001.json", {"status": "passed", "attempts": 1, "log": [self.FALL]})
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("status read Linear")):
+            self.assertEqual(self.table(), {"001": ("-", "1", "1", "0", "$0.0000")})
+
+
+class RouteSummary(unittest.TestCase):
+    """`status` sums attempts, escalations, fix rounds and cost per workflow and per depth, under the task table."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init"), ("checkout", "-q", "-b", "compose/p")):
+            subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "verify.json").write_text(json.dumps({"task_prefix": "compose/p-"}))
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        import fc_routecost
+        self.summary = fc_routecost.summary
+
+    def rows(self, *specs):
+        return [dict(zip(("workflow", "depth", "attempts", "escalations", "fix_rounds", "cost"), s)) for s in specs]
+
+    def test_the_example_gives_the_header_and_a_line_per_value_that_has_rows(self):
+        self.assertEqual(self.summary(self.rows(("test-first", "FAST", 1, 0, 0, 0.0123), ("test-first", "FAST", 3, 1, 2, 0.0456), ("-", "-", 0, 0, 0, 0.0))), [
+            "  route cost                         tasks  att  esc  fix      cost",
+            "  workflow test-first                    2    4    1    2   $0.0579",
+            "  workflow -                             1    0    0    0   $0.0000",
+            "  depth FAST                             2    4    1    2   $0.0579",
+            "  depth -                                1    0    0    0   $0.0000"])
+        self.assertEqual(self.summary([]), [])
+
+    def test_lines_follow_the_declared_order_whatever_the_row_order_and_skip_values_without_rows(self):
+        lines = self.summary(self.rows(("fix-then-regression-test", "DEEP", 1, 0, 1, 0.5), ("-", "STANDARD", 2, 1, 0, 0.25),
+                                       ("test-first", "-", 3, 0, 0, 1.0), ("implement-then-test", "DEEP", 4, 2, 3, 0.125)))
+        self.assertEqual([(l[2:36].strip(), l[36:].split()) for l in lines[1:]], [
+            ("workflow test-first", ["1", "3", "0", "0", "$1.0000"]), ("workflow implement-then-test", ["1", "4", "2", "3", "$0.1250"]),
+            ("workflow fix-then-regression-test", ["1", "1", "0", "1", "$0.5000"]), ("workflow -", ["1", "2", "1", "0", "$0.2500"]),
+            ("depth STANDARD", ["1", "2", "1", "0", "$0.2500"]), ("depth DEEP", ["2", "5", "2", "4", "$0.6250"]), ("depth -", ["1", "3", "0", "0", "$1.0000"])])
+
+    def test_status_prints_the_block_right_after_the_task_rows_and_digest_is_unchanged(self):
+        route = lambda body: {"description": "## Route\n\n" + body}
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "a", "linear": "XX-1"}, {"id": "002", "title": "b"}],
+                                                                       "issues": {"XX-1": route("* workflow: test-first\n* depth: FAST\n")}}))
+        (self.proj / "results" / "001.json").write_text(json.dumps({"status": "passed", "attempts": 3, "cost": 0.42}))
+        lines = fc.fc_status.render_status(self.repo, [self.proj]).split("\n")
+        self.assertEqual(lines[-6:], [
+            "  route cost                         tasks  att  esc  fix      cost",
+            "  workflow test-first                    1    3    0    0   $0.4200",
+            "  workflow -                             1    0    0    0   $0.0000",
+            "  depth FAST                             1    3    0    0   $0.4200",
+            "  depth -                                1    0    0    0   $0.0000", ""])
+        self.assertTrue(lines[-7].startswith("  002 "), lines)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fc.fc_status.cmd_status(SimpleNamespace(repo=str(self.repo), project=None, digest=True, watch=False, json=False))
+        self.assertEqual(out.getvalue(), fc.fc_status.digest(self.repo, self.proj) + "\n")
+
+
+class RouteRow(unittest.TestCase):
+    """`task_state` adds the task's workflow, depth, escalations and fix rounds to its row."""
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+
+    def write(self, name, data):
+        (self.proj / "results" / name).write_text(json.dumps(data))
+
+    def row(self, meta):
+        facts = {"prefix": "compose/p-", "have": set(), "merged": set()}
+        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("task_state read Linear")):
+            r = fc.fc_status.task_state(self.proj.parent.parent, self.proj, meta, "", facts)
+        return {k: r[k] for k in ("workflow", "depth", "escalations", "fix_rounds")}
+
+    def test_a_routed_task_shows_its_route_its_fallback_switches_and_the_verify_rounds_that_fixed_it(self):
+        fall = {"fallback": {"from": "a", "to": "b", "why": "x"}}
+        self.write("tasks.json", {"feature": {}, "tasks": [], "issues": {"XX-1": {"description": "## Route\n\n* workflow: test-first\n* depth: FAST\n"}}})
+        self.write("001.json", {"status": "passed", "log": [{"attempt": 1}, fall, {"attempt": 2}, fall]})
+        self.write("verify.json", {"rounds": [{"fix_tasks": ["001", "002"]}, {"fix_tasks": ["002"]}, {}, {"fix_tasks": ["001"]}]})
+        self.assertEqual(self.row({"id": "001", "linear": "XX-1"}), {"workflow": "test-first", "depth": "FAST", "escalations": 2, "fix_rounds": 2})
+
+    def test_a_task_without_a_linear_key_or_a_route_section_has_no_route(self):
+        self.write("tasks.json", {"feature": {}, "tasks": [], "issues": {"XX-2": {"description": "no section here"}}})
+        none = {"workflow": "-", "depth": "-", "escalations": 0, "fix_rounds": 0}
+        self.assertEqual(self.row({"id": "001"}), none)
+        self.assertEqual(self.row({"id": "001", "linear": "XX-2"}), none)
+
+    def test_a_task_with_no_result_no_verify_json_and_no_sync_cache_gets_zeros(self):
+        self.assertEqual(self.row({"id": "001", "linear": "XX-1"}), {"workflow": "-", "depth": "-", "escalations": 0, "fix_rounds": 0})
+
+
 if __name__ == "__main__":
     unittest.main()
