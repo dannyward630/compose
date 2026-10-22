@@ -11,7 +11,10 @@ harness_of
 model_id
 rows
 installed
+detected
 home_dir
+signed_in
+login_message
 skills_dir
 probe_command
 probe_result

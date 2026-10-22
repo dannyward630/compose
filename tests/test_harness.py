@@ -721,7 +721,7 @@ class CodexArgv(unittest.TestCase):
 
 
 class CodexStart(unittest.TestCase):
-    def start(self, model=None, entry="codex:gpt-6.1-sol", trusted=True, role="tester"):
+    def start(self, model=None, entry="codex:gpt-6.1-sol", trusted=True, role="tester", signed=True, screen=""):  # signed None: the real sign-in check runs
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
         calls, ready = [], mock.Mock()
         skill = proj.parent / "skill"; skill.mkdir(); (skill / "SKILL.md").write_text("v1\n")
@@ -729,7 +729,10 @@ class CodexStart(unittest.TestCase):
             calls.append(args)
             return {"agents": []} if args[:2] == ("agent", "list") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else {}
         a = type("A", (), {"action": "start", "role": role, "title": "t", "brief": "b", "model": model})
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
+        self.calls, self.proj = calls, proj
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_login_screen", return_value=screen), \
+                mock.patch.object(fc_harness, "signed_in", return_value=signed) if signed is not None else contextlib.nullcontext(), \
+ mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {role: entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {role: "high"}), \
@@ -766,6 +769,49 @@ class CodexStart(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
         self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))
         with self.assertRaises(SystemExit): fc.fc_crew.crew_pick_full("tester", "grok:x")
+
+
+class SignInCheck(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup); self.tmp = Path(d.name); self.log = self.tmp / "log"; (self.tmp / "bin").mkdir()
+        p = mock.patch.dict(os.environ, {"PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}", "CODEX_HOME": str(self.tmp / "ch")}); p.start(); self.addCleanup(p.stop)
+
+    def codex(self, code):
+        (self.tmp / "bin" / "codex").write_text(f'#!/bin/sh\necho "$CODEX_HOME|$*" >> {self.log}\nexit {code}\n'); (self.tmp / "bin" / "codex").chmod(stat.S_IRWXU); self.log.write_text("")
+
+    def made(self):  # what a start leaves behind: herdr calls that make or drive a tab, and the teammate's files
+        return [c for c in self.calls if c[:2] in (("tab", "create"), ("agent", "start"), ("agent", "prompt"), ("agent", "send-keys"))], [p for p in fc.fc_crew.crew_dir(self.proj).glob("*") if p.suffix in (".json", ".md")]
+
+    def test_signed_in_is_true_only_on_exit_0_after_the_read_only_check_in_the_home(self):
+        os.environ.pop("CODEX_HOME")  # the home comes from home_dir, not from the caller's environment
+        for code, want in ((0, True), (1, False), (2, False)):
+            self.codex(code)
+            self.assertIs(fc_harness.signed_in("codex"), want, code)
+            self.assertEqual(self.log.read_text(), f"{fc_harness.home_dir('codex')}|login status\n")
+
+    def test_the_message_names_the_home_and_the_login_command(self):
+        h = fc_harness.home_dir("codex")
+        self.assertEqual(fc_harness.login_message("codex"), f"Codex is not signed in for CODEX_HOME={h}. compose never signs in for you: run `CODEX_HOME={h} codex login` yourself, then the same crew start again.")
+
+    def test_not_signed_in_exits_before_a_tab_or_record_for_any_role(self):
+        self.codex(1)
+        for role in ("tester", "orchestrator"):
+            with self.assertRaises(SystemExit) as e: CodexStart.start(self, signed=None, role=role)
+            self.assertEqual(str(e.exception), fc_harness.login_message("codex"))
+            self.assertEqual(self.made(), ([], []), role)
+
+    def test_signed_in_starts_as_today_and_claude_and_pi_never_ask(self):
+        self.codex(0)
+        self.assertEqual(CodexStart.start(self, signed=None)[0][4], "codex")
+        self.codex(1)
+        for entry in ("claude:claude-sonnet-5-5", "pi:x/y"): self.assertEqual(CodexStart.start(self, entry=entry, signed=None)[0][4], entry.split(":")[0])
+        self.assertEqual(self.log.read_text(), "")
+
+    def test_a_sign_in_screen_before_the_brief_closes_the_tab_and_registers_nothing(self):
+        with self.assertRaises(SystemExit) as e: CodexStart.start(self, screen="Sign in with ChatGPT")
+        self.assertEqual(str(e.exception), fc_harness.login_message("codex"))
+        self.assertIn(("tab", "close", "w9:t3"), self.calls)
+        self.assertEqual(self.made()[1], []); self.assertFalse([c for c in self.calls if c[:2] == ("agent", "prompt")])
 
 
 class CodexLead(unittest.TestCase):
