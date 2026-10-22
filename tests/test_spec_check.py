@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -183,7 +183,7 @@ class SpecCheck(unittest.TestCase):
                                            task("ENG-6", "024"), task("ENG-7", "025", ["ENG-6"]), task("ENG-8", "026", files="z.go")]))
         def header():
             out = io.StringIO()
-            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out), contextlib.suppress(SystemExit):  # until a layer passes, this plan is a serial chain
                 fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
             return out.getvalue().splitlines()[0].partition("stack order (bottom first): ")[2]
         git("branch", "fast/p/026", git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "026"))
@@ -212,8 +212,12 @@ class SpecCheck(unittest.TestCase):
             path = proj / "results" / "tasks.json"
             path.write_text(json.dumps(cache(json.loads(path.read_text()))))
         out = io.StringIO()
+        self.exit_code = 0
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
-            fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+            try:
+                fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+            except SystemExit as e:
+                self.exit_code = e.code
         return clash, proj, out.getvalue()
 
     def test_shared_file_in_spec_check_and_tasks_and_sync_keeps_parent(self):
@@ -221,6 +225,11 @@ class SpecCheck(unittest.TestCase):
         self.assertEqual(out, TASKS_OUT)
         self.assertEqual(fc.fc_tasks.linear_cache(proj)["issues"]["ENG-3"]["parentId"], "ENG-2")
         self.assertTrue(has(check(clash)["ENG-1"][2], "a.go"))
+
+    def test_tasks_exits_1_on_a_serial_chain_after_printing_it(self):
+        _, _, out = self.clash_tasks()
+        self.assertIn("WARNING SERIAL CHAIN", out)
+        self.assertEqual(self.exit_code, 1)
 
     def test_route_is_a_dash_for_an_issue_missing_from_the_cache_or_a_cache_without_issues(self):
         wide = lambda r: f"{r:33}"

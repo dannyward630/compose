@@ -86,6 +86,7 @@ def cmd_tasks(a):
     if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
         print(f"\n  WARNING SERIAL CHAIN: {len(to_run)} tasks run in {len(waves)} waves, mostly one after another. Keep an `after:` "
               "(blocked-by) only where a task needs another task's code or file; the stack puts a task above its `after:` tasks and orders the rest by id, so review order needs no `after:`.")
+        sys.exit(1)  # the team lead cuts every `after:` that is not a real code need before 3b
 
 
 def run_waves(tasks):

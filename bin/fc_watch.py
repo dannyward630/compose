@@ -173,6 +173,9 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all"):
         lt, what = snap.get("last") or (0, "")
         if (pending or on_hold or working or snap["run"]) and lt and now_s - lt >= limit:
             fire(f"quiet:{lt}", f"quiet{who} nothing moved for {fc_core.fmt(now_s - lt)}, last: {what} at {hm(lt)}")
+        rep = (snap.get("crew", {}).get(orch) or [None])[-1]  # the team lead's newest report: working with nothing parallel is a lead under-applying SKILL.md's parallel rule
+        if lead and rep and rep["state"] == "working" and orch not in closed and (gap := fc_crew.parallel_gap(rep["message"])):
+            fire(f"serial:{rep['at']}", f"serial agent={orch} its working report of {rep['at']} {gap}; nudge it to start what can start now")
         tests = {n: v for n, v in last.items() if re.search(r"-tests-\d+$", n)}
         if tests and all(st == "done" or n in closed for n, (st, _) in tests.items()) and not snap["run"] and pending \
                 and all(snap["tasks"][t]["state"] == "pending" for t in pending):

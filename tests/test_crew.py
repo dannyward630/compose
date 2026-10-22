@@ -454,6 +454,15 @@ class Crew(unittest.TestCase):
     def test_team_lead_reports_to_engineering_manager(self):
         self.assertIn("the engineering manager", fc.fc_crew.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
 
+    def test_the_team_lead_is_told_the_parallel_clause_and_warned_when_a_working_report_lacks_it(self):
+        self.assertIn("parallel: none because <reason>", fc.fc_crew.crew_preamble(self.proj, "shop-orchestrator", "orchestrator"))
+        self.assertNotIn("parallel:", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
+        for who, msg, warned in (("shop-orchestrator", "running 001 then 002", True), ("shop-orchestrator", "parallel: started 001,002", False),
+                                 ("shop-tests", "writing tests", False)):
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print") as out:
+                fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": "working", "message": msg.split()}))
+            self.assertEqual(any("parallel:" in str(c) for c in out.call_args_list[:-1]), warned, (who, msg))
+
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
         pre = fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests")
         self.assertIn("never mention compose", pre)
