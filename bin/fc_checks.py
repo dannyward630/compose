@@ -67,16 +67,41 @@ def hooks_ok(key, checkout):
     for sub, k, h in recs:
         if k is None:
             return False, f"{fc_core.tilde(home / row['hooks_file'])} lacks compose's {sub} hook"
-    import tomllib
     trust = home / row["trust_file"]
     try:
-        state = tomllib.loads(trust.read_text()).get("hooks", {}).get("state", {}) if trust.exists() else {}
-    except tomllib.TOMLDecodeError:
+        state = trust_state(trust.read_text()) if trust.exists() else {}
+    except ValueError:
         return False, f"{fc_core.tilde(trust)} is not valid TOML"
     for sub, k, h in recs:
         if state.get(k, {}).get("trusted_hash") != h:
             return False, f"{fc_core.tilde(trust)} has no trust record for compose's {sub} hook"
     return True, ""
+
+def trust_state(text):
+    """A trust file's [hooks.state."<key>"] tables as {key: {"trusted_hash": h}}. When import tomllib succeeds inside it,
+    tomllib.loads(text).get("hooks", {}).get("state", {}) (invalid TOML raises, a ValueError); else, in the style of
+    fc_init.herdr_toml: a [hooks.state.<json key>] header line gives its key (json.loads), any other [...] header ends it, and
+    its trusted_hash = "<v>" line gives the hash (no such line: {}); never raises."""
+    try:
+        import tomllib
+        return tomllib.loads(text).get("hooks", {}).get("state", {})
+    except ImportError:
+        pass
+    state, cur = {}, None
+    for line in text.splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if m := re.match(r"\[hooks\.state\.(.*)\]$", line):
+            try:
+                cur = json.loads(m.group(1))
+            except ValueError:
+                cur = None
+            if cur is not None:
+                state[cur] = {}
+        elif re.match(r"\[.*\]$", line):
+            cur = None
+        elif cur is not None and (m := re.match(r"trusted_hash[ \t]*=(.*)$", line)):
+            state[cur] = {"trusted_hash": m.group(1).strip().strip("\"'")}
+    return state
 
 def link_state(path):
     """("ok", target) when path resolves to something that exists, ("dangling", raw link text), or ("missing", None)."""
