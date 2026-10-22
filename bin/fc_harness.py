@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import fc_core
@@ -95,6 +96,7 @@ HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
               "events": _codex_events, "once": _codex_once,
+              "login_check": ("login", "status"), "login": ("login",),
               "login_screens": ("Sign in with ChatGPT", "Finish signing in via your browser"),
               "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": _codex_hash,
               "hooks": (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"),
@@ -125,6 +127,20 @@ def installed():
 def home_dir(key):
     row = HARNESSES[key]
     return Path(os.environ.get(row["home_env"]) or os.path.expanduser(row["home"]))
+
+def signed_in(key):
+    row = HARNESSES[key]
+    try:
+        p = subprocess.run([row["exe"], *row["login_check"]], stdin=subprocess.DEVNULL, timeout=30,
+                           env={**os.environ, row["home_env"]: str(home_dir(key))})
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return p.returncode == 0
+
+def login_message(key):
+    row, home = HARNESSES[key], home_dir(key)
+    return (f"{row['name']} is not signed in for {row['home_env']}={home}. compose never signs in for you: "
+            f"run `{row['home_env']}={home} {row['exe']} {' '.join(row['login'])}` yourself, then the same crew start again.")
 
 def skills_dir(key):
     return home_dir(key) / "skills"
