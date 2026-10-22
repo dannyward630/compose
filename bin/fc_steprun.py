@@ -13,6 +13,7 @@ WRITERS = {
     "compose CLI link": link_writer("compose CLI link"),
     "compose skill link": link_writer("compose skill link"),
     **{f"{r['name']} skill link": link_writer(f"{r['name']} skill link") for k in fc_harness.rows() for r in (fc_harness.HARNESSES[k],)},
+    **{f"{fc_harness.HARNESSES[k]['name']} commands": (lambda checkout, k=k: fc_links.write_commands(k, checkout)) for k in fc_harness.rows()},
     "bp link": link_writer("bp link"),
     "TEXT_MODEL lines": lambda checkout: fc_pi.write_text_model(fc_config.ENV_FILE),
 }
@@ -23,6 +24,8 @@ PREVIEWS = {
     "compose skill link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "compose skill link"),
     **{f"{r['name']} skill link": (lambda checkout, r=r: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == f"{r['name']} skill link"))
        for k in fc_harness.rows() for r in (fc_harness.HARNESSES[k],)},
+    **{f"{fc_harness.HARNESSES[k]['name']} commands": (lambda checkout, k=k: "; ".join(f"would write {copy}" for copy, _ in fc_checks.command_copies(k, checkout)))
+       for k in fc_harness.rows()},
     "bp link": lambda checkout: next(f"would link {link} -> {target}" for n, link, target in fc_checks.owned_links(checkout) if n == "bp link"),
     "TEXT_MODEL lines": lambda checkout: f"would append {', '.join(fc_pi.TEXT_MODEL_DEFAULTS)} to {fc_config.ENV_FILE}",
 }
