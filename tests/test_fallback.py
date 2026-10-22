@@ -167,7 +167,7 @@ class Fallback(unittest.TestCase):
 
     def test_glm_is_the_default_with_no_fallback(self):
         self.assertIn("glm-5.3-flash@preset/glm-5-3-flash-fast", fc.fc_config.DEFAULT_MODEL)
-        self.assertIsNone(fc.fc_models.fallback_for(fc.fc_config.DEFAULT_MODEL))
+        self.assertEqual(fc.fc_models.fallback_for(fc.fc_config.DEFAULT_MODEL), "claude:claude-sonnet-5-5")
 
 
 class Preflight(unittest.TestCase):
@@ -1453,3 +1453,32 @@ class SiblingStubs(unittest.TestCase):
     def test_a_check_that_was_red_before_the_task_is_not_blamed_on_it(self):
         result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("python3 -m unittest discover -s tests -p test_one.py && false",))
         self.assertEqual(result["status"], "passed")
+
+
+class TestTierEscalation(unittest.TestCase):
+    SONNET = "claude:claude-sonnet-5-5"
+
+    def test_a_cheap_model_escalates_to_standard_whatever_the_fallback_is(self):
+        for fallback in (None, BACKUP):
+            with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fallback):
+                self.assertEqual(fc.fc_models.fallback_for(fc.fc_config.DEFAULT_MODEL), self.SONNET)
+                self.assertEqual(fc.fc_models.fallback_for("claude:claude-haiku-5-5"), self.SONNET)
+
+    def test_standard_and_frontier_models_have_nowhere_to_escalate(self):
+        with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
+            self.assertIsNone(fc.fc_models.fallback_for(self.SONNET))
+            self.assertIsNone(fc.fc_models.fallback_for("claude:claude-opus-5-5"))
+
+    def test_a_model_in_no_tier_keeps_the_old_rule(self):
+        with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
+            self.assertEqual(fc.fc_models.fallback_for(PRIMARY), BACKUP)
+            self.assertIsNone(fc.fc_models.fallback_for(BACKUP))
+        with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None):
+            self.assertIsNone(fc.fc_models.fallback_for(PRIMARY))
+
+    def test_escalation_follows_the_configured_tiers_to_the_first_standard_model(self):
+        tiers = {"cheap": [("pi:a/b", None)], "standard": [("pi:s/one", None), ("pi:s/two", None)], "frontier": [("claude:claude-opus-5-5", "high")]}
+        with mock.patch.object(fc.fc_config, "TIERS", tiers), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP):
+            self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:s/one")
+            self.assertIsNone(fc.fc_models.fallback_for("pi:s/one"))
+            self.assertEqual(fc.fc_models.fallback_for(PRIMARY), BACKUP)
