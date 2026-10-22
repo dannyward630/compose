@@ -68,6 +68,7 @@ def follow(cmd, log):
 
 def detach(a):
     proj = fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project))
+    fc_update.refuse_while_running(a.cmd, proj, a.repo)  # before the log below is emptied under the one still writing it
     log = proj / "results" / f"{a.cmd}.log"
     log.parent.mkdir(exist_ok=True)
     print(f"[{fc_core.now()}] {a.cmd} runs in its own session; it outlives this terminal. Log: {log}", flush=True)
