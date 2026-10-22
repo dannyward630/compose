@@ -64,7 +64,13 @@ def edit_paths(ev):
     if ev.get("tool_name") == "apply_patch":
         found += re.findall(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", cmd, re.M)
     elif ev.get("tool_name") == "Bash":
-        found += re.findall(r"(?<!>)>>?(?!&)\s*([^\s|;&<>]+)", cmd)
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        try:
+            words = list(lex)
+        except ValueError:  # an unclosed quote: the shell does not run it either
+            words = []
+        found += [words[i + 1] for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
     return [str(Path(ev.get("cwd") or ".") / p) for p in found if p]
 
 def cmd_guard(a):
