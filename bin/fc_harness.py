@@ -95,6 +95,7 @@ HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
               "events": _codex_events, "once": _codex_once,
+              "login_screens": ("Sign in with ChatGPT", "Finish signing in via your browser"),
               "hooks_file": "hooks.json", "trust_file": "config.toml", "hash": _codex_hash,
               "hooks": (("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit", "guard"), ("PreToolUse", "Bash", "guard"),
                         ("UserPromptSubmit", None, "skillcheck"), ("SessionStart", "compact", "reenter"))},

@@ -91,10 +91,20 @@ def herdr_dialog(agent):
     text = " / ".join(ln for ln in body if ln and not ln.startswith(("Enter to confirm", "Esc to")))
     return text[:400] or "unknown"
 
+def herdr_login_screen(agent):
+    """The sign-in text on `agent`'s pane: the first `login_screens` text of any fc_harness row visible on it, else ""."""
+    text = herdr_text("agent", "read", agent, "--source", "visible", "--lines", "40")
+    for key in fc_harness.rows():
+        for screen in fc_harness.HARNESSES[key].get("login_screens", ()):
+            if screen in text:
+                return screen
+    return ""
+
 def herdr_await_start(agent, first=None, tries=3):
     """Return once `agent` has started on its brief, the first prompt it gets. This only confirms the submission landed (status
     working, blocked, or done); when it did not, presses Enter for a box that kept the text without submitting, then sends `first`
-    again for a box that lost it, and fails loudly with the agent name when it still did not start."""
+    again for a box that lost it, and fails loudly with the agent name when it still did not start. A pane on a sign-in screen
+    gets neither: before each Enter and each re-send `herdr_login_screen` is asked, and one there raises naming its text."""
     def started():  # `done` counts too: a short first turn can finish before the check
         return ((herdr("agent", "get", agent) or {}).get("agent") or {}).get("agent_status") in ("working", "blocked", "done")
     def settles(secs):
@@ -105,10 +115,14 @@ def herdr_await_start(agent, first=None, tries=3):
         return False
     for attempt in range(tries + 1):
         if attempt:
+            if screen := herdr_login_screen(agent):
+                raise RuntimeError(f"{agent} is on a sign-in screen ({screen}): sign in there, then run compose again")
             herdr("agent", "send-keys", agent, "enter")
             if settles(6):
                 return
             if first:
+                if screen := herdr_login_screen(agent):
+                    raise RuntimeError(f"{agent} is on a sign-in screen ({screen}): sign in there, then run compose again")
                 herdr("agent", "prompt", agent, first)
         if settles(20):
             return
