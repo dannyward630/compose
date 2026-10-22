@@ -1283,6 +1283,37 @@ CLI_HEAD = "| `setup` | Installs and configures everything `compose` needs ([new
 CLI_TAIL = " It shows the Claude Code permission rules `compose` needs (`gh pr view`, `compose land`, moving a `compose/*` branch) and writes them to `~/.claude/settings.json` only on your yes; `--yes` and a dry run never write them, and rules that stay asking (`git push`, force-push, `gh pr merge`, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`) are never added. It exits 1 when Claude Code is missing. Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
 
 
+class HarnessHomePage(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.reserved, self.keys = fc_harness.RESERVED, [k for k, v in fc_harness.HARNESSES.items() if v]
+
+    def test_page_names_every_reserved_name_and_row_key(self):
+        page = read("docs/harnesses.md")
+        self.assertTrue(self.reserved and self.keys)
+        for key in (*self.reserved, *self.keys):
+            self.assertIn(f"`{key}", page, f"{key!r} not documented")
+
+    def test_page_covers_the_prefixes_roles_and_what_is_not_supported(self):
+        page = read("docs/harnesses.md")
+        for word in ("`claude:`", "`pi:`", "OpenCode", "codex exec", "$compose", "config.md", "NEB-1490", "NEB-1524"):
+            self.assertIn(word, page, word)
+
+    def test_readme_links_the_page_and_names_codex_in_the_quick_start(self):
+        readme = read("README.md")
+        self.assertRegex(readme, r"(?m)^\| \[harnesses\.md\]\(docs/harnesses\.md\) \|")
+        quick = readme.split("## Quick start")[1].split("\n## ")[0]
+        self.assertIn("`codex`", quick)
+        self.assertIn("`$compose", quick)
+        self.assertIn("`/compose", quick)
+
+    def test_no_em_dash_and_no_claude_only_test_reader(self):
+        for rel in ("README.md", "docs/harnesses.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+            self.assertNotRegex(read(rel), r"(?i)test_reader[^\n]*must be (a )?`?claude:", rel)
+
+
 class SetupDocs(unittest.TestCase):
     def assertBlock(self, lines, block):
         starts = [i for i, l in enumerate(lines) if l == block[0]]
