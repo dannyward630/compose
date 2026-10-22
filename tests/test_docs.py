@@ -1077,6 +1077,12 @@ class ReadyCheckpoints(unittest.TestCase):
         for word in ("sync", "run", "verify", "clean"):
             self.assertRegex(row, rf"`(compose )?{word}`")
 
+    def test_cli_init_row_names_the_herdr_tabs_and_how_to_skip_them(self):
+        row = self.row("init")
+        for word in ("`<slug> shell`", "`<slug> status`", "`COMPOSE_NO_HERDR=1`"):
+            self.assertIn(word, row)
+        self.assertNotIn("\u2014", row)
+
     def test_cli_sync_and_clean_rows_name_ready_and_keep_what_they_said(self):
         tasks = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
         projects = read("docs/cli.md").split("### Projects\n", 1)[1].split("### Tasks\n", 1)[0]
