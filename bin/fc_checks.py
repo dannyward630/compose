@@ -18,10 +18,22 @@ def owned_links(checkout):
     return links
 
 def command_copies(key, checkout):
-    raise NotImplementedError
+    """[(copy, source)] for one harness row: each <checkout>/commands/*.md sorted by name, copied to its skills folder as
+    compose-<name>/SKILL.md (Codex loads a real SKILL.md, not a link); [] when the row's exe is not on PATH."""
+    if not shutil.which(fc_harness.HARNESSES[key]["exe"]):
+        return []
+    return [(fc_harness.skills_dir(key) / f"compose-{c.stem}" / "SKILL.md", c)
+            for c in sorted(Path(checkout).glob("commands/*.md"))]
 
 def commands_ok(key, checkout):
-    raise NotImplementedError
+    """(ok, detail) for the row's command copies: ok when every copy is a regular file holding its source's bytes, else the
+    first bad copy, named as missing (not a regular file) or stale (different bytes)."""
+    for copy, source in command_copies(key, checkout):
+        if copy.is_symlink() or not copy.is_file():
+            return False, f"{fc_core.tilde(copy)} is missing"
+        if copy.read_bytes() != source.read_bytes():
+            return False, f"{fc_core.tilde(copy)} is stale"
+    return True, ""
 
 def hooks_ok(key, checkout):
     raise NotImplementedError
