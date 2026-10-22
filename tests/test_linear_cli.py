@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, time, unittest, urllib.error
+import importlib.machinery, importlib.util, io, json, os, re, subprocess, tempfile, threading, time, unittest, urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -324,16 +324,29 @@ class LinearErrors(unittest.TestCase):
                 self.assertAlmostEqual(nap.call_args.args[0], wait, delta=2)
                 self.assertIn(f"waiting {int(nap.call_args.args[0])}s", said.getvalue())
 
-    def test_a_rate_limit_that_stays_or_names_a_long_wait_fails_with_the_time(self):
+    def test_a_rate_limit_that_stays_or_names_a_wait_past_the_time_left_fails_with_the_time(self):
         body = json.dumps({"errors": [{"message": "Rate limit exceeded", "extensions": {"code": "RATELIMITED"}}]}).encode()
-        for headers, tries in (({}, fc.fc_linear.LINEAR_RETRIES + 1), ({"Retry-After": "3000"}, 1)):
+        for headers, tries in (({}, 4), ({"Retry-After": "250"}, 1)):  # the doubling pauses 10, 20, 40 fit in 120s, the 80 after them does not
             with self.subTest(headers=headers):
                 errs = [urllib.error.HTTPError(fc.fc_linear.LINEAR_URL, 429, "Too Many Requests", headers, io.BytesIO(body)) for _ in range(tries)]
-                with mock.patch("urllib.request.urlopen", side_effect=errs) as call, mock.patch("time.sleep"), mock.patch("sys.stderr", io.StringIO()):
+                now = [0.0]
+                nap = lambda s: now.__setitem__(0, now[0] + s)
+                with mock.patch("urllib.request.urlopen", side_effect=errs) as call, mock.patch("time.sleep", nap), mock.patch("time.monotonic", lambda: now[0]), \
+                        mock.patch("sys.stderr", io.StringIO()):
                     with self.assertRaises(RuntimeError) as e:
                         fc.fc_linear.linear_gql("query { viewer { id } }", {})
                 self.assertEqual(call.call_count, tries)
+                self.assertLessEqual(now[0], fc.fc_linear.LINEAR_CALL_SECONDS)
                 self.assertIn("Rate limit exceeded", str(e.exception)); self.assertIn("run it again then", str(e.exception))
+
+    def test_a_reply_that_never_ends_fails_naming_the_time_instead_of_hanging(self):
+        stuck = threading.Event()
+        self.addCleanup(stuck.set)
+        with mock.patch("urllib.request.urlopen", side_effect=lambda *a, **kw: stuck.wait(30)), mock.patch.object(fc.fc_linear, "LINEAR_CALL_SECONDS", 0.2):
+            with self.assertRaises(RuntimeError) as e:
+                fc.fc_linear.linear_gql("mutation { x }", {})
+        self.assertIn("Linear gave no answer within 0.2s", str(e.exception))
+        self.assertIn("read the issue before repeating it", str(e.exception))
 
     def test_the_sync_query_asks_for_at_most_50_relations_and_20_labels_per_issue(self):
         fields = fc.fc_linear.LINEAR_TREE_FIELDS

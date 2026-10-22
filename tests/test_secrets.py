@@ -151,6 +151,8 @@ class Secrets(unittest.TestCase):
         (home / "auth.json").touch()  # rewritten with the same bytes
         (home / "live").mkdir()  # a run in another project holds it with its pid's file (fc_update.hold)
         (home / "live" / "27545.json").write_text("{}")
+        (home / "linear-get").mkdir()  # another session's `compose linear get` caches a read
+        (home / "linear-get" / "0123456789ab-ba9876543210.json").write_text("{}")
         go.touch()
         out, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 0, err)

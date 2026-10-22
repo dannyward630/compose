@@ -1,5 +1,5 @@
 """`compose linear <verb>`: read and write Linear with the workspace key, printing compact text."""
-import hashlib, json, sys, time, urllib.parse
+import hashlib, json, os, select, sys, time, urllib.parse
 from pathlib import Path
 
 import fc_core, fc_config, fc_linear, fc_plan
@@ -9,10 +9,27 @@ def issue_line(issue):
     labels = issue["labels"]["nodes"]
     return f"{issue['identifier']} {issue['state']['name']} {labels[0]['name'] if labels else '-'} {issue['title']}"
 
+STDIN_SECONDS = 30  # a piped body that has not ended by then is refused: a stdin nobody closes must not hold the command silently
+
+def read_stdin():
+    """All of stdin, or exit naming the time when it neither ends nor sends anything for STDIN_SECONDS."""
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError):  # not a file descriptor: a StringIO has nothing to wait on
+        return sys.stdin.read()
+    chunks = []
+    while True:
+        if not select.select([fd], [], [], STDIN_SECONDS)[0]:
+            sys.exit(f"no body on stdin after {STDIN_SECONDS}s: pass the text as the last argument, or --file <path>")
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks).decode(errors="replace")
+        chunks.append(chunk)
+
 def read_body(a):
     if a.file:
         return Path(a.file).read_text()
-    return "" if sys.stdin.isatty() else sys.stdin.read()
+    return "" if sys.stdin.isatty() else read_stdin()
 
 def linear_project(repo):
     path = fc_core.repo_link(repo)
@@ -262,9 +279,10 @@ def verb_comment(a):
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier project { id name } } }",
                                  {"id": a.target[0]})["issue"]
     in_scope(issue, a)
-    body = read_body(a).strip()
+    text = " ".join(a.target[1:])
+    body = (text if text and not a.file else read_body(a)).strip()
     if not body:
-        sys.exit("comment needs a body: --file <path> or stdin")
+        sys.exit("comment needs a body: the text as the last argument, --file <path>, or stdin")
     fc_linear.linear_comment(issue, body)
     print(f"commented on {issue['identifier']}")
 

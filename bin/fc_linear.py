@@ -1,4 +1,4 @@
-import json, os, sys, time, urllib.error, urllib.request
+import json, os, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
 import fc_core, fc_config, fc_plan, fc_tasks
 
@@ -61,7 +61,8 @@ LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier state { n
 _linear_warned = []
 
 LINEAR_RETRIES = 5     # waits before a rate-limited call gives up
-LINEAR_MAX_WAIT = 300  # a single wait longer than this fails naming the time instead, so no command hangs for the rest of the hour
+LINEAR_MAX_WAIT = 300  # the doubling pause stops growing here
+LINEAR_CALL_SECONDS = 120  # one call, its rate-limit waits and slow replies included, never takes longer: it fails naming the time, so no caller waits silently
 
 class LinearRateLimited(RuntimeError):
     def __init__(self, message, wait):
@@ -104,13 +105,32 @@ def _linear_post(query, variables, attempt):
         raise RuntimeError(message)
     return out["data"]
 
+def _within(seconds, fn):
+    """fn() run in a thread of its own and given up on after `seconds`: a reply that trickles in keeps urlopen's per-read timeout from ever firing."""
+    box = {}
+    def work():
+        try:
+            box["out"] = fn()
+        except BaseException as e:  # noqa: BLE001  re-raised in the caller
+            box["err"] = e
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(max(0, seconds))
+    if t.is_alive():
+        raise RuntimeError(f"Linear gave no answer within {LINEAR_CALL_SECONDS}s; a write may still have gone through, so read the issue before repeating it")
+    if "err" in box:
+        raise box["err"]
+    return box["out"]
+
 def linear_gql(query, variables):
-    """One GraphQL call. A rate-limited call did not run, so it waits as long as Linear says and runs again, saying so on stderr."""
+    """One GraphQL call, bounded by LINEAR_CALL_SECONDS. A rate-limited call did not run, so it waits as long as Linear says
+    (while that fits in the time left) and runs again, saying so on stderr."""
+    deadline = time.monotonic() + LINEAR_CALL_SECONDS
     for attempt in range(LINEAR_RETRIES + 1):
         try:
-            return _linear_post(query, variables, attempt)
+            return _within(deadline - time.monotonic(), lambda: _linear_post(query, variables, attempt))
         except LinearRateLimited as e:
-            if e.wait > LINEAR_MAX_WAIT or attempt == LINEAR_RETRIES:
+            if e.wait > deadline - time.monotonic() or attempt == LINEAR_RETRIES:
                 raise RuntimeError(f"{e} (Linear lets calls through again in about {int(e.wait)}s; run it again then)") from None
             print(f"Linear rate limit: waiting {int(e.wait)}s, then retry {attempt + 1} of {LINEAR_RETRIES}", file=sys.stderr)
             time.sleep(e.wait)
