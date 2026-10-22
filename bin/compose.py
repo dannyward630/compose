@@ -194,6 +194,8 @@ def main():
             s.add_argument("--interval", type=float, default=fc_watch.WATCH_INTERVAL)
             s.add_argument("--settle", type=float, default=fc_watch.WATCH_SETTLE, help="seconds to gather the events of one burst into one wake (a question, a block, or a stall wakes at once; 0 = off)")
             s.add_argument("--takeover", action="store_true", help="watch from this session although another live engineering manager session drives the project (its teammates then report here)")
+            s.add_argument("--attention", action="store_true", help="wake only for what needs attention (done, needs-user, blocked, tool-bug, a stall, payment, a crash, a sign-in screen); progress lines print in the same wake as the next one. The default for --from orchestrator")
+            s.add_argument("--all", action="store_true", help="wake on every progress line too, even for --from orchestrator")
             s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")

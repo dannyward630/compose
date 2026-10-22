@@ -17,6 +17,8 @@ watch_events
 owner_lines
 is_info
 URGENT
+ATTENTION
+is_quiet
 yolo_mark
 watch_filter
 WATCH_INTERVAL
