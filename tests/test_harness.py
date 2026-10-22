@@ -1366,6 +1366,56 @@ class CodexReader(unittest.TestCase):
         for m in (self.run, self.cmd, self.res, self.claude): m.assert_not_called()
 
 
+class ResolvedTrustKey(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp()).resolve()
+        self.tmp, self.real, self.link, self.bin = tmp, tmp / "real", tmp / "link", tmp / "bin"
+        self.real.mkdir(); self.bin.mkdir(); self.link.symlink_to(self.real); (tmp / "home").mkdir()
+        (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
+        p = mock.patch.dict(os.environ, {"HOME": str(tmp / "home"), "CODEX_HOME": str(self.link), "PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        g = lambda m, sub: {**({"matcher": m} if m else {}), "hooks": [{"type": "command", "command": f'"/c/bin/compose" {sub}', "timeout": 10}]}
+        self.hooks = {"PreToolUse": [g("Write|Edit|MultiEdit|NotebookEdit", "guard"), g("Bash", "guard")], "UserPromptSubmit": [g(None, "skillcheck")], "SessionStart": [g("compact", "reenter")]}
+        self.file, self.trust = self.link / "hooks.json", self.link / "config.toml"
+        self.file.write_text(json.dumps({"hooks": self.hooks}))
+
+    def records(self, path):
+        return {f"{path}:{HookTrust.SNAKE[ev]}:{i}:{j}": fc_harness._codex_hash(ev, g) for ev, gs in self.hooks.items() for i, g in enumerate(gs) for j in range(len(g["hooks"]))}
+
+    def state(self): return {k: v["trusted_hash"] for k, v in tomllib.loads(self.trust.read_text())["hooks"]["state"].items()}
+
+    def test_a_symlinked_codex_home_gets_keys_for_the_resolved_hooks_file_and_hooks_ok_passes(self):
+        self.assertEqual([str(p) for p in fc_links.trust_hooks("codex", "/c")], [str(self.trust)])
+        self.assertEqual(self.state(), self.records(self.real / "hooks.json"))
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+        self.assertEqual(fc_links.trust_hooks("codex", "/c"), [])
+
+    def test_records_under_the_unresolved_path_are_untrusted_and_trust_hooks_adds_the_resolved_ones_after_them(self):
+        old = "# mine\n" + "".join(f"[hooks.state.{json.dumps(k)}]\ntrusted_hash = {json.dumps(h)}\n\n" for k, h in self.records(self.file).items())
+        self.trust.write_text(old)
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (False, f"{self.trust} has no trust record for compose's guard hook"))
+        fc_links.trust_hooks("codex", "/c")
+        self.assertTrue(self.trust.read_text().startswith(old))
+        self.assertEqual(self.state(), {**self.records(self.file), **self.records(self.real / "hooks.json")})
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+
+    def test_a_home_with_no_symlink_in_it_keeps_its_keys(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.real)}):
+            fc_links.trust_hooks("codex", "/c")
+            self.assertEqual(self.state(), self.records(self.real / "hooks.json"))
+            self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+
+    def test_a_hooks_file_that_is_itself_a_symlink_is_keyed_by_its_target(self):
+        (self.tmp / "dot").mkdir(); (self.tmp / "dot/hooks.json").write_text(self.file.read_text()); self.file.unlink(); self.file.symlink_to(self.tmp / "dot/hooks.json")
+        fc_links.trust_hooks("codex", "/c")
+        self.assertEqual(self.state(), self.records(self.tmp / "dot/hooks.json"))
+        self.assertEqual(fc_checks.hooks_ok("codex", "/c"), (True, ""))
+
+    def test_a_symlinked_dot_codex_under_home_is_resolved_without_codex_home(self):
+        os.environ.pop("CODEX_HOME"); (self.tmp / "home/.codex").symlink_to(self.real)
+        fc_links.trust_hooks("codex", "/c")
+        self.assertEqual(self.state(), self.records(self.real / "hooks.json"))
+
+
 class HookWriters(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
