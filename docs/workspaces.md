@@ -91,7 +91,8 @@ If an id or preset is wrong, the run stops with the provider's message.
 A rate limit, or a provider too busy to start the turn (a 429 or a 5xx before any token), switches at once.
 `test_reader` reads each failed test run and writes the implementer's fix brief.
 It takes a `claude:` or `codex:` model and runs headless with read-only tools.
-It bills to the Claude Code subscription, never an API key or OpenRouter: every headless Claude call the CLI makes drops `ANTHROPIC_*` (key, auth token, base URL, model overrides) from its environment.
+A `claude:` reader bills to the Claude Code subscription, never an API key or OpenRouter: every headless Claude call the CLI makes drops `ANTHROPIC_*` (key, auth token, base URL, model overrides) from its environment.
+A `codex:` reader bills to the ChatGPT subscription, booked at `$0`.
 `null` sends the raw test output alone.
 It is not probed first: when it fails, the raw output goes back instead.
 

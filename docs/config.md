@@ -187,7 +187,7 @@ The `harnesses` key itself is gone from the merged settings.
   "harnesses": {
     "codex": {
       "models": {
-        "crew": { "default": "codex:gpt-6-astra" }
+        "crew": { "default": "codex" }
       }
     }
   }
