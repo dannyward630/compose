@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib, importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import contextlib, importlib, io, importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -179,6 +179,17 @@ class VerifyDepth(unittest.TestCase):
                 mock.patch.object(fc.fc_verify.fc_review, "llm_review", return_value={"pass": True, "confirmed": [], "issues": []}) as rv, mock.patch.object(fc.fc_core, "say"):
             ok, report, _ = fc.fc_verify.run_stages(proj, proj, cfg, type("A", (), {"skip_e2e": True, "skip_review": False}))
         return jev, rv, report, ok
+
+    def test_a_gated_criterion_proven_by_its_test_is_a_note_and_does_not_fail_verify(self):
+        row = {"task": "061", "criterion": "c", "choice": "UNCLEAR", "p_met": 0.2, "p_not_met": 0.3, "proven_by": "f1"}
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_accept, "jev_acceptance", return_value={"pass": True, "criteria": [row], "unclear": [], "failed": []}), mock.patch.object(fc.fc_verify, "review_inputs", return_value=("d", "p", "", [])), \
+                mock.patch.object(fc.fc_verify.fc_review, "llm_review", return_value={"pass": True, "confirmed": [], "issues": []}), mock.patch.object(fc.fc_core, "say") as say, contextlib.redirect_stdout(out):
+            ok, _, findings = fc.fc_verify.run_stages(proj, proj, {"depth": "DEEP", "acceptance_gate": True, "jev_acceptance": True}, type("A", (), {"skip_e2e": True, "skip_review": False}))
+        self.assertEqual((ok, findings), (True, ""))
+        self.assertIn("0 unproven, 1 proven by their task's test", say.call_args.args[0])
+        self.assertIn("unclear  p_met=0.20 p_not=0.30 [061] c  (note: the task's test passed, ledger event f1)", out.getvalue())
 
     def test_fast_leaves_the_jev_acceptance_out_and_other_depths_run_it(self):
         jev, rv, report, ok = self.stages({"depth": "FAST", "review": False, "jev_acceptance": True})

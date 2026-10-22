@@ -75,11 +75,37 @@ def jev_acceptance(cfg, proj, diff, repo=None):
     failed = [r for r in suspects if r.get("confirmed")]
     for r in rows:
         fc_models.reask_criterion(env, cfg, states[r["task"]], choices, rules, r, "Jev acceptance")
-    # Only MET passes: UNCLEAR and a NOT_MET the confirm call did not confirm both block, as unproven criteria.
+    # MET passes, and so does a criterion its task's passing test proves; UNCLEAR and a NOT_MET the confirm call did not confirm block as unproven.
     unclear = [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")]
+    proven_by_test(repo, proj, [r for r in unclear if not r.get("judge_error")])
+    unclear = [r for r in unclear if not r.get("proven_by")]
     errors = [r for r in suspects if r.get("judge_error")]
-    return {"pass": all(r["choice"] == "MET" for r in rows), "unclear": unclear, "criteria": rows, "failed": failed, "suspects": suspects, "model": model,
+    return {"pass": all(r["choice"] == "MET" or r.get("proven_by") for r in rows), "unclear": unclear, "criteria": rows, "failed": failed, "suspects": suspects, "model": model,
             **({"error": f"{len(errors)} confirm call(s) failed: {errors[0]['evidence']}"} if errors else {})}
+
+def proven_by_test(repo, proj, rows):
+    """Set `proven_by` on each row whose task's test passed at the verified tip: the newest counted ledger event of the task's run
+    or scoped checks that covers the criterion is a pass, and its id is the value. Jev's doubt alone does not outweigh it."""
+    import json
+    f = proj / "linear.json"
+    feature = json.loads(f.read_text()).get("feature") if f.exists() else None
+    events = {}
+    for r in rows:
+        meta = next((m for m in fc_tasks.load_tasks(proj) if m["id"] == r["task"]), None)
+        if not meta or not meta.get("linear"):
+            continue
+        try:
+            if meta["id"] not in events:
+                found = fc_evidence.task_rows(meta["linear"], feature, meta["id"])
+                events[meta["id"]] = [e for e in fc_ledger.counted(repo, proj, meta, found) if e["phase"] in ("final", "scoped")]
+            cid = fc_ledger.criterion_ids(meta)[fc_tasks.parse_criteria(meta["body"]).index(r["criterion"])]
+        except Exception as e:  # noqa: BLE001
+            events[meta["id"]] = []
+            fc_core.say(f"jev    acceptance {meta['id']}: the ledger could not be read ({str(e)[:200]})")
+            continue
+        covering = [e for e in events[meta["id"]] if not e["criterion_id"] or cid in e["criterion_id"]]
+        if covering and covering[-1]["result"] == "pass":
+            r["proven_by"] = covering[-1]["event_id"]
 
 VERDICTS = ("proven", "unproven", "contradicted")
 NEEDS = ("test", "prove", "check", "e2e", "review", "acceptance", "manual", "none")

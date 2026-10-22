@@ -1,5 +1,6 @@
 JEV_CODE_CAP
 jev_acceptance
+proven_by_test
 VERDICTS
 NEEDS
 DETERMINISTIC

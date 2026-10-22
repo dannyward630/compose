@@ -10,7 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_plan  # noqa: E402
+import fc_evidence, fc_ledger, fc_plan  # noqa: E402
 
 
 def issue(ident, title, desc="", blocked_by=()):
@@ -207,6 +207,24 @@ class DesignTasks(unittest.TestCase):
             with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
                     mock.patch.object(fc.fc_models, "fast_json", return_value={"confirmed": False, "evidence": ""}):
                 self.assertEqual(fc.fc_accept.jev_acceptance({}, self.proj, "diff")["pass"], ok, choice)
+
+    def test_acceptance_counts_a_criterion_the_tasks_passing_test_proves_unless_a_violation_is_confirmed(self):
+        """Jev's UNCLEAR or unconfirmed NOT_MET alone is a note when the task's test passed at the tip and is on the ledger."""
+        cid = fc_ledger.criterion_ids(fc.fc_tasks.load_tasks(self.proj)[1])[0]
+        row = lambda eid, phase, result, ids=None: {"event_id": eid, "task_ids": ["002"], "criterion_id": [cid] if ids is None else ids, "phase": phase, "result": result}
+        final, scoped_fail = row("f1", "final", "pass"), row("s1", "scoped", "fail")
+        cases = [("passing final row", "UNCLEAR", False, [final], True, "f1"), ("scoped pass after final", "UNCLEAR", False, [scoped_fail, row("s2", "scoped", "pass")], True, "s2"),
+                 ("row for all criteria", "NOT_MET", False, [row("f2", "final", "pass", [])], True, "f2"), ("no rows", "UNCLEAR", False, [], False, None),
+                 ("test failed since", "UNCLEAR", False, [final, scoped_fail], False, None), ("other criterion", "UNCLEAR", False, [row("f3", "final", "pass", ["002.2:x"])], False, None),
+                 ("checks row is not the task's test", "UNCLEAR", False, [row("c1", "checks", "pass", [])], False, None),
+                 ("violation confirmed", "NOT_MET", True, [final], False, None)]
+        for name, choice, confirmed, rows, ok, by in cases:
+            reply = {"model": "m", "answers": {"c0": {"choice": choice, "probabilities": {choice: 0.9}}}}
+            with mock.patch.object(fc.fc_config, "ENV_FILE", self.proj / "none.env"), mock.patch.object(fc.fc_models, "jev_ask", return_value=reply), \
+                    mock.patch.object(fc.fc_models, "fast_json", return_value={"confirmed": confirmed, "evidence": "x"}), \
+                    mock.patch.object(fc_evidence, "task_rows", return_value=rows), mock.patch.object(fc_ledger, "counted", side_effect=lambda *a: a[-1]):
+                res = fc.fc_accept.jev_acceptance({}, self.proj, "diff")
+            self.assertEqual((res["pass"], res["criteria"][0].get("proven_by"), len(res["unclear"]), len(res["failed"])), (ok, by, 0 if ok or confirmed else 1, int(confirmed)), name)
 
     def test_acceptance_re_asks_a_refuted_not_met_once_and_a_confirm_error_never(self):
         first = {"model": "m", "answers": {"c0": {"choice": "NOT_MET", "probabilities": {"NOT_MET": 0.9}}}}

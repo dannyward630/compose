@@ -242,11 +242,13 @@ def run_stages(repo, proj, cfg, a, tests=None):
         fc_herdr.herdr_stage(panes, "jev", "idle" if acc["pass"] or not gate else "blocked", f"{met}/{n} met")
         fc_core.say(f"jev    {'ok  ' if acc['pass'] else ('FAIL' if gate else 'warn')} {fc_core.fmt(acc['seconds']):>8}  {met}/{n} criteria met, "
             f"{len(acc.get('unclear', []))} unproven"
+            + (f", {n_test} proven by their task's test" if (n_test := sum(bool(r.get("proven_by")) for r in acc.get("criteria", []))) else "")
             + (f"  error={acc['error'][:120]}" if acc.get("error") else ""))
         for r in acc.get("criteria", []):
             if r["choice"] != "MET":
                 flag = "NOT MET " if r in acc.get("failed", []) else ("unproven" if r in acc.get("suspects", []) else "unclear ")
-                print(f"           {flag} p_met={r['p_met']:.2f} p_not={r['p_not_met']:.2f} [{r['task']}] {r['criterion'][:110]}")
+                print(f"           {flag} p_met={r['p_met']:.2f} p_not={r['p_not_met']:.2f} [{r['task']}] {r['criterion'][:110]}"
+                      + (f"  (note: the task's test passed, ledger event {r['proven_by']})" if r.get("proven_by") else ""))
         for r in acc.get("failed", []):
             if gate:
                 findings.append(f"[high] acceptance criterion not met (task {r['task']}, p={r['p_not_met']}): {r['criterion']}")

@@ -282,13 +282,14 @@ class VerifyTasks(unittest.TestCase):
         row = lambda t, c, choice, **kw: {"task": t, "criterion": c, "choice": choice, "p_met": 0.9, "p_not_met": 0.1, **kw}
         rows = [row("021", "b", "NOT_MET", confirmed=True), row("021", "a", "MET"), row("021", "c", "NOT_MET"), row("021", "d", "NOT_MET", judge_error="no answer"),
                 row("021", "e", None, p_met=None, p_not_met=None), row("022", "x", "MET")]
+        rows[2]["proven_by"] = "f1"  # criterion c: unclear for Jev, proven by the task's test
         scoped = [e(cmd=self.T1, exit=1), e(cmd="other", exit=0), e(cmd=self.T1, exit=0, output="JEV_GAVE_UP"), e(cmd=self.T1, exit=0)]
         _, calls = self.record(scoped, {"criteria": rows})
         miss = "NOT_MET: p_met 0.9, p_not_met 0.1"
         self.assertEqual([c for c in calls if c[0] != "ENG-1"], [
             ("ENG-4", [self.ev(t1, ids, "scoped", r, f"{self.T1}: exit {n}") for r, n in (("fail", 1), ("error", 0), ("pass", 0))]),
             ("ENG-4", [self.ev(t1, [ids[1]], "acceptance", "fail", miss), self.ev(t1, [ids[0]], "acceptance", "pass", "MET: p_met 0.9, p_not_met 0.1"),
-                       self.ev(t1, [ids[2]], "acceptance", "unclear", miss), self.ev(t1, [ids[3]], "acceptance", "error", miss),
+                       self.ev(t1, [ids[2]], "acceptance", "pass", miss + ", proven by test event f1"), self.ev(t1, [ids[3]], "acceptance", "error", miss),
                        self.ev(t1, [ids[4]], "acceptance", "error", "None: p_met None, p_not_met None")]),
             ("ENG-5", []), ("ENG-5", [self.ev(t2, x, "acceptance", "pass", "MET: p_met 0.9, p_not_met 0.1")]), ("ENG-7", []), ("ENG-7", [])])
 
