@@ -53,6 +53,39 @@ class Reason(unittest.TestCase):
                          "3 files under tests, bin (2 new), 2 criteria, 2 shared with other open tasks; no Bug label")
 
 
+CHECK = {"choice": "CHECK_ONLY", "probabilities": {"CHECK_ONLY": 0.81, "TEST_FIRST": 0.19}, "confidence": 0.81}
+REST = "1 file under bin (0 new), 1 criterion, 0 shared with other open tasks; no Bug label"
+ONE = [("bin/x.py", True)]
+
+
+class CheckOnlyReason(unittest.TestCase):
+    def test_a_pinned_check_only_route_with_no_depth_answer_reads_depth_from_check_only(self):
+        r = route(workflow="check-only", depth="FAST", decided_by="pin", confidence=None, answers={})
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1, pin="check-only")), f"workflow check-only pinned, depth FAST from check-only; {REST}")
+        r = route(workflow="check-only", depth="FAST", decided_by="pin", confidence=None, answers={}, retry={"unavailable": "trail missing"}, note="n")
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1, pin="check-only")),
+                         f"workflow check-only pinned, depth FAST from check-only after a retry, dependency analysis unavailable; {REST}; n")
+
+    def test_jevs_check_only_pick_leaves_out_its_depth_answer(self):
+        r = route(workflow="check-only", depth="FAST", answers={"depth": DEPTH, "workflow": CHECK})
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)), f"Jev: workflow check-only (p 0.81, confidence 0.81), depth FAST from check-only; {REST}")
+
+    def test_a_floored_route_says_the_floor_refused_check_only(self):
+        r = route(decided_by="floor", depth="DEEP", answers={"depth": DEPTH, "workflow": CHECK}, floor=["Secrets", "Gate"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)),
+                         f"Jev: workflow check-only (p 0.81, confidence 0.81), refused by the floor; {REST}; floor DEEP from Secrets, Gate")
+        r = route(decided_by="floor", depth="DEEP", confidence=None, answers={}, floor=["Secrets"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1, pin="check-only")), f"workflow check-only pinned, refused by the floor; {REST}; floor DEEP from Secrets")
+
+    def test_other_routes_keep_their_text(self):
+        r = route(workflow="check-only", depth="DEEP", answers={"depth": DEPTH}, floor=["Secrets"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1, pin="check-only")),
+                         f"Jev: depth STANDARD (p 0.72, confidence 0.65), workflow check-only pinned; {REST}; floor DEEP from Secrets")
+        for pin in ("check-only", None):
+            r = route(workflow="check-only" if pin else "test-first", depth="FAST" if pin else "STANDARD", decided_by="fallback", confidence=None, answers={}, fallback="Jev unavailable: x")
+            self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1, pin=pin)), f"fallback {r['depth']} {r['workflow']}{' pinned' if pin else ''}: Jev unavailable: x; {REST}")
+
+
 R = route(workflow="implement-then-test", depth="DEEP", decided_by="pin + jev after retry", confidence=0.7, reason="Jev: depth DEEP; 1 file",
           checks=["python3 -m unittest tests.test_verify", "make e2e"], hash="0123456789abcdef", note="")
 SECTION = ("## Route\n\n* workflow: implement-then-test\n* depth: DEEP\n* decided by: pin + jev after retry\n* confidence: 0.70\n* reason: Jev: depth DEEP; 1 file\n"
