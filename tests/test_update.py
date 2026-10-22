@@ -148,3 +148,39 @@ class Freeze(Fixture):
                              capture_output=True, text=True, check=True).stdout
         [held] = json.loads(out); self.assertEqual((held["kind"], held["project"]), ("verify", "shop")); self.assertEqual(held["repo"], os.path.realpath("."))
         self.assertEqual(fc_update.live_work(), [])  # the process exited: its file is gone
+
+
+class Overlap(unittest.TestCase):
+    """A second run, resume or verify started on a project whose first is still alive (also after its last line): it stops before it empties the log the first writes."""
+    def setUp(self):
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup); root = Path(os.path.realpath(t.name))
+        self.repo, self.cfg = root / "repo", root / "cfg"
+        git(root, "init", "-q", "-b", "main", str(self.repo)); commit(self.repo, "a")
+        self.results = self.repo / ".compose" / "p" / "results"; self.results.mkdir(parents=True)
+        (self.repo / ".compose" / "p" / "verify.json").write_text("{}")
+        (self.results / "run.log").write_text("run done   29/30 passed\n")
+        self.proc = subprocess.Popen(["sleep", "60"]); self.addCleanup(self.proc.wait); self.addCleanup(self.proc.kill)
+    def hold(self, kind, pid=None):
+        (self.cfg / "live").mkdir(parents=True, exist_ok=True)
+        pid = pid or self.proc.pid
+        (self.cfg / "live" / f"{pid}.json").write_text(json.dumps({"pid": pid, "kind": kind, "project": "p", "repo": str(self.repo), "since": "12:00"}))
+    def compose(self, cmd):
+        r = subprocess.run([sys.executable, str(Path(fc_update.__file__).parent / "compose.py"), cmd, "--repo", str(self.repo), "--project", "p"],
+                           env=os.environ | {"COMPOSE_CONFIG": str(self.cfg / "config.json")}, capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr
+    def test_a_start_beside_a_live_one_stops_and_leaves_its_log_and_exit_code_alone(self):
+        for kind, cmd in (("run", "run"), ("run", "resume"), ("resume", "run"), ("verify", "verify")):
+            with self.subTest(f"{kind} then {cmd}"):
+                self.hold(kind)
+                code, out = self.compose(cmd)
+                self.assertEqual(code, 1, out); self.assertIn(f"{kind} is already running on p (pid {self.proc.pid}, since 12:00)", out)
+                self.assertEqual((self.results / "run.log").read_text(), "run done   29/30 passed\n")
+                self.assertEqual(sorted(f.name for f in self.results.iterdir()), ["run.log"])
+    def test_another_kind_or_a_dead_one_does_not_stop_it(self):
+        dead = subprocess.Popen(["true"]); dead.wait()
+        for kind, pid in (("verify", None), ("run", dead.pid)):
+            with self.subTest(kind):
+                self.hold(kind, pid)
+                code, out = self.compose("run")
+                self.assertNotIn("already running", out)
+                self.assertIn("run runs in its own session", out)  # the follower started
