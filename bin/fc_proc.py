@@ -96,7 +96,7 @@ def keep_awake(pid=None):
     """Keep a Mac awake while `pid` (default: this process) lives: `caffeinate -dims -w <pid>` holds the display, idle, disk and
     (on AC) system-sleep assertions, and ends with that process however it dies, so none leaks. One per pid; returns it, or None
     off macOS, where caffeinate is missing, and under COMPOSE_NO_AWAKE=1. It cannot stop a lid closed on battery (see
-    fc_checks.battery_warning)."""
+    fc_checks.battery_report)."""
     pid = pid or os.getpid()
     held = AWAKE.get(pid)
     if held and held.poll() is None:

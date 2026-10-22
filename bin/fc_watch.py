@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs, fc_sleep
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs, fc_sleep, fc_stall
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
@@ -128,10 +128,11 @@ def watch_lock(proj, key, wait=True):
         f.close()
         return None
 
-def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None):
+def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limit=None):
     """The silences an event diff never shows: work is pending but nothing moves. Each stall fires once per watcher
     (results/watch-<key>.json remembers it), so a supervisor that nudges is not woken again for the same silence.
-    `woke` is the [start, end] of a sleep: for `limit` seconds after it the silence rules wait, since nothing could move while the Mac slept."""
+    `woke` is the [start, end] of a sleep: for `limit` seconds after it the silence rules wait, since nothing could move while the Mac slept.
+    `agent_limit` is how long a working teammate may show no report and no commit (fc_stall.AGENT_STALL_SECONDS)."""
     now_s = now_s or time.time()
     orch = fc_herdr.agent_name(proj.name, "orchestrator")
     last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
@@ -166,6 +167,9 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None):
             if m := NET_ERROR.search(pane):
                 fire(f"net:{n}:{since}", f"network agent={n} its last turn ended on an API or network error ({m.group(0)}) and it has been idle since {hm(since)}; "
                      f"once the network is back, nudge: herdr agent prompt {n} \"{NET_NUDGE}\"")
+    spells = mem.get("spells", {})
+    for what_key, what in fc_stall.limit_spells(snap, spells, now_s) + fc_stall.silent_stalls(proj, snap, seen, now_s, agent_limit or fc_stall.AGENT_STALL_SECONDS, woke[1] if woke else 0):
+        fire(what_key, what)  # a pane stuck on a limit or a retry loop, a teammate working for ages with nothing to show
     for n in snap.get("closed", ()):
         r = snap.get("crew", {}).get(n) or []
         if r and r[-1]["state"] != "done" and not (re.search(r"-tests-\d+$", n) and fc_briefs.test_ready(r[-1])):  # collect closes a writer after its test ready
@@ -188,7 +192,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None):
         if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
             fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
     try:
-        watch_save(proj, key, fired=sorted(fired), seen=seen)
+        watch_save(proj, key, fired=sorted(fired), seen=seen, spells=spells)
     except OSError:
         pass
     return ev
@@ -349,10 +353,10 @@ def cmd_watch(a, rewake=False):
         parent = os.getppid()
         deadline = time.time() + a.timeout if a.timeout else None
         try:
-            cfg_stall = json.loads((proj / "verify.json").read_text()).get("stall_seconds")
+            cfg = json.loads((proj / "verify.json").read_text())
         except (OSError, json.JSONDecodeError):
-            cfg_stall = None
-        limit = a.stall if a.stall is not None else (cfg_stall or STALL_SECONDS)
+            cfg = {}
+        limit = a.stall if a.stall is not None else (cfg.get("stall_seconds") or STALL_SECONDS)
         settle, held_since = getattr(a, "settle", 0), None
         agents, tick = Agents(), time.time()
         woke = watch_mem(proj, key).get("woke")  # the last sleep this watcher saw: a run found dead after it is the sleep's
@@ -371,7 +375,7 @@ def cmd_watch(a, rewake=False):
             if woke_was != woke:
                 woke = woke_was
                 watch_save(proj, key, woke=woke)
-            stalls = slept + watch_stalls(proj, after, limit, key=key, woke=woke)
+            stalls = slept + watch_stalls(proj, after, limit, key=key, woke=woke, agent_limit=cfg.get("agent_stall_seconds"))
             ev = look(after, stalls)
             if ev and all(is_info(e) for e in ev):  # progress pings alone: they wait for a wake to travel with, `before` stays put
                 held_since = held_since or time.time()
@@ -381,7 +385,7 @@ def cmd_watch(a, rewake=False):
                 if settle and not any(URGENT.search(e) for e in ev):  # the rest of the burst joins this wake
                     time.sleep(settle)
                     after = watch_snapshot(repo, proj, agents)
-                    stalls += watch_stalls(proj, after, limit, key=key, woke=woke)
+                    stalls += watch_stalls(proj, after, limit, key=key, woke=woke, agent_limit=cfg.get("agent_stall_seconds"))
                     ev = look(after, stalls)
                 fc_crew.manager_attention(proj, ev)
                 if rewake:

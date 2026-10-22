@@ -126,6 +126,10 @@ The Mac sleeping is not a stall: when the wall clock jumps by 90 s or more betwe
 The silence alarms then wait one stall window after the wake, since nothing could move while the Mac slept.
 A run that died within 15 minutes of the wake, whose log was still being written when the Mac went to sleep and which did not halt on a payment limit, is resumed by the watch itself: `event sleep=resumed`, once per run, with `compose resume` logging to `results/resume.log`.
 Any other run that died after a wake raises `event sleep=run-lost` with the reason and the exact `compose resume --repo <repo> --project <slug>` command, and a run stopped with Ctrl-C is left alone.
+A pane that keeps showing a retry loop or a limit banner for 60 s ("Retrying ... 401", "usage limit", "try again at", "rate limited", "402") raises `event stall=limit agent=<name> line='<the matched line>'`, once per spell, instead of waiting for the quiet alarm.
+The watch reads each working teammate's pane at most every 30 s, and a spell ends when the pane stops matching.
+A teammate herdr shows as working for 30 minutes with no report and no commit raises `event stall=silent agent=<name>`; set `agent_stall_seconds` in `verify.json` to change that.
+The 4-minute quiet alarm for the team lead is unchanged, and time asleep does not count toward either.
 
 The team lead never starts `watch` itself.
 Its tab carries `COMPOSE_ROLE`, `COMPOSE_PROJECT`, and `COMPOSE_REPO`, and the plugin's Stop hook (`compose rewake`) parks a watch whenever one of its turns ends.
