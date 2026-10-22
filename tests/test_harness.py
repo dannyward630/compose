@@ -294,7 +294,7 @@ class HarnessBlock(unittest.TestCase):
     def apply(self, cfg, harness=None, **env):
         fc_config.write_config(cfg)
         with mock.patch.dict(os.environ):
-            for k in ("COMPOSE_HARNESS", "CLAUDECODE"): os.environ.pop(k, None)
+            for k in ("COMPOSE_HARNESS", "CLAUDECODE", "CODEX_THREAD_ID"): os.environ.pop(k, None)
             os.environ.update(env)
             return fc_config.apply_config(move=False, harness=harness)
 
@@ -304,6 +304,7 @@ class HarnessBlock(unittest.TestCase):
 
     def test_session_harness_precedence(self):
         with mock.patch.dict(os.environ, {"COMPOSE_HARNESS": "gemini", "CLAUDECODE": "1"}):
+            os.environ.pop("CODEX_THREAD_ID", None)
             self.assertEqual(fc_config.session_harness("codex"), "codex")
             self.assertEqual(fc_config.session_harness(), "gemini")
             del os.environ["COMPOSE_HARNESS"]
@@ -391,7 +392,7 @@ class HarnessPassDown(unittest.TestCase):
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(time, "sleep"), \
                 mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
-            for k in ("COMPOSE_HARNESS", "CLAUDECODE"): os.environ.pop(k, None)
+            for k in ("COMPOSE_HARNESS", "CLAUDECODE", "CODEX_THREAD_ID"): os.environ.pop(k, None)
             os.environ.update(env)
             try: fc.main()
             except SystemExit as e: self.exit = e
@@ -1591,6 +1592,38 @@ class GuardRedirects(unittest.TestCase):
 
     def test_other_roles_are_not_guarded(self):
         self.assertIsNone(self.denied("echo x > bin/a.py", "crew"))
+
+
+class SessionMarker(unittest.TestCase):
+    def pick(self, flag=None, **env):
+        with mock.patch.dict(os.environ):
+            for k in ("COMPOSE_HARNESS", "CLAUDECODE", "CODEX_THREAD_ID"): os.environ.pop(k, None)
+            os.environ.update(env)
+            return fc_config.session_harness(flag)
+
+    def test_codex_row_names_its_marker_and_detected_reads_it(self):
+        self.assertEqual(fc_harness.HARNESSES["codex"]["session_env"], "CODEX_THREAD_ID")
+        self.assertEqual(fc_harness.detected({"CODEX_THREAD_ID": "t1", "CLAUDECODE": "1"}), "codex")
+        for env in ({}, {"CODEX_THREAD_ID": ""}, {"CLAUDECODE": "1"}, {"CODEX_CI": "1"}, {"CODEX_THREAD_ID_X": "t1"}):
+            self.assertIsNone(fc_harness.detected(env), env)
+
+    def test_detected_defaults_to_the_process_env(self):
+        with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "t1"}): self.assertEqual(fc_harness.detected(), "codex")
+        with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": ""}): self.assertIsNone(fc_harness.detected())
+
+    def test_a_codex_marker_wins_over_claudecode(self):
+        self.assertEqual(self.pick(CODEX_THREAD_ID="t1"), "codex")
+        self.assertEqual(self.pick(CODEX_THREAD_ID="t1", CLAUDECODE="1"), "codex")
+
+    def test_flag_then_compose_harness_then_marker(self):
+        self.assertEqual(self.pick("claude", COMPOSE_HARNESS="gemini", CODEX_THREAD_ID="t1"), "claude")
+        self.assertEqual(self.pick(COMPOSE_HARNESS="gemini", CODEX_THREAD_ID="t1", CLAUDECODE="1"), "gemini")
+
+    def test_claudecode_alone_is_claude_and_nothing_is_none(self):
+        self.assertEqual(self.pick(CLAUDECODE="1"), "claude")
+        self.assertEqual(self.pick(CLAUDECODE="1", CODEX_THREAD_ID=""), "claude")
+        self.assertIsNone(self.pick())
+        self.assertIsNone(self.pick(CLAUDECODE="0", CODEX_THREAD_ID=""))
 
 
 class OldPythonTrust(unittest.TestCase):
