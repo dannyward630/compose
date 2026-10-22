@@ -69,10 +69,12 @@ class Board(unittest.TestCase):
             self.assertEqual(sh.call_count, n, "a second read with nothing changed ran git")
 
     def test_the_boards_git_cost_does_not_grow_with_the_task_count(self):
-        self.tasks([f"{i:03}" for i in range(1, 25)])
-        with self.counting() as sh:
+        with self.counting() as few:
             fc.fc_status.board(self.repo, self.proj)
-            self.assertLessEqual(sh.call_count, 6, [c.args[0] for c in sh.call_args_list])
+        self.tasks([f"{i:03}" for i in range(1, 25)])
+        with self.counting() as many:
+            fc.fc_status.board(self.repo, self.proj)
+        self.assertLessEqual(many.call_count, few.call_count, [c.args[0] for c in many.call_args_list])
 
     def test_a_new_branch_changes_the_board(self):
         fc.fc_status.board(self.repo, self.proj)
