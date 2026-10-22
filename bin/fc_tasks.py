@@ -19,7 +19,7 @@ TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
 SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "labels", '
               '"blockedBy": ["<issue id>" or {"id", "status", "labels"}]}]}'
               ": every issue under the feature, its stories' children included")
-WORKFLOWS = ("test-first", "implement-then-test", "fix-then-regression-test")
+WORKFLOWS = ("test-first", "implement-then-test", "fix-then-regression-test", "check-only")
 DEPTHS = ("FAST", "STANDARD", "DEEP")
 
 def route_text(desc):
@@ -52,7 +52,7 @@ def task_from_issue(issue):
     if "figma" in meta:  # a design task's own file, a key or a url; else the project's stored key
         meta["figma"] = fc_core.figma_key(meta["figma"]) or sys.exit(f"{issue['id']}: figma is not a Figma file url or key: {meta['figma']}")
     if "route" in meta and meta["route"] not in WORKFLOWS:
-        sys.exit(f"{issue['id']}: route must be test-first, implement-then-test or fix-then-regression-test, not {meta['route']}")
+        sys.exit(f"{issue['id']}: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {meta['route']}")
     meta.setdefault("kind", "code")
     meta.setdefault("model", fc_config.DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
