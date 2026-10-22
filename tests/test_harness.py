@@ -1101,10 +1101,10 @@ class CodexHooksRow(unittest.TestCase):
         self.assertFalse((self.home / ".codex").exists())
 
     def test_every_harness_row_with_hooks_gets_its_own_hooks_row_after_its_commands_row(self):
-        self.tool("other"); self.addCleanup(lambda: [importlib.reload(m) for m in (fc_steps, fc_steprun)])
+        self.tool("other"); self.addCleanup(reload_steps)
         p = mock.patch.dict(fc_harness.HARNESSES, {"other": {**fc_harness.HARNESSES["codex"], "name": "Other", "exe": "other", "home_env": "OTHER_HOME", "home": "~/.other"}})
         p.start(); self.addCleanup(p.stop)
-        for m in (fc_steps, fc_steprun): importlib.reload(m)
+        reload_steps()
         names = [r[0] for r in fc_steps.STEPS]; i = names.index("Other hooks")
         self.assertEqual(names[i - 1], "Other commands")
         self.assertEqual(self.run_row(fc_steps.STEPS[i])[0], "done")
