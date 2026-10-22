@@ -1,4 +1,4 @@
-import json, os, re, shlex, signal, subprocess, sys, time
+import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
 import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
 
@@ -45,7 +45,6 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
-        import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
                 *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []), *fc_providers.pi_args(model),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
@@ -96,7 +95,6 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
     worktree's files (so a bench reset is not leaked)."""
     src = repo and fc_worktree.graph_dir(repo)
     if src and not fc_worktree.graph_dir(wt):
-        import shutil
         shutil.copytree(src, wt / src.relative_to(repo), dirs_exist_ok=True)
         (wt / ".trail" / "cache").mkdir(parents=True, exist_ok=True)
         fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
@@ -226,7 +224,6 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     wt = proj / "worktrees" / (tid + tag)
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
-    import shutil
     if wt.exists(): shutil.rmtree(wt)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))
