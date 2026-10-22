@@ -3,6 +3,9 @@ fc_prompt
 fc_proc
 fc_auth
 fc_config
+fc_tiers
+fc_tierspend
+fc_budget
 fc_providers
 fc_tasks
 fc_plan
@@ -15,6 +18,7 @@ fc_routectx
 fc_routerec
 fc_readguard
 fc_routecost
+fc_tierpin
 fc_costevent
 fc_fast
 fc_claude

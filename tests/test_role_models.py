@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_defaults, fc_tierspend  # noqa: E402  (bin is on sys.path after the load; same objects compose.py uses)
 
 CREW = {"orchestrator": "claude:claude-opus-5-5", "groundwork": "claude:claude-sonnet-5-5",
         "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5"}
@@ -39,7 +40,7 @@ class RoleModels(unittest.TestCase):
 
     def test_role_then_default_then_small_then_explicit(self):
         self.config(CREW)
-        self.assertEqual(fc.fc_crew.crew_model("orchestrator"), "claude:claude-opus-5-5")
+        self.assertEqual(fc.fc_crew.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
         self.assertEqual(fc.fc_crew.crew_model("q-neb-12"), "claude:claude-sonnet-5-5")  # no entry: default
         self.assertEqual(fc.fc_crew.crew_model("revert", "small"), "claude:claude-haiku-5-5")
         self.assertEqual(fc.fc_crew.crew_model("orchestrator", "claude:claude-x"), "claude:claude-x")
@@ -120,7 +121,7 @@ class PlannerChain(unittest.TestCase):
             self.assertEqual(fc.fc_crew.crew_pick("wayfinder")[:2], ("claude:claude-fable-5-1", None))
             self.assertEqual(fc.fc_crew.crew_pick("orchestrator")[:2], ("claude:claude-sonnet-5-5", None))  # the team lead delegates, it does not plan
             self.assertEqual(fc.fc_crew.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
-            self.assertEqual(fc.fc_crew.crew_pick("groundwork")[:2], ("claude:claude-opus-5-5", None))
+            self.assertEqual(fc.fc_crew.crew_pick("groundwork")[:2], ("claude:claude-sonnet-5-5", None))
             self.assertEqual(fc.fc_crew.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
 
     def test_fallback_when_the_planner_model_is_unavailable(self):
@@ -435,3 +436,47 @@ class ClaudeReadGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCrewTiers(unittest.TestCase):
+    """A teammate starts on its role's tier under the default config; a pin lowers it, a raw --model never changes, and frontier starts drop to standard over the limit."""
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": fc_defaults.DEFAULT_MODELS["crew"], "tiers": fc.fc_config.DEFAULT_TIERS}}))
+        for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"),
+                  mock.patch.object(fc.fc_models, "model_available", return_value=(True, "answered")), mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS),
+                  mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"})):
+            p.start(); self.addCleanup(p.stop)
+        fc.fc_config.apply_config()
+        for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK", "TIERS"):
+            self.addCleanup(setattr, fc.fc_config, k, {})
+
+    def start(self, role, model=None, spend=0.0):
+        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        herdr = lambda *args, check=False, timeout=120: {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}} if args[:2] == ("tab", "create") else {}
+        a = SimpleNamespace(action="start", role=role, repo=str(proj), project="p", model=model, title=None, brief="go", cwd=None, force=False)
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
+                mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_crew, "crew_preamble", return_value=""), \
+                mock.patch.object(fc.fc_crew, "write_report"), mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_herdr, "herdr_await_start"), mock.patch.object(fc_tierspend, "frontier", return_value=spend), contextlib.redirect_stdout(io.StringIO()):
+            fc.fc_crew.cmd_crew(a)
+        return json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())["model"]
+
+    def test_each_role_starts_on_its_tier(self):
+        got = {r: fc.fc_crew.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "wayfinder")}
+        sonnet, haiku, opus, fable = (f"claude:claude-{m}" for m in ("sonnet-5-5", "haiku-5-5", "opus-5-5", "fable-5-1"))
+        self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": haiku, "planner": opus, "wayfinder": fable})
+
+    def test_a_raw_model_starts_unchanged_for_any_role(self):
+        for role in ("tests", "orchestrator", "explore"):
+            self.assertEqual(fc.fc_crew.crew_model(role, "claude:claude-opus-5-5"), "claude:claude-opus-5-5")
+            self.assertEqual(fc.fc_crew.crew_pick(role, "claude:claude-opus-5-5", "cheap")[0], "claude:claude-opus-5-5")
+
+    def test_a_pin_lowers_the_start(self):
+        self.assertEqual(fc.fc_crew.crew_pick("planner", None, "no-frontier")[0], "claude:claude-sonnet-5-5")
+        self.assertEqual(fc.fc_crew.crew_pick("orchestrator", None, "cheap")[0], "claude:claude-haiku-5-5")
+
+    def test_frontier_starts_run_at_standard_over_the_limit_and_raw_models_do_not(self):
+        self.assertEqual(self.start("planner", spend=25.0), "claude:claude-sonnet-5-5")
+        self.assertEqual(self.start("planner", spend=1.0), "claude:claude-opus-5-5")
+        self.assertEqual(self.start("planner", "claude:claude-opus-5-5", spend=25.0), "claude:claude-opus-5-5")

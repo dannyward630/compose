@@ -123,6 +123,8 @@ class Layers(unittest.TestCase):
                  for t in ("001", "002", "003")]
         (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
         for t in ("001", "002", "003"):
+            (self.proj / "results" / f"{t}.json").write_text(json.dumps({"status": "passed"}))  # done: a submit pushes their layers
+        for t in ("001", "002", "003"):
             self.write(f"t{t}.test", "t\n" * 5); self.commit(f"test {t}")
         self.sizes = {"001": 100, "002": 120, "003": 150}
         for t, base in (("001", "compose/p"), ("002", "compose/p"), ("003", "compose/p")):
@@ -315,13 +317,13 @@ class Layers(unittest.TestCase):
         fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": [b]} for b in self.layers()])
         refs = lambda: self.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/compose/p-layer-*")
         before = (refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text())
-        calls = (self.repo / ".git" / "fake-gh-calls").read_text()
-        out = []
+        calls = lambda: [c for c in (self.repo / ".git" / "fake-gh-calls").read_text().splitlines() if not c.startswith("pr view")]  # reading a PR's state changes nothing
+        out, seen = [], calls()
         with mock.patch.object(fc.fc_core, "say", out.append), self.assertRaises(SystemExit) as e:
-            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False, update=False))
         self.assertTrue(e.exception.code)
         self.assertEqual((refs(), (self.proj / "layers.json").read_text(), (self.repo / ".git" / "fake-gh-stack.json").read_text()), before)
-        self.assertEqual((self.repo / ".git" / "fake-gh-calls").read_text(), calls)
+        self.assertEqual(calls(), seen)
         return [l for l in out if "STOP" in l]
 
     def test_a_project_branch_behind_its_base_stops_the_stack_with_layers_and_gh_stack_untouched(self):
@@ -379,7 +381,7 @@ class Layers(unittest.TestCase):
         at = top(); self.assertEqual(at, "compose/p-003")
         proc = self.hold_stack_top()
         ns = lambda **kw: argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **kw)
-        for name, cmd, args in (("stack", fc.fc_ship.cmd_stack, ns(submit=False)), ("stack --submit", fc.fc_ship.cmd_stack, ns(submit=True)),
+        for name, cmd, args in (("stack", fc.fc_ship.cmd_stack, ns(submit=False, update=False)), ("stack --submit", fc.fc_ship.cmd_stack, ns(submit=True, update=False)),
                                 ("top", fc.fc_status.cmd_top, ns(detach=False)), ("top --detach", fc.fc_status.cmd_top, ns(detach=True)),
                                 ("reword", fc.fc_ship.cmd_reword, ns(set=["abc=Add it"], as_is=False))):
             with self.subTest(name), self.assertRaises(SystemExit) as e:
@@ -414,7 +416,7 @@ class Layers(unittest.TestCase):
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
             try:
-                fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True))
+                fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=True, update=False))
             except SystemExit as e:
                 return out, e.code
         return out, 0
@@ -455,7 +457,7 @@ class Layers(unittest.TestCase):
         (self.proj / "results" / "tasks.json").write_text(json.dumps({**cache, "feature": {"title": "Build it", "description": "Fixes o/r#9."}}))
         out = []
         with mock.patch.object(fc.fc_core, "say", out.append):
-            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False))
+            fc.fc_ship.cmd_stack(argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", submit=False, update=False))
         prs = [l for l in out if l.startswith("pr ")]
         self.assertEqual([l.split()[1] for l in prs], self.layers())
         for i, l in enumerate(prs, 1):

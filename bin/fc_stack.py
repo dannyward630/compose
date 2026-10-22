@@ -322,14 +322,44 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
             fc_core.say(f"stack  STOP  {fc_layers.STACK_STOP}")
             return []
         fc_core.say(f"stack  WARN  {said}; --submit stops until {base} is pushed")
+    held, through = [], ()
+    if submit:
+        metas = fc_tasks.code_tasks(fc_tasks.load_tasks(proj))
+        by_id = {m["id"]: m for m in metas}
+        order = fc_worktree.layer_order(metas)
+        def status(t):
+            f = proj / "results" / f"{t}.json"
+            return (json.loads(f.read_text()).get("status") if f.exists() else None) or "pending"
+        done = lambda t: status(t) in ("passed", "already_green", "hand_done") or fc_tasks.linear_done(by_id[t])
+        cut = next((i for i, t in enumerate(order) if not done(t)), len(order))
+        held = order[cut:]
+        if held:
+            fc_core.say(f"stack  hold  {held[0]} is {status(held[0])}; {', '.join(held)} not submitted")
+            through = [b for b in fc_worktree.stack_order(repo, proj) if b.removeprefix(fc_worktree.task_prefix(repo, proj)) in order[:cut]]
+            if not through:
+                fc_layers.STACK_STOP = f"nothing to submit: {held[0]} is {status(held[0])}"
+                fc_core.say(f"stack  STOP  {fc_layers.STACK_STOP}")
+                return []
     wt = fc_worktree.stack_worktree(repo, proj, trunk)
     gh = lambda *args: subprocess.run(["gh", "stack", *args], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    linear = fc_layers.linearize(repo, proj, trunk, wt)
+    rec_file, landed = proj / "layers.json", []  # recorded layers whose PR was merged: the rest is built on the base they moved
+    for b in json.loads(rec_file.read_text()) if rec_file.exists() else []:
+        v = subprocess.run(["gh", "pr", "view", b, "--json", "state"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if v.returncode == 0 and json.loads(v.stdout).get("state") == "MERGED":
+            landed.append(b)
+    if landed:
+        f = fc_core.sh(["git", "fetch", "-q", "origin", f"{base}:{base}"], wt, check=False)
+        if f.returncode:
+            fc_layers.STACK_STOP = f"{', '.join(landed)} landed but {base} cannot be fetched from origin: {(f.stderr or f.stdout).strip()[-300:]}; nothing was built or pushed"
+            fc_core.say(f"stack  STOP  {fc_layers.STACK_STOP}")
+            return []
+        fc_core.say(f"stack  landed {', '.join(landed)}; building on origin/{base}")
+    linear = fc_layers.linearize(repo, proj, trunk, wt, through=through)
     if not linear or fc_layers.STACK_STOP:  # a stack of the layers below the stop would leave the rest out of review
         return []
     budget = int(cfg.get("review_layer_lines") or fc_layers.REVIEW_LAYER_LINES)
     cap = int(cfg.get("max_stack_prs") or fc_config.settings(fc_config.read_config())[1].get("max_stack_prs") or 10)
-    layers = fc_layers.build_layers(repo, proj, base, trunk, linear, wt, budget, cap)
+    layers = fc_layers.build_layers(repo, proj, base, trunk, linear, wt, budget, cap, held=held, landed=landed)
     if layers is None:
         return []
     stack, stack_base = ([l["branch"] for l in layers], base) if layers else (linear, trunk)
@@ -369,14 +399,20 @@ def register_stack(repo, proj, trunk, submit=False, preview=False, gate=None):
         fc_core.say(f"submit {'ok  ' if q.returncode == 0 else 'FAIL'}  {(q.stdout + q.stderr).strip()[-400:]}")
         if q.returncode == 0 and layers:
             fc_layers.record_layers(proj, layers)
+        prs = {}
         for b in stack if q.returncode == 0 else []:  # a real GitHub stack is one PR per layer, each on the layer below
             v = subprocess.run(["gh", "pr", "view", b, "--json", "number,baseRefName,url"], cwd=wt, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             pr = json.loads(v.stdout) if v.returncode == 0 else None
             fc_core.say(f"submit {'PR #%d on %s  %s' % (pr['number'], pr['baseRefName'], pr['url']) if pr else 'NO PR for'}  {b}")
             lay = next((l for l in layers or [] if l["branch"] == b), None)
+            if pr:
+                prs[b] = pr["number"]
             if pr and lay:
                 title, body, source = layer_pr(repo, proj, lay, len(layers), fc_tasks.code_tasks(fc_tasks.load_tasks(proj)), layers)
                 fc_core.say(f"pr     {b}  {title}  [{source}]")
                 write_pr_text(proj, wt, b, before[b], title, body)
+        if prs:
+            f = proj / "results" / "prs.json"
+            fc_core.atomic_write(f, json.dumps({**(json.loads(f.read_text()) if f.exists() else {}), **prs}, indent=2))
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)  # free the branches for the user's checkout
     return [stack]

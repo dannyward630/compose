@@ -52,7 +52,30 @@ def cmd_stack(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
     fc_update.refuse_while_verifying(proj, repo)
-    if not fc_stack.register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit, gate=layer_checks):
+    def gate(repo, proj, layers, trunk, wt):
+        if why := layer_checks(repo, proj, layers, trunk, wt):
+            return why
+        below = fc_stack.layer_base(repo, proj, trunk)
+        for i, l in enumerate(layers, 1):
+            b = l["branch"]
+            info = pr_info(b, wt)
+            tip = fc_core.sh(["git", "rev-parse", b], repo).stdout.strip()
+            prev, below = below, b
+            if not info or info["state"] != "OPEN" or info["headRefOid"] == tip:
+                continue
+            head = info["headRefOid"]
+            own = set(fc_core.sh(["git", "diff", "--name-only", prev, b], repo).stdout.split())
+            hit = sorted(own & set(fc_core.sh(["git", "diff", "--name-only", head, tip], repo, check=False).stdout.split()))
+            cause = f"its own files changed: {', '.join(hit)}" if hit else "a layer below it or the base moved"
+            if not a.update:
+                return (f"layer {i} ({b}) changed since PR #{info['number']}: GitHub has {head[:9]}, here {tip[:9]}; {cause}. "
+                        "Nothing was pushed. `compose stack --submit --update` pushes it with --force-with-lease")
+            q = fc_core.sh(["git", "push", "-q", f"--force-with-lease={b}:{head}", "origin", f"{b}:{b}"], repo, check=False)
+            if q.returncode:
+                return f"push of {b} refused: {q.stderr.strip()[-200:]}"
+            fc_core.say(f"submit update {b} {tip[:9]} (was {head[:9]})")
+        return ""
+    if not fc_stack.register_stack(repo, proj, trunk, submit=a.submit, preview=not a.submit, gate=gate):
         if fc_layers.STACK_STOP:
             sys.exit(1)  # the STOP line already said why and what to do
         print("stack  nothing to register: no unmerged task branches")
@@ -230,10 +253,15 @@ def cmd_land(a):
         rec = {"orig": {b: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip() for b in names}, "pr": {}}
     infos = {b: pr_info(rec["pr"].get(b) or b, repo) for b in names}
     missing = [b for b in names if not infos[b]]
-    if missing:
+    cut = next((i for i, b in enumerate(names) if not infos[b]), len(names))
+    if not cut:
         stop(f"{', '.join(missing)} has no pull request: `compose stack --submit` first")
+    m = len(names)
+    names = names[:cut]
     rec["pr"] = {b: infos[b]["number"] for b in names}
-    print(f"land   plan  {len(names)} layer(s) into {base} by {method}, bottom up:")
+    v = Path(proj) / "results" / "verify.json"
+    verify = "not run" if not v.exists() else ("PASS" if json.loads(v.read_text())["passed"] else "FAIL")
+    print(f"land   plan  {len(names)} of {m} layer(s) submitted, verify {verify}; landing {len(names)} into {base} by {method}, bottom up:")
     for i, b in enumerate(names, 1):
         i_ = infos[b]
         print(f"  {i}  {b}  #{i_['number']}  {i_['state'].lower()}{' (draft)' if i_['isDraft'] else ''}  {i_['url']}")
@@ -252,4 +280,9 @@ def cmd_land(a):
     finally:
         fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
     kept.unlink(missing_ok=True)
-    print(f"land   done  {len(names)} layer(s) merged into {base}\nnext: compose clean --project {proj.name}")
+    print(f"land   done  {len(names)} layer(s) merged into {base}")
+    if len(names) < m:
+        print(f"land   left  {m - len(names)} layer(s) not submitted: they rebuild on {base} at the next compose stack")
+        print(f"next: compose stack --submit --project {proj.name}")
+    else:
+        print(f"next: compose clean --project {proj.name}")

@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_change, fc_linear, fc_ledger, fc_update, fc_routecost
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost
 
 
 def project_head(repo, proj):
@@ -104,6 +104,15 @@ def board(repo, proj):
     b = {"trunk": fc_core.current_branch(repo), "trunk_head": trunk_head,
          "rows": [task_state(repo, proj, m, trunk_head, facts) for m in tasks],
          "layers": {x: i + 1 for i, x in enumerate(fc_worktree.stack_order(repo, proj, tasks))}}
+    lay = json.loads((proj / "layers.json").read_text()) if (proj / "layers.json").exists() else {}
+    prs = json.loads((proj / "results" / "prs.json").read_text()) if (proj / "results" / "prs.json").exists() else {}
+    for i, (br, keys) in enumerate(lay.items()):
+        if isinstance(prs.get(br), int):
+            for r in b["rows"]:
+                if r["id"] in keys:
+                    r["note"] = f"{facts['prefix']}{r['id']}  layer {i + 1}  PR #{prs[br]}"
+    blist = fc_layers.layer_branches(repo, proj)
+    b["stack"] = f"  stack {sum(isinstance(prs.get(x), int) for x in blist)}/{len(blist)} submitted" if blist else ""
     _board[proj] = (stamp, b)
     return b
 
@@ -187,7 +196,7 @@ def render_status(repo, projects):
                (f"  run INTERRUPTED (started {m['started_at'][11:16]}) -> compose resume" if m else "")
         summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
         on = f" (after {fc_core.project_after(proj)})" if fc_core.project_after(proj) else ""
-        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{htxt}{fc_change.change_line(proj)}")
+        out.append(f"project {proj.name}   trunk {trunk}{on}   {len(rows)} tasks: {summary}{rtxt}{vtxt}{b['stack']}{htxt}{fc_change.change_line(proj)}")
         ready = proj / "results" / "ready.json"
         if ready.exists():
             out.append("  " + fc_linear.ready_line(json.loads(ready.read_text())))
@@ -203,6 +212,8 @@ def render_status(repo, projects):
             route = "-" if r["depth"] == "-" and r["workflow"] == "-" else f"{r['depth']} {r['workflow']}"
             out.append(f"  {r['id']:4} {r['title'][:38]:38} {r['state']:16} {route:33} {r['attempts']:>3} {r['escalations']:>3} {r['fix_rounds']:>3} {fc_core.fmt(r['seconds']):>8} {'$' + format(r['cost'], '.4f'):>8}  {r['model'][:14]:14} {note}")
         out.extend(fc_routecost.summary(rows))
+        out.extend(fc_tierpin.lines(proj))
+        out.extend(fc_tierspend.lines(proj, fc_budget.limit(proj)))
         out.append("")
     return "\n".join(out)
 
