@@ -3,28 +3,61 @@ from pathlib import Path
 import fc_core, fc_routerec, fc_tasks, fc_worktree, fc_status
 
 
+def ordered(tasks, a, b):
+    """Whether task `b` is reached from task `a` through `after:` links, so `b` runs before `a`."""
+    deps = {m["id"]: {d.strip() for d in str(m.get("after") or "").split(",") if d.strip()} for m in tasks}
+    seen, todo = set(), [a]
+    while todo:
+        for d in deps.get(todo.pop(), ()):
+            if d == b:
+                return True
+            if d not in seen:
+                seen.add(d); todo.append(d)
+    return False
+
 def file_clashes(tasks):
     """Files two still-open tasks own without one being reachable from the other through `after:`: {file: [task ids]}."""
-    deps = {m["id"]: {d.strip() for d in str(m.get("after") or "").split(",") if d.strip()} for m in tasks}
-    def ordered(a, b):  # b is reached from a through `after:` links, so one runs before the other
-        seen, todo = set(), [a]
-        while todo:
-            for d in deps.get(todo.pop(), ()):
-                if d == b:
-                    return True
-                if d not in seen:
-                    seen.add(d); todo.append(d)
-        return False
     shared = {}
     for m in tasks:
         for f in m["files"]:
             shared.setdefault(f, []).append(m["id"])
     clashes = {}
     for f, ids in shared.items():
-        loose = [i for i in ids if any(j != i and not ordered(i, j) and not ordered(j, i) for j in ids)]
+        loose = [i for i in ids if any(j != i and not ordered(tasks, i, j) and not ordered(tasks, j, i) for j in ids)]
         if loose:
             clashes[f] = loose
     return clashes
+
+def uses(text, path):
+    """Whether a brief's `text` names the code at `path`: the path itself, with or without its extension, or its module called, imported or required by name."""
+    stem = Path(path).stem
+    bare = str(Path(path).with_suffix(""))
+    return bool(re.search(rf"(?<![\w./-]){re.escape(path)}(?![\w])|(?<![\w./-]){re.escape(bare)}(?![\w/])"
+                          rf"|(?<![\w./-]){re.escape(stem)}\.[A-Za-z_]|\b(?:import|from|require\(['\"]\./?)\s*{re.escape(stem)}\b", text))
+
+def missing_after(tasks):
+    """Code a task's brief or test command names that other tasks own, when the task has no `after:` path to or from any of them:
+    {task id: {owner id: [files]}}. The owner named is the first to change the file. The brief states every signature its test
+    asserts, so a file it names is code the test imports or calls, and the task cannot pass until the owner's change is in its worktree."""
+    code = [m for m in tasks if m.get("kind") != "design"]
+    found = {}
+    for m in code:
+        text = f"{m.get('body') or ''}\n{m.get('test') or ''}"
+        owners = {}
+        for o in code:
+            for f in o["files"] if o["id"] != m["id"] else ():
+                if f not in m["files"] and not fc_worktree.GENERATED_RE.search(f) and uses(text, f):
+                    owners.setdefault(f, []).append(o["id"])
+        for f, ids in owners.items():
+            if any(ordered(tasks, m["id"], i) or ordered(tasks, i, m["id"]) for i in ids):
+                continue
+            first = min(i for i in ids if not any(ordered(tasks, i, j) for j in ids))  # the owner no other owner of the file comes before
+            found.setdefault(m["id"], {}).setdefault(first, []).append(f)
+    return found
+
+def missing_after_text(found):
+    """The lines that say what each task in `found` (from missing_after) must be `after:`."""
+    return [f"{tid} names {', '.join(fs)}, which {oid} owns: add `after: {oid}`" for tid, owners in found.items() for oid, fs in owners.items()]
 
 def cmd_tasks(a):
     """The task list as the user should review it before dispatch: id, title, files it owns, what it builds on, its test."""
@@ -55,6 +88,11 @@ def cmd_tasks(a):
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
         for f, ids in clashes.items():
             print(f"    {f}: {', '.join(ids)}")
+    loose = missing_after_text(missing_after(open_tasks))
+    if loose:
+        print("\n  WARNING a task names code another task owns, with no `after:` on it (its test cannot pass until that code is in its worktree):")
+        for line in loose:
+            print(f"    {line}")
     pages = {}
     for m in (t for t in open_tasks if t.get("kind") == "design"):
         for n in m["nodes"]:
@@ -123,6 +161,7 @@ def spec_check(data, checks=()):
     if clashes:
         detail = "; ".join(f"{f}: {', '.join(ids)}" for f, ids in clashes.items())
         gaps.append(f"two tasks own the same file (they must be one task, or one must be `after:` the other): {detail}")
+    loose = missing_after(tasks)
     to_run = [t for t in tasks if (t["linear_state"] or "").lower() not in ("in review", "done")]  # a passed or merged layer never runs again
     waves = run_waves(to_run)
     if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
@@ -147,6 +186,7 @@ def spec_check(data, checks=()):
                     gaps.append("empty `files:`")
                 if not meta["protected"]:
                     gaps.append("empty `protected:`")
+            gaps += missing_after_text({meta["id"]: loose[meta["id"]]} if meta["id"] in loose else {})
             if " ".join(meta["test"].split()) in suite:
                 gaps.append(f"`test:` is the verify check `{meta['test']}`, the whole suite: run only this task's test (its file, or a name filter)")
             if re.search(r"(?i)contract\.md|\b(?:from|in|per|see) the (?:groundwork )?contract\b", desc):

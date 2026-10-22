@@ -1,4 +1,8 @@
+ordered
 file_clashes
+uses
+missing_after
+missing_after_text
 cmd_tasks
 run_waves
 spec_check
