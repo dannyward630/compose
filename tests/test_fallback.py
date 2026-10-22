@@ -1482,3 +1482,47 @@ class TestTierEscalation(unittest.TestCase):
             self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "pi:s/one")
             self.assertIsNone(fc.fc_models.fallback_for("pi:s/one"))
             self.assertEqual(fc.fc_models.fallback_for(PRIMARY), BACKUP)
+
+
+class TestReferenceCost(unittest.TestCase):
+    def result(self, turns, rate_limited=None):
+        """Each entry of `turns` is the usage of one implementer turn; the first turn misses, the last one writes the answer."""
+        root = Path(tempfile.mkdtemp())
+        repo, proj = root / "repo", root / "proj"
+        repo.mkdir(); proj.mkdir()
+        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("no\n")
+        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        usages = list(turns)
+        def run_impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            if rate_limited and model == PRIMARY:
+                raise fc.fc_models.RateLimited(rate_limited)
+            usage = {"tokens_in": 1, "tokens_out": 1, **usages.pop(0)}
+            (Path(cwd) / "a.txt").write_text("yes\n" if not usages else "nope\n")
+            return "s", "", 1, usage
+        with mock.patch.object(fc.fc_implement, "implementer", run_impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
+                mock.patch.object(fc.fc_config, "FALLBACK_AFTER", 2), mock.patch.object(fc.fc_config, "TEST_READER", None), \
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
+            fc.fc_implement.run_task(repo, proj, task, 3)
+        return json.loads((proj / "results" / "001.json").read_text())
+
+    def test_two_attempts_add_up_and_cost_is_unchanged(self):
+        r = self.result([{"cost": 0.0, "reference_cost": 0.25}] * 2)
+        self.assertEqual((r["attempts"], r["reference_cost"], r["cost"]), (2, 0.5, 0.0))
+
+    def test_a_real_cost_stays_apart_from_the_reference_cost(self):
+        r = self.result([{"cost": 0.125, "reference_cost": 0.25}] * 2)
+        self.assertEqual((r["reference_cost"], r["cost"]), (0.5, 0.25))
+
+    def test_a_missing_or_none_reference_cost_counts_as_zero(self):
+        for usage in ({"cost": 0.0}, {"cost": 0.0, "reference_cost": None}):
+            self.assertEqual(self.result([usage] * 2)["reference_cost"], 0.0)
+        self.assertEqual(self.result([{"cost": 0.0, "reference_cost": None}, {"cost": 0.0, "reference_cost": 0.25}])["reference_cost"], 0.25)
+
+    def test_a_rate_limited_attempt_adds_its_reference_cost(self):
+        r = self.result([{"cost": 0.0, "reference_cost": 0.25}] * 2, rate_limited={"cost": 0.0, "reference_cost": 0.125})
+        self.assertEqual(r["reference_cost"], 0.625)
