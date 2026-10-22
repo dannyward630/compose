@@ -140,6 +140,7 @@ class UnprovenRun(unittest.TestCase):
     """An unproven task's dependents wait, and its run events carry no red event."""
     def setUp(self):
         self.ledger = importlib.import_module("fc_ledger")  # the foundation's module, not on every branch
+        self.costevent = importlib.import_module("fc_costevent")
         keys = ("run_id", "commit_sha", "task_ids", "criterion_id", "phase", "source", "result", "fails_on_base", "detail")
         mock.patch.object(self.ledger, "event", side_effect=lambda *a: dict(zip(keys, a))).start()
         self.ev = lambda phase, result="passed", detail="d": self.ledger.event("r1", "abc", ["001"], "001.1:x", phase, "run", result, None, detail)
@@ -163,7 +164,7 @@ class UnprovenRun(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_run, "reflect_task"), mock.patch.object(fc.fc_linear, "linear_reconcile"), \
              mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc_fast, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
-             mock.patch.object(fc.fc_costevent, "run_event", return_value=None), mock.patch.object(self.ledger, "record_task") as record,mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
+             mock.patch.object(self.costevent, "run_event", return_value=None), mock.patch.object(self.ledger, "record_task") as record,mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
             fc.fc_run.run_tasks(repo, proj, tasks, a)
         rows = {c.args[0].split()[0]: c.args[0].split()[1] for c in out.call_args_list if c.args and c.args[0][:1].isdigit()}
         return [c.args[0] for c in say.call_args_list], rows, e.exception.code, sorted((c.args[2]["linear"], c.args[3]) for c in record.call_args_list)
