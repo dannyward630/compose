@@ -29,33 +29,70 @@ def branch_budget(wt, base, allowed=None, delete=()):
 FAILING_RE = re.compile(r"^\s*(?:(?:FAIL|ERROR): |FAILED (?!\()|not ok \d+ - |--- FAIL: )(\S.*?)(?: \(\d[\d.]*s\))?\s*$", re.M)  # unittest, pytest, node --test, go test; not unittest's "FAILED (failures=3)" summary
 BASELINES, BASELINE_LOCK = {}, threading.Lock()
 
+CHECKS_TIMEOUT = 900  # seconds a whole-suite check may run: a task's own `test_timeout` is sized for one test, and a suite cut off by it leaves no ids
+
 def check_state(run, cmds, wt, limit):
-    """What each of the project's checks does in this checkout: its exit code and the failing test ids it printed. `run` is fc_implement.timed."""
+    """What each of the project's checks does in this checkout: its exit code and the failing test ids it printed.
+    `run` is fc_implement.timed. A check that timed out (124), or exited non-zero without printing one id, is "unknown": its ids are not a complete list."""
     state = {}
     for cmd in cmds:
-        r = run(cmd, wt, limit, env=fc_core.clean_env())
-        state[cmd] = {"exit": r.returncode, "failing": sorted(set(FAILING_RE.findall(r.stdout + r.stderr)))}
+        r = run(cmd, wt, max(limit, CHECKS_TIMEOUT), env=fc_core.clean_env())
+        failing = sorted(set(FAILING_RE.findall(r.stdout + r.stderr)))
+        state[cmd] = {"exit": r.returncode, "failing": failing, "unknown": r.returncode == 124 or (r.returncode != 0 and not failing)}
     return state
 
 def baseline_state(run, cmds, wt, base, limit):
-    """check_state on a task's base, once per base: tasks that start from the same commit share it. None when the project has no checks."""
+    """check_state on a task's base, once per base: tasks that start from the same commit share it. None when the project has no checks.
+    A state with an unknown check is not kept: the next task on that base takes it again."""
     if not cmds:
         return None
     with BASELINE_LOCK:
         if (base, tuple(cmds)) not in BASELINES:
-            BASELINES[base, tuple(cmds)] = check_state(run, cmds, wt, limit)
+            state = check_state(run, cmds, wt, limit)
+            if any(c["unknown"] for c in state.values()):
+                return state
+            BASELINES[base, tuple(cmds)] = state
         return BASELINES[base, tuple(cmds)]
 
-def regressions(before, after):
-    """What passed on the base and fails now: a failing test id the base run did not print, or a check that exited 0 and no longer does.
-    A check that was already red tells nothing about the task beyond its new failures."""
-    broke = []
+IMPORT_RE = re.compile(r"^\s*(?:import|from|use|require|#include)\b|\b(?:require|import)\s*\(", re.M)
+
+def touches(wt, base):
+    """A function: does the diff of `wt` against `base` touch the test file a failing id names, or a module that file imports?
+    An id that names no file in the checkout touches nothing."""
+    fc_core.sh(["git", "add", "-A"], wt, check=False)
+    changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
+    def test_file(tid):
+        m = re.search(r"[\w./-]+\.(?:py|js|mjs|ts|tsx|jsx|go|rs|rb)\b", tid)
+        if m:
+            return m.group(0)
+        m = re.search(r"\(([\w.]+)\)", tid)  # unittest: "name (pkg.mod.Class.name)"
+        parts = m.group(1).split(".") if m else []
+        return next(("/".join(parts[:i]) + ".py" for i in range(len(parts), 0, -1) if (wt / ("/".join(parts[:i]) + ".py")).is_file()), None)
+    def check(tid):
+        f = test_file(tid)
+        if f is None or not (wt / f).is_file():
+            return False
+        if f in changed:
+            return True
+        lines = [l for l in (wt / f).read_text(errors="replace").splitlines() if IMPORT_RE.search(l)]
+        return any(re.search(rf"\b{re.escape(c.rsplit('/', 1)[-1].rsplit('.', 1)[0])}\b", l) for c in changed for l in lines)
+    return check
+
+def regressions(before, after, touches=lambda tid: True):
+    """(broke, unknown): what passed on the base and fails now (a failing test id the base run did not print, or a check that exited 0 and no longer does),
+    and what is red on a base whose run is unknown. A check that was already red tells nothing about the task beyond its new failures.
+    Where the base is unknown a failing id is a regression only when `touches(id)`; the rest are ids the base may well have printed."""
+    broke, unknown = [], []
     for cmd, now in after.items():
         was = before.get(cmd)
         if was and now["exit"] != 0:
             new = [t for t in now["failing"] if t not in was["failing"]]
-            broke += new or ([f"`{cmd}` exits {now['exit']}"] if was["exit"] == 0 else [])
-    return broke
+            if was.get("unknown"):
+                broke += [t for t in new if touches(t)]
+                unknown += [t for t in new if not touches(t)]
+            else:
+                broke += new or ([f"`{cmd}` exits {now['exit']}"] if was["exit"] == 0 else [])
+    return broke, unknown
 
 def advice(broke):
     """The next prompt's problem when a passing task broke something that passed before it."""

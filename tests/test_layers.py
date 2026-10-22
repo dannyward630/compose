@@ -928,7 +928,63 @@ class FailingIds(unittest.TestCase):
 
     def test_the_same_failing_ids_under_a_different_summary_are_no_regression(self):
         state = lambda summary: {"c": {"exit": 1, "failing": sorted(set(self.ids(f"FAIL: test_a (m.C.test_a)\n{summary}\n")))}}
-        self.assertEqual(fc.fc_gate.regressions(state("FAILED (errors=3)"), state("FAILED (failures=3)")), [])
+        self.assertEqual(fc.fc_gate.regressions(state("FAILED (errors=3)"), state("FAILED (failures=3)")), ([], []))
+
+
+class UnknownBaseline(unittest.TestCase):
+    def run_of(self, script, limit=1):
+        return lambda cmd, wt, lim, env=None: fc.fc_implement.timed(script, wt, lim, env=env)
+
+    def test_a_baseline_cut_off_by_its_limit_is_unknown_and_not_kept(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(fc.fc_gate, "CHECKS_TIMEOUT", 1):
+            script = "echo 'FAIL: test_a (t.T.test_a)'; python3 -c \"print('x' * 5000)\"; sleep 30"
+            got = fc.fc_gate.baseline_state(self.run_of(script), ["suite"], Path(d), "sha-unknown", 1)
+            self.assertEqual((got["suite"]["exit"], got["suite"]["unknown"]), (124, True))
+            self.assertNotIn(("sha-unknown", ("suite",)), fc.fc_gate.BASELINES)
+
+    def test_a_clean_or_listed_baseline_is_known_and_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, script, exit_ in (("clean", "true", 0), ("listed", "echo 'FAIL: test_a (t.T.test_a)'; exit 1", 1)):
+                got = fc.fc_gate.baseline_state(self.run_of(script), [name], Path(d), "sha-" + name, 5)
+                self.assertEqual((got[name]["exit"], got[name]["unknown"]), (exit_, False))
+                self.assertIn(("sha-" + name, (name,)), fc.fc_gate.BASELINES)
+
+    def test_a_non_zero_exit_that_lists_no_id_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = fc.fc_gate.check_state(self.run_of("echo boom; exit 2"), ["c"], Path(d), 5)
+            self.assertEqual((got["c"]["failing"], got["c"]["unknown"]), ([], True))
+
+    def test_an_id_red_on_an_unknown_baseline_rejects_only_when_the_diff_reaches_its_test(self):
+        before = {"c": {"exit": 124, "failing": [], "unknown": True}}
+        after = {"c": {"exit": 1, "failing": ["test_a (tests.test_ship.S.test_a)", "test_b (tests.test_other.O.test_b)"], "unknown": False}}
+        broke, unknown = fc.fc_gate.regressions(before, after, lambda tid: "test_ship" in tid)
+        self.assertEqual((broke, unknown), (["test_a (tests.test_ship.S.test_a)"], ["test_b (tests.test_other.O.test_b)"]))
+
+    def test_an_id_red_on_a_known_baseline_is_never_excused(self):
+        before = {"c": {"exit": 0, "failing": [], "unknown": False}}
+        after = {"c": {"exit": 1, "failing": ["test_a (tests.test_ship.S.test_a)"], "unknown": False}}
+        self.assertEqual(fc.fc_gate.regressions(before, after, lambda tid: False), (["test_a (tests.test_ship.S.test_a)"], []))
+
+    def test_touches_names_the_test_file_and_the_modules_it_imports(self):
+        with tempfile.TemporaryDirectory() as d:
+            wt = Path(d)
+            sh = lambda *a: subprocess.run(a, cwd=d, check=True, capture_output=True, env={**os.environ, **ENV})
+            (wt / "tests").mkdir(); (wt / "bin").mkdir()
+            (wt / "tests" / "test_ship.py").write_text("import fc_ship\nfc = load()\nfc.fc_status.x()\n")
+            (wt / "tests" / "test_other.py").write_text("import unittest\n")
+            for f in ("fc_ship", "fc_status", "fc_other"):
+                (wt / "bin" / (f + ".py")).write_text("x = 1\n")
+            sh("git", "init", "-q"); sh("git", "add", "-A"); sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+            ship, status, other = "test_a (tests.test_ship.S.test_a)", "test_b (tests.test_other.O.test_b)", "tests/test_ship.py::test_c - assert"
+            (wt / "bin" / "fc_status.py").write_text("x = 2\n")
+            check = fc.fc_gate.touches(wt, "HEAD")
+            self.assertEqual((check(ship), check(status), check(other)), (False, False, False))  # fc_status is named in no import line
+            (wt / "bin" / "fc_ship.py").write_text("x = 2\n")
+            check = fc.fc_gate.touches(wt, "HEAD")
+            self.assertEqual((check(ship), check(status), check(other)), (True, False, True))
+            (wt / "tests" / "test_other.py").write_text("import unittest\nx = 1\n")
+            self.assertTrue(fc.fc_gate.touches(wt, "HEAD")(status))
+            self.assertFalse(fc.fc_gate.touches(wt, "HEAD")("TestUnnamed"))
 
 
 if __name__ == "__main__":
