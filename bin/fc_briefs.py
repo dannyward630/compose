@@ -423,7 +423,13 @@ def cmd_testcrews(a):
     waiting_writers(proj, {**{t: None for t in asked}, **{t: how for t in blocked}, **{m["id"]: how for m in queued}})  # a queued writer counts as an earlier one
     for tid, by in blocked.items():
         print(f"tests-{tid} waits for {', '.join('tests-' + b for b in by)}, which write its test file too; --collect starts it once they are collected")
+    def say_queued():
+        if queued:
+            ids = ",".join(m["id"] for m in queued)
+            print(f"{len(queued)} test writer(s) queued past the cap of {cap} (`parallel`, and `claude_parallel` for Claude writers, in {fc_config.CONFIG_PATH}): {ids}\n"
+                  f"--collect starts them, in task order, as earlier ones are collected; or start them yourself: compose testcrews --project {proj.name} --only {ids}{again}")
     if not metas:
+        say_queued()
         return
     fc_herdr.herdr_space(proj)  # once, before the parallel starts
     wts = {m["id"]: test_worktree(proj, m["id"]) for m in metas}  # serially: worktree adds share one lock
@@ -439,10 +445,7 @@ def cmd_testcrews(a):
         list(ex.map(start, metas))
     if failed:
         print(f"not started: {','.join(sorted(failed))}; start them again: compose testcrews --project {proj.name} --only {','.join(sorted(failed))}{again}")
-    if queued:
-        ids = ",".join(m["id"] for m in queued)
-        print(f"{len(queued)} test writer(s) queued past the cap of {cap} (`parallel`, and `claude_parallel` for Claude writers, in {fc_config.CONFIG_PATH}): {ids}\n"
-              f"--collect starts them, in task order, as earlier ones are collected; or start them yourself: compose testcrews --project {proj.name} --only {ids}{again}")
+    say_queued()
 
 def cap_split(proj, tasks, metas, cap):
     """`metas` split into the writers to start now and those queued past `cap`. A writer whose branch is open is still writing

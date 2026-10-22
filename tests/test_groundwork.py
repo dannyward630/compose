@@ -196,6 +196,16 @@ class Groundwork(unittest.TestCase):
         self.assertIn("1 test writer(s) queued past the cap of 1", out.getvalue())
         self.assertIn("compose testcrews --project p --only 002", out.getvalue())
 
+    def test_a_call_whose_writers_are_all_queued_behind_a_full_cap_still_says_so(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        started, out = [], io.StringIO()
+        with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+             mock.patch.object(fc.fc_briefs, "test_open", lambda proj, tid: tid == "001"), mock.patch("sys.stdout", out), mock.patch.object(fc.fc_config, "PARALLEL", 1):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only="002", print_=False))
+        self.assertEqual(started, [])
+        self.assertIn("1 test writer(s) queued past the cap of 1", out.getvalue())
+        self.assertIn("compose testcrews --project p --only 002", out.getvalue())
+
     def test_claude_test_writers_stay_within_claude_parallel_but_pi_writers_do_not(self):
         (self.proj / "results" / "contract.md").write_text("c")
         for models, cap, expect in (({}, 1, ["tests-001"]), ({"tests": "claude:opus"}, 1, ["tests-001"]), ({"tests": "pi:zai/glm-5"}, 1, ["tests-001", "tests-002"])):
