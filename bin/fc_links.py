@@ -1,7 +1,9 @@
 """Make or repoint the links compose owns; never touch a real file, never write a shell rc file."""
+import json
 import os
 from pathlib import Path
 import fc_checks
+import fc_core
 import fc_harness
 
 
@@ -38,7 +40,43 @@ def write_commands(key, checkout):
     return lines
 
 def write_hooks(key, checkout):
-    raise NotImplementedError
+    """Write compose's hook groups (fc_harness.hook_groups) into the row's hooks file, merged into what is there, never replaced:
+    a missing file is written as {"hooks": {<event>: [groups]}}; per event a wanted group matches the first existing group with the
+    same matcher (both absent counts as the same) whose first handler's command ends in /bin/compose" <sub> for the same sub, so the
+    two PreToolUse guard groups are told apart by matcher, is replaced in place when it differs and kept when equal, and a wanted
+    group with no match is appended after the event's other groups, so groups that are not compose's keep their content and index.
+    Other events and keys are kept. Written with fc_core.atomic_write, indent=2, only when the content changed; returns the written
+    paths, [] when nothing changed. A file that is not valid JSON exits naming it, and nothing is written."""
+    want = fc_harness.hook_groups(key, checkout)
+    if not want:
+        return []
+    path = fc_harness.home_dir(key) / fc_harness.HARNESSES[key]["hooks_file"]
+    if path.exists():
+        try:
+            doc = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            raise SystemExit(f"{path}: {e}")
+    else:
+        doc = {}
+    hooks = doc.setdefault("hooks", {})
+    changed = False
+    for ev, groups in want.items():
+        existing = list(hooks.get(ev, ()))
+        for g in groups:
+            sub = g["hooks"][0]["command"].rsplit('" ', 1)[1]
+            i = next((j for j, e in enumerate(existing) if e.get("matcher") == g.get("matcher")
+                      and e["hooks"][0]["command"].endswith(f'/bin/compose" {sub}')), None)
+            if i is None:
+                existing.append(g)
+                changed = True
+            elif existing[i] != g:
+                existing[i] = g
+                changed = True
+        hooks[ev] = existing
+    if not changed:
+        return []
+    fc_core.atomic_write(path, json.dumps(doc, indent=2) + "\n")
+    return [path]
 
 def trust_hooks(key, checkout):
     raise NotImplementedError
