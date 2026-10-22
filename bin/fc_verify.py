@@ -347,6 +347,24 @@ def fix_strays(touched, allowed, named=()):
     when it is working around a broken environment, not fixing a finding. A lockfile a task names in `files:` is part of the work."""
     return [f for f in touched if f not in allowed and f not in named] if allowed else [f for f in touched if Path(f).name in fc_worktree.LOCKFILES and f not in named]
 
+def wrong_layer(tasks, files, top):
+    """The files of a fix that belong to another layer: some task's `files:` lists them and the top task's does not.
+    A fix commits on the top layer, so it may change only what that layer owns (or what no task names)."""
+    code = fc_tasks.code_tasks(tasks)
+    owners = {f: sorted(t["id"] for t in code if f in t["files"]) for f in files}
+    return {f: o for f, o in owners.items() if o and top not in o} if top else {}
+
+def fix_answers(repo, fixed, report):
+    """Whether a fix round answers something reproduced: it removes the line a confirmed review finding quotes, an e2e case
+    failed (the next round reruns it), or a check that failed passes when run again."""
+    diff = fc_core.sh(["git", "--literal-pathspecs", "diff", "-U0", "HEAD", "--", *fixed], repo, check=False).stdout
+    removed = " ".join(" ".join(l[1:] for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")).split())
+    quotes = [" ".join(str(i.get("evidence") or "").split()) for i in (report.get("review") or {}).get("confirmed", [])]
+    failed = lambda rs: [r for r in rs if r["exit"] and not r.get("tool_error")]
+    return any(q and q in removed for q in quotes) or bool(failed(report.get("e2e", []))) or \
+        any(fc_proc.run(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=fc_core.clean_env(), timeout=900).returncode == 0
+            for r in failed(report.get("checks", []) + report.get("scoped", [])))
+
 def fix_message(reply, files, conv=None):
     """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed.
     The tool's name counts only as a word of its own, so docker-compose, compose.yaml, or composer stay a real change."""
@@ -401,6 +419,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             fc_core.say(f"fix    skip  repo has uncommitted changes ({', '.join(dirty[:5])}); commit first so a bad fix can be reverted")
             break
         _, _, _, protected = review_inputs(repo, proj, cfg)
+        main = cfg.get("main_repo") or repo
         before, pending = fc_core.digests(repo, protected), changed_files(repo)
         t1 = time.time()
         model = cfg.get("fix_model") or os.environ.get("COMPOSE_FIX_MODEL") or fc_config.DEFAULT_MODEL
@@ -454,16 +473,24 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         if new_docs:
             fc_core.say(f"fix    removed documents the fixer added: {', '.join(new_docs)}")
         fixed = [f for f in fixed if f not in new_docs]
-        stray = fix_strays(fixed, allowed, {f for t in fc_tasks.code_tasks(fc_tasks.load_tasks(proj)) for f in t["files"]})
-        if stray:
-            # The whole round goes: an out-of-scope edit means the fixer worked around something (an install, the toolchain)
-            # instead of fixing a finding, and its other edits rest on that. The last stage run failed, so verify ends FAIL.
+        tasks = fc_tasks.load_tasks(proj)
+        stray = fix_strays(fixed, allowed, {f for t in fc_tasks.code_tasks(tasks) for f in t["files"]})
+        order = fc_worktree.stack_order(main, proj)
+        top = order[-1].removeprefix(fc_worktree.task_prefix(main, proj)) if order else None
+        foreign = {} if stray else wrong_layer(tasks, fixed, top)
+        # The whole round goes when it is out of scope (a stray edit means the fixer worked around something, an install or the
+        # toolchain, instead of fixing a finding, and its other edits rest on that), on a layer that does not own what it changed
+        # (a fix commits on the top layer), or when it answers nothing reproduced. The last stage run failed, so verify ends FAIL.
+        why = (f"touched files outside the stack ({', '.join(stray[:8])})" if stray else
+               f"changed a file of layer {', '.join(sorted({x for o in foreign.values() for x in o}))}, not the top layer {top}: {', '.join(foreign)}" if foreign else
+               "changed no failing check and removed no line a confirmed finding cites" if fixed and not fix_answers(repo, fixed, report) else None)
+        if why:
             if set(fixed) - added:
                 fc_core.sh(["git", "--literal-pathspecs", "checkout", "-q", "HEAD", "--", *sorted(set(fixed) - added)], repo)
             for f in added & set(fixed):
                 (repo / f).unlink()
-            rejected.append({"round": rnd + 1, "files": stray})
-            fc_core.say(f"fix    REJECTED round {rnd + 1}: touched files outside the stack ({', '.join(stray[:8])}); reverted the round")
+            rejected.append({"round": rnd + 1, "files": stray or sorted(foreign) or fixed, **({} if stray else {"why": why})})
+            fc_core.say(f"fix    REJECTED round {rnd + 1}: {why}; reverted the round")
             break
         fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if fixed else 'no'}  ${usage['cost']:.4f}")
         if fixed:
@@ -474,8 +501,6 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             tests = fix_tests(fc_tasks.load_tasks(proj), fixed)
             if tests is None:
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
-            main = cfg.get("main_repo") or repo
-            order = fc_worktree.stack_order(main, proj)
             unrouted = fc_reroute.catch_up(main, proj, fc_tasks.load_tasks(proj), [order[-1].removeprefix(fc_worktree.task_prefix(main, proj))], base, ("scope",)) if order else {}
             for id, why in unrouted.items():
                 fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")

@@ -298,10 +298,12 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None):
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None, report=None, rerun=0, top=None):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
         `self.scopes` holds the tests each stage run was given (None: the full checks). `dirty` (path: text) is in the worktree
-        before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind."""
+        before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind. The first
+        stage run's `report` (by default one failing check, `c1`) is what the fix answers; the check exits `rerun` when verify runs it
+        again. `top` is the task id of the stack's top layer."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -320,7 +322,7 @@ class FixScope(unittest.TestCase):
             for f, text in writes.items():
                 (Path(cwd) / f).write_text(text)
             return "s", reply, 1, {"cost": 0.0}
-        stages, self.scopes, self.said = iter([(False, {}, "finding"), (True, {}, "")]), [], []
+        stages, self.scopes, self.said = iter([(False, report or {"checks": [{"cmd": "c1", "exit": 1}]}, "finding"), (True, {}, "")]), [], []
         def run_stages(repo, proj, cfg, a, tests=None):
             if artifact and not self.scopes:
                 (repo / artifact).write_text("out\n")
@@ -330,6 +332,9 @@ class FixScope(unittest.TestCase):
                 mock.patch.object(fc.fc_verify, "run_stages", run_stages), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_tasks, "load_tasks", return_value=list(tasks)), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})), \
+                mock.patch.object(fc.fc_proc, "run", return_value=mock.Mock(returncode=rerun)), \
+                mock.patch.object(fc.fc_worktree, "stack_order", return_value=[f"compose/p-{top}"] if top else []), \
+                mock.patch.object(fc.fc_worktree, "task_prefix", return_value="compose/p-"), \
                 mock.patch.object(fc.fc_core, "say", self.said.append):  # a failed verify screens: never call Jev
             with self.assertRaises(SystemExit) as cm:
                 fc.fc_verify.verify_rounds(repo, proj, {"review_base": "main", **(cfg or {})}, type("A", (), {"fix": 2, "skip_review": True})(), [], time.time())
@@ -372,6 +377,30 @@ class FixScope(unittest.TestCase):
             diff, _, _, _ = fc.fc_verify.review_inputs(repo, proj, {"review_base": "main"})
         self.assertIn("+fixed", diff)  # the stack's diff, not every named file whole
         self.assertNotIn("==== a.go ====", diff)
+
+    def test_a_fix_that_changes_no_failing_check_and_no_cited_line_is_discarded(self):
+        code, repo, res = self.verify({"a.go": "fixed\n"}, rerun=1)  # c1 still fails after the fix
+        self.assertEqual((code, len(res["rounds"]), res["rejected_fixes"]), (1, 1, [{"round": 1, "files": ["a.go"],
+                         "why": "changed no failing check and removed no line a confirmed finding cites"}]))
+        self.assertEqual((self.committed(repo)[0], (repo / "a.go").read_text()), (["a.go"], "b\n"))  # still the layer's own commit
+        rv = lambda quote: {"review": {"pass": False, "issues": [], "confirmed": [{"evidence": quote}]}}
+        code, repo, res = self.verify({"a.go": "fixed\n"}, report=rv("b"))  # it removes the line the finding quotes
+        self.assertEqual((code, res["rejected_fixes"], (repo / "a.go").read_text()), (0, [], "fixed\n"))
+        code, _, res = self.verify({"a.go": "fixed\n"}, report=rv("zzz"))
+        self.assertEqual((code, len(res["rejected_fixes"])), (1, 1))  # it leaves that line alone
+        code, _, res = self.verify({"a.go": "fixed\n"}, report={"e2e": [{"name": "n", "exit": 1}]})  # a failing e2e case is its own reproduction
+        self.assertEqual((code, res["rejected_fixes"]), (0, []))
+
+    def test_a_fix_round_commits_only_to_the_layer_that_owns_the_changed_file(self):
+        tasks = [{"id": "003", "files": ["a.go"], "protected": [], "test": "t3"}, {"id": "007", "files": ["b.go"], "protected": [], "test": "t7"}]
+        code, repo, res = self.verify({"a.go": "fixed\n"}, tasks=tasks, top="007")
+        self.assertEqual((code, res["rejected_fixes"]), (1, [{"round": 1, "files": ["a.go"], "why": "changed a file of layer 003, not the top layer 007: a.go"}]))
+        self.assertEqual(((repo / "a.go").read_text(), self.committed(repo)[0]), ("b\n", ["a.go"]))  # reverted, nothing committed
+        code, _, res = self.verify({"a.go": "fixed\n"}, tasks=tasks, top="003")
+        self.assertEqual((code, res["rejected_fixes"]), (0, []))
+        tasks[1]["files"].append("a.go")  # a file two tasks list belongs to the top layer too
+        code, _, res = self.verify({"a.go": "fixed\n"}, tasks=tasks, top="007")
+        self.assertEqual((code, res["rejected_fixes"]), (0, []))
 
     def test_fix_inside_the_stack_commits_and_passes(self):
         code, repo, res = self.verify({"a.go": "fixed\n"})
@@ -445,6 +474,21 @@ class FixScope(unittest.TestCase):
         self.assertIn("hardening", review[0])
         self.assertIn("hardening", confirm[0])
         self.assertIn("THE PLAN", confirm[1])
+
+    def test_review_drops_a_claim_a_passing_test_in_the_code_already_proves_wrong(self):
+        code = "def test_a_floor_turns_check_only_into_deep(self):\n    assert floor(x) == 'deep'\nreturn floor(x)"
+        def review(proof, tests_pass=True):
+            def fj(env, system, user, **kw):
+                if "strict code reviewer" in system:
+                    return {"issues": [{"file": "a.py", "severity": "high", "note": "floor does not refuse check-only"}]}
+                return {"wrong_line": "return floor(x)", "fixed_line": "return x", "proof": proof, "confirmed": True}
+            with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
+                return fc.fc_verify.fc_review.llm_review({"perspectives": ["spec"]}, code, "plan", "", tests_pass)
+        rv = review("test_a_floor_turns_check_only_into_deep")
+        self.assertEqual(([i["evidence"] for i in rv["issues"]], rv["confirmed"], rv["pass"]),
+                         (["a passing test already proves it: test_a_floor_turns_check_only_into_deep"], [], True))
+        for proof, tests_pass in (("", True), ("test_not_in_the_code", True), ("test_a_floor_turns_check_only_into_deep", False)):
+            self.assertEqual(len(review(proof, tests_pass)["confirmed"]), 1, (proof, tests_pass))  # no passing proof: the claim stands
 
     def test_a_review_cut_off_at_its_token_budget_is_asked_again_with_a_bigger_one(self):
         full = json.dumps({"issues": [{"file": "a.go", "severity": "low", "note": "n"}]})

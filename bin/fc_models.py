@@ -406,7 +406,7 @@ def fast_env():
 def fast_json(env, system, user, max_tokens=1500, timeout=90, key=None):
     """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact. `key` names
     the field the caller needs, so the object holding it is the one read."""
-    body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens,
+    body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens, "temperature": 0,  # the same code gets the same review
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
             "messages": [{"role": "system", "content": fc_core.scrub(system)}, {"role": "user", "content": fc_core.scrub(user)}]}
     req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
