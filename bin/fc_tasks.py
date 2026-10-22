@@ -1,5 +1,5 @@
 import json, os, re, sys, time
-import fc_core, fc_config
+import fc_core, fc_config, fc_tiers
 
 
 # ---------- tasks ----------
@@ -53,7 +53,11 @@ def task_from_issue(issue):
         meta["figma"] = fc_core.figma_key(meta["figma"]) or sys.exit(f"{issue['id']}: figma is not a Figma file url or key: {meta['figma']}")
     if "route" in meta and meta["route"] not in WORKFLOWS:
         sys.exit(f"{issue['id']}: route must be test-first, implement-then-test or fix-then-regression-test, not {meta['route']}")
+    if "tier" in meta and meta["tier"] not in fc_tiers.PINS:
+        sys.exit(f"{issue['id']}: tier must be cheap, standard, frontier or no-frontier, not {meta['tier']}")
     meta.setdefault("kind", "code")
+    if "model" not in meta:
+        meta["model_auto"] = True
     meta.setdefault("model", fc_config.DEFAULT_MODEL)
     meta.update({"title": issue.get("title", ""), "linear": issue["id"], "linear_state": issue.get("status", ""),
                  "blocked_by": [b if isinstance(b, dict) else {"id": b} for b in issue.get("blockedBy") or []],  # MCP gives {id, title}
