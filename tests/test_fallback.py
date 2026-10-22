@@ -3,7 +3,7 @@ import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, te
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
-import sys, time, types
+import sys, threading, time, types
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
 os.environ["HERDR_ENV"] = ""
 os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
@@ -105,9 +105,11 @@ class Fallback(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        me, real_sleep = threading.get_ident(), time.sleep
+        record = lambda s: slept.append(s) if threading.get_ident() == me else real_sleep(s)  # time is global: another thread's sleep is not the wait
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
-                mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", slept.append), \
+                mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", record), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, 1), proj
 

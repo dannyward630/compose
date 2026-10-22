@@ -226,7 +226,7 @@ class Groundwork(unittest.TestCase):
                      mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out), \
                      mock.patch.object(fc.fc_config, "PARALLEL", 1), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 1), mock.patch.object(fc.fc_config, "CREW_MODELS", models):
                     fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, parallel=flag))
-                self.assertEqual(started, expect, (models, flag))
+                self.assertEqual(sorted(started), expect, (models, flag))  # the writers start on threads, so their order is not fixed
 
     def test_testcrews_takes_parallel_on_the_command_line(self):
         cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
