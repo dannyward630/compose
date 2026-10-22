@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, subprocess, sys, tempfile, time, unittest
+import io, json, os, subprocess, sys, tempfile, time, types, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -91,6 +91,21 @@ class HermeticCleanup(unittest.TestCase):
             h = Path(tempfile.mkdtemp()) / "gh"; h.write_text("#!/bin/sh\necho 1.0.0\n"); h.chmod(0o755)
             made["h"] = subprocess.run([str(h)], capture_output=True, text=True).stdout
         self.assertEqual(self.run_case(body), {"f": "2.0.0\n", "g": "#!/bin/sh\necho 1.0.0\n", "h": "1.0.0\n"})
+
+
+class HermeticModules(unittest.TestCase):
+    """Test files reload every fc_* module at import, so the last file loaded owns sys.modules while the others run."""
+
+    def test_a_test_runs_with_the_fc_modules_its_file_loaded(self):
+        probes, seen, cases = [types.ModuleType("fc_probe"), types.ModuleType("fc_probe")], [], []
+        self.addCleanup(sys.modules.pop, "fc_probe", None)
+        for n, probe in zip("ab", probes):  # file a loads first and file b after it: only b's copy is left in sys.modules
+            sys.modules["fc_probe"] = probe
+            cases.append(type("Case", (unittest.TestCase,), {"__module__": "probe_file_" + n, "test_it": lambda case: seen.append(sys.modules["fc_probe"])}))
+            self.addCleanup(hermetic._world.pop, "probe_file_" + n, None)
+        unittest.TextTestRunner(stream=io.StringIO()).run(unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(c) for c in cases))
+        self.assertEqual(seen, probes)
+        self.assertIs(sys.modules["fc_probe"], probes[1])  # and what sys.modules held is back after each test
 
 
 class HermeticEnv(unittest.TestCase):
