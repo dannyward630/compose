@@ -1277,3 +1277,46 @@ class CodexOnce(unittest.TestCase):
         self.assertEqual(str(cm.exception), "Codex failed: boom")
         self.assertEqual(self.ledger.rows, {})
         self.assertEqual(fc_harness.once_result("codex:x", self.done("partial", code=1, err="ERROR: late\n"))[1], "partial")
+
+
+class CodexImplementer(unittest.TestCase):
+    RESULT = (None, "ok", 1, {"tokens_in": 1, "tokens_out": 2, "cost": 0.0})
+
+    def setUp(self):
+        self.run, self.cmd, self.res = mock.Mock(return_value=subprocess.CompletedProcess([], 0, "", "")), mock.Mock(return_value=["codex", "x"]), mock.Mock(return_value=self.RESULT)
+        self.other = {k: mock.Mock(return_value=("s", "r", 0, {})) for k in ("opencode", "pi_turn", "claude_once")}
+        patches = [(fc.fc_proc, "run", self.run), (fc.fc_claude, "headless_env", mock.Mock(return_value={"H": "1"})), (fc.fc_herdr, "herdr_env", mock.Mock(return_value=None)),
+                   (fc_harness, "once_command", self.cmd), (fc_harness, "once_result", self.res), (fc.fc_claude, "claude_once", self.other["claude_once"]),
+                   (fc.fc_models, "opencode", self.other["opencode"]), (fc.fc_models, "pi_turn", self.other["pi_turn"])]
+        for obj, k, v in patches: p = mock.patch.object(obj, k, v); p.start(); self.addCleanup(p.stop)
+
+    def test_codex_turn_runs_once_with_the_row_argv_and_returns_its_result(self):
+        self.assertEqual(fc.fc_implement.implementer("/w", "codex:gpt-6-sol", "do it", timeout=50), self.RESULT)
+        self.cmd.assert_called_once_with("codex:gpt-6-sol", "/w", "do it")
+        self.run.assert_called_once_with(["codex", "x"], cwd="/w", env={"H": "1"}, timeout=50)
+        self.assertEqual(self.res.call_args.args[0], "codex:gpt-6-sol"); self.assertIs(self.res.call_args.args[1], self.run.return_value)
+
+    def test_default_timeout_is_900_and_bare_codex_takes_the_same_path(self):
+        for model in ("codex:gpt-6-sol", "codex"):
+            self.run.reset_mock(); self.assertEqual(fc.fc_implement.implementer("/w", model, "do it"), self.RESULT)
+            self.assertEqual(self.run.call_args.kwargs["timeout"], 900)
+            self.assertEqual(self.cmd.call_args.args[0], model)
+
+    def test_prompt_is_scrubbed_and_a_fake_402_comes_first(self):
+        with mock.patch.object(fc.fc_core, "SECRET_VALUES", {"s3cret-value-xyz"}):
+            fc.fc_implement.implementer("/w", "codex:gpt-6-sol", "use s3cret-value-xyz now")
+            self.assertEqual(self.cmd.call_args.args[2], "use <redacted> now")
+            self.run.reset_mock()
+            with mock.patch.dict(os.environ, {"COMPOSE_FAKE_402": "openrouter"}), self.assertRaises(fc.fc_models.PaymentRequired): fc.fc_implement.implementer("/w", "codex:gpt-6-sol", "x")
+        self.run.assert_not_called()
+
+    def test_a_codex_fallback_of_a_pi_model_routes_here(self):
+        with mock.patch.object(fc.fc_config, "FALLBACK_MODEL", "codex:gpt-6-sol"):
+            self.assertEqual(fc.fc_models.fallback_for("pi:a/b"), "codex:gpt-6-sol")
+            self.assertEqual(fc.fc_implement.implementer("/w", fc.fc_models.fallback_for("pi:a/b"), "x"), self.RESULT)
+        self.run.assert_called_once()
+
+    def test_claude_pi_and_openrouter_ids_route_as_before(self):
+        for model, k in (("claude:opus", "claude_once"), ("pi:a/b", "pi_turn"), ("openrouter/x/y", "opencode")):
+            fc.fc_implement.implementer("/w", model, "x"); self.other[k].assert_called_once()
+        self.run.assert_not_called(); self.cmd.assert_not_called(); self.res.assert_not_called()
