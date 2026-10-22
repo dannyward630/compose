@@ -595,5 +595,47 @@ class PartialLand(Ship):
         self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
 
 
+class LandedLayers(Ship):
+    def merge(self, n):
+        subprocess.run(["gh", "pr", "edit", str(n), "--base", "main"], cwd=self.repo, check=True)
+        subprocess.run(["gh", "pr", "merge", str(n), "--squash"], cwd=self.repo, check=True)
+
+    def tree(self, ref):
+        return self.git("ls-tree", "-r", "--name-only", ref).splitlines()
+
+    def assert_built_on_main(self, branch, file, below="main"):
+        self.assertIn(file, self.tree(branch))
+        self.assertTrue(self.git("rev-list", f"{below}..{branch}"), f"{branch} adds nothing over {below}")
+        self.assertEqual(subprocess.run(["git", "merge-base", "--is-ancestor", "main", branch], cwd=self.repo).returncode, 0)
+
+    def test_the_layers_above_a_merged_bottom_build_on_the_new_base(self):
+        self.submit(); self.merge(1)
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stack  landed compose/p-layer-01; building on origin/main", out)
+        self.assertFalse(any("STOP" in l for l in out), out)
+        self.assertEqual(self.git("rev-parse", "main"), self.git("--git-dir", str(self.origin), "rev-parse", "main"))
+        self.assert_built_on_main("compose/p-layer-02", "002.src")
+        self.assert_built_on_main("compose/p-layer-03", "003.src", "compose/p-layer-02")
+
+    def test_two_merged_layers_are_both_named_and_the_last_one_builds_on_the_base(self):
+        self.submit(); self.merge(1); self.merge(2)
+        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stack  landed compose/p-layer-01, compose/p-layer-02; building on origin/main", out)
+        self.assert_built_on_main("compose/p-layer-03", "003.src")
+
+    def test_open_pull_requests_or_no_layers_file_fetch_nothing(self):
+        self.submit()
+        old = self.git("rev-parse", "main")
+        self.git("checkout", "-q", "main"); self.write("base.txt", "b\n"); self.commit("Move the base"); self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "compose/p"); self.git("branch", "-f", "main", old)
+        for _ in range(2):
+            out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+            self.assertFalse(any("landed" in l for l in out), out)
+            self.assertEqual(self.git("rev-parse", "main"), old)
+            (self.proj / "layers.json").unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()
