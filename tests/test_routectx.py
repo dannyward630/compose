@@ -62,7 +62,7 @@ class Context(unittest.TestCase):
             "files": [{"path": "bin/x.py", "top": "bin", "exists": True}, {"path": "README.md", "top": ".", "exists": True},
                       {"path": "src/new.py", "top": "src", "exists": False}],
             "other_files": ["a.py", "bin/x.py", "z.py"], "story": {"title": "Story", "criteria": ["greets", "waves"]},
-            "bug": {"label": True, "documented": True, "confirmed": True}, "pin": "implement-then-test"})
+            "bug": {"label": True, "documented": True, "confirmed": True}, "pin": "implement-then-test", "check": "t"})
 
     def test_bug_and_story_holdouts(self):
         for body, bug in [("## Goal\nx", (False, False)), ("## Reproduction\n\n   \n## Notes\ncase: greet-name", (False, False)),
@@ -73,6 +73,32 @@ class Context(unittest.TestCase):
         for name in ("results/prove.json", "verify.json"):
             (self.proj / name).unlink()
             self.assertEqual(self.ctx(issue(1, "a.py", BUG))["bug"], {"label": False, "documented": True, "confirmed": False}, name)
+
+
+class CheckOnlyContext(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+
+    def ctx(self, mine):
+        meta = fc.fc_tasks.task_from_issue(mine)
+        return fc_routectx.route_context(self.repo, self.proj, meta, [meta], {mine["id"]: mine})
+
+    def whole(self, check, pin=None):
+        return {"task": "T1", "criteria": [], "files": [{"path": "bin/a.py", "top": "bin", "exists": False}], "other_files": [],
+                "story": None, "bug": {"label": False, "documented": False, "confirmed": False}, "pin": pin, "check": check}
+
+    def test_a_task_with_no_protected_test_carries_its_check(self):
+        self.assertEqual(self.ctx(issue(1, "bin/a.py")), self.whole("t"))
+
+    def test_a_task_with_a_protected_test_carries_no_check(self):
+        self.assertEqual(self.ctx(issue(1, "bin/a.py", block="protected: tests/test_a.py\n")), self.whole(None))
+
+    def test_holdouts(self):
+        self.assertIsNone(self.ctx(issue(1, "bin/a.py", block="protected: tests/test_a.py, tests/test_b.py\n"))["check"])
+        self.assertEqual(self.ctx(issue(1, "bin/a.py", block="route: check-only\n")), self.whole("t", "check-only"))
+        self.assertEqual(self.ctx(issue(1, "bin/a.py", block="protected:\n"))["check"], "t")
 
 
 class Dependencies(unittest.TestCase):
