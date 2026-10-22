@@ -7,7 +7,7 @@ import fc_tasks
 
 
 def route_context(repo, proj, meta, tasks, issues):
-    """The Jev state for one task: task, criteria, files, other_files, story, bug, pin."""
+    """The Jev state for one task: task, criteria, files, other_files, story, bug, check, pin."""
     mine = issues.get(meta.get("linear")) or {}
     parent = issues.get(mine.get("parentId"))
     rep = re.search(r"## Reproduction\n(.*?)(?:\n## |\Z)", meta["body"], re.S)
@@ -27,7 +27,7 @@ def route_context(repo, proj, meta, tasks, issues):
             "other_files": sorted({f for t in other for f in t["files"]}),
             "story": None if not parent else {"title": parent["title"], "criteria": fc_tasks.parse_criteria(parent["description"])},
             "bug": {"label": any(l.lower() == "bug" for l in mine.get("labels") or ()), "documented": bool(text), "confirmed": confirmed},
-            "pin": meta.get("route")}
+            "pin": meta.get("route"), "check": meta["test"] if not meta.get("protected") else None}
 
 
 def dependency_context(repo, meta):

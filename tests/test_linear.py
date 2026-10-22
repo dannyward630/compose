@@ -742,7 +742,7 @@ class RoutePin(unittest.TestCase):
         return fc.fc_tasks.task_from_issue(issue("ENG-3", "T", desc))
 
     def test_the_workflow_and_depth_names(self):
-        self.assertEqual(fc.fc_tasks.WORKFLOWS, ("test-first", "implement-then-test", "fix-then-regression-test"))
+        self.assertEqual(fc.fc_tasks.WORKFLOWS, ("test-first", "implement-then-test", "fix-then-regression-test", "check-only"))
         self.assertEqual(fc.fc_tasks.DEPTHS, ("FAST", "STANDARD", "DEEP"))
 
     def test_route_text_ends_at_the_next_section_or_the_block(self):
@@ -769,10 +769,17 @@ class RoutePin(unittest.TestCase):
                                                    "issues": [issue("ENG-3", "T", block(id="001", test="t", route="implement-then-test"))]})
         self.assertEqual(tasks[0]["route"], "implement-then-test")
 
+    def test_a_check_only_pin_is_kept_through_sync_and_stored(self):
+        self.assertEqual(self.task(block(id="001", test="t", route="check-only"))["route"], "check-only")
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""},
+                                           "issues": [issue("ENG-3", "T", block(id="001", test="t", route="check-only"))]})
+        self.assertEqual(fc.fc_tasks.load_tasks(self.proj)[0]["route"], "check-only")
+        self.assertEqual(json.loads((self.proj / "results" / "tasks.json").read_text())["tasks"][0]["route"], "check-only")
+
     def test_sync_exits_on_a_route_that_is_not_a_workflow(self):
-        for value in ("Test-First", "TEST_FIRST", "DEEP"):
+        for value in ("Test-First", "TEST_FIRST", "DEEP", "quick", "check_only", "Check-Only"):
             with self.assertRaises(SystemExit) as e:
                 fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""},
                                                    "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
             self.assertEqual(e.exception.code,
-                             f"ENG-7: route must be test-first, implement-then-test or fix-then-regression-test, not {value}")
+                             f"ENG-7: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {value}")

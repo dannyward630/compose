@@ -45,7 +45,16 @@ def broken_base(proj, meta, red, base_name, branch, wt):
 def run_events(proj, repo, meta, result):
     """The task's run events for the ledger: a FAST task's carry no `red` event and end `unproven` when it is."""
     import fc_ledger
-    if workflow(proj, meta) != "fix-then-regression-test":
+    flow = workflow(proj, meta)
+    if flow == "check-only":
+        events = fc_ledger.run_events(proj, repo, meta, result)
+        if not events:
+            return []
+        events = [fc_ledger.event(e["run_id"], e["commit_sha"], e["task_ids"], e["criterion_id"], e["phase"], e["source"], e["result"], e["fails_on_base"], f"check-only: {meta['test']}: {e['detail']}") for e in events]
+        first = events[0]
+        events.append(fc_ledger.event(first["run_id"], "", first["task_ids"], first["criterion_id"], "red", "run", "skipped", None, "regression test skipped (check-only)"))
+        return events
+    if flow != "fix-then-regression-test":
         return fc_ledger.run_events(proj, repo, meta, result)
     unproven = result["status"] == "unproven"
     events = fc_ledger.run_events(proj, repo, meta, {**result, "status": "passed"} if unproven else result)

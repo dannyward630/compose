@@ -21,6 +21,7 @@ fc_claude
 fc_models
 fc_routejev
 fc_route
+fc_quick
 fc_herdr
 fc_worktree
 fc_checks

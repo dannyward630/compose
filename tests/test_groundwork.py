@@ -945,5 +945,46 @@ class ToolsmithBrief(unittest.TestCase):
             self.assertIn("shop", str(cm.exception.code))
 
 
+class NoTestToWrite(unittest.TestCase):
+    """A task with no protected test has no writer, no brief, and says so."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo, _ = repo_with({"README.md": "x\n"})
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        tasks = [{"id": "001", "title": "Store", "files": ["server/store.go"], "protected": ["server/store_test.go"], "test": "go test ./...", "body": "## Goal\nOpen."},
+                 {"id": "002", "title": "Copy", "files": ["README.md"], "protected": [], "test": "grep -q x README.md", "body": "## Goal\nFix the copy."},
+                 {"id": "003", "title": "Form", "files": ["Form.js"], "protected": ["Form.test.js"], "test": "yarn test Form", "body": "## Goal\nShow."}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        (self.proj / "results" / "contract.md").write_text("c")
+
+    def testcrews(self, only=None, print_=True):
+        started, out = [], io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.repo), \
+             mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: started.append(ns.role)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+             mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo), mock.patch("sys.stdout", out):
+            fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=only, print_=print_))
+        return out.getvalue(), sorted(started)
+
+    def test_print_briefs_only_the_tasks_with_a_protected_test(self):
+        text, _ = self.testcrews()
+        self.assertIn("===== tests-001", text); self.assertIn("===== tests-003", text)
+        self.assertNotIn("===== tests-002", text)
+        self.assertIn("002 skipped: no protected test to write", text)
+
+    def test_only_names_a_skipped_task_and_still_briefs_the_others(self):
+        text, _ = self.testcrews(only="002")
+        self.assertIn("002 skipped: no protected test to write", text); self.assertNotIn("===== tests-", text)
+        text, _ = self.testcrews(only="001,002")
+        self.assertIn("002 skipped: no protected test to write", text); self.assertIn("===== tests-001", text)
+        self.assertNotIn("skipped", self.testcrews(only="001")[0])  # only the named ids
+
+    def test_no_writer_starts_for_it_and_the_others_still_start(self):
+        text, started = self.testcrews(print_=False)
+        self.assertEqual(started, ["tests-001", "tests-003"])
+        self.assertEqual(self.testcrews(only="002", print_=False)[1], [])
+        self.assertEqual(self.testcrews(only="003", print_=False)[1], ["tests-003"])
+
+
 if __name__ == "__main__":
     unittest.main()

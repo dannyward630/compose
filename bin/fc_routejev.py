@@ -12,10 +12,14 @@ def route_questions(state, plain):
     depths = {"FAST": "A small, low-risk change with minimal testing.", "STANDARD": "The usual change with its tests.",
               "DEEP": "A wide or risky change with thorough testing and scrutiny."}
     applies = {"APPLIES": "This policy governs how the task is done.", "DOES_NOT_APPLY": "This policy does not govern it."}
+    if state.get("check"):
+        workflows["CHECK_ONLY"] = ("Small work whose result shows by running it: state the expected behavior, do the work, "
+                                   "run the same check again; no written test and no suite")
     questions = {}
     if not state.get("pin"):
         questions["workflow"] = {"type": "choice", "criteria": workflows, "instructions": {"task": state.get("task", "")}}
-    questions["depth"] = {"type": "choice", "criteria": depths, "instructions": {"task": state.get("task", "")}}
+    if state.get("pin") != "check-only" or state.get("recorded"):
+        questions["depth"] = {"type": "choice", "criteria": depths, "instructions": {"task": state.get("task", "")}}
     for i, policy in enumerate(plain):
         if policy.get("globs"):
             continue
@@ -36,8 +40,8 @@ def decide(env, cfg, state, matched, plain, more):
 
     reply, retry, why = None, None, None
     try:
-        reply = fc_models.jev_ask(env, cfg, state, questions, "Jev route")
-        if low(reply.get("answers", {})):
+        reply = fc_models.jev_ask(env, cfg, state, questions, "Jev route") if questions else {"answers": {}}
+        if questions and low(reply.get("answers", {})):
             retry = more()
             reply = fc_models.jev_ask(env, cfg, {**state, "dependencies": retry}, questions, "Jev route retry")
             if low(reply.get("answers", {})):
@@ -52,7 +56,11 @@ def decide(env, cfg, state, matched, plain, more):
         workflow, depth, decided_by = pin or "test-first", "STANDARD", "fallback"
     else:
         workflow = pin or answers["workflow"]["choice"].lower().replace("_", "-")
-        depth, decided_by = answers["depth"]["choice"], "jev" if retry is None else "jev after retry"
+        depth = answers["depth"]["choice"] if "depth" in answers else "STANDARD"
+        decided_by = None if not questions else "jev" if retry is None else "jev after retry"
+    recorded = state.get("recorded")
+    if workflow == "check-only" and not recorded:
+        depth = "FAST"
     floor = [p["name"] for p in matched]
     checks = [c for p in matched for c in p["checks"]]
     if reply is None:
@@ -66,6 +74,9 @@ def decide(env, cfg, state, matched, plain, more):
     checks = list(dict.fromkeys(checks))
     if floor:
         depth = "DEEP"
-    return {"workflow": workflow, "depth": depth, "decided_by": f"pin + {decided_by}" if pin else decided_by,
+        if workflow == "check-only" and not recorded:
+            workflow, decided_by, pin = "test-first", "floor", None
+    by = "pin" if decided_by is None else f"pin + {decided_by}" if pin else decided_by
+    return {"workflow": workflow, "depth": depth, "decided_by": by,
             "confidence": min(confs) if confs else None, "answers": answers, "retry": retry, "fallback": why,
             "floor": floor, "checks": checks}

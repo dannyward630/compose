@@ -91,3 +91,56 @@ class Floor(unittest.TestCase):
         self.assertEqual(pick(route, "depth", "floor", "checks", "fallback"), ("STANDARD", [], ["t", "v", "d"], "Jev unavailable: no key"))
         route, _ = self.decide(RuntimeError("no key"), [GATE], TRIO)
         self.assertEqual(pick(route, "depth", "floor", "checks"), ("DEEP", ["Gate"], ["v", "t", "d"]))
+
+
+CHECK = {**STATE, "check": "python3 -m unittest tests/test_a.py"}
+RECORDED = {"recorded": {"workflow": "check-only", "depth": "FAST", "checks": []}, "pin": "check-only"}
+ONLY = "Small work whose result shows by running it: state the expected behavior, do the work, run the same check again; no written test and no suite"
+
+
+class CheckOnlyDecide(unittest.TestCase):
+    def decide(self, side_effect, state=CHECK, matched=(), plain=()):
+        with mock.patch.object(fc.fc_models, "jev_ask", side_effect=side_effect) as ask:
+            return fc_routejev.decide({}, {}, state, list(matched), list(plain), mock.Mock(return_value=CALLERS)), ask
+
+    def test_check_only_is_offered_only_with_a_check_and_no_pin(self):
+        crit = lambda state: fc_routejev.route_questions(state, [])["workflow"]["criteria"]
+        self.assertEqual((crit(CHECK)["CHECK_ONLY"], len(crit(CHECK))), (ONLY, 4))
+        self.assertEqual(set(crit({**STATE, "check": None})), {"TEST_FIRST", "IMPLEMENT_THEN_TEST", "FIX_THEN_REGRESSION_TEST"})
+        self.assertEqual(set(fc_routejev.route_questions({**CHECK, "pin": "test-first"}, [])), {"depth"})
+
+    def test_a_check_only_pick_routes_at_fast_whatever_the_depth(self):
+        route, _ = self.decide([reply(workflow=ans("CHECK_ONLY", 0.9), depth=ans("DEEP", 0.9))])
+        self.assertEqual(pick(route, "workflow", "depth", "floor"), ("check-only", "FAST", []))
+
+    def test_a_check_only_pin_asks_no_depth_and_with_no_question_left_makes_no_call(self):
+        pinned = {**CHECK, "pin": "check-only"}
+        self.assertEqual(fc_routejev.route_questions(pinned, []), {})
+        route, ask = self.decide([], state=pinned)
+        self.assertEqual((ask.call_count, *pick(route, "workflow", "depth", "decided_by", "answers", "confidence")), (0, "check-only", "FAST", "pin", {}, None))
+        route, ask = self.decide([reply(policy0=ans("DOES_NOT_APPLY", 0.9))], state=pinned, plain=PLAIN[:1])
+        self.assertEqual((ask.call_count, set(ask.call_args.args[3]), *pick(route, "workflow", "depth")), (1, {"policy0"}, "check-only", "FAST"))
+
+    def test_a_floor_turns_check_only_into_test_first_deep_decided_by_floor(self):
+        gate = {"name": "Gate", "statement": "Verify.", "globs": ["bin/x.py"], "checks": ["v"]}
+        want = ("test-first", "DEEP", "floor", ["Gate"], ["v"])
+        route, _ = self.decide([reply(workflow=ans("CHECK_ONLY", 0.9), depth=ans("FAST", 0.9))], matched=[gate])
+        self.assertEqual(pick(route, "workflow", "depth", "decided_by", "floor", "checks"), want)
+        route, ask = self.decide([], state={**CHECK, "pin": "check-only"}, matched=[gate])
+        self.assertEqual((ask.call_count, *pick(route, "workflow", "depth", "decided_by", "floor", "checks")), (0, *want))
+        route, _ = self.decide([reply(workflow=ans("CHECK_ONLY", 0.9), depth=ans("FAST", 0.9), policy0=ans("APPLIES", 0.9))], plain=PLAIN[:1])
+        self.assertEqual(pick(route, "workflow", "depth", "decided_by", "floor"), ("test-first", "DEEP", "floor", ["Secrets"]))
+
+    def test_a_reassessment_keeps_check_only_asks_the_depth_and_a_floor_only_deepens(self):
+        state = {**CHECK, **RECORDED}
+        self.assertEqual(set(fc_routejev.route_questions(state, [])), {"depth"})
+        route, ask = self.decide([reply(depth=ans("STANDARD", 0.9))], state=state)
+        self.assertEqual((ask.call_count, *pick(route, "workflow", "depth")), (1, "check-only", "STANDARD"))
+        route, _ = self.decide([reply(depth=ans("FAST", 0.9))], state=state, matched=[{"name": "Gate", "statement": "V.", "globs": ["bin/x.py"], "checks": []}])
+        self.assertEqual(pick(route, "workflow", "depth", "floor"), ("check-only", "DEEP", ["Gate"]))
+
+    def test_the_fallback_keeps_a_check_only_pin_at_fast_and_no_pin_at_standard(self):
+        route, _ = self.decide(RuntimeError("no key"), state={**CHECK, "pin": "check-only"}, plain=PLAIN[:1])
+        self.assertEqual(pick(route, "workflow", "depth", "fallback"), ("check-only", "FAST", "Jev unavailable: no key"))
+        route, _ = self.decide(RuntimeError("no key"))
+        self.assertEqual(pick(route, "workflow", "depth"), ("test-first", "STANDARD"))
