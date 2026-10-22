@@ -1,6 +1,6 @@
 import shlex, json, os, re, shutil, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_models
+import fc_core, fc_harness, fc_models
 
 
 # ---------- herdr ----------
@@ -18,12 +18,14 @@ def herdr_env():
 PANE_MAKERS = (("tab", "create"), ("pane", "split"), ("workspace", "create"))
 def herdr_argv(args):
     """The herdr command line for `args`. A new pane gets the herdr server's env, not ours, so a call that makes one passes the
-    caller's COMPOSE_CONFIG and HOME on: a scratch config stays scratch in the CLI, agent, or teammate that pane runs. PATH too:
-    compose decides a harness is installed by its own PATH, so the pane must run with that PATH. They go last: herdr reads
-    `pane split`'s pane id only as the argument right after the subcommand."""
+    caller's COMPOSE_CONFIG and HOME on: a scratch config stays scratch in the CLI, agent, or teammate that pane runs. Each harness
+    row's home variable goes too, when set in the caller: the pane's harness must use the home compose wrote hooks, trust and skills
+    into, and its sign-in. PATH too: compose decides a harness is installed by its own PATH, so the pane must run with that PATH.
+    They go last: herdr reads `pane split`'s pane id only as the argument right after the subcommand."""
     args = [str(a) for a in args]
     if tuple(args[:2]) in PANE_MAKERS:
-        args += [x for k in ("COMPOSE_CONFIG", "HOME", "PATH") if os.environ.get(k) for x in ("--env", f"{k}={os.environ[k]}")]
+        homes = [h for k in fc_harness.rows() if (h := fc_harness.HARNESSES[k].get("home_env")) and os.environ.get(h)]
+        args += [x for k in ("COMPOSE_CONFIG", "HOME", *homes, "PATH") if os.environ.get(k) for x in ("--env", f"{k}={os.environ[k]}")]
     return ["herdr", *args]
 
 def herdr(*args, check=False, timeout=120):
