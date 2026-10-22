@@ -31,6 +31,17 @@ class CodexCommandsE2E(SetupE2E, unittest.TestCase):
         self.assertIn("usage: compose workspace", p.stdout + p.stderr, p.stderr[-3000:])
 
 
+def codex_config(directory, base=None):
+    """A config.json in `directory` holding `base`'s content (a path, else nothing) and a harnesses.codex block, as a Codex session needs;
+    the real auth.json is linked beside it, never copied, so Linear keys still resolve."""
+    cfg = json.loads(base.read_text()) if base and base.is_file() else {}
+    cfg["harnesses"] = {**cfg.get("harnesses", {}), "codex": {"models": {"crew": {"default": "codex"}}}}
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "config.json").write_text(json.dumps(cfg))
+    if (hermetic.REAL / "auth.json").is_file() and not (directory / "auth.json").exists(): (directory / "auth.json").symlink_to(hermetic.REAL / "auth.json")
+    return directory / "config.json"
+
+
 def linear_key():
     try: return any(w.get("linear") for w in json.loads((hermetic.REAL / "auth.json").read_text()).get("workspaces", {}).values())
     except (OSError, ValueError): return False
@@ -46,8 +57,9 @@ class CodexFence(unittest.TestCase):
         for a in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], ["worktree", "add", "-q", "-b", "t", str(self.wt)]):
             subprocess.run(["git", "-C", str(self.repo), *a], check=True)
 
-    def codex(self, task, cwd, **env):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")} | {"CODEX_HOME": str(SIGNED_IN), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", **env}
+    def codex(self, task, cwd, real_config=False, **env):
+        cfg = codex_config(self.repo / ".compose-config", hermetic.REAL / "config.json" if real_config else None)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")} | {"CODEX_HOME": str(SIGNED_IN), "COMPOSE_CONFIG": str(cfg), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", **env}
         # `codex exec` has no -a, so the fence goes before the subcommand (codex 0.163.0 accepts it there)
         argv = [CODEX, *fc_harness.crew_argv("codex", None, "Do exactly what the task says.", ROOT / "SKILL.md", cwd, self.res), "exec", "--ephemeral", "--skip-git-repo-check", task]
         return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
@@ -67,7 +79,7 @@ class CodexFence(unittest.TestCase):
 
     @unittest.skipUnless(linear_key(), "no Linear key")
     def test_linear_get(self):
-        p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515 --any-project", self.repo, COMPOSE_CONFIG=str(hermetic.REAL / "config.json"))
+        p = self.codex(f"Run: {ROOT}/bin/compose linear get NEB-1515 --any-project", self.repo, real_config=True)
         self.assertIn("NEB-1515", p.stdout.split("\ncodex\n")[-1], p.stdout[-3000:])
 
 
@@ -75,10 +87,10 @@ class CodexFence(unittest.TestCase):
 class CodexLeadFence(unittest.TestCase):
     """The real codex, started as a team lead with crew_argv's fence and the folders `more` names, runs the commands a lead runs."""
 
-    def lead(self, cmd, expect, cfg=None):
+    def lead(self, cmd, expect, real_config=False):
         tmp = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, tmp, True)
-        repo, scratch, cfg = tmp / "repo", tmp / "codex", cfg or tmp / "state/config.json"
-        (repo / ".compose/p/results").mkdir(parents=True); (repo / ".compose/p/verify.json").write_text("{}"); cfg.parent.mkdir(exist_ok=True); scratch.mkdir()
+        repo, scratch, cfg = tmp / "repo", tmp / "codex", codex_config(tmp / "state", hermetic.REAL / "config.json" if real_config else None)
+        (repo / ".compose/p/results").mkdir(parents=True); (repo / ".compose/p/verify.json").write_text("{}"); scratch.mkdir()
         (scratch / "auth.json").symlink_to(SIGNED_IN / "auth.json")  # the sign-in is linked, never copied
         subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
         env = {**os.environ, "HOME": pwd.getpwuid(os.getuid()).pw_dir, "CODEX_HOME": str(scratch), "COMPOSE_CONFIG": str(cfg), "COMPOSE_ROLE": "orchestrator", "PYTHONDONTWRITEBYTECODE": "1"}
@@ -96,7 +108,7 @@ class CodexLeadFence(unittest.TestCase):
     def test_herdr_agent_list(self): self.lead("herdr agent list", "agent_list")
 
     @unittest.skipUnless(linear_key(), "no Linear key")
-    def test_linear_get(self): self.lead("{root}/bin/compose linear get NEB-1515 --any-project", "NEB-1515", hermetic.REAL / "config.json")
+    def test_linear_get(self): self.lead("{root}/bin/compose linear get NEB-1515 --any-project", "NEB-1515", real_config=True)
 
 
 @unittest.skipUnless(CODEX and os.environ.get("HERDR_SOCKET_PATH"), "codex or a herdr pane is missing")
