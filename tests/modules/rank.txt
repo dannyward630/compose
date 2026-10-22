@@ -22,7 +22,9 @@ fc_tierpin
 fc_costevent
 fc_fast
 fc_claude
+fc_notify
 fc_models
+fc_credit
 fc_routejev
 fc_route
 fc_quick

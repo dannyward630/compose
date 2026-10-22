@@ -36,7 +36,7 @@ def watch_snapshot(repo, proj, agents=None):
             if (proj / "results" / "crew").exists() else {}}
     try:
         h = json.loads((proj / "results" / "resume.json").read_text())
-        snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or [])]
+        snap["halt"] = [h["halted_at"], h["provider"], len(h.get("remaining") or []), h.get("top_up"), h.get("resume")]
     except (OSError, json.JSONDecodeError, KeyError):
         pass
     try:
@@ -210,9 +210,10 @@ def watch_events(before, after):
         ev.append(f"event run=ended passed={passed}/{len(after['tasks'])}"
                   + RUN_ENDED.get(after.get("ended"), ""))
     if after.get("halt") and after["halt"] != before.get("halt"):
-        at_, provider, left = after["halt"]
-        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}  (the product owner's stop: tell them, wait for "
-                  f"their word, then `compose resume`)")
+        at_, provider, left, top_up, resume = (after["halt"] + [None, None])[:5]
+        ev.append(f"event halt=payment provider={provider} remaining={left} at={at_!r}"
+                  + (f" top_up={top_up}" if top_up else "") + (f" resume={resume!r}" if resume else "")
+                  + "  (the product owner's stop: tell them, wait for their word, then run the resume command)")
     new = {i: t for i, t in after.get("ready", {}).items() if i not in before.get("ready", {})}
     if new:
         import fc_linear

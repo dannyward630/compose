@@ -83,6 +83,7 @@ Everything else you edit by hand.
 | `claude_parallel` | a whole number of 1 or more | `3` | The cap on Claude Code sessions among those agents. |
 | `branch_prefix` | a string | `compose/` | The start of every new project's branch. |
 | `max_stack_prs` | a whole number | `10` | The most PRs one stack opens; adjacent layers fold past it. |
+| `notify.ntfy` | an `http://` or `https://` topic URL | none (off) | Sends a phone notification for a gate only you can clear, see [Phone notifications](#phone-notifications). |
 
 A command's own flag always wins over the config.
 `--parallel N` beats `parallel`, and `crew start --model` beats `models.crew`.
@@ -183,7 +184,7 @@ A workspace is one set of keys plus optional overrides.
 A name under `workspaces` holds the same keys as the top level, and the active one is merged over the top level one level deep:
 
 - For a plain value (`parallel`, `claude_parallel`, `branch_prefix`, `max_stack_prs`), the workspace's value replaces the top-level one.
-- For `models`, `env` and `providers`, the workspace's entries replace the top-level entries of the same name, and the top-level entries it does not name stay.
+- For `models`, `env`, `providers` and `notify`, the workspace's entries replace the top-level entries of the same name, and the top-level entries it does not name stay.
 - That is one level only.
   A workspace's `models.crew` replaces the whole top-level `models.crew`, and a workspace's `providers.ollama` replaces the whole top-level `providers.ollama`, so give it its own `base_url` and `models`.
 
@@ -216,6 +217,27 @@ A name ending in `_API_KEY` is treated as a secret and kept out of logs, but key
   Task, test and layer branches are that branch plus `-NNN`, `-tests-NNN` and `-layer-NN`.
 - `max_stack_prs` caps the PRs one stack opens.
   The same key in a project's `verify.json` overrides it.
+
+## Phone notifications
+
+`notify` is off unless the file has it, and nothing turns it on for you:
+
+```json
+{"notify": {"ntfy": "https://ntfy.sh/<your-topic>"}}
+```
+
+With it, compose posts one line to that [ntfy](https://ntfy.sh) topic when a gate stops that only you can clear:
+
+- A billing halt (the line says to top up, then `compose resume`).
+- An agent blocked on a prompt only you can answer, such as a sign-in or an allow.
+- A verified stack waiting for your push approval, while away or yolo is on with push off.
+- A teammate's `needs-user` or `blocked` report that asks for a sign-in, a payment, an approval or a push, while away or yolo is on.
+
+The message is the project slug as the title and a fixed one-line summary, so it holds no key, no code and no free text from a report.
+It goes by `urllib` with a 10 second limit, and a topic that does not answer never stops a run.
+A value that is not an `http://` or `https://` URL turns it off.
+In a workspace, `notify` merges one level like `models`, so the workspace's `ntfy` replaces the top-level one.
+Anyone who knows the topic name can read it, so pick a long random one.
 
 ## Files beside it
 
