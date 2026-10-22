@@ -1897,6 +1897,28 @@ class OneSuiteAfterARebase(unittest.TestCase):
         self.assertLess(len(read("SKILL.md").encode()), 30000)
 
 
+class HarnessPaneAndInstallClaims(unittest.TestCase):
+    def test_herdr_sign_in_line_says_compose_stops_and_names_the_pane_and_screen(self):
+        lines = [l for l in read("docs/herdr.md").splitlines() if "A pane on a sign-in screen" in l]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("no key", lines[0])
+        self.assertNotIn("stops naming", lines[0])
+        for want in ("the pane", "the screen"):
+            self.assertIn(want, lines[0])
+
+    def test_requirements_codex_row_matches_what_codex_runs_and_what_setup_does(self):
+        sec = read("docs/requirements.md").split("\n## On by default\n", 1)[1].split("\n## ", 1)[0]
+        rows = [l for l in sec.splitlines() if l.startswith("| Codex")]
+        self.assertEqual(len(rows), 1, rows)
+        for want in ("team lead", "implementer", "never installs", "never signs in", "`codex login`"):
+            self.assertIn(want, rows[0])
+        self.assertNotIn("for teammate sessions besides Claude Code", rows[0])
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel in ("docs/herdr.md", "docs/requirements.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+
+
 if __name__ == "__main__":
     unittest.main()
 
