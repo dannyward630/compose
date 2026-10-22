@@ -90,7 +90,7 @@ If an id or preset is wrong, the run stops with the provider's message.
 `fallback_after` is how many failed attempts a task gets on its own model before `fallback` takes over.
 A rate limit, or a provider too busy to start the turn (a 429 or a 5xx before any token), switches at once.
 `test_reader` reads each failed test run and writes the implementer's fix brief.
-It must be a `claude:` model, since it runs in Claude Code with read-only tools.
+It takes a `claude:` or `codex:` model and runs headless with read-only tools.
 It bills to the Claude Code subscription, never an API key or OpenRouter: every headless Claude call the CLI makes drops `ANTHROPIC_*` (key, auth token, base URL, model overrides) from its environment.
 `null` sends the raw test output alone.
 It is not probed first: when it fails, the raw output goes back instead.
@@ -102,6 +102,8 @@ A model id names its harness:
 | `pi:<provider/model>` | pi |
 | `claude:<model-id>` | Claude Code with that model |
 | `claude` | Claude Code with its default model |
+| `codex:<model>` | Codex with that model, see [harnesses.md](harnesses.md) |
+| `codex` | Codex with its default model |
 | anything else | OpenCode |
 
 A Claude implementer and the test reader start lean, with `--safe-mode --strict-mcp-config`: no user CLAUDE.md, skills, plugins, hooks, or MCP servers, about 8K input tokens a turn instead of about 200K.
@@ -167,7 +169,7 @@ A Linear error never stops a run.
 - `crew start --model small` overrides the role.
   The value can be any name under `models.crew`, or a `claude:<model-id>`.
 
-Teammate sessions run in pi or Claude Code, so an OpenCode id under `models.crew` stops `crew start`.
+Teammate sessions run in Claude Code, pi or a harness from [harnesses.md](harnesses.md), so an OpenCode id under `models.crew` stops `crew start`.
 A pi teammate session loads this repo as its skill but not Claude Code's plugin hooks, so the team lead's edit guard does not apply to it.
 
 ## Local models
