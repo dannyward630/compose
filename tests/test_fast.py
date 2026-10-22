@@ -155,7 +155,7 @@ class UnprovenRun(unittest.TestCase):
             self.assertEqual(events(flow, "unproven"), [self.ev(p, "unproven" if p == "final" else "passed") for p in ("red", "green", "final")])
 
     def run_tasks(self, specs, statuses):
-        """Runs tasks (id, after) whose run_task answers `statuses`; returns (say lines, {id: status} of the rows, exit code, record calls)."""
+        """Runs tasks (id, after) whose run_task answers `statuses`; returns (say lines, {id: status} of the rows, exit code, record_task (issue, events) calls)."""
         repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
         tasks = [{"id": t, "title": t, "after": after, "files": [], "protected": [], "test": "true", "model": "m", "linear": f"ENG-{t}"} for t, after in specs]
         run_task = lambda repo, proj, task, attempts: {"id": task["id"], "title": task["id"], "status": statuses[task["id"]], "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "b", "log": []}
@@ -163,10 +163,10 @@ class UnprovenRun(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch.object(fc.fc_run, "reflect_task"), mock.patch.object(fc.fc_linear, "linear_reconcile"), \
              mock.patch.object(fc.fc_implement, "run_task", run_task), mock.patch.object(fc_fast, "run_events", side_effect=lambda proj, repo, meta, r: [meta["id"], r["status"]]), \
-             mock.patch.object(self.ledger, "record") as record, mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
+             mock.patch.object(self.ledger, "record_task") as record, mock.patch("builtins.print") as out, self.assertRaises(SystemExit) as e:
             fc.fc_run.run_tasks(repo, proj, tasks, a)
         rows = {c.args[0].split()[0]: c.args[0].split()[1] for c in out.call_args_list if c.args and c.args[0][:1].isdigit()}
-        return [c.args[0] for c in say.call_args_list], rows, e.exception.code, sorted(c.args for c in record.call_args_list)
+        return [c.args[0] for c in say.call_args_list], rows, e.exception.code, sorted((c.args[2]["linear"], c.args[3]) for c in record.call_args_list)
 
     def test_dependents_of_an_unproven_task_are_held_with_no_row_and_a_failed_tasks_dependents_stay_blocked_and_the_run_exits_1(self):
         specs = [("001", ""), ("007", ""), ("002", "007,001"), ("003", "002"), ("004", ""), ("005", "004"), ("010", "005"), ("006", "")]
