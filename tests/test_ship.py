@@ -421,3 +421,57 @@ class Land(Ship):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PartialSubmit(Ship):
+    def result(self, tid, status):
+        (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"status": status}))
+
+    def origin_git(self, *a):
+        return subprocess.run(["git", "--git-dir", str(self.origin), *a], check=True, capture_output=True, text=True).stdout.split()
+
+    def pushed(self):
+        """Origin's layer refs and SHAs, and every file in any ref but main."""
+        refs = {r.removeprefix("refs/heads/"): s for s, r in zip(*[iter(self.origin_git("for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/compose"))] * 2)}
+        return refs, {f for r in refs for f in self.origin_git("ls-tree", "-r", "--name-only", r)}
+
+    def test_a_failed_task_holds_it_and_the_ones_after_back_and_a_later_submit_adds_them(self):
+        self.result("002", "failed")
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(any("stack  hold  002 is failed; 002, 003 not submitted" in l for l in out), out)
+        before, files = self.pushed()
+        self.assertTrue({"setup.txt", "001.src", "t001.test"} <= files)
+        self.assertFalse(files & {"002.src", "003.src", "t002.test", "t003.test"})
+        self.assertEqual(set(json.loads((self.proj / "results" / "prs.json").read_text())), set(before))
+        self.result("002", "passed")
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        after, files = self.pushed()
+        self.assertTrue({"002.src", "003.src", "t002.test", "t003.test"} <= files)
+        self.assertEqual({b: after[b] for b in before}, before)
+        self.assertEqual(json.loads((self.proj / "results" / "prs.json").read_text()), {p["branch"]: int(n) for n, p in self.prs().items()})
+
+    def test_every_task_done_pushes_every_layer_and_maps_each_to_its_pr(self):
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(any("stack  hold" in l for l in out))
+        self.assertEqual(json.loads((self.proj / "results" / "prs.json").read_text()), {f"compose/p-layer-0{i}": i for i in (1, 2, 3)})
+
+    def test_a_task_done_on_linear_is_not_held_whatever_its_result(self):
+        self.result("002", "failed")
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())
+        tasks["tasks"][1]["linear_state"] = "Done"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(tasks))
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertTrue({"002.src", "003.src"} <= self.pushed()[1])
+        self.assertTrue((self.proj / "results" / "prs.json").exists())
+
+    def test_a_pending_first_task_stops_with_nothing_pushed(self):
+        (self.proj / "results" / "001.json").unlink()
+        out, code = self.submit()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("stack  STOP  nothing to submit: 001 is pending" in l for l in out), out)
+        self.assertEqual(self.pushed()[0], {})
+        self.assertFalse(any("stack submit" in c for c in self.log()))
