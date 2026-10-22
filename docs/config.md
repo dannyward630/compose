@@ -77,6 +77,8 @@ Everything else you edit by hand.
 | `models.test_reader` | a `claude:` model id or `null` | `claude:claude-haiku-5-5` | Reads a failed test run and writes the fix brief. `null` sends the raw output. |
 | `models.fix` | a model id | the implementer | The model of verify's fix rounds. A project's `verify.json` `fix_model` beats it. |
 | `models.crew` | a map of role to entry | none | The model of each teammate role, see [Crew models](#crew-models). |
+| `models.tiers` | a map of `cheap`, `standard`, `frontier` to a list of entries | see [Model tiers](#model-tiers-prices-and-the-frontier-budget) | The models of each tier, in order. A tier you leave out keeps its default list. |
+| `prices` | a map of model id to 2 or 4 numbers | the built-in list | Dollars per million tokens, see [Model tiers](#model-tiers-prices-and-the-frontier-budget). |
 | `providers` | a map of name to server | none | Local OpenAI-compatible servers, see [Providers](#providers). |
 | `env` | a map of name to value | none | Environment variables set for the CLI and everything it starts. |
 | `parallel` | a whole number of 1 or more | `run` and `resume` use 3, `testcrews` starts all at once | How many agents start at once. |
@@ -129,6 +131,42 @@ A model id names the harness that runs it.
 - A role is looked up in this order: its own entry, then the entry named by its first word (`design-003` finds `design`), then a built-in default (the designer is Opus 5.5 at high effort), then `planner` for the wayfinder, then `default`, then bare `claude`.
 - The team lead is `orchestrator`, else `default`.
   It delegates, so it never uses `planner`.
+
+## Model tiers, prices and the frontier budget
+
+Every model belongs to one of three tiers: `cheap`, `standard` and `frontier`.
+Each role starts on the highest tier it may use: `small`, `tests`, `test_reader` and `fix` on cheap, `explore`, `research`, `perf`, `toolsmith`, `groundwork`, `orchestrator` and the implementer on standard, and `planner`, `wayfinder`, `designer` and `designer-plan` on frontier.
+An implementer with no `model:` of its own starts on cheap, or on standard when its route's depth is `DEEP`.
+A cheap model that fails `fallback_after` attempts moves to the first standard model.
+`compose tier` pins a tier for a story or the whole project, and a task's `tier:` key pins one task ([cli.md](cli.md), [tasks.md](tasks.md#model-tier)).
+
+`models.tiers` replaces the list of a tier, and an entry is a model id or `{"model": ..., "effort": "high"}` as in [Crew models](#crew-models).
+The first entry of a tier is the model its implementers use, and a teammate whose `models.crew` chain holds models above its tier drops them.
+The default lists are:
+
+| Tier | Models |
+|---|---|
+| `cheap` | `claude:claude-haiku-5-5`, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` |
+| `standard` | `claude:claude-sonnet-5-5` |
+| `frontier` | `claude:claude-opus-5-5`, `claude:claude-fable-5-1`, `pi:openai/gpt-6-astra`, each at high effort |
+
+```json
+"models": { "tiers": { "frontier": [{ "model": "claude:claude-opus-5-5", "effort": "high" }] } }
+```
+
+`prices` gives the list price of a model in dollars per million tokens: two numbers (input, output) or four (input, output, cache write, cache read).
+Your entries are added to the built-in ones and win over them.
+`compose status` uses them for the spend of each tier, as reference dollars at list prices for a Claude Code call and as real dollars for any other model.
+A model with no price shows `+?` beside its tier.
+
+```json
+"prices": { "pi:ollama/qwen3-coder:30b": [0, 0], "claude:claude-opus-5-5": [4, 20, 5, 0.2] }
+```
+
+The frontier spend of a project is held to a limit, 25 dollars unless `compose budget --project <slug> frontier <dollars>` sets another.
+The limit lives in the project's `results/budget.json` as `{"frontier": 25}`.
+A project that has spent the limit starts new frontier work on standard and reports `needs-user` to the team lead, until the limit is raised.
+A file that is not an object, or a `frontier` that is negative or not a number, stops the command with a line that names the file.
 
 ## Providers
 
@@ -244,6 +282,9 @@ A bad entry stops the command with one line that names the entry.
 | `<model> is not in providers.<name>.models: <the list>` | Add the model to the list, or use one that is in it. |
 | `parallel must be a whole number of 1 or more` | Same for `claude_parallel`. |
 | `... teammate sessions run in Claude Code or pi` | Use `claude:<model-id>` or `pi:<provider/model>` under `models.crew`. |
+| `models.tiers.<tier>: tiers are cheap, standard, frontier` | Rename the tier. |
+| `prices must be an object of model id to 2 or 4 numbers, not <value>` | Make `prices` a map of model id to a list of 2 or 4 numbers. |
+| `prices.<model> must be 2 or 4 numbers` | Give that model 2 numbers (input, output) or 4 (input, output, cache write, cache read). |
 
 ## Checking it
 

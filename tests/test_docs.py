@@ -1678,5 +1678,38 @@ class MentionsNamePostures(unittest.TestCase):
             self.assertNotIn("—", read(rel))
 
 
+class TiersBudgetAndPartialStacks(unittest.TestCase):
+    def test_cli_rows_name_the_tier_and_budget_commands_and_the_stack_flags(self):
+        cli = read("docs/cli.md")
+        tiers = cli.split("### Tiers and budget\n", 1)[1].split("\n## ", 1)[0]
+        for word in ("compose tier --project", "no-frontier", "results/tier.json", "compose budget --project", "default 25", "results/budget.json", "needs-user"):
+            self.assertIn(word, tiers)
+        stack = next(l for l in cli.splitlines() if l.startswith("| `stack`"))
+        for word in ("--update", "--force-with-lease", "stack  hold", "nothing to submit", "origin/<base>"):
+            self.assertIn(word, stack)
+        land = next(l for l in cli.splitlines() if l.startswith("| `land`"))
+        for word in ("N of M layer(s) submitted", "land   left"):
+            self.assertIn(word, land)
+
+    def test_config_documents_tiers_prices_and_the_errors_for_a_bad_prices(self):
+        cfg = read("docs/config.md")
+        for word in ("| `models.tiers` |", "| `prices` |", "## Model tiers, prices and the frontier budget", "compose budget --project <slug> frontier <dollars>",
+                     "prices must be an object of model id to 2 or 4 numbers", "`+?`", "claude:claude-opus-5-5"):
+            self.assertIn(word, cfg)
+
+    def test_tasks_documents_the_tier_key_and_the_sections_name_the_new_commands(self):
+        tasks = read("docs/tasks.md")
+        self.assertIn("## Model tier\n", tasks)
+        self.assertIn("tier must be cheap, standard, frontier or no-frontier", tasks)
+        self.assertIn("`model:` line", tasks)
+        self.assertIn("--update", read("sections/4.md"))
+        self.assertIn("land   left", read("sections/7.md"))
+        self.assertIn("compose budget --project <slug> frontier <dollars>", read("sections/0h.md"))
+
+    def test_the_new_lines_have_no_em_dash(self):
+        for rel in ("docs/config.md", "sections/4.md", "sections/7.md", "sections/0h.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+
+
 if __name__ == "__main__":
     unittest.main()
