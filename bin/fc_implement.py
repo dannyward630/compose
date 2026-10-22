@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -10,6 +10,9 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     if fake and os.environ.get("COMPOSE_FAKE_402_MATCH", "") in prompt:
         raise fc_models.PaymentRequired(fake, "Payment required to access this resource (simulated)")
     prompt = fc_core.scrub(prompt)
+    if fc_harness.harness_of(model):
+        p = fc_proc.run(fc_harness.once_command(model, cwd, prompt), cwd=cwd, env=fc_claude.headless_env(), timeout=timeout or 900)
+        return fc_harness.once_result(model, p)
     if fc_claude.is_claude(model):
         return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
     if model.startswith("pi:"):
