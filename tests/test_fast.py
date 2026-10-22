@@ -198,7 +198,7 @@ class UnprovenRun(unittest.TestCase):
         repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
         a = SimpleNamespace(cmd="run", repo=str(repo), project="p", only="004")
         mock.patch.object(fc.fc_core, "project_dir", lambda a: proj).start()
-        marker = lambda **kw: (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getppid(), "tasks": ["001"], **kw}))
+        marker = lambda **kw: (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getppid(), "tasks": ["001"], "reads_queue": True, **kw}))
         self.assertFalse(fc.fc_run.joins_live_run(a))  # no run
         marker()
         self.assertTrue(fc.fc_run.joins_live_run(a))
@@ -213,6 +213,29 @@ class UnprovenRun(unittest.TestCase):
         self.assertEqual(sorted(f.name for f in (proj / "results" / "run-queue").glob("*.json")), ["004.json"])  # 001 is in the run already
         self.assertEqual(pre.call_args.args[0] - {None}, {"m", fc.fc_models.fallback_for("m")} - {None})
         self.assertIn("001 keep    already in the live run", say.call_args_list[0].args[0])
+
+    def test_run_only_refuses_a_live_run_that_does_not_read_the_queue_and_writes_no_queue_file(self):
+        repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        a = SimpleNamespace(cmd="run", repo=str(repo), project="p", only="001,004")
+        mock.patch.object(fc.fc_core, "project_dir", lambda a: proj).start()
+        (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getppid(), "tasks": ["002"]}))  # started before run --only could join
+        with mock.patch.object(fc.fc_run, "preflight"), self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(repo, proj, [{"id": "001", "model": "m"}, {"id": "004", "model": "m"}], a)
+        self.assertIn(f"live run (pid {os.getppid()}) predates", str(e.exception))
+        self.assertIn("wait for it to end or stop it", str(e.exception))
+        self.assertFalse((proj / "results" / "run-queue").exists())
+
+    def test_a_task_queued_in_the_instant_the_run_closes_is_named_in_the_log_and_not_run(self):
+        real = fc.fc_core.atomic_write
+        def write(path, text, *args, **kw):
+            real(path, text, *args, **kw)
+            if path.name == "run.json" and json.loads(text)["closed"]:  # `compose run --only` lands after the loop's last look at the queue
+                (path.parent / "run-queue").mkdir(exist_ok=True)
+                real(path.parent / "run-queue" / "009.json", json.dumps({"id": "009", "after": "", "model": "m"}))
+        with mock.patch.object(fc.fc_core, "atomic_write", write):
+            say, rows, code, _ = self.run_tasks([("001", "")], {"001": "passed"})
+        self.assertEqual((rows, code), ({"001": "passed"}, 0))
+        self.assertEqual([l for l in say if " not run " in l], ["009 not run  queued as the run ended; start it again: compose run --project p --only 009"])
 
 
 class UnprovenWhy(unittest.TestCase):

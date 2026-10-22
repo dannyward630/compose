@@ -65,11 +65,15 @@ QUEUE = "run-queue"  # results/run-queue/<id>.json: a task `compose run --only` 
 QUEUE_POLL = 2  # seconds the live run waits for a task to finish before it looks at the queue again
 
 def joins_live_run(a):
-    """Whether this `compose run --only` adds its tasks to a run that is live on the project, instead of starting a second one."""
+    """Whether this `compose run --only` adds its tasks to a run that is live on the project, instead of starting a second one.
+    A live run that does not say it reads the queue started before joining existed: nothing would ever read the tasks, so this stops."""
     if getattr(a, "cmd", None) != "run" or not a.only:
         return False
     m = fc_tasks.run_marker(fc_core.project_dir(a))
-    return bool(m and m["pid"] != os.getpid() and fc_tasks.pid_alive(m["pid"]) and not m.get("closed"))
+    live = bool(m and m["pid"] != os.getpid() and fc_tasks.pid_alive(m["pid"]) and not m.get("closed"))
+    if live and not m.get("reads_queue"):
+        sys.exit(f"STOP  the live run (pid {m['pid']}) predates `run --only` joining and never reads the queue; nothing was queued; wait for it to end or stop it, then run again")
+    return live
 
 def queue_tasks(proj, tasks):
     """Hand the prepared tasks to the live run, which starts each one as soon as its `after` tasks allow."""
@@ -211,7 +215,7 @@ def run_tasks(repo, proj, tasks, a):
     (proj / "results").mkdir(exist_ok=True)
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     def write_marker(closed=False):  # closed: the queue below takes no more tasks
-        fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": started_at, "closed": closed,
+        fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": started_at, "closed": closed, "reads_queue": True,
             "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
     write_marker()
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
