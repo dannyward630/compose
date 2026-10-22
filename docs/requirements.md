@@ -40,7 +40,7 @@ Setup installs these unless you skip them.
 | trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |
 | superpowers plugin | the writing-plans skill (needs Claude Code) | `claude plugin install superpowers@claude-plugins-official` |
 | herdr integrations | herdr shows pi and Claude Code agents' state (the Claude one needs Claude Code) | `herdr integration install pi`, `herdr integration install claude` |
-| Codex | a harness for teammate sessions besides Claude Code; you sign in with `codex login`, and setup links its skill, commands and hooks | `codex login` (setup never signs in for you) |
+| Codex | a harness for the team lead, implementers, fix rounds and the test reader as well as teammate sessions; you sign in with `codex login`, and setup links its skill, commands and hooks | `codex login` (setup never installs Codex and never signs in for you; its rows only link, copy and write) |
 | herdr config | herdr's own toasts and sounds stay off | setup writes it ([new-machine.md](new-machine.md#herdr-settings)) |
 | `TEXT_MODEL` lines | the Mercury review and jev's text helper | setup adds them to `~/.compose/.env` when absent |
 | git rerere | stacks that rebase cleanly | `git config --global rerere.enabled true`, set only when unset |

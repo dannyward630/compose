@@ -27,7 +27,7 @@ Project `clean-recut-branches` has team lead `clean-recut-branche-orchestrator`,
 Use the name `compose crew list` shows in every `herdr agent` command; `watch --from` takes the role.
 
 New panes get `PATH` and each harness row's `home_env` (`CODEX_HOME` for Codex) from the caller.
-A pane on a sign-in screen gets no key: compose stops naming it.
+A pane on a sign-in screen gets no key: compose stops and names the pane and the screen.
 
 The engineering manager is the session you started, so compose sets neither its model nor its compaction.
 It relays and supervises while planning goes to the wayfinder on the strongest model, so Sonnet serves it well.
