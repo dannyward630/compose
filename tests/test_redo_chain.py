@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, subprocess, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -10,6 +10,8 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+
+RUN_TASKS = fc.fc_run.run_tasks  # the tests that stub it out keep the real one for the ones that run it
 
 ENV = {"HERDR_ENV": "", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -363,6 +365,70 @@ class RunDirtyCheck(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 self.go(cmd)
             self.assertIn("uncommitted changes (b.txt, new_test.py)", str(e.exception))
+        self.assertEqual(self.ran, [])
+
+
+class ResumeAfterRedo(unittest.TestCase):
+    """`resume` of a `run --redo` that stopped early rebuilds the tasks that had not started: their results still read passed
+    from before the redo, but their branches were set aside."""
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "-b", "main")
+        (self.repo / "a.txt").write_text("base\n")
+        git("add", "-A"); git("commit", "-qm", "init")
+        (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        tasks = [{"id": t, "title": t, "files": [], "protected": [], "test": "true", "body": "", "model": "m", **({"linear_state": "Done"} if t == "004" else {})}
+                 for t in ("001", "002", "003", "004")]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        for t in ("001", "002", "003", "004"):  # all passed before the redo, an hour ago
+            f = self.proj / "results" / f"{t}.json"
+            f.write_text(json.dumps({"id": t, "status": "passed"}))
+            os.utime(f, (time.time() - 3600,) * 2)
+        self.ran = []
+        def run_tasks(repo, proj, ts, a):
+            self.ran.append(([m["id"] for m in ts], os.environ.get("COMPOSE_REDO")))
+        for p in (mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_core, "say"),
+                  mock.patch.object(fc.fc_run, "run_tasks", run_tasks)):
+            p.start(); self.addCleanup(p.stop)
+
+    def resume(self):
+        fc.fc_run.cmd_resume(mock.Mock(repo=str(self.repo), project="p", parallel=None))
+
+    def test_resume_after_a_payment_halt_rebuilds_every_task_the_banner_counted(self):
+        halted = []
+        results = lambda: {"001": {"id": "001", "status": "payment_required", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-",
+                                   "log": [{"payment_required": {"provider": "p", "message": "m"}}]}}
+        real = fc.fc_run
+        with mock.patch.object(real, "preflight"), mock.patch.object(real.fc_proc, "keep_awake"), \
+             mock.patch.object(real.fc_blockers, "released", return_value=({}, {})), mock.patch.object(real.fc_herdr, "herdr_space"), \
+             mock.patch.object(real.fc_implement, "run_task", lambda repo, proj, meta, attempts: results()[meta["id"]]), \
+             mock.patch.dict(os.environ, {"COMPOSE_REDO": "1"}):
+            tasks = [m for m in fc.fc_tasks.load_tasks(self.proj, required=True) if m["id"] != "004"]
+            with self.assertRaises(SystemExit) as e:
+                RUN_TASKS(self.repo, self.proj, tasks, mock.Mock(attempts=3, parallel=1, trunk="main", no_stack=True))
+            self.assertEqual(e.exception.code, 3)
+        self.assertEqual(json.loads((self.proj / "results" / "resume.json").read_text())["remaining"], ["001", "002", "003"])
+        self.resume()
+        self.assertEqual(self.ran, [(["001", "002", "003"], "1")])  # Done on Linear (004) stays out
+
+    def test_resume_of_an_interrupted_redo_keeps_only_what_passed_in_that_run(self):
+        started = time.time() - 600
+        fresh = self.proj / "results" / "001.json"  # rebuilt and passed in the run, after it started
+        fresh.write_text(json.dumps({"id": "001", "status": "passed"}))
+        (self.proj / "results" / "run.json").write_text(json.dumps({"pid": 999999, "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
+            "tasks": ["001", "002", "003"], "args": {"attempts": 3, "parallel": 3, "trunk": None, "no_stack": True, "redo": True}}))
+        self.resume()
+        self.assertEqual(self.ran, [(["002", "003"], "1")])
+
+    def test_resume_without_redo_still_keeps_every_passed_task(self):
+        (self.proj / "results" / "resume.json").write_text(json.dumps({"command": "run", "remaining": ["001", "002"], "halted_at": "x", "provider": "p",
+            "args": {"attempts": 3, "parallel": 3, "trunk": None, "no_stack": True}}))
+        with self.assertRaises(SystemExit):
+            self.resume()
         self.assertEqual(self.ran, [])
 
 

@@ -8,4 +8,5 @@ preflight
 claude_capped
 run_tasks
 reflect_task
+since_of
 cmd_resume
