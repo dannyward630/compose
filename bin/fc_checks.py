@@ -1,5 +1,5 @@
 """Read-only machine checks the setup steps table and doctor use. No network, no writes."""
-import datetime, os, re, shutil, subprocess
+import datetime, json, os, re, shutil, subprocess
 from pathlib import Path
 import platform
 import fc_core
@@ -35,8 +35,41 @@ def commands_ok(key, checkout):
             return False, f"{fc_core.tilde(copy)} is stale"
     return True, ""
 
+def hook_records(key, checkout):
+    """[(sub, trust key, hash)] for each handler of compose's wanted hook groups found in the row's hooks file; the key and hash
+    are None for a group the file lacks."""
+    row, out = fc_harness.HARNESSES[key], []
+    path = fc_harness.home_dir(key) / row["hooks_file"]
+    have = json.loads(path.read_text()).get("hooks", {}) if path.exists() else {}
+    for ev, groups in fc_harness.hook_groups(key, checkout).items():
+        for g in groups:
+            sub = g["hooks"][0]["command"].rsplit('" ', 1)[1]
+            i = next((j for j, e in enumerate(have.get(ev, ())) if e == g), None)
+            if i is None:
+                out.append((sub, None, None))
+                continue
+            snake = re.sub(r"(?<=[a-z])(?=[A-Z])", "_", ev).lower()
+            out += [(sub, f"{path}:{snake}:{i}:{j}", row["hash"](ev, g)) for j in range(len(g["hooks"]))]
+    return out
+
 def hooks_ok(key, checkout):
-    raise NotImplementedError
+    """(ok, detail): (True, "") for a row without hooks or without its exe on PATH; else the first hook the hooks file lacks or
+    the first hook with no trust record (a wrong hash counts as none) in the trust file."""
+    row = fc_harness.HARNESSES[key]
+    if not row.get("hooks") or not shutil.which(row["exe"]):
+        return True, ""
+    home = fc_harness.home_dir(key)
+    recs = hook_records(key, checkout)
+    for sub, k, h in recs:
+        if k is None:
+            return False, f"{fc_core.tilde(home / row['hooks_file'])} lacks compose's {sub} hook"
+    import tomllib
+    trust = home / row["trust_file"]
+    state = tomllib.loads(trust.read_text()).get("hooks", {}).get("state", {}) if trust.exists() else {}
+    for sub, k, h in recs:
+        if state.get(k, {}).get("trusted_hash") != h:
+            return False, f"{fc_core.tilde(trust)} has no trust record for compose's {sub} hook"
+    return True, ""
 
 def link_state(path):
     """("ok", target) when path resolves to something that exists, ("dangling", raw link text), or ("missing", None)."""

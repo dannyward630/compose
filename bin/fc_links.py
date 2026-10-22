@@ -1,6 +1,7 @@
 """Make or repoint the links compose owns; never touch a real file, never write a shell rc file."""
 import json
 import os
+import re
 from pathlib import Path
 import fc_checks
 import fc_core
@@ -79,7 +80,33 @@ def write_hooks(key, checkout):
     return [path]
 
 def trust_hooks(key, checkout):
-    raise NotImplementedError
+    """Merge a trust record for each of compose's hook handlers found in the hooks file (fc_checks.hook_records) into the row's
+    trust file: a missing key is appended as [hooks.state.<json key>] with trusted_hash, a wrong hash has only its trusted_hash
+    line replaced, every other byte stays. Written with fc_core.atomic_write only on change; returns the written paths. Invalid
+    TOML, or a header not found as text, exits naming the file and nothing is written."""
+    path = fc_harness.home_dir(key) / fc_harness.HARNESSES[key]["trust_file"]
+    text = old = path.read_text() if path.exists() else ""
+    import tomllib
+    try:
+        state = tomllib.loads(text).get("hooks", {}).get("state", {})
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"{path}: {e}")
+    for _, k, h in fc_checks.hook_records(key, checkout):
+        if k is None or state.get(k, {}).get("trusted_hash") == h:
+            continue
+        header = f"[hooks.state.{json.dumps(k)}]"
+        if k not in state:
+            text += ("\n" if text else "") + f"{header}\ntrusted_hash = {json.dumps(h)}\n"
+            continue
+        m = re.search(r"^" + re.escape(header) + r"[ \t]*(?:#.*)?\n((?:(?!\[).*\n?)*)", text, re.M)
+        body = m and re.sub(r"^trusted_hash[ \t]*=.*$", lambda _: f"trusted_hash = {json.dumps(h)}", m.group(1), count=1, flags=re.M)
+        if not m or body == m.group(1):
+            raise SystemExit(f"{path}: no {header} with a trusted_hash line to update")
+        text = text[:m.start(1)] + body + text[m.end(1):]
+    if text == old:
+        return []
+    fc_core.atomic_write(path, text)
+    return [path]
 
 def relink_owned(checkout):
     """ensure_link for each fc_checks.owned_links(checkout), then the command copies of each installed harness row; one line
