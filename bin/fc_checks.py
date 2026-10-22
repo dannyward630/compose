@@ -3,14 +3,19 @@ import datetime, os, re, shutil, subprocess
 from pathlib import Path
 import platform
 import fc_core
+import fc_harness
 
 
 def owned_links(checkout):
-    """[(name, link, target)] for the three links compose owns: compose CLI link, compose skill link, bp link."""
+    """[(name, link, target)] for the three links compose owns (compose CLI link, compose skill link, bp link) plus, for each
+    installed harness row in order, the compose skill link in that harness's skills folder."""
     checkout, home = Path(checkout), Path.home()
-    return [("compose CLI link", home / ".local/bin/compose", checkout / "bin/compose"),
-            ("compose skill link", home / ".claude/skills/compose", checkout),
-            ("bp link", home / ".local/bin/bp", checkout / "bp/bin/bp.mjs")]
+    links = [("compose CLI link", home / ".local/bin/compose", checkout / "bin/compose"),
+             ("compose skill link", home / ".claude/skills/compose", checkout),
+             ("bp link", home / ".local/bin/bp", checkout / "bp/bin/bp.mjs")]
+    links += [(f"{fc_harness.HARNESSES[key]['name']} skill link", fc_harness.skills_dir(key) / "compose", checkout)
+              for key in fc_harness.installed()]
+    return links
 
 def command_copies(key, checkout):
     raise NotImplementedError
