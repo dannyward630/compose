@@ -216,7 +216,7 @@ def applies_without(repo, c, drop, files):
         return git("read-tree", f"{c}^") and all(git("apply", "--cached", "-R", patch=diff(p, *sorted(files))) for p in reversed(drop)) \
             and git("apply", "--cached", patch=diff(c))
 
-def review_units(repo, proj, base, trunk, chain):
+def review_units(repo, proj, base, trunk, chain, held=()):
     """The project's work as ordered units: every commit the project branch carries over `base` that no task owns (groundwork,
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; when its author date falls in the span of a test
@@ -307,7 +307,7 @@ def record_layers(proj, layers):
     (Path(proj) / "results" / "land.json").unlink(missing_ok=True)
     fc_core.atomic_write(Path(proj) / "layers.json", json.dumps({l["branch"]: list(dict.fromkeys(l.get("keys", l["tasks"]))) for l in layers}, indent=2))
 
-def group_by_record(proj, units, budget, max_prs=None):
+def group_by_record(proj, units, budget, max_prs=None, landed=()):
     """Groups of units: each recorded layer keeps its own tasks (groundwork commits go to the layer that held groundwork, or
     groundwork above that task), and
     units no layer holds yet are grouped as usual into new layers above. `max_prs` caps the groups (None: no cap): while the
@@ -334,7 +334,7 @@ def group_by_record(proj, units, budget, max_prs=None):
         groups[i:i + 2] = [(None, groups[i][1] + groups[i + 1][1], True)]
     return groups
 
-def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None):
+def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=(), landed=()):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
     generated, commits, units}] (units: the commits of each entry of tasks, in order). The layers are built on a detached HEAD and
