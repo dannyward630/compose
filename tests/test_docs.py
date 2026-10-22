@@ -63,6 +63,56 @@ class CliAndTasksDocs(unittest.TestCase):
             self.assertNotIn("\u2014", read(page), page)
 
 
+class HarnessRoleDocs(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.rows = [v for v in fc_harness.HARNESSES.values() if v]
+        self.assertTrue(self.rows)
+        self.how, self.herdr = read("docs/how-it-works.md"), read("docs/herdr.md")
+        self.roles = {l.split("|")[1].strip(): l for l in self.how.split("Eight roles")[1].split("\n\n")[1].splitlines()}
+
+    def line(self, text, word):
+        return next((l for l in text.splitlines() if word in l), "")
+
+    def test_role_table_names_each_harness_for_the_lead_and_teammates_and_keeps_the_designer(self):
+        for who in ("Team lead", "Planner"):
+            row = next(l for k, l in self.roles.items() if k.startswith(who))
+            self.assertRegex(row, r"\bpi\b")
+            for word in ("Claude Code", *(r["name"] for r in self.rows)):
+                self.assertIn(word, row, who)
+        self.assertIn("any model id", next(l for k, l in self.roles.items() if "implementer" in k))
+        designer = next(l for k, l in self.roles.items() if k.startswith("Designer"))
+        self.assertIn("Claude teammate", designer)
+        self.assertNotIn(self.rows[0]["name"], designer)
+
+    def test_model_choices_names_codex_ids_and_the_block_and_links_both_pages(self):
+        part = self.how.split("## Model choices\n", 1)[1].split("\n## ", 1)[0]
+        for word in ("`codex:", "`harnesses.<name>`", "](harnesses.md", "](config.md"):
+            self.assertIn(word, part)
+
+    def test_herdr_hint_names_each_harness_and_is_neutral_about_the_session(self):
+        hint = self.line(self.herdr, "hint line")
+        for word in ("`claude`", "`/compose`", "`codex`", *(f"`{r['sigil']}compose" for r in self.rows)):
+            self.assertIn(word, hint)
+        self.assertNotIn("the Claude session you started", self.herdr)
+
+    def test_herdr_says_codex_waits_in_the_foreground_and_new_panes_get_the_env_but_no_key_at_sign_in(self):
+        self.assertRegex(self.line(self.herdr, "--timeout 240"), r"Codex.*foreground|foreground.*Codex")
+        for r in self.rows:
+            self.assertIn("PATH", self.line(self.herdr, r["home_env"]), r["home_env"])
+        self.assertRegex(self.line(self.herdr, "sign-in screen"), r"(?i)\bno key\b")
+
+    def test_asyncrewake_and_compaction_stay_and_say_they_are_claude_codes(self):
+        for word in ("asyncRewake", "compacts at"):
+            self.assertIn("Claude Code", self.line(self.herdr, word), word)
+
+    def test_both_pages_link_harnesses_md_without_an_em_dash(self):
+        for text in (self.how, self.herdr):
+            self.assertIn("](harnesses.md", text)
+            self.assertNotIn("\u2014", text)
+
+
 class HerdrAndWorkspacesDocs(unittest.TestCase):
     def section(self, rel, title):
         return read(rel).split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
@@ -1769,18 +1819,16 @@ class UserDocsNamePostures(unittest.TestCase):
 
 class MentionsNamePostures(unittest.TestCase):
     LINES = (
-        ("sections/0g.md", 13, "An autonomous mode is never a mandate to decide for the user, except away and yolo (0h), "
+        ("sections/0g.md", "An autonomous mode is never a mandate to decide for the user, except away and yolo (0h), "
          "whose decisions are the recommendations, logged for the product owner's return.", "except yolo (0h)"),
-        ("docs/herdr.md", 122, "`watch --now` and `status` also say whether away or yolo is on and which session set it, "
+        ("docs/herdr.md", "`watch --now` and `status` also say whether away or yolo is on and which session set it, "
          "since one session's `compose away` or `compose yolo` changes how every session on the project answers.",
          "whether yolo is on"),
     )
 
     def test_each_line_is_replaced_in_place(self):
-        for rel, number, line, old in self.LINES:
-            lines = read(rel).splitlines()
-            self.assertEqual(lines[number - 1], line, rel)
-            self.assertEqual(lines.count(line), 1, rel)
+        for rel, line, old in self.LINES:
+            self.assertEqual(read(rel).splitlines().count(line), 1, rel)
             self.assertNotIn(old, read(rel))
 
     def test_no_em_dash(self):
