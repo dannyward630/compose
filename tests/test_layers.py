@@ -890,5 +890,23 @@ class WholeFileDeletion(unittest.TestCase):
         self.assertEqual([[u["name"] for u in g] for g in layers], [["001", "002"]])
 
 
+class FailingIds(unittest.TestCase):
+    def ids(self, out):
+        return fc.fc_gate.FAILING_RE.findall(out)
+
+    def test_a_unittest_summary_line_is_never_a_test_id(self):
+        for summary in ("FAILED (failures=3)", "FAILED (errors=2)", "FAILED (failures=1, errors=1)", "FAILED (skipped=2)", "FAILED (failures=1, errors=1, skipped=2)"):
+            self.assertEqual(self.ids(f"Ran 5 tests in 0.1s\n\n{summary}\n"), [], summary)
+
+    def test_real_ids_from_each_runner_still_match(self):
+        out = ("FAIL: test_x (mod.Class.test_x)\nERROR: test_z (mod.Class.test_z)\nFAILED (failures=1, errors=1)\n"
+               "FAILED tests/x.py::test_y - AssertionError\nnot ok 1 - name\n--- FAIL: TestX (0.00s)\n")
+        self.assertEqual(self.ids(out), ["test_x (mod.Class.test_x)", "test_z (mod.Class.test_z)", "tests/x.py::test_y - AssertionError", "name", "TestX"])
+
+    def test_the_same_failing_ids_under_a_different_summary_are_no_regression(self):
+        state = lambda summary: {"c": {"exit": 1, "failing": sorted(set(self.ids(f"FAIL: test_a (m.C.test_a)\n{summary}\n")))}}
+        self.assertEqual(fc.fc_gate.regressions(state("FAILED (errors=3)"), state("FAILED (failures=3)")), [])
+
+
 if __name__ == "__main__":
     unittest.main()
