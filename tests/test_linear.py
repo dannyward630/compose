@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, re, tempfile, unittest, urllib.error
+import contextlib, importlib.machinery, importlib.util, io, json, os, re, tempfile, unittest, urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -102,7 +102,7 @@ class Sync(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc.fc_tasks, "load_tasks", return_value=tasks), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
                 mock.patch.object(fc.fc_status, "task_state", return_value={"state": "pending"}), mock.patch.object(fc.fc_core, "sh"), \
-                mock.patch("sys.stdout", out):
+                mock.patch("sys.stdout", out), contextlib.suppress(SystemExit):  # a transitively ordered chain is a serial chain, which exits 1 after printing
             fc.fc_spec.cmd_tasks(type("A", (), {"repo": str(self.proj)})())
         return "own the same file" in out.getvalue()
 

@@ -525,7 +525,6 @@ class RewrittenTrunk(unittest.TestCase):
 class UnprovenRestart(unittest.TestCase):
     """Resume or run --only of an unproven task restarts only its regression test writer, never the fix."""
     def setUp(self):
-        import fc_regress, fc_unproven  # noqa: E402
         self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
         self.repo = Path(tempfile.mkdtemp()).resolve()
         self.proj = self.repo / ".compose" / "p"; (self.proj / "results").mkdir(parents=True)
@@ -542,7 +541,7 @@ class UnprovenRestart(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "say") as say, mock.patch.object(fc.fc_run, "preflight", lambda m: None), mock.patch.object(fc.fc_herdr, "herdr_space", lambda p: None), \
              mock.patch.object(fc.fc_run, "triage", lambda *x: None), mock.patch("builtins.print"), \
              mock.patch.object(fc.fc_implement, "run_task", mock.Mock(side_effect=lambda r, p, m, n, **k: done(r, p, m))) as run_task, \
-             mock.patch("fc_regress.regress", mock.Mock(side_effect=lambda r, p, m, pr, n: done(r, p, m))) as regress, self.assertRaises(SystemExit):
+             mock.patch.object(fc.fc_run.fc_regress, "regress", mock.Mock(side_effect=lambda r, p, m, pr, n: done(r, p, m))) as regress, self.assertRaises(SystemExit):
             fc.fc_run.run_tasks(self.repo, self.proj, tasks, a)
         return run_task, regress, [str(c.args[0]) for c in say.call_args_list]
 

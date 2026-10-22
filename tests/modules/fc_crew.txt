@@ -9,6 +9,10 @@ listeners_under
 stop_listeners_under
 TRUST_PROMPT
 LINEAR_RULE
+PARALLEL_CLAUSE
+PARALLEL_NONE
+PARALLEL_FORM
+parallel_gap
 crew_preamble
 crew_pick
 crew_chain
