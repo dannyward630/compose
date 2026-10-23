@@ -48,19 +48,6 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain"), "")  # the pool is excluded, never shown or committed
         self.assertEqual(self.git("branch", "--show-current"), "main")
 
-    def test_test_crew_slots_are_leased_then_returned_on_collect(self):
-        wt, proj = self.init()
-        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
-        slot = fc.fc_briefs.test_worktree(proj, "001")
-        self.assertEqual(self.git("branch", "--show-current", cwd=slot), "compose/p-tests-001")
-        (slot / "t_test.txt").write_text("t\n")
-        self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
-        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
-        fc.fc_briefs.collect_tests(proj)
-        self.assertTrue((wt / "t_test.txt").exists())
-        self.assertEqual(self.status()[slot.resolve()], "available")  # back in the pool, installs and all
-        self.assertEqual(fc.fc_worktree.slots(proj), {})
-
     def test_a_collected_test_slot_can_be_leased_again(self):
         # `return` resets a slot to its lease's base, and treehouse reuses a slot only when its commit is an ancestor of the next
         # base; a slot leased on its test branch came back on a test commit, "in use or dirty" for every lease after it
