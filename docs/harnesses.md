@@ -88,6 +88,7 @@ A `harnesses.codex` block replaces that default whole.
 compose never writes the block or any other part of the config.
 A block whose `models.crew` has no `default` stops with a line saying so.
 A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today.
+In a Codex session with no block, every `models.tiers` entry on a `claude` or `claude:<id>` model, the default lists included, also runs on `codex` with its effort kept, and a `harnesses.codex` block still replaces that default whole.
 
 A block with no `designer` entry still gets the built-in designer default, `claude:claude-opus-5-5`, which needs Claude Code.
 

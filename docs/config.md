@@ -158,6 +158,8 @@ The default lists are:
 "models": { "tiers": { "frontier": [{ "model": "claude:claude-opus-5-5", "effort": "high" }] } }
 ```
 
+A Codex session with no `harnesses.codex` block also puts every entry of these lists on a `claude` or `claude:<id>` model on bare `codex`, with its effort kept, and a `codex` block still replaces that default whole, see [harnesses.md](<harnesses.md>).
+
 `prices` gives the list price of a model in dollars per million tokens: two numbers (input, output) or four (input, output, cache write, cache read).
 Your entries are added to the built-in ones and win over them.
 `compose status` uses them for the spend of each tier, as reference dollars at list prices for a Claude Code call and as real dollars for any other model.
