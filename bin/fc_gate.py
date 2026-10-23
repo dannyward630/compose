@@ -2,7 +2,7 @@
 Imports only lower modules."""
 import contextlib, re, shutil, tempfile, threading
 from pathlib import Path
-import fc_core, fc_config, fc_worktree
+import fc_core, fc_config, fc_proc, fc_tasks, fc_worktree
 
 def branch_budget(wt, base, allowed=None, delete=()):
     """(lines changed vs base counting the working tree, new document files, files outside the task's `files:` list).
@@ -169,4 +169,10 @@ def new_tests_prove(run, repo, fixed, cmds, install=None):
     return any(not within[c]["unknown"] and any(t not in within[c]["failing"] for t in theirs[c]) for c in cmds)
 
 def after_checks(checks, tasks, changed, own):
-    raise NotImplementedError
+    """The commands `run` must pass after an attempt, in place of the project's whole check list: every check that is not a
+    whole suite (a suite is verify's, never run's), then the `test:` of each code task whose files or protected paths a changed
+    path is in, in task order. `own`, the task's own `test:`, is never in the list, and no command appears twice."""
+    cmds = [c for c in checks if not fc_proc.suite(c) and c != own]
+    cmds += [t["test"] for t in fc_tasks.code_tasks(tasks)
+             if any(p in changed for p in t.get("files", []) + t.get("protected", [])) and t.get("test") and t["test"] != own]
+    return list(dict.fromkeys(cmds))
