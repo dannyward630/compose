@@ -227,5 +227,47 @@ class Slept(unittest.TestCase):
         self.assertEqual(fc.fc_proc.slept_text(90), "the machine slept for 2 minutes")
 
 
+class NiceFloor(unittest.TestCase):
+    """fc_proc.nice_floor: raise to the floor, never lower, inherit, a missing pid is None; main() calls it first. A niceness cannot
+    be lowered again, so each case runs in a child; under a niced test run the child starts at `base`, so the raising cases are relative to it."""
+
+    def child(self, body):
+        code = f"import json, os, subprocess, sys\nsys.path.insert(0, {str(Path(__file__).resolve().parents[1] / 'bin')!r})\nimport fc_proc\nnice = lambda pid=0: os.getpriority(os.PRIO_PROCESS, pid)\nbase = nice()\n{body}"
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_it_raises_to_the_floor_and_returns_it(self):
+        base, ret, now = self.child("print(json.dumps([base, fc_proc.nice_floor(floor=base + 3), nice()]))")
+        self.assertEqual((ret, now), (base + 3, base + 3))
+
+    def test_the_default_floor_is_10_and_a_higher_niceness_is_never_lowered(self):
+        base, ret, now = self.child("print(json.dumps([base, fc_proc.nice_floor(), nice()]))")
+        self.assertEqual((ret, now), (max(base, 10),) * 2)
+        ret, now = self.child("os.setpriority(os.PRIO_PROCESS, 0, 15)\nprint(json.dumps([fc_proc.nice_floor(), nice()]))")
+        self.assertEqual((ret, now), (15, 15))
+
+    def test_a_child_started_afterwards_inherits_it(self):
+        ret, kid = self.child("r = fc_proc.nice_floor()\nprint(json.dumps([r, int(subprocess.run(['nice'], capture_output=True, text=True).stdout)]))")
+        self.assertEqual((kid, ret >= 10), (ret, True))
+
+    def test_it_raises_another_process_and_leaves_this_one(self):
+        other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.kill)
+        mine = os.getpriority(os.PRIO_PROCESS, 0)
+        self.assertEqual(fc.fc_proc.nice_floor(other.pid), max(mine, 10))
+        self.assertEqual((os.getpriority(os.PRIO_PROCESS, other.pid), os.getpriority(os.PRIO_PROCESS, 0)), (max(mine, 10), mine))
+
+    def test_a_pid_that_does_not_exist_is_none(self):
+        gone = subprocess.Popen(["true"]); gone.wait()
+        self.assertIsNone(fc.fc_proc.nice_floor(gone.pid))
+
+    def test_main_calls_it_before_anything_else(self):
+        with mock.patch.object(fc.fc_proc, "nice_floor", side_effect=RuntimeError("floor")), mock.patch.object(fc.fc_proc, "on_termination") as hook, \
+                mock.patch.object(sys, "argv", ["compose", "timed", "true"]):
+            with self.assertRaisesRegex(RuntimeError, "floor"):
+                fc.main()
+        hook.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
