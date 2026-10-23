@@ -434,10 +434,6 @@ class ClaudeReadGuard(unittest.TestCase):
                 self.assertEqual(p.stderr, err, body)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestCrewTiers(unittest.TestCase):
     """A teammate starts on its role's tier under the default config; a pin lowers it, a raw --model never changes, and frontier starts drop to standard over the limit."""
     def setUp(self):
@@ -451,8 +447,10 @@ class TestCrewTiers(unittest.TestCase):
         for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK", "TIERS"):
             self.addCleanup(setattr, fc.fc_config, k, {})
 
-    def start(self, role, model=None, spend=0.0):
-        proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+    def start(self, role, model=None, spend=0.0, pins=None):
+        proj = self.proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
+        if pins:
+            (proj / "results" / "tier.json").write_text(json.dumps(pins))
         herdr = lambda *args, check=False, timeout=120: {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}} if args[:2] == ("tab", "create") else {}
         a = SimpleNamespace(action="start", role=role, repo=str(proj), project="p", model=model, title=None, brief="go", cwd=None, force=False)
         with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), \
@@ -480,3 +478,18 @@ class TestCrewTiers(unittest.TestCase):
         self.assertEqual(self.start("planner", spend=25.0), "claude:claude-sonnet-5-5")
         self.assertEqual(self.start("planner", spend=1.0), "claude:claude-opus-5-5")
         self.assertEqual(self.start("planner", "claude:claude-opus-5-5", spend=25.0), "claude:claude-opus-5-5")
+
+    def test_a_small_start_is_cheap_work_the_frontier_limit_neither_holds_nor_reports(self):
+        status = lambda: self.proj / "results" / "crew" / "frontier-budget.status"
+        self.assertEqual(self.start("planner", "small", spend=25.0), "claude:claude-haiku-5-5")
+        self.assertFalse(status().exists())
+        self.start("planner", spend=25.0); self.assertTrue(status().exists())
+
+    def test_a_project_pin_changes_the_tier_a_teammate_starts_on(self):
+        self.assertEqual(self.start("orchestrator"), "claude:claude-sonnet-5-5")
+        self.assertEqual(self.start("orchestrator", pins={"project": "cheap"}), "claude:claude-haiku-5-5")
+        self.assertEqual(self.start("planner", pins={"project": "no-frontier"}), "claude:claude-sonnet-5-5")
+
+
+if __name__ == "__main__":
+    unittest.main()

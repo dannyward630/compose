@@ -53,6 +53,14 @@ class TestTierPins(unittest.TestCase):
         self.assertEqual(self.T.start_model(self.proj, self.meta("NEB-2")), "claude:claude-opus-5-5")
         self.assertEqual(self.T.start_model(self.proj, self.meta("NEB-2", model_auto=False, model="pi:a/b")), "pi:a/b")
 
+    def test_a_project_pin_changes_the_tier_a_task_starts_on_and_a_task_pin_wins_over_it(self):
+        self.assertEqual(self.T.start_model(self.proj, self.meta()), "claude:claude-sonnet-5-5")
+        self.tier("cheap")
+        self.assertEqual(self.T.start_model(self.proj, self.meta()), fc.fc_config.DEFAULT_MODEL)
+        self.assertEqual(self.T.start_model(self.proj, self.meta(tier="frontier")), "claude:claude-opus-5-5")
+        self.tier("clear")
+        self.assertEqual(self.T.start_model(self.proj, self.meta()), "claude:claude-sonnet-5-5")
+
     def test_lines_list_the_project_pin_then_stories_sorted_and_nothing_without_pins(self):
         self.assertEqual(self.T.lines(self.proj), [])
         self.file.write_text(json.dumps({"project": "no-frontier", "stories": {"NEB-9": "cheap", "NEB-10": "frontier"}}))
