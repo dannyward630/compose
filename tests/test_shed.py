@@ -99,3 +99,34 @@ class ShedPause(unittest.TestCase):
     def test_a_released_hold_restarts_the_120s(self):
         got = [self.go(t, a) for t, a in ((1000, 13.0), (1100, 7.0), (1150, 13.0), (1200, 13.0), (1275, 13.0))]
         self.assertEqual(got, [([], [])] * 4 + [([paused(400, "teammate")], [(400, STOP), (401, STOP)])])
+class ShedMemory(unittest.TestCase):
+    def setUp(self):
+        ShedPause.setUp(self)  # same ps, kill, clock, claim and records; the load stays at 1.0 unless a case says more
+        self.level, root = None, Path(self.recs[0]["project"]).parent
+        (root / "old").mkdir()  # a project that ended: its test record is freeable
+        self.recs.append({"pid": 500, "kind": "test", "project": str(root / "old"), "waiter": os.getpid(), "until": None, "cwd": None, "at": 5.0, "alive": True})
+        self.table += [(500, 1, 0.0, "sh"), (501, 500, 0.0, "node")]
+        for p in (mock.patch.object(fc_load, "memory_level", lambda: self.level), mock.patch.object(fc_started, "forget")):
+            p.start(); self.addCleanup(p.stop)
+    def go(self, t, level, avg=1.0):
+        self.level = level
+        return ShedPause.go(self, t, avg)[1]
+    def sig(self, pid, s=STOP): return [(pid, s), (pid + 1, s)]
+    def pids(self, key): return [e["pid"] for e in fc_shed.state()[key]]
+    def test_critical_frees_then_pauses_the_newest_at_once_then_one_a_minute(self):
+        self.assertEqual((self.go(1000, 4), self.pids("freed"), self.pids("paused")), (self.sig(400), [500], [400]))
+        got = [self.go(t, 4) for t in (1030, 1065, 1090, 1130, 1200)]
+        self.assertEqual((got, self.pids("paused")), ([[], self.sig(200), [], self.sig(100), []], [400, 200, 100]))  # 300 is a timed record: never paused
+    def test_warn_frees_and_holds_but_pauses_only_after_120s(self):
+        self.assertEqual((self.go(1000, 2), self.pids("freed"), fc_shed.state()["hold"]["at"]), ([], [500], 1000.0))
+        self.assertEqual([self.go(t, 2) for t in (1119, 1130, 1180)], [[], self.sig(400), []])
+    def test_critical_after_a_young_warn_hold_pauses_at_once(self):
+        self.assertEqual((self.go(1000, 2), self.go(1010, 4)), ([], self.sig(400)))
+    def test_a_tree_running_verify_is_never_paused_at_critical(self):
+        self.table = [(401, 400, 0.0, "/usr/local/bin/compose verify") if r[0] == 401 else r for r in self.table]
+        self.assertEqual([self.go(t, 4) for t in (1000, 1065, 1130, 1200)], [self.sig(200), self.sig(100), [], []])
+    def test_resumes_in_reverse_one_a_minute_only_at_level_1_or_none_with_the_load_below_low(self):
+        self.go(1000, 4); self.go(1065, 4)
+        held = [self.go(t, lv, avg) for t, lv, avg in ((1070, 2, 1.0), (1075, 4, 1.0), (1080, 1, 9.0), (1085, None, 9.0))]
+        got = [self.go(t, None, 7.0) for t in (1090, 1100, 1155)]
+        self.assertEqual((held, got, self.pids("paused")), ([[]] * 4, [self.sig(200, CONT), [], self.sig(400, CONT)], []))
