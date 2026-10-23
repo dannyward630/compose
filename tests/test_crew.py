@@ -1266,6 +1266,45 @@ class CardsById(unittest.TestCase):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
 
 
+LINEAR_TEXT_LINE = "Linear text: concise, readable English. Lead with the action, one idea per line, no preamble or recap."
+
+
+class TersePreamble(unittest.TestCase):
+    """The crew preamble is terse: one Linear-text rule, at most 3500 characters, every report form and the orchestrator's parallel form kept."""
+
+    def setUp(self):
+        self.wt = Path(tempfile.mkdtemp())
+        self.proj = self.wt / ".compose" / "hw"
+        self.proj.mkdir(parents=True)
+
+    def pre(self, name, title, up=None):
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "4"}):  # the preamble prints the slot count; a fixed digit keeps the size stable
+            return fc.fc_crew.crew_preamble(self.proj, name, title, up)
+
+    def test_linear_text_line_is_there_once_on_a_line_of_its_own(self):
+        for name, title, up in (("hw-planner", "planner", "manager"), ("hw-orchestrator", "orchestrator", None), ("hw-tests-001", "tests 001", "orchestrator")):
+            with self.subTest(name):
+                pre = self.pre(name, title, up)
+                self.assertEqual(pre.count(LINEAR_TEXT_LINE), 1)
+                self.assertIn("\n" + LINEAR_TEXT_LINE + "\n", pre)
+
+    def test_planner_preamble_is_at_most_3500_characters_without_the_worktree(self):
+        text = self.pre("hw-planner", "planner", "manager").replace(str(self.wt.resolve()), "").replace(str(self.wt), "")
+        self.assertLessEqual(len(text), 3500)
+
+    def test_every_report_state_keeps_its_compose_report_form(self):
+        report = f"compose report --repo {self.wt.resolve()} --project hw --as hw-planner"
+        pre = self.pre("hw-planner", "planner", "manager")
+        for state in ("needs-user", "blocked", "working", "done", "tool-bug", "contradiction"):
+            with self.subTest(state):
+                self.assertIn(f"{report} {state}", pre)
+
+    def test_only_the_orchestrator_gets_the_parallel_form(self):
+        self.assertIn(fc.fc_crew.PARALLEL_FORM, self.pre("hw-orchestrator", "orchestrator"))
+        for name, title, up in (("hw-planner", "planner", "manager"), ("hw-tests-001", "tests 001", "orchestrator")):
+            self.assertNotIn(fc.fc_crew.PARALLEL_FORM, self.pre(name, title, up))
+
+
 class PreambleNamesComposeLinear(unittest.TestCase):
     """Every teammate's preamble sends Linear reads and writes through `compose linear`, never a Linear MCP tool."""
 
