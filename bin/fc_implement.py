@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate, fc_fast, fc_format
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -260,8 +260,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     checks, limit = fc_core.project_config(proj).get("checks") or [], int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
     def checked(where):  # the project's checks run a long time: each one says what it runs, and where, before it starts
         def run(cmd, tree, secs, env=None):
+            sha = fc_green.tree_of(tree)
+            if line := fc_green.taken(proj, sha, cmd):  # green on these very files already: not run twice
+                fc_core.say(f"{tid} checks  {line}")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             fc_core.say(f"{tid} checks  `{cmd}` {where}, up to {secs}s")
             r = timed(cmd, tree, secs, env=env)
+            fc_green.record(proj, sha, cmd, r.returncode)
             if r.returncode == 124:
                 fc_core.say(f"{tid} checks  `{cmd}` {where} timed out after {secs}s")
             return r
@@ -431,7 +436,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_core.say(f"{tid} attempt {attempt} contradiction  {found[:160]}")
             status = "contradiction"
             break
-        test = run_test(meta, wt)
+        test = checked("after the task")(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT), env=fc_core.clean_env())
         now = fc_gate.check_state(checked("after the task"), checks, wt, limit) if checks and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
         # What passed on the base is asked only for a check that fails after the task: a suite that passes needs no base run.
         ahead = fc_gate.baseline_state(checked("on its base"), checks, wt, (base, tuple(delete)), limit) if any(c["exit"] for c in now.values()) else {}

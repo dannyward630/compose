@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
 
 CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
@@ -177,6 +177,11 @@ def run_stages(repo, proj, cfg, a, tests=None):
 
     def run_checks(cmds, into):
         for c in cmds:
+            tree = fc_green.tree_of(repo)
+            if line := fc_green.taken(proj, tree, c, getattr(a, "fresh", False)):  # green on these very files already: not run twice
+                fc_core.say(f"check  {line}")
+                into.append({"cmd": c, "exit": 0, "seconds": 0, "output": "", "tool_error": False})
+                continue
             t1, clk = time.time(), fc_proc.clock()
             p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT)  # in a group of its own: a stop ends the whole suite
             full = fc_core.scrub(p.stdout + p.stderr)
@@ -188,6 +193,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
                 full = fc_core.scrub(p.stdout + p.stderr)
                 out = full[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
+            fc_green.record(proj, tree, c, p.returncode)
             awake = time.time() - t1 - fc_proc.slept(clk)  # the time the check ran, not the time the lid was closed
             record = {"cmd": c, "exit": p.returncode, "seconds": round(awake, 1), "output": out, "tool_error": tool}
             if p.returncode:  # the cut hides most of a long suite's failures: the whole output stays in a file

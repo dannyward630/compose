@@ -1,7 +1,7 @@
 """Shipping a verified stack: check every layer before it is submitted, reword its commits, land it on the base."""
 import hashlib, json, os, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_worktree, fc_layers, fc_stack, fc_gate, fc_jev, fc_verify, fc_update
+import fc_core, fc_proc, fc_tasks, fc_worktree, fc_layers, fc_stack, fc_green, fc_gate, fc_jev, fc_verify, fc_update
 
 LAND_POLL = 20      # seconds between looks at a pull request that is not ready yet
 LAND_SETTLE = 15    # seconds after a push before its required checks are read: GitHub registers them a moment later
@@ -60,13 +60,15 @@ def layer_refusal(name, c, out, why=""):
             f"Nothing was pushed. A layer must pass without the layers above it: put what it needs in this layer or below "
             f"(a task's `after`), fix it, then run `compose stack --submit` again")
 
-def layer_checks(repo, proj, layers, trunk, wt):
+def layer_checks(repo, proj, layers, trunk, wt, fresh=False):
     """The gate on a submit: verify.json `checks` (the cheap ones, never e2e) on each layer's own tree, bottom up, in the CLI's
     worktree. Each layer runs the tests of its own tasks; the top layer also every check, a layer below it only the cheap ones (layer_commands).
     A failing test that fails on the stack's base too, in a test the stack does not touch, was red before this work: it is accepted
     and reported (against_base). One that passes on the base, or that the stack touches, refuses the submit, as does a failure that
     names no test. The first layer refused is the reason returned, with nothing pushed; "" when every layer passes. A layer that
-    passed once is not run again while its tip and its commands stay the same, and one that leaned on the base also the base and top."""
+    passed once is not run again while its tip and its commands stay the same, and one that leaned on the base also the base and top.
+    A command already green on a layer's tree (fc_green: verify, the run or an earlier submit left it) is not run again either, and the
+    layer says so; one that goes red is forgotten. `fresh` runs everything."""
     cfg = fc_core.project_config(proj)
     checks = cfg.get("checks") or []
     if not checks:
@@ -85,15 +87,22 @@ def layer_checks(repo, proj, layers, trunk, wt):
         cmds = fc_verify.at_root(layer_commands(proj, l, checks, i == len(layers)), roots, wt)
         stamp = f"{tip}:{hashlib.sha1(json.dumps(cmds).encode()).hexdigest()[:12]}"
         lean = f"{stamp}:{base}:{top}"
-        if seen.get(l["branch"]) in (stamp, lean):
+        if not fresh and seen.get(l["branch"]) in (stamp, lean):
             fc_core.say(f"layers ok    {name}  unchanged since its checks passed")
             continue
         fc_core.say(f"layers scope {name}  " + ("its tasks' tests and every check" if i == len(layers) else "its tasks' tests and the cheap checks") + (": " + "; ".join(cmds) if cmds else ": nothing to run"))
-        fc_core.sh(["git", "checkout", "-q", "--detach", tip], wt)
-        fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
+        tree, ready = fc_green.tree_of(repo, tip), False
         failed, outs = {}, {}
         for c in cmds:
+            if line := fc_green.taken(proj, tree, c, fresh):
+                fc_core.say(f"layers {name}  {line}")
+                continue
+            if not ready:  # a layer whose commands are all green on its tree is not even checked out
+                fc_core.sh(["git", "checkout", "-q", "--detach", tip], wt)
+                fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
+                ready = True
             state = fc_gate.check_state(checked(name, outs), [c], wt, 0)[c]
+            fc_green.record(proj, tree, c, state["exit"])
             if state["unknown"]:
                 return layer_refusal(name, c, outs[c], "" if state["exit"] == 124 else "it names no failing test, so it cannot be compared with the base")
             if state["exit"]:
@@ -118,7 +127,7 @@ def cmd_stack(a):
     trunk = a.trunk or fc_core.current_branch(repo)
     fc_update.refuse_while_verifying(proj, repo)
     def gate(repo, proj, layers, trunk, wt):
-        if why := layer_checks(repo, proj, layers, trunk, wt):
+        if why := layer_checks(repo, proj, layers, trunk, wt, getattr(a, "fresh", False)):
             return why
         below = fc_stack.layer_base(repo, proj, trunk)
         for i, l in enumerate(layers, 1):
