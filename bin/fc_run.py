@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_harness, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_harness, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit, fc_load
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -293,13 +293,22 @@ def run_tasks(repo, proj, tasks, a):
                 fc_core.say(f"{m['id']} joined  added to the run while it goes on")
                 joined = True
             return joined
+        held_before = False
         while adopt() or pending or running:  # a task queued as the last one ends still starts
             if live["open"] != sorted(set(pending) | set(running.values())):
                 live["open"] = sorted(set(pending) | set(running.values()))
                 write_marker()
             hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
+            st = None if fc_load.off(getattr(a, "force", False)) else fc_load.update()  # the machine-wide load hold, re-read every pass
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
-            free = a.parallel - len(running)
+            free = 0 if st and st["held"] else a.parallel - len(running)  # held: no slot opens; running tasks go on
+            if st and st["held"] and not held_before:
+                lim = fc_load.limits()
+                fc_core.say(f"load {st['avg']:.1f} on {lim['cores']} cores: holding new task starts until it falls below {lim['low']:.1f}")
+            held_before = bool(st and st["held"])
+            if st and st["held"] and ready and not running:
+                time.sleep(QUEUE_POLL)  # held with tasks ready and nothing running: go round again, do not end the run
+                continue
             starts = claude_capped(ready, [metas[q]["model"] for q in running.values()], free, metas)  # only into free slots: a task queued inside the pool is out of a hold's reach
             for p in ready:
                 if free > len(starts) and p not in starts and p not in capped:
