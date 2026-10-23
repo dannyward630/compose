@@ -195,6 +195,65 @@ class BranchNames(unittest.TestCase):
                 self.assertEqual((branches(), self.recorded()), (names, before))
 
 
+class PrefixCache(unittest.TestCase):
+    git = StackWorktree.git
+
+    def setUp(self):
+        StackWorktree.setUp(self)
+        fc.fc_worktree._prefixes.clear(); fc.fc_worktree._commons.clear()
+
+    def ask(self, proj=None):
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            return fc.fc_worktree.task_prefix(self.repo, proj or self.proj), [c.args[0] for c in run.call_args_list]
+
+    def test_an_unchanged_project_is_answered_without_git(self):
+        first, _ = self.ask()
+        self.assertEqual((first, *self.ask()), ("compose/p-", "compose/p-", []))
+
+    def test_a_created_or_deleted_branch_and_a_changed_record_change_the_answer(self):
+        self.ask()
+        for ref in ("refs/heads/fast/p/001", "refs/remotes/origin/fast/p/002"):
+            self.git("update-ref", ref, "HEAD")
+            got, cmds = self.ask()
+            self.assertEqual(got, "fast/p/")
+            self.assertFalse(any("--git-common-dir" in c for c in cmds))  # the common dir is asked once
+            self.git("update-ref", "-d", ref)
+            self.assertEqual(self.ask()[0], "compose/p-")
+        (self.proj / "verify.json").write_text(json.dumps({"task_prefix": "x/"}))
+        self.assertEqual(self.ask()[0], "x/")
+        (self.proj / "verify.json").unlink()
+        self.assertEqual(self.ask()[0], "compose/p-")
+
+    def test_a_packed_branch_deleted_changes_the_answer(self):
+        self.git("update-ref", "refs/heads/fast/p/001", "HEAD")
+        self.assertEqual(self.ask()[0], "fast/p/")
+        self.git("pack-refs", "--all")
+        self.assertEqual(self.ask()[0], "fast/p/")
+        self.git("update-ref", "-d", "refs/heads/fast/p/001")
+        self.assertEqual(self.ask()[0], "compose/p-")
+
+    def test_projects_of_one_repository_keep_their_own_answers(self):
+        other = self.repo / ".compose" / "q"; other.mkdir(parents=True)
+        (other / "verify.json").write_text(json.dumps({"task_prefix": "q/"}))
+        self.assertEqual((self.ask()[0], self.ask(other)[0], self.ask()[0]), ("compose/p-", "q/", "compose/p-"))
+
+    def test_a_rename_gives_the_new_prefix(self):
+        (self.proj / "verify.json").write_text(json.dumps({"task_prefix": "fast/p/"}))
+        self.git("branch", "fast/p/001")
+        self.assertEqual(self.ask()[0], "fast/p/")
+        self.assertTrue(fc.fc_worktree.rename_legacy_branches(self.repo, self.proj))
+        self.assertEqual(fc.fc_worktree._prefixes, {})
+        self.assertEqual(self.ask()[0], "compose/p-")
+
+    def test_the_refs_stamp_follows_branches_and_packing(self):
+        common, stamp = fc.fc_worktree.common_dir(self.repo), fc.fc_worktree.refs_stamp
+        stamps = [stamp(common)]
+        self.assertEqual(stamp(common), stamps[0])
+        for step in (("branch", "x"), ("pack-refs", "--all"), ("branch", "-D", "x")):
+            self.git(*step); stamps.append(stamp(common))
+        self.assertEqual((type(stamps[0]), len(set(stamps))), (tuple, 4))
+
+
 class ReviewGate(unittest.TestCase):
     def test_confirmed_review_findings_fail_verify(self):
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
