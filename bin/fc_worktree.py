@@ -216,10 +216,21 @@ def review_base(repo, cfg):
     return default_branch(repo)
 
 def release_slot(repo, path):
-    """Hand a slot back to the pool with its installs intact. compose's own leftovers go first: `return` keeps ignored
+    """Hand a slot back to the pool with its installs intact, and say whether treehouse took it: `return` fails while a live
+    process keeps respawning in the slot, and the slot stays leased. compose's own leftovers go first: `return` keeps ignored
     files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
     clear_leftovers(path)
-    treehouse(repo, "return", "--force", str(path), check=False)
+    return treehouse(repo, "return", "--force", str(path), check=False).returncode == 0
+
+def checked_out(repo, branch):
+    """The other worktree of `repo` that has `branch` checked out, or None: git refuses to delete a branch held there."""
+    here, path = Path(repo).resolve(), None
+    for line in fc_core.sh(["git", "worktree", "list", "--porcelain"], repo, check=False).stdout.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line[len("worktree "):])
+        elif line == f"branch refs/heads/{branch}" and path and path.resolve() != here:
+            return path
+    return None
 
 def clear_leftovers(path):
     for d in (".compose", "graft", ".trail"):

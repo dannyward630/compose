@@ -165,6 +165,43 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.status()[slot.resolve()], "available")
         self.assertEqual(fc.fc_worktree.slots(proj), {})
 
+    def ready_writer(self, proj):
+        (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "A", "files": [], "protected": [], "test": "true", "body": ""}]}))
+        slot = fc.fc_briefs.test_worktree(proj, "001")
+        (slot / "t_test.txt").write_text("t\n")
+        self.git("add", "-A", cwd=slot); self.git("commit", "-qm", "Test A", cwd=slot)
+        fc.fc_crew.write_report(proj, "p-tests-001", "working", "test ready: x")
+        return slot
+
+    def test_collect_deletes_the_branch_of_a_writer_whose_slot_the_project_no_longer_records(self):
+        wt, proj = self.init()
+        slot = self.ready_writer(proj)
+        fc.fc_worktree.slots(proj, {"tests-001": None})
+        fc.fc_briefs.collect_tests(proj)
+        self.assertTrue((wt / "t_test.txt").exists())
+        self.assertEqual(self.git("branch", "--list", "compose/p-tests-001"), "")
+        self.assertFalse(fc.fc_briefs.test_open(proj, "001"))
+        self.assertEqual(self.status()[slot.resolve()], "available")  # found through git, and returned
+        self.assertEqual(fc.fc_worktree.slots(proj), {})
+
+    def test_collect_frees_the_branch_of_a_writer_whose_slot_treehouse_cannot_return(self):
+        # a live writer session respawns its children while `treehouse return` terminates them: the return fails, the slot stays leased
+        wt, proj = self.init()
+        slot = self.ready_writer(proj)
+        real = fc.fc_worktree.treehouse
+        def stuck(repo, *args, **kw):
+            if args[:1] == ("return",):
+                return subprocess.CompletedProcess(args, 1, "", "failed to return worktree: worktree still has live processes after termination: sleep (1)")
+            return real(repo, *args, **kw)
+        with mock.patch.object(fc.fc_worktree, "treehouse", stuck):
+            fc.fc_briefs.collect_tests(proj)
+        self.assertTrue((wt / "t_test.txt").exists())
+        self.assertEqual(self.git("branch", "--list", "compose/p-tests-001"), "")
+        self.assertFalse(fc.fc_briefs.test_open(proj, "001"))
+        self.assertEqual(self.git("branch", "--show-current", cwd=slot), "")  # detached, so nothing holds the branch
+        self.assertEqual(self.status()[slot.resolve()], "leased")
+        self.assertEqual(fc.fc_worktree.slots(proj), {"spare-001": str(slot)})  # still on record, for the next writer or `compose clean`
+
     def test_a_lease_from_a_full_pool_exits_with_one_line_naming_the_holders(self):
         self.cap(1)
         wt, proj = self.init()

@@ -567,12 +567,14 @@ def collect_tests(proj, only=None):
                 break
         else:
             held = fc_worktree.slots(proj).get(f"tests-{tid}")
-            if held and waiting_writers(proj):  # the chained next writer takes this slot as it is: returning it leaves a gap for another project's lease
+            if not held and fc_worktree.use_treehouse():  # the record is gone: git still knows where the branch is checked out
+                there = fc_worktree.checked_out(wt, branch)
+                held = str(there) if there and fc_worktree.is_slot(wt, there) else None
+            if held and not waiting_writers(proj) and fc_worktree.release_slot(wt, held):
+                fc_worktree.slots(proj, {f"tests-{tid}": None})
+            elif held:  # the chained next writer takes this slot as it is: returning it leaves a gap for another project's lease. A slot treehouse cannot return stays leased the same way
                 fc_worktree.park_slot(held, fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip())
                 fc_worktree.slots(proj, {f"tests-{tid}": None, f"spare-{tid}": held})
-            elif held:
-                fc_worktree.release_slot(wt, held)
-                fc_worktree.slots(proj, {f"tests-{tid}": None})
             else:
                 fc_core.sh(["git", "worktree", "remove", "--force", str(proj / "worktrees" / f"tests-{tid}")], wt, check=False)
             fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
@@ -589,7 +591,7 @@ def collect_tests(proj, only=None):
                                              redo=redo))
     finally:  # slots kept for writers that did not start (still blocked, failed, or past the cap) go back to the pool
         for role, held in {k: v for k, v in fc_worktree.slots(proj).items() if k.startswith("spare-")}.items():
-            fc_worktree.release_slot(wt, held)
-            fc_worktree.slots(proj, {role: None})
+            if fc_worktree.release_slot(wt, held):
+                fc_worktree.slots(proj, {role: None})
     if conflicts:
         sys.exit("\n".join(conflicts))
