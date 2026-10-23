@@ -4,6 +4,8 @@ from pathlib import Path
 
 import fc_config
 
+WAIT_POLL = 2
+
 
 def limits():
     cores = os.cpu_count() or 1
@@ -58,3 +60,19 @@ def since(n):
     except FileNotFoundError:
         return []
     return [e for e in log if e["n"] > n]
+
+
+def wait(say, force=False):
+    if off(force):
+        return 0.0
+    lim, t0 = limits(), time.time()
+    s = update()
+    if not s["held"]:
+        return 0.0
+    say(f"load {s['avg']:.1f} on {lim['cores']} cores is above {lim['high']:.1f}: "
+        f"waiting until it falls below {lim['low']:.1f}")
+    while True:
+        time.sleep(WAIT_POLL)
+        if not update()["held"]:
+            break
+    return time.time() - t0
