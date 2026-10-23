@@ -101,7 +101,28 @@ def tick():
                 cmd = os.path.basename(row[3].split()[0])
                 s["hot"] = {"pid": row[0], "cpu": row[2], "command": cmd}
                 lines.append(f"event shed=hot pid={row[0]} cpu={row[2]:.0f} command={cmd} (not started by compose, left alone)")
+            now, step = time.time(), s.get("step_at")
+            if now - s["hold"]["at"] >= 120 and (step is None or now - step >= 60):
+                done = {e["pid"] for e in s["paused"]}
+                for r in sorted(recs, key=lambda r: r["at"], reverse=True):
+                    pids = tree(r["pid"], rows)
+                    if (r["alive"] and r["kind"] in ("implementer", "teammate") and r["pid"] not in done
+                            and not any("compose verify" in c for p, _, _, c in rows if p in pids)):
+                        name = os.path.basename(r["project"]) if r["project"] else "-"
+                        for p in pids:
+                            os.kill(p, signal.SIGSTOP)
+                        s["paused"].append({"pid": r["pid"], "kind": r["kind"], "project": name, "at": now})
+                        s["step_at"] = now
+                        lines.append(f"event shed=paused pid={r['pid']} kind={r['kind']} project={name}  (resumes in reverse once the load falls below {os.cpu_count():.1f})")
+                        break
         else:
             s["hold"] = s["hot"] = None
+            now, step = time.time(), s.get("step_at")
+            if s["paused"] and st["avg"] < os.cpu_count() and (step == s["paused"][-1]["at"] or now - step >= 60):
+                e = s["paused"].pop()
+                for p in tree(e["pid"], table()):
+                    os.kill(p, signal.SIGCONT)
+                s["step_at"] = now
+                lines.append(f"event shed=resumed pid={e['pid']} kind={e['kind']} project={e['project']}")
         (d / "shed.json").write_text(json.dumps(s))
         return lines
