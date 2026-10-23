@@ -1038,5 +1038,46 @@ class ContractSlice(unittest.TestCase):
         self.assertIn(line, fc.fc_briefs.GROUNDWORK_BRIEF.splitlines())
 
 
+class TerseTemplatesB(unittest.TestCase):
+    B = fc.fc_briefs
+    META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
+    SIZES = {"GROUNDWORK_BRIEF": 3000, "WAYFINDER_BRIEF": 4888, "CHANGE_BRIEF": 3782}
+    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "WAYFINDER_BRIEF": "feature name page slug wt",
+                    "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
+    LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
+              "npx -y lavish-axi {page}", "--reopen", "`yolo:`", "reminder:", "(yolo recommendation, unconfirmed, <date>)", "`away:`"]
+    KEPT = {"GROUNDWORK_BRIEF": ["`compose verify --project {slug} --prove`", '`working "stubs ready: <commit>; contract at {contract}"`',
+                                 '`blocked "<task>: brief lacks <what>"`', "`compose timed`", "`protected:`", "`test:`"],
+            "WAYFINDER_BRIEF": LAVISH + ["`compose linear update <id> --section \"## Decisions so far\" --file <path> --expect <hash>`"],
+            "CHANGE_BRIEF": LAVISH + ["`evidence`", "`compose linear get <id> --body`", "change {cid}: "]}
+
+    def text(self, name):
+        return " ".join(getattr(self.B, name).split())
+
+    def test_each_text_fits_its_size(self):
+        for name, limit in self.SIZES.items():
+            self.assertLessEqual(len(getattr(self.B, name)), limit, name)
+        self.assertLessEqual(len(self.B.test_brief(self.META, "")), 1340)
+
+    def test_each_constant_keeps_exactly_its_placeholders(self):
+        for name, fields in self.PLACEHOLDERS.items():
+            self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(self.B, name)) if f}, set(fields.split()), name)
+
+    def test_commands_report_forms_and_rules_are_kept_verbatim(self):
+        for name, tokens in self.KEPT.items():
+            for token in tokens:
+                self.assertIn(token, self.text(name), f"{name}: {token}")
+
+    def test_test_brief_keeps_its_report_form_and_ends_with_the_task_brief_and_contract(self):
+        brief = self.B.test_brief({**self.META, "body": "## Goal\nbody text"}, "contract text\n")
+        self.assertIn('`working "test ready: <commit>; holdouts: <what they cover>"`', brief)
+        self.assertIn("`done`", brief)
+        self.assertRegex(brief, r"TASK BRIEF:\n## Goal\nbody text\n+CONTRACT:\ncontract text\n\Z")
+        self.assertIn("Test file: tests/test_a.py.", brief)
+
+    def test_fc_briefs_stays_within_600_lines(self):
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
+
+
 if __name__ == "__main__":
     unittest.main()
