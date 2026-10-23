@@ -231,7 +231,7 @@ def cmd_crew(a):
         print(f"teammate {name} stopped")
         return
     explicit = getattr(a, "model", None)
-    pin = None if explicit and explicit not in fc_config.CREW_MODELS else fc_budget.hold(proj, fc_tiers.tier_for(fc_tiers.ceiling(a.role), fc_tierpin.read(proj).get("project")))
+    pin = None if explicit and explicit not in fc_config.CREW_MODELS else fc_budget.hold(proj, fc_tiers.tier_for(fc_tiers.ceiling(explicit or a.role) or fc_tiers.ceiling(a.role), fc_tierpin.read(proj).get("project")))
     model, effort, why_model, skipped = crew_pick_full(a.role, explicit, pin)
     if not fc_herdr.herdr_env():
         sys.exit("teammate sessions live in herdr panes; outside herdr do the work in this session or with the harness's own subagents")
