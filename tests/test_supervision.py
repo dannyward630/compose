@@ -1459,5 +1459,65 @@ class WatchLoadEvents(unittest.TestCase):  # the load log reaches each watcher o
         self.assertTrue(any(line in str(o) for o in out), out)
 
 
+class WatchLoadWarn(unittest.TestCase):  # a warn or a cleared entry is told to the manager's pane and desktop once
+    def setUp(self):
+        import fc_load
+        self.load, self.proj, self.calls = fc_load, Path(tempfile.mkdtemp()) / "hw", []
+        (self.proj / "results").mkdir(parents=True)
+        self.claim, self.notify = mock.Mock(return_value=True), mock.Mock()
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(11.0,) * 3),
+                  mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: self.calls.append(a)), mock.patch.object(fc.fc_crew, "desktop_notify", self.notify),
+                  mock.patch.object(fc_load, "claim", self.claim)):
+            p.start(); self.addCleanup(p.stop)
+        fc.fc_watch.watch_save(self.proj, "m", load_n=0)
+
+    def log(self, *entries, manager="%7"):
+        if manager:
+            (self.proj / "results" / "manager.json").write_text(json.dumps({"session": manager}))
+        (Path.home() / ".compose").mkdir(exist_ok=True)
+        (Path.home() / ".compose" / "load.json").write_text(json.dumps({"held": False, "since": None, "n": len(entries), "warn": entries[-1][0] == "warn", "claimed": [],
+            "memory": None, "log": [{"n": i, "at": time.time(), "kind": k, "avg": a} for i, (k, a) in enumerate(entries, 1)]}))
+
+    def events(self):
+        return fc.fc_watch.load_events(self.proj, "m")
+
+    def metadata(self):
+        return [c for c in self.calls if c[:2] == ("pane", "report-metadata")]
+
+    def test_a_warn_is_told_sets_the_pane_token_and_notifies(self):
+        self.log(("warn", 11.04))
+        tell, = self.events()
+        m = re.fullmatch(r"event tell='(load 11\.0 on 8 cores is above the warn mark (\d+\.\d): compose holds new starts above (\d+\.\d))'", tell)
+        self.assertTrue(m, tell)
+        self.assertEqual(self.metadata(), [("pane", "report-metadata", "%7", "--source", "compose-load", "--token", "load=11.0 on 8 cores")])
+        self.claim.assert_called_once_with(1)
+        self.notify.assert_called_once_with("compose: load", m.group(1))
+
+    def test_a_clear_is_told_removes_the_pane_token_and_notifies(self):
+        self.log(("warn", 11.0), ("cleared", 6.55))
+        warn, tell = self.events()
+        m = re.fullmatch(r"event tell='(load cleared: 6\.[56] on 8 cores, below (\d+\.\d))'", tell)
+        self.assertTrue(m, tell)
+        self.assertEqual(self.metadata()[-1], ("pane", "report-metadata", "%7", "--source", "compose-load", "--clear-token", "load"))
+        self.assertEqual([c.args for c in self.notify.call_args_list][-1], ("compose: load", m.group(1)))
+
+    def test_without_the_claim_only_the_pane_and_the_line_are_told(self):
+        self.claim.return_value = False
+        self.log(("warn", 11.0))
+        self.assertEqual((len(self.events()), len(self.metadata())), (1, 1))
+        self.notify.assert_not_called()
+
+    def test_without_a_manager_pane_the_line_and_the_notification_still_go_out(self):
+        self.log(("warn", 11.0), manager=None)
+        self.assertEqual((len(self.events()), self.metadata()), (1, []))
+        self.notify.assert_called_once()
+
+    def test_each_crossing_fires_once(self):
+        self.log(("warn", 11.0))
+        self.assertEqual(len(self.events()), 1)
+        self.assertEqual((self.events(), self.events()), ([], []))
+        self.assertEqual((len(self.metadata()), self.notify.call_count), (1, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
