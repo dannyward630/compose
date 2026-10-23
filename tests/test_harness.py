@@ -409,6 +409,56 @@ class CodexDefaultBlock(unittest.TestCase):
         self.assertEqual((fc_config.HARNESS, json.dumps(self.CFG, sort_keys=True), fc_config.CONFIG_PATH.read_bytes()), ("codex", cfg_before, file_before))
 
 
+class CodexDefaultTiers(unittest.TestCase):
+    CFG = {"models": {"crew": {"default": "claude:sonnet"}}}
+    apply = HarnessBlock.apply
+    CODEX_TIERS = {"cheap": ["codex", "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast"], "standard": ["codex"],
+                   "frontier": [{"model": "codex", "effort": "high"}, {"model": "codex", "effort": "high"}, {"model": "pi:openai/gpt-6-astra", "effort": "high"}]}
+
+    def setUp(self):
+        HarnessBlock.setUp(self)
+        p = mock.patch.object(fc_config, "TIERS", fc_config.TIERS); p.start(); self.addCleanup(p.stop)
+
+    def tiers(self, cfg): return fc_config.settings(cfg, "codex")[1]["models"]["tiers"]
+
+    def test_no_block_and_no_tiers_give_the_codex_defaults(self):
+        self.assertEqual(self.tiers(self.CFG), self.CODEX_TIERS)
+
+    def test_each_entry_maps_by_its_shape_and_keeps_its_effort(self):
+        tiers = {"cheap": ["claude", "claude:claude-haiku-5-5", "pi:a/b", "openrouter/openai/gpt-oss-120b"],
+                 "standard": [{"model": "claude:claude-sonnet-5-5", "effort": "xhigh"}, {"model": "pi:c/d", "effort": "max"}],
+                 "huge": ["pi:x/y"]}
+        self.assertEqual(self.tiers({**self.CFG, "models": {"tiers": tiers}}),
+                         {"cheap": ["codex", "codex", "pi:a/b", "openrouter/openai/gpt-oss-120b"],
+                          "standard": [{"model": "codex", "effort": "xhigh"}, {"model": "pi:c/d", "effort": "max"}],
+                          "frontier": self.CODEX_TIERS["frontier"], "huge": ["pi:x/y"]})
+
+    def test_escalate_never_picks_a_claude_model(self):
+        self.apply(self.CFG, harness="codex")
+        picks = [fc.fc_tiers.escalate(m) for t in fc_config.TIERS.values() for m, _ in t]
+        self.assertEqual(picks[0], "codex")
+        self.assertEqual([p for p in picks if p and p.startswith("claude")], [])
+
+    def test_a_codex_block_wins_whole(self):
+        block = {"models": {"crew": {"default": "codex:gpt-6-sol"}, "tiers": {"cheap": ["claude:claude-haiku-5-5"]}}}
+        self.assertEqual(self.tiers({**self.CFG, "harnesses": {"codex": block}}), {"cheap": ["claude:claude-haiku-5-5"]})
+
+    def test_claude_and_no_harness_keep_the_claude_tiers(self):
+        for harness in ("claude", None):
+            with self.subTest(harness=harness):
+                self.apply(self.CFG, harness=harness)
+                self.assertEqual((fc_config.TIERS["cheap"][0], fc.fc_tiers.escalate("claude:claude-haiku-5-5")), (("claude:claude-haiku-5-5", None), "claude:claude-sonnet-5-5"))
+
+    def test_the_input_config_and_its_file_are_unchanged(self):
+        cfg = {"models": {"tiers": {"standard": ["claude:claude-opus-5-5"]}}}
+        before = json.dumps(cfg, sort_keys=True)
+        self.assertEqual(self.tiers(cfg)["standard"], ["codex"])
+        self.assertEqual(json.dumps(cfg, sort_keys=True), before)
+        fc_config.write_config(cfg); file_before = fc_config.CONFIG_PATH.read_bytes()
+        with mock.patch.dict(os.environ): fc_config.apply_config(move=False, harness="codex")
+        self.assertEqual(fc_config.CONFIG_PATH.read_bytes(), file_before)
+
+
 class HarnessPassDown(unittest.TestCase):
     BLOCK = lambda m, t: {"models": {"crew": {"default": m, "tests": t}}}
     CFG = {"models": {"crew": {"default": "claude:top", "tests": "claude:toptests"}},
