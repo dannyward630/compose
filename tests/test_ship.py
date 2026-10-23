@@ -150,10 +150,6 @@ class Reword(Ship):
             self.assertTrue(any("names 0 commits" in l for l in out), out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SharedFixture(Ship):
     seen = []
 
@@ -196,3 +192,7 @@ class SharedFixture(Ship):
 
     def test_what_another_test_commits_pushes_and_changes_is_gone_in_the_next(self):
         self.leave_leftovers()
+
+
+if __name__ == "__main__":
+    unittest.main()
