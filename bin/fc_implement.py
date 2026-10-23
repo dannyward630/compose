@@ -1,6 +1,6 @@
 import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -172,7 +172,10 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
     The command runs under one of the machine's slots (fc_proc.slot; only a whole suite takes a suite slot, so any other command never waits on one)
     and its group is in fc_proc.RUNNING, so a stop ends it."""
-    with fc_proc.slot(fc_core.say, not fc_proc.suite(cmd)) as held:
+    quick = not fc_proc.suite(cmd)
+    if not quick and "COMPOSE_TEST_SLOT" not in os.environ:  # a suite waits at the load gate before it takes its slot
+        fc_load.wait(fc_core.say)
+    with fc_proc.slot(fc_core.say, quick) as held:
         env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
         before = fc_core.home_state()
         p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
