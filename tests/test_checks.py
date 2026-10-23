@@ -67,6 +67,7 @@ class Machine(unittest.TestCase):
     def setUp(self):
         self.bin = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_NO_PREFLIGHT", None)  # hermetic sets it; the cleanup above restores it
         for p in (mock.patch("os.getloadavg", return_value=(1.0, 1.0, 1.0)), mock.patch("os.cpu_count", return_value=8)):
             p.start(); self.addCleanup(p.stop)
 
@@ -85,6 +86,23 @@ class Machine(unittest.TestCase):
         for out, want in (("Now drawing from 'Battery Power'", True), ("Now drawing from 'AC Power'", False)):
             self.fake("pmset", f'[ "$*" = "-g batt" ] || exit 9\necho "{out}"')
             self.assertIs(C.on_battery(), want)
+
+    def batt(self, power, pct):
+        self.fake("pmset", f"echo \"Now drawing from '{power}'\"\necho \" -InternalBattery-0 (id=4653155)\t{pct}%; discharging; 3:12 remaining present: true\"")
+
+    def test_battery_stop_names_the_charge_and_the_override_only_on_battery_below_30_percent(self):
+        self.assertIsNone(C.battery_stop())  # no pmset
+        self.batt("Battery Power", 29)
+        self.assertEqual(C.battery_stop(), "the Mac is on battery at 29%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway")
+        self.assertIsNone(C.battery_stop(force=True))
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_PREFLIGHT": "1"}):
+            self.assertIsNone(C.battery_stop())
+        self.batt("Battery Power", 30)
+        self.assertIsNone(C.battery_stop())
+        self.batt("AC Power", 12)  # charging at 12% is fine
+        self.assertIsNone(C.battery_stop())
+        self.fake("pmset", 'echo "Now drawing from \'Battery Power\'"')  # a charge that cannot be read stops nothing
+        self.assertIsNone(C.battery_stop())
 
     def test_busiest_process_is_the_first_row_of_ps(self):
         self.assertIsNone(C.busiest_process())

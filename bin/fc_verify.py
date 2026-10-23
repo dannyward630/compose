@@ -306,7 +306,7 @@ def at_root(value, olds, root):
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
-    fc_init.start_checks(repo, stack=False, tree=False)  # keys and machine only: verify tolerates a dirty tree
+    fc_init.start_checks(repo, stack=False, tree=False, force=getattr(a, "force", False))  # keys and machine only: verify tolerates a dirty tree
     fc_proc.keep_awake()  # a display that sleeps fails every e2e check, and a verify takes long enough for the Mac to sleep
     cfg_path = proj / "verify.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}

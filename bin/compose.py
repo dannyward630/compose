@@ -180,6 +180,8 @@ def main():
             s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
             s.add_argument("--unproven", action="store_true", help="run although `verify --prove` has not passed on the current e2e cases")
+        if name in ("run", "resume", "verify"):
+            s.add_argument("--force", action="store_true", help="start although the Mac runs on its battery below 30%% (otherwise it stops: plug it in)")
         if name == "resume":
             s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else the halted run's)")
         if name == "done":
@@ -264,7 +266,7 @@ def main():
             s.add_argument("--role", help="orchestrator (the team lead), wayfinder, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
-            s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
+            s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done; start: start although the Mac runs on its battery below 30%%")
             s.add_argument("--cwd", help="start: run the session in its own new worktree of this repo (a plain folder: in it) instead of the project worktree")
             s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
