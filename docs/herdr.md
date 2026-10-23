@@ -84,7 +84,6 @@ A project opens as a herdr worktree space of its own, labelled `<slug>`, grouped
 |---|---|---|
 | space | the project worktree, grouped under the repo's space | `<slug>` |
 | tab | a shell in the project worktree | `shell` |
-| tab | live `compose status --watch` | `status` |
 | tab | every implementer, one pane per task | `implementers` |
 | pane | one task's interactive pi session | `NNN <title>`, agent `<slug>-NNN` |
 | tab | the latest verify run, one pane per stage | `verify` |
@@ -92,7 +91,7 @@ A project opens as a herdr worktree space of its own, labelled `<slug>`, grouped
 | tab | one teammate session | its title, agent `<slug>-<role>` |
 
 When no space of the project's repo is open, such as when compose runs from another repo's space, the project opens in the space `init` was started from instead, with no new space.
-There every tab carries the project's name first (`<slug> status`), so several projects share one space without touching each other's tabs.
+There every tab carries the project's name first (`<slug> shell`), so several projects share one space without touching each other's tabs.
 That space is recorded in the project's `results/herdr.json`, so every later command finds it, and the project stays there while it is open.
 
 Each task pane shows its state, such as `attempt 2/3` or `passed`, along with its model and cost.

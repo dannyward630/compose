@@ -188,7 +188,7 @@ You only run them yourself in [manual mode](docs/cli.md#manual-mode).
 | `compose quick --project <name> <id>...` | Pins check-only on small tasks, a story's tasks, or the feature's code tasks, then routes them |
 | `compose run --project <name>` | Dispatches the tasks to parallel implementers |
 | `compose verify --project <name>` | Runs the local verify pipeline |
-| `compose status [--project <name>] [--watch]` | Shows every project and every task |
+| `compose status [--project <name>]` | Shows every project and every task |
 | `compose stack --project <name> --submit` | Pushes the stack and opens draft PRs |
 | `compose resume --project <name>` | Continues after a billing halt |
 | `compose clean --project <name>` | Removes what has merged, including a stack re-cut onto a moved base, and moves it to Done in Linear, story and feature included; names the first unmatched commit of each branch it keeps |

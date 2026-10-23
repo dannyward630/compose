@@ -1129,8 +1129,9 @@ class ReadyCheckpoints(unittest.TestCase):
 
     def test_cli_init_row_names_the_herdr_tabs_and_how_to_skip_them(self):
         row = self.row("init")
-        for word in ("`<slug> shell`", "`<slug> status`", "`COMPOSE_NO_HERDR=1`"):
+        for word in ("`<slug> shell`", "`COMPOSE_NO_HERDR=1`"):
             self.assertIn(word, row)
+        self.assertNotIn("`<slug> status`", row)
         self.assertNotIn("\u2014", row)
 
     def test_cli_sync_and_clean_rows_name_ready_and_keep_what_they_said(self):
@@ -1212,7 +1213,7 @@ class ReadyEventDocs(unittest.TestCase):
         row = self.row(self.projects_rows(), "status")
         self.assertIn("can start now:", row)
         self.assertIn("results/ready.json", row)
-        self.assertIn("--watch", row)
+        self.assertNotIn("--watch", row)
 
     def test_projects_row_ends_each_line_with_can_start_now(self):
         row = self.row(self.projects_rows(), "projects")
