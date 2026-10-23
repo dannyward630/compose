@@ -314,9 +314,9 @@ def herdr_repo_space(wt):
 
 def herdr_space(proj):
     """The project's herdr space, idempotent: the project worktree opened as a worktree space of its own, labelled `<name>` with
-    `shell` and `status` tabs, grouped under the repo's open space. When no space of the repo is open, the space compose was
-    started from (HERDR_WORKSPACE_ID) instead, never a new empty repo space: there its tabs are labelled `<name> shell` and
-    `<name> status`, and the space is recorded so every later command finds it whoever runs it. A recorded space is kept while
+    a `shell` tab, grouped under the repo's open space. When no space of the repo is open, the space compose was
+    started from (HERDR_WORKSPACE_ID) instead, never a new empty repo space: there its shell tab is labelled `<name> shell`,
+    and the space is recorded so every later command finds it whoever runs it. A recorded space is kept while
     it is open. Outside any space herdr opens the repo's space itself. Keyed on the project, never on where a command runs
     (verify runs in the stack worktree)."""
     if not herdr_env():
@@ -337,7 +337,6 @@ def herdr_space(proj):
         HERDR_SPACES[slug] = space
         if tab_label(proj, "shell") not in herdr_tabs(space):
             herdr_tab(space, tab_label(proj, "shell"), wt)
-        herdr_status_tab(space, wt, slug, tab_label(proj, "status"))
         return space
     if not space:
         r = herdr("worktree", "open", "--cwd", herdr_main_repo(wt), "--path", str(wt), "--label", slug, "--no-focus") or {}
@@ -354,21 +353,11 @@ def herdr_space(proj):
                 for p in (herdr("pane", "list", "--workspace", space) or {}).get("panes", []):
                     if p.get("tab_id") == t["tab_id"]:
                         herdr("pane", "rename", p["pane_id"], "shell")
-        herdr_status_tab(space, wt, slug)
     return space
 
 
 def herdr_tabs(space):
     return {t.get("label"): t for t in (herdr("tab", "list", "--workspace", space) or {}).get("tabs", [])}
-
-def herdr_status_tab(space, wt, slug, label="status"):
-    """A `status` tab running `compose status --watch`, so the product owner sees every task's state without asking."""
-    if label in herdr_tabs(space):
-        return
-    pane = (herdr_tab(space, label, wt).get("root_pane") or {}).get("pane_id")
-    if pane:
-        me = str(Path(sys.argv[0]).resolve())
-        herdr("pane", "run", pane, f"clear; {me} status --repo {wt} --project {slug} --watch")
 
 def herdr_label(session, label, cost, state="working"):
     """Display-only pane metadata: the state label the product owner reads next to the agent, and the running cost."""
