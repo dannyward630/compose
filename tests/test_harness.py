@@ -326,9 +326,9 @@ class HarnessBlock(unittest.TestCase):
     def test_config_without_harnesses_is_unchanged(self):
         cfg = {k: v for k, v in self.CFG.items() if k != "harnesses"}
         self.assertEqual(fc_config.settings(cfg, "claude"), fc_config.settings(cfg))
-        with self.assertRaises(SystemExit) as e: fc_config.settings(cfg, "codex")
-        self.assertEqual(str(e.exception), f'{fc_config.CONFIG_PATH}: no "harnesses.codex" block')
-        self.exits(cfg, 'no "harnesses.codex" block', COMPOSE_HARNESS="codex")
+        with self.assertRaises(SystemExit) as e: fc_config.settings(cfg, "gemini")
+        self.assertEqual(str(e.exception), f'{fc_config.CONFIG_PATH}: no "harnesses.gemini" block')
+        self.exits(cfg, 'no "harnesses.gemini" block', COMPOSE_HARNESS="gemini")
 
     def test_a_block_without_default_exits_active_or_not(self):
         bad = {**self.CFG, "harnesses": {"codex": self.CODEX, "gemini": {"models": {"crew": {"planner": "x"}}}}}
@@ -341,7 +341,7 @@ class HarnessBlock(unittest.TestCase):
 
 class ClaudeTopLevel(unittest.TestCase):
     CFG, setUp, apply, exits = HarnessBlock.CFG, HarnessBlock.setUp, HarnessBlock.apply, HarnessBlock.exits
-    NO_BLOCK = 'no "harnesses.codex" block'
+    NO_BLOCK = 'no "harnesses.gemini" block'
 
     def test_claude_code_needs_no_claude_block(self):
         self.apply(self.CFG, CLAUDECODE="1")
@@ -349,12 +349,12 @@ class ClaudeTopLevel(unittest.TestCase):
         self.assertEqual(fc_config.settings(self.CFG, "claude"), fc_config.settings(self.CFG))
 
     def test_a_harness_without_a_block_exits_with_or_without_a_map(self):
-        for harnesses in ({}, {"gemini": HarnessBlock.CODEX}, None):
+        for harnesses in ({}, {"codex": HarnessBlock.CODEX}, None):
             cfg = {**self.CFG, "harnesses": harnesses}
             if harnesses is None: del cfg["harnesses"]
             with self.subTest(harnesses=harnesses):
-                self.exits(cfg, self.NO_BLOCK, COMPOSE_HARNESS="codex")
-                self.exits(cfg, self.NO_BLOCK, CLAUDECODE="1", COMPOSE_HARNESS="codex")
+                self.exits(cfg, self.NO_BLOCK, COMPOSE_HARNESS="gemini")
+                self.exits(cfg, self.NO_BLOCK, CLAUDECODE="1", COMPOSE_HARNESS="gemini")
 
     def test_an_explicit_claude_block_merges_as_codexs_does(self):
         claude = {"models": {"crew": {"default": "claude:haiku"}}}
@@ -454,7 +454,7 @@ class HarnessPassDown(unittest.TestCase):
         self.assertEqual(([e for e in envs if e.startswith("COMPOSE_HARNESS")], model), ([], "claude:toptests"))
 
     def test_a_flag_without_its_block_exits_before_any_herdr_call(self):
-        calls, _, _ = self.start("--harness", "codex", cfg={k: v for k, v in self.CFG.items() if k != "harnesses"})
+        calls, _, _ = self.start("--harness", "gemini", cfg={k: v for k, v in self.CFG.items() if k != "harnesses"})
         self.assertEqual((calls, hasattr(self, "exit")), ([], True))
 
 
