@@ -92,6 +92,13 @@ class Policies(unittest.TestCase):
             result = fc.fc_route.route_tasks(self.repo, self.proj, self.tasks)
         self.assertEqual((result, self.decide.called, out.getvalue()), (({}, {"001": "policies unreadable: boom", "002": "policies unreadable: boom"}), False, ""))
 
+    def test_compose_no_policies_routes_without_recording_on_linear(self):
+        self.read_policies.return_value = (self.pols, "policies skipped: COMPOSE_NO_POLICIES is set")
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_POLICIES": "1"}), mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin_test"), mock.patch.object(fc.fc_linear, "linear_ready", return_value=True), \
+                mock.patch.object(fc.fc_route, "record_route") as record, mock.patch.object(fc_routerec, "route_section", return_value="S"), mock.patch("sys.stdout", io.StringIO()):
+            routes, held = fc.fc_route.route_tasks(self.repo, self.proj, self.tasks)
+        self.assertEqual((sorted(routes), held, record.call_count), (["001", "002"], {}, 0))
+
     def test_compose_route_stops_on_unreadable_policies(self):
         self.read_policies.side_effect = RuntimeError("2 documents titled Verification policies: D1, D2")
         with mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit) as stop:

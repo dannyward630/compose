@@ -1,9 +1,9 @@
 """The project's mandatory verification policies: the Linear document titled "Verification policies" in the repo's Linear
 project, one `## ` section per policy with a plain-language statement, an optional `globs:` line and a `checks:` line."""
 
-import fnmatch
+import fnmatch, os
 
-import fc_config, fc_linear, fc_linear_cmd
+import fc_config, fc_core, fc_linear, fc_linear_cmd
 
 POLICY_DOC = "Verification policies"
 
@@ -39,10 +39,24 @@ class _Duplicate(RuntimeError):
     """More than one document titled "Verification policies"; raised out of the retry instead of retried."""
 
 
+def skipped():
+    """COMPOSE_NO_POLICIES=1 (offline work): no policy is read, no route is recorded on Linear, none is caught up."""
+    return bool(os.environ.get("COMPOSE_NO_POLICIES"))
+
+
+def fix_hint(repo, error):
+    """The command that fixes an unreadable policy document, then the way to go on without it."""
+    first = (f"write {fc_core.repo_link(repo)} as {{\"project\": \"<Linear project URL>\", \"team\": \"Engineering\"}}, then check it with `compose linear project --repo {repo}`"
+             if str(error).startswith("no .compose/linear.json") else f"check the link with `compose linear project --repo {repo}`")
+    return f"{first}; or set COMPOSE_NO_POLICIES=1 to run without the project's policies"
+
+
 def read_policies(repo):
     """(policies, note) read from the repo's Linear project; raises RuntimeError when the document cannot be read."""
     if not fc_config.LINEAR_KEY:
         return [], "policies unavailable: no Linear key"
+    if skipped():
+        return [], "policies skipped: COMPOSE_NO_POLICIES is set"
     for _ in range(2):
         try:
             p = fc_linear_cmd.linear_project(repo)
@@ -65,4 +79,4 @@ def read_policies(repo):
             raise
         except (Exception, SystemExit) as e:
             error = e
-    raise RuntimeError(f"policies unreadable: {error}")
+    raise RuntimeError(f"policies unreadable: {error}; {fix_hint(repo, error)}")

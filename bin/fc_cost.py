@@ -6,7 +6,9 @@ import fc_sessions
 FIELDS = ("turns", "input", "cache_created", "cache_read", "output")
 
 
-def rows(proj: Path) -> list[dict]:
+def rows(proj: Path, runs=()) -> list[dict]:
+    """The teammate sessions, then the run providers. `runs` are the project's run-end lines of the run history: when there are
+    any, the providers total every run (run-cost.json holds only the latest); else run-cost.json is read."""
     proj = Path(proj)
     out = []
     crew = proj / "results" / "crew"
@@ -30,8 +32,19 @@ def rows(proj: Path) -> list[dict]:
             row["model"] = u["model"] or row["model"]
             row["note"] = ""
         out.append(row)
+    if runs:
+        total_by = {}
+        for r in runs:
+            for name, v in (r.get("providers") or {}).items():
+                t = total_by.setdefault(name, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "runs": 0})
+                t["runs"] += 1
+                for k in ("calls", "tokens_in", "tokens_out"):
+                    t[k] += v.get(k) or 0
+        for name, v in sorted(total_by.items()):
+            out.append({"name": name, "role": "run", "model": "", "turns": v["calls"], "input": v["tokens_in"], "cache_created": 0,
+                        "cache_read": 0, "output": v["tokens_out"], "note": f"{v['runs']} runs"})
     rc = proj / "results" / "run-cost.json"
-    if rc.exists():
+    if rc.exists() and not runs:
         try:
             run = json.loads(rc.read_text())
         except ValueError:

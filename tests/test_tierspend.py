@@ -36,6 +36,11 @@ class TierSpend(unittest.TestCase):
         with self.assertRaises(SystemExit) as e: self.config({}, prices={"pi:a/b": [1, 2, 3]})
         self.assertEqual(str(e.exception), f"{self.path}: prices.pi:a/b must be 2 or 4 numbers")
 
+    def test_a_prices_value_that_is_not_an_object_exits_naming_the_file_and_key(self):
+        for bad in ([1, 2], "cheap", 3, None):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit) as e: self.config({}, prices=bad)
+            self.assertEqual(str(e.exception), f"{self.path}: prices must be an object of model id to 2 or 4 numbers, not {bad!r}")
+
     def test_spend_and_lines_sum_teammates_and_implementers_into_tiers(self):
         self.config({"tiers": {"cheap": ["pi:a/b"]}}, prices={"pi:a/b": [1, 2]})
         proj = Path(tempfile.mkdtemp()) / ".compose" / "p"; (proj / "results").mkdir(parents=True)

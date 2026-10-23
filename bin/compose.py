@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -180,6 +180,8 @@ def main():
             s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
             s.add_argument("--unproven", action="store_true", help="run although `verify --prove` has not passed on the current e2e cases")
+        if name in ("run", "resume", "verify"):
+            s.add_argument("--force", action="store_true", help="start although the Mac runs on its battery below 30%% or (run, resume) the OpenRouter key's credit looks too low for the tasks that start at once")
         if name == "resume":
             s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else the halted run's)")
         if name == "done":
@@ -194,9 +196,12 @@ def main():
             s.add_argument("--interval", type=float, default=fc_watch.WATCH_INTERVAL)
             s.add_argument("--settle", type=float, default=fc_watch.WATCH_SETTLE, help="seconds to gather the events of one burst into one wake (a question, a block, or a stall wakes at once; 0 = off)")
             s.add_argument("--takeover", action="store_true", help="watch from this session although another live engineering manager session drives the project (its teammates then report here)")
+            s.add_argument("--attention", action="store_true", help="wake only for what needs attention (done, needs-user, blocked, tool-bug, a stall, payment, a crash, a sign-in screen); progress lines print in the same wake as the next one. The default for --from orchestrator")
+            s.add_argument("--all", action="store_true", help="wake on every progress line too, even for --from orchestrator")
             s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
             s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
+            s.add_argument("--history", nargs="?", type=int, const=fc_history.SHOWN, metavar="N", help=f"the last N (default {fc_history.SHOWN}) lines of this repository's run history (runs, task results, verify rounds), kept outside the worktrees, instead of the board")
             s.add_argument("--digest", action="store_true", help="one line per project: tasks done, run, last verify and why it failed, questions waiting")
         if name == "stack":
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
@@ -261,7 +266,7 @@ def main():
             s.add_argument("--role", help="orchestrator (the team lead), wayfinder, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
-            s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done")
+            s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done; start: start although the Mac runs on its battery below 30%%")
             s.add_argument("--cwd", help="start: run the session in its own new worktree of this repo (a plain folder: in it) instead of the project worktree")
             s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
             s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")

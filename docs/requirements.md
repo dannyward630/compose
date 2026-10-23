@@ -99,7 +99,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.compose/skill-seen/` | the skill files each session last saw |
 | `~/.compose/.env` | verify's `TEXT_MODEL*` and `TYPESAFE_MODEL` lines, no keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
-| `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports, with the issue URL once filed |
+| `~/.compose/tool-bugs.jsonl`, `~/.compose/history.jsonl` | every project's tool-bug reports with the issue URL once filed, and one line per run start, run end, task result and verify round (time, task, model, attempts, duration, cost, outcome; no prompts or secrets) |
 | `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |
@@ -113,7 +113,7 @@ These need no install.
 | Tool | Used for |
 |---|---|
 | `caffeinate` (macOS) | keeps the Mac awake while a run, resume, verify, watch, or live teammate works (`caffeinate -dims -w <pid>`) |
-| `pmset` (macOS) | `doctor` and the start of a run warn when the Mac is on battery, because closing the lid sleeps it |
+| `pmset` (macOS) | `doctor` and the start of a run warn when the Mac is on battery, because closing the lid sleeps it; `run`, `resume`, `verify`, and `crew start` stop below 30% unless `--force` |
 | docker | `doctor` and the start of a run warn about a container that keeps restarting, only when docker is installed and running |
 
 ## Environment variables
@@ -125,7 +125,8 @@ These need no install.
 | `COMPOSE_CONFIG` | path of the config file; the files beside it in `~/.compose/` move with it. Project code that `run`, `verify`, and `compose timed` start gets one in a fresh scratch directory, and a change to `~/.compose` while it runs prints a `WARNING`, unless a compose outside it made that change (another session's `compose workspace`, say; compose journals each write it makes there in `~/.compose/home-writes.jsonl`) or it is in the CLI checkout |
 | `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |
 | `COMPOSE_NO_TRAIL=1` | skip trail |
-| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2) |
+| `COMPOSE_NO_POLICIES=1` | `route`, `run`, `quick`, and `verify` read no Verification policies and record or catch up no route on Linear, for work with Linear unreachable or the repo not linked; without it an unreadable policy document stops them (fail closed, since Linear is the record) |
+| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default: a quarter of the cores, at least 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2). `COMPOSE_TEST_JOBS=<n>` is how many test files `python3 -m tests.run` runs side by side (default: half the cores; `-j` overrides it) |
 | `COMPOSE_NO_HERDR=1` | bare `compose` does not open the herdr session; it prints the usage. Every subcommand runs headless, inside herdr too: no space, tab, pane, or agent |
 | `COMPOSE_INSTALL_DIR` | where `install.sh` puts the checkout (default `~/.compose/src`) |
 | `COMPOSE_FAKE_402=<provider>` | simulate a billing halt (tests) |

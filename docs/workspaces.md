@@ -250,10 +250,16 @@ When one does, `run` and `verify` halt, and three things follow:
 
 - No attempt is consumed and nothing is retried.
 - Running tasks finish and no new task starts.
-- The banner names the provider, quotes its message, and prints the top-up link.
+- The banner names the provider, quotes its message, and prints the top-up link and the exact resume command.
   The exit code is 3.
 
 After topping up, run `compose resume --project <name>`.
 Passed tasks keep their branches.
 A halted verify reruns from its first stage.
 `COMPOSE_FAKE_402=openrouter` simulates a halt for testing.
+
+`run` and `resume` try not to reach a halt in the first place.
+When a task runs on an OpenRouter model, they ask OpenRouter how much credit the key has left before anything is cloned.
+They stop when that is less than the dearest `parallel` tasks are estimated to cost, with the numbers and the top-up link.
+A task is estimated at the mean cost of that model's latest 20 finished tasks in the repo, else $0.25.
+A key with no limit, a key that cannot be checked, and `--force` all start the run without a verdict.

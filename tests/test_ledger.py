@@ -130,6 +130,89 @@ class AddRow(unittest.TestCase):
             refresh.assert_called_once_with("NEB-1")
 
 
+class FakeLinear:
+    """Comments per issue, as Linear keeps them. A write named in `drops` fails; it lands first unless its name is in `lost`,
+    as a write that timed out may."""
+    def __init__(self):
+        self.comments, self.drops, self.lost, self.unreadable, self.writes = {}, [], [], False, 0
+
+    def __call__(self, query, variables):
+        if "commentCreate" in query:
+            self.writes += 1
+            err = self.drops.pop(0) if self.drops else None
+            if err not in self.lost:
+                self.comments.setdefault(variables["id"], []).append(variables["b"])
+            if err:
+                raise RuntimeError(err)
+            return {"commentCreate": {"success": True}}
+        if "comments(" in query:
+            if self.unreadable:
+                raise RuntimeError("read failed")
+            return {"issue": {"comments": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                                           "nodes": [{"body": b, "createdAt": f"2026-01-01T00:00:{i:02d}Z"} for i, b in enumerate(self.comments.get(variables["id"], []))]}}}
+        return {"issue": {"id": variables["id"], "identifier": variables["id"]}}
+
+    def rows(self, issue):
+        return [r["event_id"] for b in self.comments.get(issue, []) for r in fc_evidence.parse_comment(b)]
+
+
+class LateLanding(unittest.TestCase):
+    """A Linear call that timed out may have written anyway: a retry must not add the same rows a second time."""
+    def setUp(self):
+        self.linear, self.said = FakeLinear(), []
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "lin_api_x"), (fc.fc_linear, "linear_gql", self.linear), (fc_ledger, "UNSAVED", []),
+                                 (fc_ledger, "SAVED", set()), (fc.fc_core, "say", self.said.append)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        p = mock.patch("time.sleep"); p.start(); self.addCleanup(p.stop)
+
+    def test_a_write_that_timed_out_and_landed_is_not_written_again_by_the_retry(self):
+        self.linear.drops = ["Linear gave no answer within 120s"]
+        a, b = row(1), row(2)
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))
+        self.assertEqual((self.linear.writes, self.linear.rows("NEB-1"), fc_ledger.unsaved(), self.said), (1, [a["event_id"], b["event_id"]], [], []))
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a, b]))  # and a saved row is still never written again
+        self.assertEqual(self.linear.writes, 1)
+
+    def test_a_write_that_never_landed_is_written_by_the_retry(self):
+        self.linear.drops, self.linear.lost = ["boom"], ["boom"]
+        a = row(1)
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a]))
+        self.assertEqual((self.linear.writes, self.linear.rows("NEB-1")), (2, [a["event_id"]]))
+
+    def test_only_the_rows_that_did_not_land_are_retried(self):
+        a, b, c = row(1), row(2), row(3)
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a]))
+        self.linear.comments["NEB-1"].append(fc_ledger.comment_text([b]))  # b landed through a timed-out write of an earlier call
+        fc_ledger.UNSAVED.append(("NEB-1", b))
+        self.assertTrue(fc_ledger.add_row("NEB-1", [c]))
+        self.assertEqual(self.linear.rows("NEB-1"), [a["event_id"], b["event_id"], c["event_id"]])
+        self.assertEqual(self.linear.comments["NEB-1"][-1], fc_ledger.comment_text([c]))
+        self.assertEqual(fc_ledger.unsaved(), [])
+
+    def test_rows_kept_after_three_tries_that_landed_late_are_not_written_again_by_the_next_call(self):
+        self.linear.drops = ["t1", "t2", "t3"]
+        a = row(1)
+        with mock.patch.object(self.linear, "unreadable", True):
+            self.assertFalse(fc_ledger.add_row("NEB-1", [a]))
+        self.assertEqual((self.linear.writes, fc_ledger.unsaved()), (3, [a]))  # three blind writes: the read was down too
+        self.assertEqual(len(self.linear.comments["NEB-1"]), 3)
+        self.assertTrue(fc_ledger.add_row("NEB-1", []))
+        self.assertEqual((self.linear.writes, fc_ledger.unsaved()), (3, []))
+        self.assertEqual(fc_evidence.rows("NEB-1"), [{**a, "at": "2026-01-01T00:00:00Z"}])  # the reading side shows it once
+
+    def test_a_read_that_fails_does_not_stop_the_retry_from_writing(self):
+        self.linear.unreadable, self.linear.drops = True, ["boom"]
+        self.assertTrue(fc_ledger.add_row("NEB-1", [row(1)]))
+        self.assertEqual(self.linear.writes, 2)
+
+    def test_another_issues_rows_are_not_mistaken_for_this_ones(self):
+        a = row(1)
+        self.assertTrue(fc_ledger.add_row("NEB-2", [a]))
+        self.linear.drops, self.linear.lost = ["boom"], ["boom"]
+        self.assertTrue(fc_ledger.add_row("NEB-1", [a]))
+        self.assertEqual((self.linear.rows("NEB-1"), self.linear.rows("NEB-2")), ([a["event_id"]], [a["event_id"]]))
+
+
 class RunEvidence(unittest.TestCase):
     BODY = "## Acceptance criteria\n* works\n* fast\n"
 

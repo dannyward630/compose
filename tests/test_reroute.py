@@ -404,6 +404,11 @@ class Sweep(unittest.TestCase):
                 got, re = self.sweep(key=key, kinds=kinds)
                 self.assertEqual((got, re.call_count), ({}, 0))
 
+    def test_compose_no_policies_reassesses_and_records_nothing(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_NO_POLICIES": "1"}):
+            got, re = self.sweep()
+        self.assertEqual((got, re.call_count), ({}, 0))
+
     def test_a_failure_is_returned_under_its_id_and_the_other_tasks_go_on(self):
         def boom(repo, proj, meta, *a):
             if meta["id"] == "001": raise RuntimeError("Linear: down")
@@ -554,7 +559,7 @@ class VerifyCatchUp(unittest.TestCase):
     def test_each_route_not_recorded_is_said_exactly_and_verify_exits_1_without_a_stage(self):
         code, order, *_ = self.verify(return_value={"003": "Linear timeout", "001": "Linear: down"})
         said = [c.args[0] for c in order.say.call_args_list]
-        self.assertEqual([s for s in said if "FAIL" in s], ["verify FAIL  route not recorded for 003: Linear timeout", "verify FAIL  route not recorded for 001: Linear: down"])
+        self.assertEqual([s for s in said if "FAIL" in s], ["verify FAIL  route not recorded for 003: Linear timeout", "verify FAIL  route not recorded for 001: Linear: down", "verify FAIL  fix what Linear refused (`compose linear get <issue>` shows the task), or set COMPOSE_NO_POLICIES=1 to verify without recording routes"])
         self.assertEqual((code, order.rounds.call_count), (1, 0))
 
     def test_a_payment_required_reaches_payment_halt_without_a_stage(self):
@@ -818,7 +823,7 @@ class LedgerRound(unittest.TestCase):
     def test_each_route_not_recorded_is_said_with_the_exact_line_and_returned_in_failed(self):
         failed = {"003": "Linear: down", "001": "policies unreadable: boom"}
         got, cu, say, *_ = self.round(failed)
-        self.assertEqual((got[1], [c.args[0] for c in say.call_args_list]), (failed, ["verify FAIL  route not recorded for 003: Linear: down", "verify FAIL  route not recorded for 001: policies unreadable: boom"]))
+        self.assertEqual((got[1], [c.args[0] for c in say.call_args_list]), (failed, ["verify FAIL  route not recorded for 003: Linear: down", "verify FAIL  route not recorded for 001: policies unreadable: boom", "verify FAIL  fix what Linear refused (`compose linear get <issue>` shows the task), or set COMPOSE_NO_POLICIES=1 to verify without recording routes"]))
         self.assertEqual(self.round()[2].call_count, 0)
 
     def test_without_a_linear_key_it_returns_empty_and_calls_nothing(self):

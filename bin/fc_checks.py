@@ -55,14 +55,31 @@ def chromium_installed():
 LOAD_FACTOR = 2  # the 5-minute load average that is "far above" the core count: this many times it
 CRASH_RESTARTS, CRASH_WINDOW = 3, 120  # a container restarted this many times, the last one under this many seconds ago, is in a crash loop
 
+def battery_report():
+    """What `pmset -g batt` prints; empty off macOS, without pmset, and when it does not answer within 10 s."""
+    if not shutil.which("pmset"):
+        return ""
+    try:
+        return fc_core.sh(["pmset", "-g", "batt"], None, timeout=10, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
 def on_battery():
     """True when `pmset -g batt` says the Mac runs on its battery; False on AC power, off macOS, and without pmset."""
-    if not shutil.which("pmset"):
-        return False
-    try:
-        return "Battery Power" in fc_core.sh(["pmset", "-g", "batt"], None, timeout=10, check=False).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return "Battery Power" in battery_report()
+
+LOW_BATTERY = 30  # percent: on battery below this, run, resume, verify and crew start refuse without --force
+
+def battery_stop(force=False):
+    """The line that stops a start while the Mac runs on its battery below LOW_BATTERY percent, with why and how to override;
+    None on AC power, at or above it, when the charge cannot be read, with `force`, and under COMPOSE_NO_PREFLIGHT=1."""
+    if force or os.environ.get("COMPOSE_NO_PREFLIGHT"):
+        return None
+    out = battery_report()
+    if "Battery Power" not in out or not (m := re.search(r"(\d+)%", out)) or int(m[1]) >= LOW_BATTERY:
+        return None
+    return (f"the Mac is on battery at {m[1]}%, below {LOW_BATTERY}%: it can die or sleep in the middle of the work; plug it in, "
+            "or run again with --force to start anyway")
 
 def busiest_process():
     """(cpu percent, command name) of the process using the most CPU right now, else None."""

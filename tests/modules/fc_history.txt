@@ -1,0 +1,9 @@
+FILE
+FIELDS
+SHOWN
+path
+main_repo
+providers
+record
+read
+render

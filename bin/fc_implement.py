@@ -1,6 +1,6 @@
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate, fc_fast
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_gate, fc_fast, fc_format
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -137,60 +137,6 @@ def task_base(repo, proj, meta):
         # Base on the highest dependency, not the chain top: layers ordered after this task must stay above it in history.
         base = max(unmerged, key=chain.index)
         return base, fc_core.sh(["git", "rev-parse", base], repo).stdout.strip()
-
-PRETTIER_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css", ".scss", ".json", ".html", ".vue"}
-
-def prettier_opted_in(wt, path):
-    """Whether the repo chose prettier for `path`: a prettier config file or a package.json `prettier` key on the way from the
-    file's directory up to `wt`, or prettier as a direct dependency of the nearest package.json."""
-    names = [".prettierrc"] + [".prettierrc." + e for e in ("json", "yaml", "yml", "json5", "js", "cjs", "mjs", "ts", "cts", "mts", "toml")] \
-        + ["prettier.config." + e for e in ("js", "cjs", "mjs", "ts", "cts", "mts")]
-    nearest = None
-    d = path.parent
-    while d == wt or wt in d.parents:
-        if any((d / n).exists() for n in names):
-            return True
-        pkg = d / "package.json"
-        if pkg.exists():
-            cfg = json.loads(pkg.read_text())
-            if "prettier" in cfg:
-                return True
-            if nearest is None:
-                nearest = cfg
-        d = d.parent
-    if nearest is None:
-        return False
-    return "prettier" in {**nearest.get("dependencies", {}), **nearest.get("devDependencies", {})}
-
-def format_files(wt, files, base="HEAD"):
-    """Format a passed task's own changed files with the repo's formatter, deterministically and with no model, so verify's
-    fix rounds never spend one on formatting: gofmt for Go, the repo's installed prettier for web files. Whatever the formatter,
-    a text file ends with exactly one final newline, unless it had none on base. Returns what changed."""
-    import shutil
-    out = []
-    for f in files:
-        p = wt / f
-        cmd = None
-        if p.suffix == ".go" and shutil.which("gofmt"):
-            cmd = ["gofmt", "-w", str(p)]
-        elif p.suffix in PRETTIER_EXT and prettier_opted_in(wt, p):
-            d = p.parent
-            while cmd is None and (d == wt or wt in d.parents):  # the nearest node_modules, up to the clone root
-                bin_ = d / "node_modules" / ".bin" / "prettier"
-                cmd = [str(bin_), "--write", str(p)] if bin_.exists() else None
-                d = d.parent
-        before = p.read_bytes()
-        if cmd:
-            fc_core.sh(cmd, wt, timeout=120, check=False)
-        data = p.read_bytes()
-        text = b"\0" not in data and data.strip()
-        old = fc_core.sh(["git", "show", f"{base}:{f}"], wt, check=False) if text else None  # only text is decoded
-        if text and (old.returncode != 0 or old.stdout.endswith("\n")):
-            data = data.rstrip(b"\n") + b"\n"
-            p.write_bytes(data)
-        if data != before:
-            out.append(f)
-    return out
 
 READER_TIMEOUT = 120  # seconds the test reader may take before the raw tail goes back alone
 
@@ -557,7 +503,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "add", "-A"], wt)
         changed = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]
         kept = {f: (wt / f).read_bytes() for f in changed if (wt / f).is_file()}
-        formatted = format_files(wt, list(kept), base)
+        formatted = fc_format.format_files(wt, list(kept), base)
         if formatted and run_test(meta, wt).returncode != 0:
             for f, b in kept.items():
                 (wt / f).write_bytes(b)

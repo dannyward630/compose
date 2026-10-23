@@ -57,18 +57,26 @@ def awk_program_ok(prog):
     return paren == 0 and brace == 0
 
 
-def measure(cmd, root, allow):
-    """Whether `cmd` is one `wc` (flags among -l -L -c -m -w) or `awk '<measuring program>'` over plain paths that all are in `allow`:
-    how long a line of the task's own file is, which a model cannot count by eye. No pipe, redirect, substitution, glob or second command."""
+def words_of(cmd):
+    """The words of one shell line, operators (`;`, `&&`, `|`, `>`, `(`) as words of their own; None for a substitution, a newline, or a
+    quote that never closes."""
     if "`" in cmd or "$(" in cmd or "${" in cmd or "\n" in cmd:
-        return False
+        return None
     try:
         lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
-        words = list(lex)
+        return list(lex)
     except ValueError:
-        return False
-    if len(words) < 2 or words[0] not in ("wc", "awk") or any(re.fullmatch(r"[;&|<>()]+", w) for w in words):
+        return None
+
+def plain(files, root, allow):
+    """Whether `files` is a non-empty list of plain paths (no glob, no `~`, no `$`, not an option) that all are in `allow`."""
+    return bool(files) and all(not re.search(r"[*?\[\]{}~$]|^-", f) and os.path.realpath(os.path.join(root, f)) in allow for f in files)
+
+def measure(words, root, allow):
+    """Whether `words` are one `wc` (flags among -l -L -c -m -w) or `awk '<measuring program>'` over plain paths that all are in `allow`:
+    how long a line of the task's own file is, which a model cannot count by eye."""
+    if len(words) < 2 or words[0] not in ("wc", "awk"):
         return False
     if words[0] == "wc":
         flags = [w for w in words[1:] if w.startswith("-")]
@@ -79,13 +87,62 @@ def measure(cmd, root, allow):
         if not awk_program_ok(words[1]):
             return False
         files = words[2:]
-    return bool(files) and all(not re.search(r"[*?\[\]{}~$]|^-", f) and os.path.realpath(os.path.join(root, f)) in allow for f in files)
+    return plain(files, root, allow)
+
+def count_len(words):
+    """How many leading `words` are a line count of `head` or `tail` (`-20`, `-n20`, or `-n 20`): 0 when they do not start with one."""
+    if words[:1] == ["-n"] and len(words) > 1 and words[1].isdigit():
+        return 2
+    return 1 if words and re.fullmatch(r"-\d+|-n\d+", words[0]) else 0
+
+def viewer(words, root, allow):
+    """Whether `words` only show part of the task's own files, which the Read tool shows anyway: `cat [-n]`, `head`/`tail` with a line
+    count, `sed -n '<a>,<b>p'`, or `grep` with display flags and one pattern. Never an option that names another file or writes."""
+    if len(words) < 2:
+        return False
+    name, rest = words[0], words[1:]
+    if name == "cat":
+        rest = rest[1:] if rest[0] == "-n" else rest
+        return plain(rest, root, allow)
+    if name in ("head", "tail"):
+        return plain(rest[count_len(rest):], root, allow)
+    if name == "sed":
+        return len(rest) > 2 and rest[0] == "-n" and re.fullmatch(r"(\d+|\$)(,(\d+|\$))?p", rest[1]) is not None and plain(rest[2:], root, allow)
+    if name != "grep":
+        return False
+    found, i = [], 0  # the pattern and the files, with display flags anywhere among them
+    while i < len(rest):
+        if re.fullmatch(r"-[ABCm]", rest[i]) and i + 1 < len(rest) and rest[i + 1].isdigit():
+            i += 1
+        elif rest[i].startswith("-") and not re.fullmatch(r"-[ABCm]\d+|-[nicwFEHhvx]+", rest[i]):
+            return False
+        elif not rest[i].startswith("-"):
+            found.append(rest[i])
+        i += 1
+    return len(found) > 1 and plain(found[1:], root, allow)
+
+def view(cmd, root, allow):
+    """Whether bash line `cmd` only measures or shows the task's own files: `measure` or `viewer`, led by `cd <the clone> &&` and ended
+    by `| head` or `| tail` with a line count. No other pipe, redirect, second command, substitution, glob or file."""
+    words = words_of(cmd)
+    if not words:
+        return False
+    if words[0] == "cd" and len(words) > 3 and words[2] == "&&" and os.path.realpath(os.path.join(root, words[1])) == root:
+        words = words[3:]
+    if "|" in words:
+        i = words.index("|")
+        words, cut = words[:i], words[i + 1:]
+        if not cut or cut[0] not in ("head", "tail") or len(cut) - 1 != count_len(cut[1:]):
+            return False
+    if not words or any(re.fullmatch(r"[;&|<>()]+", w) for w in words):
+        return False
+    return measure(words, root, allow) or viewer(words, root, allow)
 
 
 def refusal(tool, args, guard):
     """None when the call is allowed, else the reply text for the model. `guard` is the loaded guard dict."""
     why = ("Blocked: you may read only the files the context pack names (or a directory directly holding one), and in bash only "
-           "`trail ask \"<question>\"` or `trail callers <symbol>`, plus `wc -L <file>` or `awk '{print length}' <file>` on those files to measure a line. "
+           "`trail ask \"<question>\"` or `trail callers <symbol>`, plus `wc -L`, `awk '{print length}'`, `cat`, `head`, `tail`, `sed -n 'a,bp'` or `grep` on those files. "
            "For anything else, run trail ask \"<question>\".")
     tool = (tool or "").lower()
     root, allow = guard["root"], set(guard["allow"])
@@ -94,7 +151,7 @@ def refusal(tool, args, guard):
         if (cmd in ("trail ask", "trail callers") or cmd.startswith(("trail ask ", "trail callers "))) \
                 and not any(x in cmd for x in (";", "&", "|", "`", "$(", "<", ">", "\n")):
             return None
-        if measure(cmd, root, allow):
+        if view(cmd, root, allow):
             return None
         return why
     p = args.get("file_path") or args.get("path")

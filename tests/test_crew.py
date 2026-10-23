@@ -114,6 +114,20 @@ class Crew(unittest.TestCase):
             self.assertIn(says, brief)
             self.assertIn("Never loop or poll `compose linear`", brief)  # every crew brief, whatever the role
 
+    def test_start_stops_on_a_low_battery_before_claiming_or_opening_anything_unless_forced(self):
+        calls = []
+        a = type("A", (), {"action": "start", "role": "planner", "title": "planner", "brief": "Go."})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *x, **k: calls.append(x) or {}), \
+                mock.patch.object(fc.fc_crew.fc_checks, "battery_stop", return_value="the Mac is on battery at 9%") as stop, self.assertRaises(SystemExit) as e:
+            fc.fc_crew.cmd_crew(a)
+        self.assertEqual(str(e.exception), "crew start stopped, nothing was started: the Mac is on battery at 9%")
+        self.assertEqual((calls, stop.call_args.args), ([], (False,)))
+        a.force = True
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *x, **k: calls.append(x) or {}), \
+                mock.patch.object(fc.fc_crew.fc_checks, "battery_stop", return_value=None) as stop, self.assertRaises(SystemExit):
+            fc.fc_crew.cmd_crew(a)  # goes on to the herdr work, which this fake cannot finish
+        self.assertEqual(stop.call_args.args, (True,))
+
     def test_bad_state_refused(self):
         with self.assertRaises(SystemExit):
             self.report("shop-q-1", "finished", "x")
@@ -471,7 +485,9 @@ class Crew(unittest.TestCase):
         self.assertIn("Fact-check before you say it", pre)
         self.assertIn("not verified", pre)
         self.assertIn("through `compose timed <seconds> -- <command>`", pre)
-        self.assertIn("at most two suites run at once on this machine", pre)
+        self.assertIn(f"at most {fc.fc_proc.suite_slots()} suites run at once on this machine", pre)
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "3"}):
+            self.assertIn("at most 3 suites run at once on this machine", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
         self.assertIn("two quick runs", pre); self.assertIn("run the whole suite once, before you report `done`", pre)
         self.assertIn("Run compose's own commands (`compose sync`, `status`, `verify`, `report`, ...) directly", pre)
 

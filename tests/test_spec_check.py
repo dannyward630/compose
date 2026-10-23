@@ -148,6 +148,48 @@ class SpecCheck(unittest.TestCase):
         self.assertTrue("a.go: 001, 002" in g and "b.go: 003, 004" in g, g)
         self.assertEqual(g.count(g[:min(g.index("a.go"), g.index("b.go"))]), 1, g)  # the explanation leads, once
 
+    def test_a_task_naming_code_another_task_owns_needs_an_after_on_it(self):
+        miss = lambda *t: fc.fc_spec.missing_after(list(t))
+        shrink = {"id": "001", "files": ["bin/fc_shrink.py"], "body": "", "test": "t"}
+        cmd = {"id": "002", "files": ["bin/fc_shrink.py"], "body": "", "test": "t", "after": "001"}
+        jev = {"id": "004", "files": ["bin/fc_jev.py"], "body": "Call `fc_shrink.shrink(p, tmp)` on every jpg.", "test": "t"}
+        self.assertEqual(miss(shrink, cmd, jev), {"004": {"001": ["bin/fc_shrink.py"]}})  # the first owner, not the one that adds on top of it
+        for after in ("001", "002"):  # a path to any owner, direct or through another task, orders it
+            self.assertEqual(miss(shrink, cmd, dict(jev, after=after)), {})
+        self.assertEqual(miss(dict(shrink, after="004"), jev), {})  # the owner waits for it instead
+        for body in ("import fc_shrink", "see bin/fc_shrink.py", "see bin/fc_shrink and fc_shrink.shrink"):
+            self.assertEqual(miss(shrink, dict(jev, body=body)), {"004": {"001": ["bin/fc_shrink.py"]}}, body)
+        self.assertEqual(miss(shrink, dict(jev, body="", test="python3 -m unittest tests.test_x; python3 bin/fc_shrink.py")), {"004": {"001": ["bin/fc_shrink.py"]}})
+        for body in ("see bin/fc_shrink_extra.py and old/bin/fc_shrink.py", "the shrink step", "fc_shrinker.run(x)"):  # a lookalike names nothing
+            self.assertEqual(miss(shrink, dict(jev, body=body)), {}, body)
+        self.assertEqual(miss(shrink, dict(jev, files=["bin/fc_shrink.py"])), {})  # the same file is the file clash's to report
+        self.assertEqual(miss(dict(shrink, files=["app/package-lock.json"]), dict(jev, body="app/package-lock.json")), {})  # generated
+        self.assertEqual(miss(dict(shrink, kind="design"), jev), {})  # a design task builds a page, not code
+        self.assertEqual(fc.fc_spec.missing_after_text(miss(shrink, jev)), ["004 names bin/fc_shrink.py, which 001 owns: add `after: 001`"])
+
+    def test_spec_check_and_tasks_say_which_after_a_task_is_missing(self):
+        brief = lambda **kv: task("ENG-4", "002", files="b.go", crit="- calls `a.go` Run", **kv)
+        owner = task("ENG-3", "001", files="a.go")
+        self.assertEqual(check([owner, brief()])["ENG-4"], (False, "task", ["002 names a.go, which 001 owns: add `after: 001`"]))
+        self.assertEqual(check([owner, brief(), task("ENG-5", "003", ["ENG-3"], files="c.go", crit="- calls `a.go` Run")])["ENG-5"], (True, "task", []))
+        self.assertEqual(check([owner, task("ENG-4", "002", ["ENG-3"], files="b.go", crit="- calls `a.go` Run")])["ENG-4"], (True, "task", []))
+        repo = Path(tempfile.mkdtemp())
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "init")
+        proj = repo / ".compose" / "p"
+        (proj / "results").mkdir(parents=True)
+        (proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        def printed(*issues):
+            fc.fc_tasks.sync_tasks(proj, data(list(issues)))
+            out = io.StringIO()
+            with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch("sys.stdout", out):
+                fc.fc_spec.cmd_tasks(SimpleNamespace(repo=str(repo), project="p"))
+            return out.getvalue()
+        self.assertIn("WARNING a task names code another task owns, with no `after:` on it", printed(owner, brief()))
+        self.assertIn("\n    002 names a.go, which 001 owns: add `after: 001`\n", printed(owner, brief()))
+        self.assertNotIn("names code another task owns", printed(owner, task("ENG-4", "002", ["ENG-3"], files="b.go", crit="- calls `a.go` Run")))
+
     def test_serial_chain_counts_only_tasks_left_to_run(self):
         chain = [{**task("ENG-3", "001"), "status": "In Review"}, {**task("ENG-4", "002", ["ENG-3"]), "status": "Done"},
                  task("ENG-5", "003", ["ENG-4"])]
