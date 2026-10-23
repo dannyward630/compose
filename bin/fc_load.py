@@ -1,5 +1,5 @@
 """The machine-wide load hold: one state file under ~/.compose that every process reads and moves."""
-import fcntl, json, os, time
+import ctypes, ctypes.util, fcntl, json, os, time
 from pathlib import Path
 
 import fc_config
@@ -33,11 +33,13 @@ def update(avg=None):
     home = Path.home() / ".compose"
     path = home / "load.json"
 
+    mem = memory_level()
+
     def kinds(state):
         out = []
-        if avg > lim["high"] and not state["held"]:
+        if (avg > lim["high"] or (mem or 0) >= 2) and not state["held"]:
             out.append("held")
-        elif avg < lim["low"] and state["held"]:
+        elif avg < lim["low"] and (mem or 0) < 2 and state["held"]:
             out.append("released")
         if lim["warn"] <= avg < lim["high"] and not state["warn"]:
             out.append("warn")
@@ -52,10 +54,12 @@ def update(avg=None):
         with open(home / "load.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             state = _read(path)
+            state["memory"] = mem
             for kind in kinds(state):
                 state["n"] += 1
                 entry = {"n": state["n"], "at": time.time(), "kind": kind, "avg": float(avg)}
                 if kind in ("held", "released"):
+                    entry["why"] = "memory" if (mem or 0) >= 2 else "load"
                     state["held"] = kind == "held"
                     state["since"] = entry["at"] if state["held"] else None
                 else:
@@ -63,7 +67,7 @@ def update(avg=None):
                 state["log"] = (state["log"] + [entry])[-50:]
                 new.append(entry)
             path.write_text(json.dumps(state))
-    return {**state, "avg": avg, "new": new}
+    return {**state, "avg": avg, "memory": mem, "new": new}
 
 
 def held(force=False):
@@ -107,3 +111,14 @@ def claim(n):
         state["claimed"] = (state["claimed"] + [n])[-50:]
         path.write_text(json.dumps(state))
         return True
+
+
+def memory_level():
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"))
+        val, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+        if libc.sysctlbyname(b"kern.memorystatus_vm_pressure_level", ctypes.byref(val), ctypes.byref(size), None, 0) != 0:
+            return None
+        return val.value
+    except Exception:
+        return None
