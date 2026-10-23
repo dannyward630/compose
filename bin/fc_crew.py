@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
+import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -214,6 +214,8 @@ def cmd_crew(a):
         sys.exit(f"usage: compose crew {a.action} --project {slug} --role <role>")
     if a.action == "start" and (low := fc_checks.battery_stop(getattr(a, "force", False))):
         sys.exit(f"crew start stopped, nothing was started: {low}")
+    if a.action == "start":
+        fc_load.wait(fc_core.say, getattr(a, "force", False))
     if a.action in ("start", "stop"):
         fc_herdr.herdr_manager_claim(proj, getattr(a, "takeover", False))
     name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
