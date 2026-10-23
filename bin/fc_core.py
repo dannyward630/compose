@@ -44,15 +44,18 @@ def sh(cmd, cwd, timeout=None, check=True, env=None):
     return p
 
 def worktree_branches(repo):
-    raise NotImplementedError("not implemented")
-
-def worktrees(repo):
-    """Every checkout of this repository (main plus linked worktrees), as paths."""
+    """Every checkout of this repository (main plus linked worktrees), as [(path, branch)] in creation order, main checkout first, branch empty when detached."""
     out = []
     for line in sh(["git", "worktree", "list", "--porcelain"], repo, check=False).stdout.splitlines():
         if line.startswith("worktree "):
-            out.append(Path(line[len("worktree "):]))
-    return out or [Path(repo).resolve()]
+            out.append((Path(line[len("worktree "):]), ""))
+        elif line.startswith("branch "):
+            out[-1] = (out[-1][0], line[len("branch refs/heads/"):])
+    return out[:1] + sorted(out[1:], key=lambda wt: wt[0].stat().st_mtime) or [(Path(repo).resolve(), "")]
+
+def worktrees(repo):
+    """Every checkout of this repository (main plus linked worktrees), as paths."""
+    return [wt for wt, _ in worktree_branches(repo)]
 
 def repo_link(path):
     """The repo's Linear link, `.compose/linear.json` (SKILL.md step 0): one file in the main checkout that every worktree of
@@ -100,11 +103,10 @@ def all_projects(repo):
     """{project name: (worktree path, project dir)} over every worktree. A project lives in its own worktree
     (`compose-<name>` on the project's branch, `compose/<name>` unless `init --branch` chose one), created by `init`; older projects may sit in the main checkout."""
     found = {}
-    for wt in worktrees(repo):
+    for wt, on_branch in worktree_branches(repo):
         root = wt / ".compose"
         if not root.exists():
             continue
-        on_branch = sh(["git", "branch", "--show-current"], wt, check=False).stdout.strip()
         for p in sorted(root.iterdir()):
             if not (p.is_dir() and (p / "verify.json").exists()):
                 continue
