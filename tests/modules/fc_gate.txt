@@ -13,3 +13,4 @@ settle
 advice
 TEST_FILE_RE
 new_tests_prove
+after_checks
