@@ -42,11 +42,23 @@ def comment_text(rows):
     return f"Evidence: {rows[0]['source']} {', '.join(phases)}\n\n```evidence\n" + \
         "\n".join(json.dumps(r) for r in rows) + "\n```"
 
+def landed(issue, batch):
+    """The event ids of `batch` already in the issue's comments, none when they cannot be read: a write that timed out may have
+    landed after all, and writing it again would add a second identical row."""
+    try:
+        return {r["event_id"] for r in fc_evidence.rows(issue)} & {r["event_id"] for r in batch}
+    except Exception:
+        return set()
+
 def add_row(issue, rows):
-    """Write the issue's unsaved rows and these as one comment, retried; False while anything stays unsaved."""
+    """Write the issue's unsaved rows and these as one comment, retried; False while anything stays unsaved. Before every try
+    but a first one on fresh rows, the rows already on the issue are left out (see landed), so a retry never repeats a write
+    that went through. A write still in flight when its timeout is given up on can land beside the retry: the reading side
+    keeps one row per event id."""
     if not issue or not fc_linear.linear_ready():
         return True
     seen, batch = set(), []
+    unsure = any(t[0] == issue for t in UNSAVED)  # an earlier call gave up on rows whose last write may have landed
     for r in [t[1] for t in UNSAVED if t[0] == issue] + list(rows):
         if (issue, r["event_id"]) in SAVED or r["event_id"] in seen:
             continue
@@ -57,8 +69,13 @@ def add_row(issue, rows):
     err = ""
     for n in range(3):
         try:
-            fc_linear.linear_comment(fc_linear.linear_issue(issue), comment_text(batch))
-            SAVED.update((issue, r["event_id"]) for r in batch)
+            if n or unsure:
+                there = landed(issue, batch)
+                SAVED.update((issue, e) for e in there)
+                batch = [r for r in batch if r["event_id"] not in there]
+            if batch:
+                fc_linear.linear_comment(fc_linear.linear_issue(issue), comment_text(batch))
+                SAVED.update((issue, r["event_id"]) for r in batch)
             UNSAVED[:] = [t for t in UNSAVED if t[0] != issue]
             return True
         except Exception as e:

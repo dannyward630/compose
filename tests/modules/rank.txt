@@ -61,6 +61,7 @@ fc_testred
 fc_briefs
 fc_libapi
 fc_gate
+fc_format
 fc_implement
 fc_jev
 fc_accept

@@ -117,6 +117,8 @@ Evidence: run red, attempt, final
 
 The comments are the record.
 A row saved twice is read once.
+A write that timed out may have landed anyway, so before every retry the CLI reads the issue's comments and writes only the rows that are not there yet.
+If that read fails too, it writes anyway, and the reader still keeps one row per `event_id`.
 
 | Key | Holds |
 |---|---|

@@ -33,6 +33,29 @@ class Budget(unittest.TestCase):
         (self.proj / "results" / "budget.json").write_text("{not json")
         self.assertEqual(fc.fc_budget.limit(self.proj), 25.0)
 
+    def test_a_limit_that_is_negative_or_not_a_number_exits_naming_the_file_and_key(self):
+        f = self.proj / "results" / "budget.json"
+        for bad in ("-1", '"ten"', "null", "true", "[5]", "NaN", "Infinity", "-0.01"):
+            with self.subTest(bad=bad):
+                f.write_text('{"frontier": %s}' % bad)
+                with self.assertRaises(SystemExit) as e: fc.fc_budget.limit(self.proj)
+                self.assertRegex(str(e.exception), rf"^{f}: frontier must be a number of dollars, 0 or more, not ")
+        f.write_text("[25]")
+        with self.assertRaises(SystemExit) as e: fc.fc_budget.limit(self.proj)
+        self.assertEqual(str(e.exception), f'{f}: must be an object such as {{"frontier": 25}}, not [25]')
+
+    def test_a_valid_limit_zero_and_a_file_without_the_key_are_accepted(self):
+        f = self.proj / "results" / "budget.json"
+        for text, want in (('{"frontier": 0}', 0.0), ('{"frontier": 12}', 12.0), ('{"frontier": 0.5}', 0.5), ("{}", 25.0)):
+            f.write_text(text)
+            self.assertEqual(fc.fc_budget.limit(self.proj), want)
+
+    def test_the_budget_command_refuses_a_negative_or_non_finite_limit_and_writes_nothing(self):
+        for bad in (-5.0, float("nan"), float("inf")):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit) as e: self.set_limit(bad)
+            self.assertRegex(str(e.exception), r"^compose budget: frontier must be a number of dollars, 0 or more")
+            self.assertFalse((self.proj / "results" / "budget.json").exists())
+
     def test_budget_command_sets_the_limit_and_prints_it(self):
         self.assertEqual(self.set_limit(40.0), "frontier limit $40.00 for p\n")
         self.assertEqual(fc.fc_budget.limit(self.proj), 40.0)
