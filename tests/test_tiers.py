@@ -36,7 +36,7 @@ class Tiers(unittest.TestCase):
 
     def test_order_pins_ceilings_and_tier_of(self):
         self.assertEqual((T.ORDER, T.PINS), (("cheap", "standard", "frontier"), ("cheap", "standard", "frontier", "no-frontier")))
-        self.assertEqual([T.ceiling(r) for r in ("tests", "implementer", "planner", "planner-2", "designer-plan", "helper")], ["cheap", "standard", "frontier", "frontier", "frontier", None])
+        self.assertEqual([T.ceiling(r) for r in ("test_reader", "tests", "fix", "implementer", "planner", "planner-2", "designer-plan", "helper")], ["cheap", "standard", "standard", "standard", "frontier", "frontier", "frontier", None])
         self.assertEqual([T.tier_of(m) for m in (HAIKU, SONNET, OPUS, "claude-opus-5-5", "claude-haiku-5-5", C.DEFAULT_MODEL, "pi:a/b")], ["cheap", "standard", "frontier", "frontier", "cheap", "cheap", None])
 
     def test_tier_for_and_start_tier_follow_every_pin_rule(self):

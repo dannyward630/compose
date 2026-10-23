@@ -4,8 +4,8 @@ import fc_config
 
 ORDER = fc_config.TIER_NAMES
 PINS = (*ORDER, "no-frontier")
-CEILINGS = {"cheap": ("small", "tests", "test_reader", "fix"),
-            "standard": ("explore", "research", "perf", "toolsmith", "groundwork", "orchestrator", "implementer"),
+CEILINGS = {"cheap": ("small", "test_reader"),
+            "standard": ("explore", "research", "perf", "toolsmith", "groundwork", "orchestrator", "implementer", "tests", "fix"),
             "frontier": ("planner", "wayfinder", "designer", "designer-plan")}
 
 def ceiling(role):
