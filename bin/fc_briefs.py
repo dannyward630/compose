@@ -23,32 +23,32 @@ def detect_stacks(wt):
             found.append(f"- Rust crate in {rel}: cargo build, cargo test")
     return "\n".join(found) or "- no manifest found: read the README for how it builds and starts"
 
-GROUNDWORK_BRIEF = """You are the groundwork teammate for project {slug}. Worktree: {wt}, branch {trunk}. The task briefs are the contract:
+GROUNDWORK_BRIEF = """You are groundwork teammate for project {slug}. Worktree: {wt}, branch {trunk}. Task briefs are the contract:
 read them first with `compose tasks --repo {wt} --project {slug}`. Use `trail ask "<question>" --source` for code context.
-Commit on {trunk} in small commits with plain messages. Nothing is pushed.
+Commit on {trunk} in small plain commits. Nothing is pushed.
 
-Phase A, toolchain (probe and report; you never change dependencies):
+Phase A, toolchain (probe and report; never change dependencies):
 {stacks}
-1. Install from the lockfiles, then build, test, and start every part the way a user would (start the server and probe one URL; start the client with BROWSER=none and probe it). Unit tests passing is not proof the app runs.
-2. For each breakage find the smallest fix that works (a documented setting, or an upgrade); try it on a scratch copy if needed, and leave the worktree's dependencies and lockfiles as they are.
-3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for the team lead's go in this pane.
+1. Install from lockfiles, build, test, and start every part as a user would (probe server URL; start client with BROWSER=none).
+2. For each breakage find the smallest fix (documented setting, or upgrade); leave dependencies and lockfiles as they are.
+3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for team lead's go in this pane.
 
-Phase B, after the go (the settled choices reach the planner as tasks):
-1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: the planner splits them like any other work, and a choice the probe found is a wayfinder card the product owner settles first. Change no dependency.
-2. Write the schema, codegen, wiring, and stubs the task briefs need, with the exact signatures the briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
-3. verify.json ({verify}, keep existing keys): `checks` = every smoke command that passed (build, vet, unit tests, formatter check, client build). For anything with a UI or server: `e2e_setup` starting the server on $E2E_PORT and the client on $E2E_CLIENT_PORT (the CLI hands out free ports and stops what the setup starts; never hardcode a port the app does not pin, never free ports with lsof or kill), `e2e_setup_wait`, and one `e2e` case per user flow with a goal and an `assert` script that checks the real log or DOM. Driver and assert scripts go in {e2e_dir}, never in ~/.compose or /tmp. Run the checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0` (no task sync needed), then prove the e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds, so fix every case, seed, or setup it names. Run both directly: under `compose timed` jev has no TypeSafe key.
+Phase B, after the go:
+1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a wayfinder card for the product owner.
+2. Write schema, codegen, wiring, and stubs the task briefs need, with the exact signatures briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
+3. verify.json ({verify}):`checks` = every smoke command that passed. For UI or server: `e2e_setup` starting server on $E2E_PORT and client on $E2E_CLIENT_PORT (CLI hands out free ports and stops what setup starts; never hardcode unpinned ports, never free ports with lsof or kill), `e2e_setup_wait`, one `e2e` case per user flow with a goal and an `assert` script checking real log or DOM. Scripts go in {e2e_dir}, never ~/.compose or /tmp. Run checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0`, then prove e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds; fix what it names. Run both directly: under `compose timed` jev has no TypeSafe key.
 4. Commit.
 
-Phase C, the contract (you write no tests: one teammate per task writes them in parallel from your contract):
-Write {contract} (outside the repo; never commit it) with exactly what a test writer needs and must not guess:
-- every type, struct, and generated model a test touches, with its package and whether it is a value or a pointer
+Phase C, contract (you write no tests; one teammate per task does, from your contract):
+Write {contract} (outside repo; never commit it) with what a test writer needs and must not guess:
+- every type, struct, generated model a test touches, with package and value or pointer
 - every stub's exact signature, and which task implements it
-- the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
-- per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
+- test helpers and fixtures
+- per task: test path (its `protected:`), test names its `test:` command selects, that command
 Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.
-Signatures and exact lines are copied from the briefs, never added: implementers see the brief and the code, never the contract.
-A test that would need a value, line, or rule no brief states is `blocked "<task>: brief lacks <what>"`, for the planner to add.
-Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the team lead says so.
+Signatures and exact lines are copied from the briefs, never added: implementers see brief and code, never contract.
+A test needing a value, line, or rule no brief states is `blocked "<task>: brief lacks <what>"`, for the planner to add.
+Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when team lead says so.
 """
 
 def cmd_groundwork(a):
@@ -59,53 +59,42 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-WAYFINDER_BRIEF = """You are the wayfinder teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
-The map is the feature issue {feature} on Linear:
-its description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
-1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking anything, look
-   for the answer in Linear: the map's Decisions so far and Notes, the feature's and its epic's comments, and a
-   `compose linear list --search "<terms>"` search in the project for the question's key terms. A decision found there is
-   settled: do not ask it again.
+WAYFINDER_BRIEF = """You are wayfinder teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
+Map is feature issue {feature} on Linear: description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
+1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking, look in
+   Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
+   A decision found there is settled: do not ask again.
 2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
-   open question as a card: the question, why it matters, the options with one line each, and your recommended option marked.
-   Never choose for the product owner: every card
-   carries a recommendation, the product owner answers. Decide the channel per card with one test: are the options pictures, or words?
-   Words are text (the default): requirements, conceptual choices, tradeoffs, scope, toolchain; "where do the tokens live?" is text although tokens are UI.
-   Pictures are visual: a Frame0 wireframe, a layout or flow comparison, a diagram, side-by-side designs; "which of these three onboarding layouts?" is visual.
+   open question as a card: question, why it matters, options with one line each, your recommended option marked.
+   Never choose for the product owner: every card carries a recommendation.
+   Channel per card, one test: are options pictures, or words? Words are text (the default). Pictures are visual.
    A visual card is never asked as text, and a text card is never put on the page. Visual cards go on one page: {page}
-   For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first (the project's own design system if
-   it has one, else the Lavish-recommended Tailwind and DaisyUI CDN). Set data-lavish-annotate="off" on <html>. Each card is a
-   form with data-lavish-question, the recommended option preselected, a free-text box, and one answer button; the top of the page
-   has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text "<question>: <answer>"
-   and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}} with every
-   card's recommendation.
-3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
-   first, with a card id per card, never reusing an id; visual cards go on the page instead. Then ask once, all open cards in one
-   line: open the page if there is one (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step
-   text says, one line:
+   For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first. Set data-lavish-annotate="off"
+   on <html>. Each card is a form with data-lavish-question, recommended option preselected, free-text box, one answer button;
+   page top has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text
+   "<question>: <answer>" and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
+3. Write every text card in full under Not yet specified on the map first, with a card id per card, never reusing an id;
+   visual cards go on the page instead. Then ask once, all open cards in one line: open the page if any
+   (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step says, one line:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
-   cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed, copied and never
-   retyped, in no second host form. `compose report` refuses a page without that link, a link that does not answer, and a card
-   asked already and not answered (a card in Decisions so far is never asked), and it adds that the product owner may answer in
-   text. The team lead forwards the line unchanged; the engineering manager reads the issue once and asks the product owner
-   every card in full; answers travel by card id.
-4. Wait. Text answers come back as a prompt in this pane, which a Bash call blocked in a poll cannot receive: poll in rounds,
-   `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground with the Bash call's timeout set to 180000 ms, and
-   when a round ends with nothing run it again at once (a killed poll loses nothing: queued answers wait), so a forwarded text
-   answer reaches you within three minutes. Never background it, never `end` it or `--reopen` a session the product owner ended.
-   Never loop or poll `compose linear` while you wait (the shared hourly Linear budget): read the issue once, and the herdr prompt brings the answer.
-   Answers arrive in the poll's `text` column (and as JSON after "Context data:" inside `prompt`), not as a data field.
-   As soon as answers arrive, by poll or by text, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply
-   "<card ids> received"`; the product owner sees their answers landed. If a poll returns `browser_disconnected`, the window
-   closed but the session lives: run `npx -y lavish-axi {page}` once for its `url:` (it resumes the session), report once
-   `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"` (the answers so far are
-   acknowledged first), and poll again.
+   cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed, copied,
+   never retyped. `compose report` refuses a page without that link, a dead link, and a card asked already and not answered
+   The team lead forwards the line unchanged; the engineering manager asks the
+   product owner every card in full; answers travel by card id.
+4. Wait. Text answers arrive as a prompt in this pane, which a Bash call blocked in a poll cannot receive: poll in rounds,
+   `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground, Bash timeout 180000 ms; when a round ends
+   with nothing run it again at once, so a forwarded text answer reaches you within three minutes. Never background it,
+   never `end` it or `--reopen` a session the product owner ended.
+   Never loop or poll `compose linear` while you wait (shared hourly Linear budget): read the issue once, the herdr prompt brings the answer.
+   Answers arrive in the poll's `text` column, not as a data field.
+   When answers arrive, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`.
+   If a poll returns `browser_disconnected`, run `npx -y lavish-axi {page}` once for its `url:`, report once
+   `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"`, and poll again.
 5. Record each answer in the map's Decisions so far as it arrives: one line each, starting with its card id and ending `(product owner, <date>)`.
    An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
    end its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
-   and change that tag to `(product owner, <date>)` only when they confirm it. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write.
-6. New questions the answers open, and the groundwork teammate's toolchain findings when the team lead forwards them (which version, which option),
-   are asked the same way, and the planner cuts what the product owner settles into implementer tasks: text cards in a new needs-user; visual cards added to the same page, then
+   and change that tag to `(product owner, <date>)` only when they confirm it. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if the section changed since you read it, read again and keep what changed; never a whole-description write.
+6. New questions the answers open, and groundwork toolchain findings the team lead forwards, are asked the same way: text cards in a new needs-user; visual cards on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}` if the page was opened, then report
    `done` with the decisions in one line each.
@@ -208,38 +197,30 @@ Read that repo's SKILL.md first; no other skill file.
    `--comment <n>` if same bug, `--new` if not.
 {variant}"""
 
-CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
+CHANGE_BRIEF = """You are wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. Map is feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
-The screen that raised it: {reflect}
-1. Read the map, the evidence (the screen file above, its `evidence` field, and the team lead's notes at the end of this brief),
-   and the code each piece of evidence cites (`trail ask "<question>" --source`).
-2. Write one card per decision line the evidence calls into question: the line as recorded, the evidence quoted verbatim with
-   its source, the options with one line each with "keep it as is" always among them, and your recommended option marked. Never
-   choose for the product owner. Text by default; a card is visual only when its options are pictures (a screenshot, a layout or flow
-   comparison, a diagram), and then it is never asked as text. Visual cards go on one Lavish page, never the wayfinder's earlier page: {page}
-   Build it as the wayfinder does: read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first, set
-   data-lavish-annotate="off" on <html>, give each card data-lavish-question, the recommended option preselected, a free-text box,
-   and one answer button, and put one "accept every recommendation" button at the top; each sends exactly one
-   window.lavish.queuePrompt with text "<question>: <answer>" and data {{question, answer}}; accept-all sends
-   data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
-3. Write every text card in full (question, why it matters, the options, recommendation) under Not yet specified on the map
-   first, with a card id per card, never reusing an id; visual cards go on the page instead. Then ask once, all open cards in one
-   line: open the page if there is one (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step
-   text says, one line:
+Screen that raised it: {reflect}
+1. Read the map, the evidence (screen file above, its `evidence` field, team lead's notes below),
+   and the code it cites (`trail ask "<question>" --source`).
+2. Write one card per decision line the evidence questions: the line as recorded, evidence quoted verbatim with
+   its source, options with one line each ("keep it as is" always among them), your recommended option marked. Never
+   choose for the product owner. Text by default; visual only when options are pictures, and then never asked as text. Visual cards go on one Lavish page, never the wayfinder's earlier page: {page}
+   Build it as the wayfinder does: same reads, card forms, accept-all button, and prompts.
+3. Write every text card in full under Not yet specified on the map first, with a card id per card, never reusing an id;
+   visual cards go on the page instead. Then ask once, all open cards in one line: open the page if any
+   (`npx -y lavish-axi {page}`), and report, before any poll, one line:
    `compose report --project {slug} --as {name} needs-user "change {cid}: <issue>: <n> cards <ids>; recommendation <one
    line>; 'visual cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed,
-   copied and never retyped, in no second host form. `compose report` refuses a page without that link, a link that does not
-   answer, and a card asked already and not answered. The team lead forwards the line unchanged; the engineering manager reads
-   the issue once and asks the product owner every card in full; answers travel by card id.
-4. Wait as the wayfinder does: poll in rounds (`npx -y lavish-axi poll {page} --owner {name} --takeover`, the Bash call's timeout
-   180000 ms, run again at once when a round ends with nothing) so a text answer reaches you within three minutes; acknowledge
-   answers on the page with `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`; on `browser_disconnected` run
+   copied, never retyped. The team lead forwards the line unchanged; the engineering manager asks the product owner every card in full;
+   answers travel by card id.
+4. Wait as the wayfinder does: poll in rounds (`npx -y lavish-axi poll {page} --owner {name} --takeover`, Bash timeout
+   180000 ms, run again at once when a round ends with nothing); acknowledge answers on the page with
+   `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`; on `browser_disconnected` run
    `npx -y lavish-axi {page}` once for its `url:` and report once `needs-user "reminder: change {cid}: ..."` with it, then poll again.
-   Never loop or poll `compose linear` while you wait (the shared hourly Linear budget): read the issue once, and the herdr prompt brings the answer.
-   Never `end` or `--reopen` a session the product owner ended. Answers arrive in the poll's `text` column (and as JSON after
-   "Context data:" inside `prompt`), not as a data field.
-5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write. A line that changes is struck through
-   and tagged, with the new line right after it:
+   Never loop or poll `compose linear` while you wait (shared hourly Linear budget): read the issue once, the herdr prompt brings the answer.
+   Never `end` or `--reopen` a session the product owner ended. Answers arrive in the poll's `text` column, not as a data field.
+5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if the section changed since you read it, read again and keep what changed; never a whole-description write. A line that changes is struck through
+   and tagged, new line right after:
    - ~~<old line>~~ ({cid})
    - <new line> ({cid}: <why, naming the evidence's source>)
    "keep it as is" changes nothing in the map.
@@ -341,24 +322,24 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
     args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
     files = ", ".join(meta.get("files") or [])
-    fails = (f"Its brief changed after it was built: rewrite the test {paths} holds to the TASK BRIEF. It must fail on the project "
+    fails = (f"Its brief changed after it was built: rewrite the test {paths} holds to the TASK BRIEF. It must fail on project "
              f"branch for what the brief changed, and pass once {files} implement the new brief.\n" if rebuilt else
-             f"It must fail on the current stubs for the reason this task fixes, and pass once {files} implement the brief.\n")
+             f"It must fail on current stubs for the reason this task fixes, and pass once {files} implement the brief.\n")
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
             f"Test file: {paths}. Test command: {meta.get('test')}\n" + fails +
-            "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it does not give "
-            "(report `blocked` naming what is missing instead).\n"
-            "Assert only what the TASK BRIEF states or the code already shows: its implementer gets the brief, the stubs, and your test, "
-            "never the contract, so a line or value only the contract gives is not asserted.\n"
-            "Cover the brief's acceptance criteria plus holdout cases it does not list. One file, proportional to the code it tests; "
-            "no CSS values, no tooling tests: never a test that asserts dependency lists, lint or tool configuration, or the contents of a config file; test behavior only.\n"
-            f"Budget: at most {budget} lines, holdouts included. Pick the cases that would catch a wrong implementation; drop the rest.\n"
-            "You work in your own worktree on your own branch; the CLI collects every test-writing teammate's commits onto the project branch. "
-            "Run that command, never the whole suite, and confirm it fails for the right reason, format the file, then commit only your file: "
+            "Use exactly the types, signatures, helpers, and fixtures in the CONTRACT below; never guess a shape it lacks "
+            "(report `blocked` naming it).\n"
+            "Assert only what the TASK BRIEF states or the code shows: implementer never sees the contract, "
+            "so a line or value only it gives is not asserted.\n"
+            "Cover the brief's acceptance criteria plus holdout cases it does not list. One file; "
+            "never a test that asserts dependency lists, lint or tool configuration, or config file contents.\n"
+            f"Budget: at most {budget} lines, holdouts included.\n"
+            "You work in your own worktree and branch; the CLI collects every teammate's commits onto the project branch. "
+            "Run that command, never the whole suite, confirm it fails for the right reason, format the file, commit only your file: "
             f"`git add {args} && git commit {args} -m \"{fc_core.typed('<what the test covers>', 'test', conv) if conv else '<plain message>'}\"`.\n"
-            "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
-            "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
-            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"
+            "To fix your test, make another plain commit. Never run `git commit --amend`, `git reset`, "
+            "`git rebase`, `git checkout`, or `git stash`.\n"
+            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when team lead says so.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract_slice(contract, meta['id'])}")
 
 def cmd_testcrews(a):
