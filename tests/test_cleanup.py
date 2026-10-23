@@ -274,14 +274,11 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertIn("at most 40 lines", fc.fc_briefs.test_brief(tasks[0], "c", 40))
 
 
-def server(cwd):
-    p = subprocess.Popen([sys.executable, "-m", "http.server", "0", "--bind", "127.0.0.1"], cwd=cwd,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(50):
-        if str(p.pid) in subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-t"], capture_output=True, text=True).stdout.split():
-            return p
-        time.sleep(0.1)
-    raise AssertionError("server never listened")
+def server(cwd, port):
+    """A process standing in for a server with working directory `cwd`: the fake lsof reports it listening on `port`, and the test's end kills it."""
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    hermetic.listen(p.pid, port, Path(cwd).resolve())
+    return p
 
 
 class Leftovers(unittest.TestCase):
@@ -290,7 +287,7 @@ class Leftovers(unittest.TestCase):
         proj_wt = Path(tempfile.mkdtemp()).resolve()
         proj = proj_wt / ".compose" / "p"
         scratch = fc.fc_crew.scratch_dir(proj, "p-groundwork"); scratch.mkdir(parents=True)
-        mine, other = server(scratch), server(tempfile.mkdtemp())
+        mine, other = server(scratch, 8001), server(tempfile.mkdtemp(), 8002)
         self.addCleanup(lambda: [(p.kill(), p.wait()) for p in (mine, other)])
         with mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj_wt), mock.patch.dict(os.environ, {"HERDR_ENV": ""}), \
                 mock.patch("sys.stdout", io.StringIO()):

@@ -3,8 +3,11 @@
 On import the process gets a temp HOME and COMPOSE_CONFIG and loses the key variables and the caller's test slot, so paths
 the bin modules compute at import land there; each test then runs with its own fresh temp HOME (see temp_home) and COMPOSE_CONFIG, and its environment is restored after.
 A test that still changes the real ~/.compose files that hold keys or config (created, written, moved or deleted, from the test
-process or any subprocess) fails, naming the files, never their content."""
-import atexit, hashlib, json, os, pwd, shutil, sys, tempfile, time, unittest
+process or any subprocess) fails, naming the files, never their content.
+Nor does a test reach the real machine: `lsof` and `herdr` on PATH are fakes (see guard_dir). The fake lsof answers only for the
+listeners a test registers with listen() and, for a port the call names, the machine's socket table (netstat), so it never walks the machine's processes; the fake herdr answers its version and integration status and fails
+the test that ran any other call, naming it. Every process a test registers is killed when the test ends."""
+import atexit, hashlib, json, os, pwd, shutil, signal, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +16,8 @@ GUARDED = ("config.json", "auth.json", ".env", "openrouter.key")
 KEYS = ("OPENROUTER_API_KEY", "TEXT_MODEL_API_KEY", "OPENCODE_CONFIG_CONTENT", "TYPESAFE_API_KEY")
 CALLERS = ("COMPOSE_TEST_SLOT",  # the slot of a `compose timed` running the suite: a lock under the real home, not a test's
            "HERDR_PANE_ID",  # the herdr pane the suite runs in is the session identity of a watch, crew start, or yolo: a test sets its own
-           "COMPOSE_ROLE")  # the suite run in a teammate's tab (a toolsmith's) is no engineering manager: a test sets its own
+           "COMPOSE_ROLE",  # the suite run in a teammate's tab (a toolsmith's) is no engineering manager: a test sets its own
+           "HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_SESSION", "HERDR_WORKSPACE_ID", "HERDR_TAB_ID", "HERDR_BIN_PATH")  # the suite is no pane of the user's herdr: a test that needs one sets its own
 
 
 INSTALLED = {  # what compose's required tools keep in a home, faked so `compose init` goes ahead without the user's machine
@@ -131,6 +135,7 @@ def temp_home():
     GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL give a test a git identity, because a temp
     HOME has no ~/.gitconfig, so git would refuse its commits with "Author identity unknown"."""
     home = Path(tempfile.mkdtemp(prefix="compose-home-")).resolve()
+    (home / "guard").mkdir()
     for rel, text in INSTALLED.items():
         f = home / rel
         f.parent.mkdir(parents=True)
@@ -139,7 +144,94 @@ def temp_home():
     (home / ".graft").mkdir()
     (home / ".graft" / "update-check.json").write_text(json.dumps({"latest": None, "checkedAt": int(time.time() * 1000)}))
     return {"HOME": str(home), "COMPOSE_CONFIG": str(home / ".compose" / "config.json"), "DO_NOT_TRACK": "1", "COMPOSE_NO_PREFLIGHT": "1", "COMPOSE_NO_AWAKE": "1",
+            "PATH": guarded_path(), "COMPOSE_TEST_GUARD": str(home / "guard"),
             "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+
+FAKE_LSOF = """#!{python}
+import os, sys
+data = os.environ.get("COMPOSE_TEST_GUARD")
+args = sys.argv[1:]
+if data:
+    with open(os.path.join(data, "calls"), "a") as f:
+        f.write("lsof " + " ".join(args) + "\\n")
+rows = []
+try:
+    rows = [l.split(None, 2) for l in open(os.path.join(data, "listeners")).read().splitlines() if l.strip()]
+except (OSError, TypeError):
+    pass
+if "-p" in args:  # cwd of the named pids: `-Fpn`
+    wanted = args[args.index("-p") + 1].split(",")
+    for pid, port, cwd in rows:
+        if pid in wanted:
+            print("p" + pid + "\\nn" + cwd)
+else:  # listeners, all or on the named ports: `-t`
+    ports = [a.rsplit(":", 1)[1] for a in args if a.startswith("-iTCP:") or a.startswith("tcp:")]
+    found = [pid for pid, port, cwd in rows if not ports or port in ports]
+    if ports and not found:  # a port the test owns but did not register (a server its code under test started): the socket table, never the processes
+        import subprocess
+        for l in subprocess.run(["netstat", "-anv", "-p", "tcp"], capture_output=True, text=True).stdout.splitlines():
+            f = l.split()
+            if len(f) > 5 and f[5] == "LISTEN" and f[3].rsplit(".", 1)[-1] in ports:
+                found += [x.rsplit(":", 1)[1] for x in f if ":" in x and x.rsplit(":", 1)[1].isdigit()][:1]
+    for pid in dict.fromkeys(found):
+        print(pid)
+"""
+FAKE_HERDR = """#!/bin/sh
+case "$*" in
+  "--version") echo "herdr 99.0.0"; exit 0;;
+  "integration status") for a in pi omp claude codex copilot; do echo "$a: current (v1) (/fake/$a)"; done; exit 0;;
+esac
+echo "herdr $*" >> "${COMPOSE_TEST_GUARD:-/dev/null}/calls"
+echo '{"error": {"code": "test_guard", "message": "a test must not reach the real herdr"}}'
+exit 1
+"""
+_guard = None
+
+
+def guard_dir():
+    """The directory holding the fake lsof and herdr, first on every test's PATH."""
+    global _guard
+    if _guard is None:
+        _guard = Path(_mkdtemp(prefix="compose-guard-")).resolve()
+        atexit.register(shutil.rmtree, _guard, ignore_errors=True)
+        for name, body in (("lsof", FAKE_LSOF.format(python=sys.executable)), ("herdr", FAKE_HERDR)):
+            (_guard / name).write_text(body)
+            _chmod(_guard / name, 0o755)
+    return _guard
+
+
+def guarded_path():
+    return os.pathsep.join([str(guard_dir())] + [p for p in os.environ.get("PATH", "").split(os.pathsep) if p != str(guard_dir())])
+
+
+def listen(pid, port, cwd):
+    """Tell the fake lsof that process `pid`, started by the test, listens on `port` with working directory `cwd`. The process is killed when the test ends."""
+    with open(Path(os.environ["COMPOSE_TEST_GUARD"]) / "listeners", "a") as f:
+        f.write(f"{pid} {port} {cwd}\n")
+
+
+def guard_calls(tool=None, clear=False):
+    """The lines the fake lsof and herdr logged for this test (`lsof ...`, `herdr ...`), only `tool`'s when given. `clear` forgets them."""
+    f = Path(os.environ["COMPOSE_TEST_GUARD"]) / "calls"
+    lines = f.read_text().splitlines() if f.exists() else []
+    if clear:
+        f.unlink(missing_ok=True)
+    return [l for l in lines if tool is None or l.split()[0] == tool]
+
+
+def guarded(data):
+    """Kill every process the test registered with listen(), then fail the test if it ran the fake herdr."""
+    f = Path(data) / "listeners"
+    for l in f.read_text().splitlines() if f.exists() else []:
+        try:
+            os.kill(int(l.split()[0]), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, ValueError):
+            pass
+    calls = Path(data) / "calls"
+    herdr = [l for l in calls.read_text().splitlines() if l.startswith("herdr ")] if calls.exists() else []
+    if herdr:
+        raise AssertionError(f"this test ran the real herdr, which starts agents and tabs on the user's machine: {'; '.join(herdr)}")
 
 
 def snapshot():
@@ -204,6 +296,7 @@ def run(self, result=None):
     env.start()
     try:
         self.addCleanup(untouched, snapshot())  # the first cleanup added runs last, after the test's own
+        self.addCleanup(guarded, os.environ["COMPOSE_TEST_GUARD"])
         with in_world(self):
             return _run(self, result)
     finally:

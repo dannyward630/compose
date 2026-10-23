@@ -38,13 +38,16 @@ def scratch_dir(proj, name=None):
 
 def listeners_under(root):
     """Pids listening on a TCP port whose working directory is inside `root`: the servers and dev watchers a teammate or run
-    left behind. Listening narrows it to servers, so the herdr shells and agent sessions that also sit in the worktree stay."""
-    pids = set(fc_core.sh("lsof -nP -iTCP -sTCP:LISTEN -t", ".", check=False).stdout.split())
-    root, out = str(Path(root).resolve()), []
-    for pid in pids:
-        cwd = next((l[1:] for l in fc_core.sh(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], ".", check=False).stdout.splitlines()
-                    if l.startswith("n")), "")
-        if cwd == root or cwd.startswith(root + "/"):
+    left behind. Listening narrows it to servers, so the herdr shells and agent sessions that also sit in the worktree stay.
+    Two lsof calls however many servers the machine has (each one walks every process), the second for all the pids at once."""
+    pids = sorted(set(fc_core.sh("lsof -nP -iTCP -sTCP:LISTEN -t", ".", check=False).stdout.split()))
+    if not pids:
+        return []
+    root, out, pid = str(Path(root).resolve()), [], None
+    for l in fc_core.sh(["lsof", "-nP", "-a", "-d", "cwd", "-Fpn", "-p", ",".join(pids)], ".", check=False).stdout.splitlines():
+        if l.startswith("p"):
+            pid = l[1:]
+        elif l.startswith("n") and pid in pids and (l[1:] == root or l[1:].startswith(root + "/")):
             out.append(pid)
     return out
 

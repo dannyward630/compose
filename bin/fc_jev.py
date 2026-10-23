@@ -37,11 +37,13 @@ def stop_group(proc):
     proc.poll()
 
 def kill_listeners(ports):
-    """Kill whatever listens on these ports: servers and browsers a setup detached from its process group (`&`, `bp launch`)."""
-    for port in ports:
-        pids = fc_core.sh(f"lsof -ti tcp:{int(port)} -sTCP:LISTEN", ".", check=False).stdout.split()
-        if pids:
-            fc_core.sh(["kill", "-9", *pids], ".", check=False)
+    """Kill whatever listens on these ports: servers and browsers a setup detached from its process group (`&`, `bp launch`).
+    One lsof call for all the ports."""
+    if not ports:
+        return
+    pids = fc_core.sh(["lsof", "-nP", "-t", "-sTCP:LISTEN", *(f"-iTCP:{int(port)}" for port in sorted(ports))], ".", check=False).stdout.split()
+    if pids:
+        fc_core.sh(["kill", "-9", *sorted(set(pids))], ".", check=False)
 
 def harness_daemons(name):
     """Pids of the browser-harness daemons running under BU_NAME=`name`. A daemon carries no name on its command line, only
