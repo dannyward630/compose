@@ -1,6 +1,7 @@
 """The pass gate of a task: what its branch may change (size, documents, files) and what must still pass after it.
 Imports only lower modules."""
-import re, threading
+import re, shutil, tempfile, threading
+from pathlib import Path
 import fc_core, fc_config, fc_worktree
 
 def branch_budget(wt, base, allowed=None, delete=()):
@@ -99,3 +100,33 @@ def advice(broke):
     """The next prompt's problem when a passing task broke something that passed before it."""
     return ("Your change breaks what passed before it. Code outside this task, other tasks' stubs included, must stay as it was; "
             "restore it. Now failing: " + "; ".join(broke[:10]))
+
+TEST_FILE_RE = re.compile(r"(?:^|/)(?:tests?|__tests__|spec)/|(?:^|/)test_[^/]*$|_test\.\w+$|\.(?:test|spec)\.\w+$")
+
+def new_tests_prove(run, repo, fixed, cmds, install=None):
+    """Whether a fix has a test of its own that proves it: on a clone of `repo`'s HEAD the fix's test files alone fail a test id
+    of theirs that `cmds` print, and with the rest of the fix that id passes. False when the fix has no test file or nothing but test files."""
+    tests = [f for f in fixed if TEST_FILE_RE.search(f)]
+    if not tests or len(tests) == len(fixed) or not cmds:
+        return False
+    root = Path(tempfile.mkdtemp(prefix="compose-fix-"))
+    try:
+        tree = root / "tree"
+        fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(tree)], repo)
+        fc_worktree.ready_checkout(repo, tree, install=install)
+        def put(files):
+            for f in files:
+                if (repo / f).exists():
+                    (tree / f).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(repo / f, tree / f)
+                else:
+                    (tree / f).unlink(missing_ok=True)
+        put(tests)
+        without = check_state(run, cmds, tree, CHECKS_TIMEOUT)
+        mine = touches(tree, "HEAD", tests)
+        theirs = {c: [t for t in s["failing"] if mine(t)] for c, s in without.items()}
+        put(fixed)
+        within = check_state(run, cmds, tree, CHECKS_TIMEOUT)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return any(not within[c]["unknown"] and any(t not in within[c]["failing"] for t in theirs[c]) for c in cmds)

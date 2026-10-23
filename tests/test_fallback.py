@@ -304,12 +304,12 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None, report=None, rerun=0, top=None):
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None, report=None, rerun=0, top=None, layer=None):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
         `self.scopes` holds the tests each stage run was given (None: the full checks). `dirty` (path: text) is in the worktree
         before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind. The first
         stage run's `report` (by default one failing check, `c1`) is what the fix answers; the check exits `rerun` when verify runs it
-        again. `top` is the task id of the stack's top layer."""
+        again. `top` is the task id of the stack's top layer. `layer` (path: text) is more of what the layer commits."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -320,7 +320,9 @@ class FixScope(unittest.TestCase):
         git("add", "-A"); git("commit", "-qm", "init")
         git("checkout", "-qb", "layer")
         (repo / "a.go").write_text("b\n")
-        git("commit", "-qam", "layer")
+        for f, text in (layer or {}).items():
+            (repo / f).parent.mkdir(exist_ok=True); (repo / f).write_text(text)
+        git("add", "-A"); git("commit", "-qm", "layer")
         for f, text in (dirty or {}).items():
             (repo / f).write_text(text)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -396,6 +398,29 @@ class FixScope(unittest.TestCase):
         self.assertEqual((code, len(res["rejected_fixes"])), (1, 1))  # it leaves that line alone
         code, _, res = self.verify({"a.go": "fixed\n"}, report={"e2e": [{"name": "n", "exit": 1}]})  # a failing e2e case is its own reproduction
         self.assertEqual((code, res["rejected_fixes"]), (0, []))
+
+    GUARD = {"m.py": "def f(x):\n    return x\n", "tests/__init__.py": "",
+             "tests/test_m.py": "import unittest\nfrom m import f\n\n\nclass T(unittest.TestCase):\n    def test_keeps(self):\n        self.assertEqual(f(1), 1)\n"}
+    ADDED = "\n    def test_none(self):\n        self.assertEqual(f(None), 0)\n"
+    GUARDED = "def f(x):\n    if x is None:\n        return 0\n    return x\n"
+    CHECK = "python3 -m unittest discover -s tests -t ."
+
+    def additive(self, writes, file="m.py", **kw):
+        """A fix that only adds code, for a confirmed finding about `file`; no check failed, so nothing but its own tests could show it."""
+        report = {"checks": [{"cmd": self.CHECK, "exit": 0}], "review": {"pass": False, "issues": [], "confirmed": [{"file": file, "evidence": "return x"}]}}
+        return self.verify(writes, report=report, layer=self.GUARD, **kw)
+
+    def test_an_additive_fix_for_a_confirmed_finding_is_kept_when_its_new_test_fails_without_it_and_passes_with_it(self):
+        code, repo, res = self.additive({"m.py": self.GUARDED, "tests/test_m.py": self.GUARD["tests/test_m.py"] + self.ADDED})
+        self.assertEqual((code, res["rejected_fixes"], (repo / "m.py").read_text()), (0, [], self.GUARDED))
+        self.assertEqual(self.committed(repo)[0], ["m.py", "tests/test_m.py"])
+
+    def test_an_additive_fix_is_still_discarded_when_it_has_no_test_that_fails_without_it_or_answers_no_confirmed_finding(self):
+        passes = self.GUARD["tests/test_m.py"] + "\n    def test_again(self):\n        self.assertEqual(f(2), 2)\n"
+        for writes, file in (({"m.py": self.GUARDED}, "m.py"), ({"m.py": self.GUARDED, "tests/test_m.py": passes}, "m.py"),
+                             ({"m.py": self.GUARDED, "tests/test_m.py": self.GUARD["tests/test_m.py"] + self.ADDED}, "other.py")):
+            code, repo, res = self.additive(writes, file=file)
+            self.assertEqual((code, len(res["rejected_fixes"]), (repo / "m.py").read_text()), (1, 1, self.GUARD["m.py"]), writes)
 
     def test_a_fix_round_commits_only_to_the_layer_that_owns_the_changed_file(self):
         tasks = [{"id": "003", "files": ["a.go"], "protected": [], "test": "t3"}, {"id": "007", "files": ["b.go"], "protected": [], "test": "t7"}]
