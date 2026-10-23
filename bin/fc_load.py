@@ -17,6 +17,15 @@ def off(force=False):
     return bool(force) or os.environ.get("COMPOSE_NO_LOAD") == "1"
 
 
+def _read(path):
+    state = {"held": False, "since": None, "n": 0, "log": [], "warn": False, "claimed": []}
+    try:
+        state.update(json.loads(path.read_text()))
+    except FileNotFoundError:
+        pass
+    return state
+
+
 def update(avg=None):
     if avg is None:
         avg = os.getloadavg()[0]
@@ -24,28 +33,36 @@ def update(avg=None):
     home = Path.home() / ".compose"
     path = home / "load.json"
 
-    def read():
-        try:
-            return json.loads(path.read_text())
-        except FileNotFoundError:
-            return {"held": False, "since": None, "n": 0, "log": []}
+    def kinds(state):
+        out = []
+        if avg > lim["high"] and not state["held"]:
+            out.append("held")
+        elif avg < lim["low"] and state["held"]:
+            out.append("released")
+        if lim["warn"] <= avg < lim["high"] and not state["warn"]:
+            out.append("warn")
+        elif avg < lim["low"] and state["warn"]:
+            out.append("cleared")
+        return out
 
-    kind = "held" if avg > lim["high"] else "released" if avg < lim["low"] else None
-    state = read()
+    state = _read(path)
     new = []
-    if kind and (kind == "held") != state["held"]:
+    if kinds(state):
         home.mkdir(parents=True, exist_ok=True)
         with open(home / "load.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            state = read()
-            if (kind == "held") != state["held"]:
+            state = _read(path)
+            for kind in kinds(state):
                 state["n"] += 1
                 entry = {"n": state["n"], "at": time.time(), "kind": kind, "avg": float(avg)}
-                state["held"] = kind == "held"
-                state["since"] = entry["at"] if state["held"] else None
+                if kind in ("held", "released"):
+                    state["held"] = kind == "held"
+                    state["since"] = entry["at"] if state["held"] else None
+                else:
+                    state["warn"] = kind == "warn"
                 state["log"] = (state["log"] + [entry])[-50:]
-                path.write_text(json.dumps(state))
-                new = [entry]
+                new.append(entry)
+            path.write_text(json.dumps(state))
     return {**state, "avg": avg, "new": new}
 
 
@@ -76,3 +93,17 @@ def wait(say, force=False):
         if not update()["held"]:
             break
     return time.time() - t0
+
+
+def claim(n):
+    home = Path.home() / ".compose"
+    home.mkdir(parents=True, exist_ok=True)
+    with open(home / "load.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = home / "load.json"
+        state = _read(path)
+        if n in state["claimed"]:
+            return False
+        state["claimed"] = (state["claimed"] + [n])[-50:]
+        path.write_text(json.dumps(state))
+        return True
