@@ -443,10 +443,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         else:
             test = run_test(meta, wt)
             fc_green.record(proj, sha, meta["test"], test.returncode)
-        now = fc_gate.check_state(checked("after the task"), checks, wt, limit) if checks and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
+        fc_core.sh(["git", "add", "-A"], wt, check=False)
+        changed = fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split()
+        cmds = fc_gate.after_checks(checks, fc_tasks.load_tasks(proj), changed, meta["test"])
+        now = fc_gate.check_state(checked("after the task"), cmds, wt, limit) if cmds and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
         # What passed on the base is asked only for a check that fails after the task: a suite that passes needs no base run.
-        ahead = fc_gate.baseline_state(checked("on its base"), checks, wt, (base, tuple(delete)), limit) if any(c["exit"] for c in now.values()) else {}
-        broke, red_on_base = fc_gate.regressions(ahead, now, fc_gate.touches(wt, base)) if now else ([], [])
+        ahead = fc_gate.baseline_state(checked("on its base"), cmds, wt, (base, tuple(delete)), limit) if any(c["exit"] for c in now.values()) else {}
+        broke, red_on_base = fc_gate.regressions(ahead, now, fc_gate.touches(wt, base, changed)) if now else ([], [])
         if red_on_base:  # unknown is never base-red: the base tree says which of these it failed too
             more, cannot = fc_gate.settle(checked("on its base"), wt, base, tuple(delete), limit, red_on_base, now, learned)
             broke, red_on_base = broke + more, [t for t in red_on_base if t not in more]
