@@ -110,6 +110,10 @@ def _stand_in_block(out, stand):
         m = models.get(k, TEST_READER if k == "test_reader" else None)
         if m is not None:
             block[k] = swap(m)
+    tiers = dict(models.get("tiers") or {})
+    for t in TIER_NAMES:
+        tiers[t] = [{**e, "model": swap(e.get("model"))} if isinstance(e, dict) else swap(e) for e in tiers.get(t, DEFAULT_TIERS[t])]
+    block["tiers"] = tiers
     return {"models": block}
 
 def settings(cfg, harness=None):
