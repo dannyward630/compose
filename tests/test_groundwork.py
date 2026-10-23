@@ -228,10 +228,23 @@ class Groundwork(unittest.TestCase):
                     fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, parallel=flag))
                 self.assertEqual(sorted(started), expect, (models, flag))  # the writers start on threads, so their order is not fixed
 
-    def test_testcrews_takes_parallel_on_the_command_line(self):
+    def test_testcrews_takes_parallel_and_force_on_the_command_line(self):
         cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
         sub = subprocess.run([sys.executable, cli, "testcrews", "--help"], capture_output=True, text=True)
         self.assertIn("--parallel", sub.stdout)
+        self.assertIn("--force", sub.stdout)
+
+    def test_force_goes_on_to_every_writer_and_is_off_without_it(self):
+        (self.proj / "results" / "contract.md").write_text("c")
+        for flag, expect in ((True, [True, True]), (None, [False, False])):
+            forced = []
+            with self.patched()[0], mock.patch.object(fc.fc_crew, "cmd_crew", lambda ns: forced.append(ns.force)), mock.patch.object(fc.fc_herdr, "herdr_space"), \
+                 mock.patch.object(fc.fc_briefs, "test_worktree", lambda proj, tid: self.repo):
+                ns = SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False)
+                if flag:
+                    ns.force = True
+                fc.fc_briefs.cmd_testcrews(ns)
+            self.assertEqual(forced, expect, flag)
 
     def test_a_named_task_that_needs_no_test_writer_says_why(self):
         (self.proj / "results" / "contract.md").write_text("c")
