@@ -241,10 +241,53 @@ def wait(probe, deadline):
             return None
         time.sleep(LAND_POLL)
 
+def in_stack(n, cwd):
+    """True when GitHub holds PR n in a native stack (`gh stack`): such a PR merges only through the asynchronous merge API,
+    and GitHub itself retargets and rebases the layer above a merged one. False when gh cannot say."""
+    p = gh(["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", f"n={n}", "-f",
+            "query=query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){stack{size}}}}"], cwd)
+    try:
+        return bool(json.loads(p.stdout)["data"]["repository"]["pullRequest"]["stack"])
+    except (ValueError, KeyError, TypeError):
+        return False
+
+def merge_async(n, sha, method, cwd, deadline):
+    """Merge PR n, which is in a stack, through the asynchronous merge API at head sha, and poll it until GitHub is done. "" when
+    it merged, else why not."""
+    url = f"repos/{{owner}}/{{repo}}/pulls/{n}/merge-async"
+    p = gh(["api", "-X", "PUT", url, "-f", f"sha={sha}", "-f", f"merge_method={method}", "-f", "merge_action=direct_merge"], cwd)
+    try:  # a 409 (a merge already pending) carries the pending request's uuid too, so a re-run joins it
+        body = json.loads(p.stdout)
+    except ValueError:
+        body = {}
+    uuid = (body.get("details") or {}).get("uuid")
+    if p.returncode and not uuid:
+        return f"merge of #{n} refused: {(p.stderr or p.stdout).strip()[-300:]}"
+    while True:
+        status, details = body.get("status"), body.get("details") or {}
+        if status == "merged":
+            return ""
+        if status == "failed":
+            return f"merge of #{n} failed: {details.get('message', 'no reason given')}"
+        if status == "enqueued":
+            return f"#{n} went into a merge queue, which compose land does not wait for"
+        if time.time() >= deadline:
+            return f"#{n} was asked to merge but GitHub has not finished after the timeout; re-run to resume"
+        time.sleep(LAND_POLL)
+        g = gh(["api", f"{url}/{uuid}"], cwd)
+        if g.returncode:
+            return f"merge of #{n}: cannot read its result: {(g.stderr or g.stdout).strip()[-200:]}"
+        try:
+            body = json.loads(g.stdout)
+        except ValueError:
+            return f"merge of #{n}: gh printed no JSON for its result"
+
 def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
     """Land layer b (index i). "" when it is merged, else why it stopped. A layer above the first has lost its parent to the
     merge: it is rebased onto the base (from the tip its parent had when the land began), its PR retargeted, and pushed with a
-    lease on the commit compose last saw there. Every remote change waits for the layer's own required checks."""
+    lease on the commit compose last saw there. Every remote change waits for the layer's own required checks. A PR in a GitHub
+    stack is merged through the asynchronous merge API instead, and GitHub moves the layer above it onto the base itself, so
+    compose touches nothing there and merges whatever head GitHub left."""
     n, deadline = rec["pr"][b], time.time() + minutes * 60
     tip = lambda: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip()
     info = pr_info(n, repo)
@@ -256,7 +299,13 @@ def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
     if info["state"] != "OPEN":
         return f"PR #{n} ({b}) is {info['state'].lower()}, not open"
     old, pushed = tip(), False
-    if prev:
+    stacked = in_stack(n, repo)
+    if stacked and prev:
+        if wait(lambda: True if (pr_info(n, repo) or {}).get("baseRefName") == base else None, deadline) is None:
+            return f"PR #{n} ({b}) never moved onto {base} after its parent merged"
+        info, pushed = pr_info(n, repo) or info, True  # GitHub rewrites the head as it moves the layer
+        old = new = info["headRefOid"]
+    elif prev:
         if fc_core.sh(["git", "merge-base", "--is-ancestor", prev, old], repo, check=False).returncode == 0:  # not rebased yet
             fc_core.sh(["git", "fetch", "-q", "origin", base], wt)
             fc_core.sh(["git", "checkout", "-q", "--detach", b], wt)
@@ -266,10 +315,10 @@ def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
                 fc_core.sh(["git", "rebase", "--abort"], wt, check=False)
                 return f"{b} conflicts with {base} in {', '.join(files) or 'files git does not name'} after its parent merged; resolve it by hand, nothing of it was pushed"
             fc_core.sh(["git", "branch", "-f", b, fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip()], repo)
-    new = tip()
+    new = old if stacked and prev else tip()
     if info["headRefOid"] not in (old, new):
         return f"PR #{n} ({b}) has commits compose did not push ({info['headRefOid'][:9]}, local {new[:9]}); `compose stack --submit` first"
-    if prev and info["baseRefName"] != base:
+    if prev and not stacked and info["baseRefName"] != base:
         fc_core.say(f"land   edit  #{n} base {info['baseRefName']} -> {base}")
         q = gh(["pr", "edit", str(n), "--base", base], repo)
         if q.returncode:
@@ -294,7 +343,7 @@ def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
         if status.startswith(("fail", "error")):
             return f"required checks on #{n} ({b}): {status}"
         fc_core.say(f"land   checks #{n} {status}")
-        if (pr_info(n, repo) or {}).get("mergeStateStatus") != "BEHIND":
+        if stacked or (pr_info(n, repo) or {}).get("mergeStateStatus") != "BEHIND":
             break
         fc_core.say(f"land   update #{n} is behind {base}; gh pr update-branch")
         q = gh(["pr", "update-branch", str(n), "--rebase"], repo)
@@ -303,8 +352,10 @@ def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
         moved = lambda: (h if (h := (pr_info(n, repo) or {}).get("headRefOid")) != new else None)
         new = wait(moved, deadline) or new
         pushed = True
-    q = gh(["pr", "merge", str(n), f"--{method}"], repo)
-    if q.returncode:
+    if stacked:
+        if why := merge_async(n, (pr_info(n, repo) or {}).get("headRefOid") or new, method, repo, deadline):
+            return f"{why} ({b})"
+    elif (q := gh(["pr", "merge", str(n), f"--{method}"], repo)).returncode:
         return f"gh pr merge #{n} ({b}): {(q.stderr or q.stdout).strip()[-300:]}"
     if wait(lambda: True if (pr_info(n, repo) or {}).get("state") == "MERGED" else None, deadline) is None:
         return f"#{n} ({b}) was asked to merge but is not merged after {minutes} minutes; re-run to resume"
@@ -312,7 +363,7 @@ def land_layer(repo, wt, i, b, prev, rec, base, method, minutes):
     return ""
 
 def cmd_land(a):
-    """Merge the submitted stack into its base, bottom up, one `gh pr merge` per PR. It pushes and merges on GitHub, so without
+    """Merge the submitted stack into its base, bottom up, one `gh pr merge` per PR (the asynchronous merge API for a PR in a GitHub stack). It pushes and merges on GitHub, so without
     --yes it only prints the plan."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     trunk = a.trunk or fc_core.current_branch(repo)
@@ -344,8 +395,8 @@ def cmd_land(a):
     for i, b in enumerate(names, 1):
         i_ = infos[b]
         print(f"  {i}  {b}  #{i_['number']}  {i_['state'].lower()}{' (draft)' if i_['isDraft'] else ''}  {i_['url']}")
-    print(f"  for each: mark it ready, wait up to {a.timeout:g} min for its required checks, `gh pr merge --{method}`;\n"
-          f"  after each: rebase the next layer onto origin/{base}, retarget its PR to {base}, push it with --force-with-lease")
+    print(f"  for each: mark it ready, wait up to {a.timeout:g} min for its required checks, `gh pr merge --{method}` (the async merge API for a PR in a GitHub stack);\n"
+          f"  after each: rebase the next layer onto origin/{base}, retarget its PR to {base}, push it with --force-with-lease (not for a GitHub stack: GitHub does it)")
     if not a.yes:
         print(f"land   nothing was merged or pushed. Re-run with --yes once the user has said to land this stack")
         return

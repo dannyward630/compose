@@ -45,11 +45,44 @@ if a[0] == "stack":
         for b in s["branches"]:
             subprocess.run(["git", "push", "-q", "--force", "origin", b["name"]], check=True)
             if not find(b["name"])[1]:
-                st["prs"][str(len(st["prs"]) + 1)] = {"branch": b["name"], "base": below, "state": "OPEN", "draft": True, "checks": ["pass"], "title": "t", "body": "b"}
+                st["prs"][str(len(st["prs"]) + 1)] = {"branch": b["name"], "base": below, "state": "OPEN", "draft": True, "stacked": False, "checks": ["pass"], "title": "t", "body": "b"}
             below = b["name"]
     else:
         done(1)
     done()
+def merge(n, p):
+    tree = head(p) + "^{tree}"
+    if p.get("extra"):  # the base also gains a file of its own with this merge
+        env = {**os.environ, "GIT_INDEX_FILE": origin + "/fake-index"}
+        run = lambda *x, **k: subprocess.run(["git", "--git-dir", origin, *x], capture_output=True, text=True, env=env, **k).stdout.strip()
+        run("read-tree", tree)
+        blob = run("hash-object", "-w", "--stdin", input=p["extra"][1])
+        run("update-index", "--add", "--cacheinfo", "100644," + blob + "," + p["extra"][0])
+        tree = run("write-tree")
+    ogit("update-ref", "refs/heads/" + p["base"], ogit("commit-tree", tree, "-p", ogit("rev-parse", "refs/heads/" + p["base"]), "-m", "PR " + n))
+    p["state"] = "MERGED"
+    for q in st["prs"].values():  # a stack: GitHub moves the layer above onto the base and rewrites its head
+        if q["stacked"] and q["base"] == p["branch"]:
+            q["base"] = p["base"]
+            ogit("update-ref", "refs/heads/" + q["branch"], ogit("commit-tree", head(q) + "^{tree}", "-p", ogit("rev-parse", "refs/heads/" + p["base"]), "-m", "rebased by GitHub"))
+if a[0] == "api":  # the stack field of a PR, and the asynchronous merge of a PR in a stack
+    path = next((x for x in a if "/pulls/" in x), "")
+    n, p = find(path.split("/pulls/")[1].split("/")[0] if path else next(x.split("=")[1] for x in a if x.startswith("n=")))
+    if "graphql" in a:
+        print(json.dumps({"data": {"repository": {"pullRequest": {"stack": {"size": 3} if p.get("stacked") else None}}}})); done()
+    if "PUT" in a:
+        if p["draft"]:
+            print("Pull request is in draft", file=sys.stderr); done(1)
+        sha = next(x.split("=", 1)[1] for x in a if x.startswith("sha="))
+        p["async"] = {"uuid": "u" + n, "method": next(x.split("=", 1)[1] for x in a if x.startswith("merge_method=")), "sha": sha, "polls": 0}
+        print(json.dumps({"status": "pending", "details": {"uuid": "u" + n}})); done()
+    p["async"]["polls"] += 1
+    if p["async"]["polls"] < 2:
+        print(json.dumps({"status": "pending", "details": {"uuid": "u" + n}})); done()
+    if p.get("refuse") or p["async"]["sha"] != head(p):
+        print(json.dumps({"status": "failed", "details": {"message": p.get("refuse") or "head changed"}})); done()
+    merge(n, p)
+    print(json.dumps({"status": "merged", "details": {"message": "ok", "sha": "abc"}})); done()
 n, p = find(a[2]) if len(a) > 2 else (None, None)
 if a[:2] == ["pr", "view"]:
     if os.environ.get("FAKE_GH_VIEW_FAIL"):
@@ -72,18 +105,11 @@ elif a[:2] == ["pr", "update-branch"]:
     p["behind"] = False
     ogit("update-ref", "refs/heads/" + p["branch"], ogit("commit-tree", head(p) + "^{tree}", "-p", head(p), "-m", "update branch"))
 elif a[:2] == ["pr", "merge"]:
+    if p.get("stacked"):
+        print("GraphQL: This pull request is part of a stack and must be merged using the asynchronous merge REST API (mergePullRequest)", file=sys.stderr); done(1)
     if p.get("refuse"):
         print(p["refuse"], file=sys.stderr); done(1)
-    tree = head(p) + "^{tree}"
-    if p.get("extra"):  # the base also gains a file of its own with this merge
-        env = {**os.environ, "GIT_INDEX_FILE": origin + "/fake-index"}
-        run = lambda *x, **k: subprocess.run(["git", "--git-dir", origin, *x], capture_output=True, text=True, env=env, **k).stdout.strip()
-        run("read-tree", tree)
-        blob = run("hash-object", "-w", "--stdin", input=p["extra"][1])
-        run("update-index", "--add", "--cacheinfo", "100644," + blob + "," + p["extra"][0])
-        tree = run("write-tree")
-    ogit("update-ref", "refs/heads/" + p["base"], ogit("commit-tree", tree, "-p", ogit("rev-parse", "refs/heads/" + p["base"]), "-m", "PR " + n))
-    p["state"] = "MERGED"
+    merge(n, p)
 else:
     done(1)
 done()

@@ -16,5 +16,7 @@ pr_view
 pr_info
 required_checks
 wait
+in_stack
+merge_async
 land_layer
 cmd_land

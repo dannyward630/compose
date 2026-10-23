@@ -146,6 +146,40 @@ class Land(Ship):
         self.assertIn("pr update-branch 1 --rebase", self.log())
         self.assertEqual([p["state"] for p in self.prs().values()], ["MERGED"] * 3)
 
+    def stacked(self):
+        self.submitted()
+        for n in (1, 2, 3):
+            self.set_pr(n, stacked=True)
+
+    def test_a_github_stack_merges_through_the_async_api_and_keeps_the_heads_github_rewrote(self):
+        self.stacked()
+        top = self.git("rev-parse", "compose/p-layer-03")
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual([p["state"] for p in self.prs().values()], ["MERGED"] * 3)
+        log = self.log()
+        self.assertFalse([c for c in log if c.startswith(("pr merge", "pr update-branch")) or ("pr edit" in c and "--base" in c)])
+        puts = [c for c in log if " PUT " in f" {c} "]
+        self.assertEqual(len(puts), 3)
+        self.assertTrue(all("merge_method=squash" in c and "merge_action=direct_merge" in c and "sha=" in c for c in puts), puts)
+        self.assertLess(log.index("pr ready 1"), log.index(puts[0]))
+        self.assertEqual(self.git("rev-parse", "compose/p-layer-03"), top)  # compose rebased and pushed nothing
+        self.assertEqual(out[-1], "next: compose clean --project p")
+
+    def test_a_github_stack_follows_the_merge_method(self):
+        self.stacked()
+        self.land(method="rebase")
+        puts = [c for c in self.log() if " PUT " in f" {c} "]
+        self.assertTrue(puts and all("merge_method=rebase" in c for c in puts), puts)
+
+    def test_a_github_stack_merge_that_fails_stops_with_what_github_said(self):
+        self.stacked()
+        self.set_pr(1, refuse="Required status check is expected")
+        out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("merge of #1" in l and "Required status check is expected" in l for l in out), out)
+        self.assertEqual(self.prs()["1"]["state"], "OPEN")
+
     def test_the_merge_method_follows_the_flag_then_verify_json(self):
         self.submitted()
         self.config(land_method="rebase")
