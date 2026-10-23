@@ -372,5 +372,45 @@ class BoardOneListing(unittest.TestCase):
         self.assertEqual(len(calls) - len(merged), 1)
 
 
+class WatchFilesStamp(unittest.TestCase):
+    """A `watch` saves its memory between ticks: that must not make the cached board stale, while every other state change must."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, ENV); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        self.git("init", "-q", "-b", "main")
+        self.git("commit", "-q", "--allow-empty", "-m", "init")
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "results" / "verify.json").write_text("{}")
+        (self.proj / "layers.json").write_text("{}")
+
+    def git(self, *a):
+        return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def stamp(self):
+        return fc.fc_status.board_stamp(self.repo, self.proj)
+
+    def test_writing_a_watch_file_leaves_the_stamp_as_it_was(self):
+        for name in ("watch-all.json", "watch-001.json"):
+            before = self.stamp()
+            (self.proj / "results" / name).write_text("{}")
+            self.assertEqual(self.stamp(), before, f"new {name}")
+            (self.proj / "results" / name).write_text('{"seen": ["a", "b"]}')
+            self.assertEqual(self.stamp(), before, f"rewritten {name}")
+
+    def test_rewriting_another_json_changes_the_stamp(self):
+        for path in (self.proj / "results" / "verify.json", self.proj / "results" / "001.json", self.proj / "layers.json", self.proj / "watch-x.json"):
+            before = self.stamp()
+            path.write_text('{"changed": true}')
+            self.assertNotEqual(self.stamp(), before, str(path.relative_to(self.proj)))
+
+    def test_a_new_branch_changes_the_stamp_even_beside_watch_writes(self):
+        before = self.stamp()
+        (self.proj / "results" / "watch-all.json").write_text("{}")
+        self.git("branch", "compose/p-001")
+        self.assertNotEqual(self.stamp(), before)
+
+
 if __name__ == "__main__":
     unittest.main()
