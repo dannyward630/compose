@@ -1,6 +1,6 @@
 import shlex, json, os, re, shutil, signal, subprocess, sys, time
 from pathlib import Path
-import fc_core, fc_harness, fc_models
+import fc_core, fc_harness, fc_models, fc_proc
 
 
 # ---------- herdr ----------
@@ -135,7 +135,10 @@ def herdr_start_crew(*args, tries=8):
     has not yet registered the name the start waits for (the session may be up under its pane's default name: it is renamed)."""
     for i in range(tries):
         try:
-            return herdr("agent", "start", *args, check=True, timeout=90)
+            r = herdr("agent", "start", *args, check=True, timeout=90)
+            if "--pane" in args:
+                agent_pids(args[args.index("--pane") + 1])
+            return r
         except RuntimeError as e:
             if ("timeout" in str(e) or "agent_name_not_found" in str(e)) and "--pane" in args:  # the session can come up after the call gave up: name it rather than lose it
                 pane = args[args.index("--pane") + 1]
@@ -158,7 +161,7 @@ def pane_processes(pane):
         if info.get("foreground_process_group_id") != info.get("shell_pid") else []
 
 def agent_pids(pane):
-    raise NotImplementedError("not implemented")
+    return sorted(p["pid"] for p in pane_processes(pane) if fc_proc.nice_floor(p["pid"]) is not None)
 
 def pane_launching(agent, pane):
     """True when `agent` is registered by name, listed on `pane`, or the pane runs a process that is still becoming it."""
@@ -398,6 +401,8 @@ def herdr_agent_start(*args, tries=8):
         time.sleep(0.5 * (i + 1))
     if err:
         raise RuntimeError(f"herdr agent start: {err}")
+    if "--pane" in args:
+        agent_pids(args[args.index("--pane") + 1])
     return started
 
 
