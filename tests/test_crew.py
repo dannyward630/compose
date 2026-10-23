@@ -1361,3 +1361,33 @@ class CrewLoadWait(unittest.TestCase):
         self.assertEqual(self.crew("start", mock.Mock(), battery="9%").call_count, 0)  # the battery check comes first
         for action in ("list", "focus", "stop"):
             self.assertEqual(self.crew(action, mock.Mock()).call_count, 0, action)
+
+
+class CrewRecorded(unittest.TestCase):
+    def start(self, model, pids, fail=False):
+        """(the record call args or None, the pane agent_pids was asked about, the teammate's recorded cwd); the exit is swallowed."""
+        import fc_started
+        proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
+        def herdr(*args, **kw):
+            return {"agents": []} if args[:2] == ("agent", "list") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {"agent": {"agent_status": "working"}}
+        a = type("A", (), {"action": "start", "role": "planner", "title": "planner", "brief": "Go."})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, None, "test", [])), \
+                mock.patch.object(fc.fc_herdr, "herdr_start_crew", side_effect=RuntimeError("no start") if fail else None), mock.patch.object(fc.fc_herdr, "pane_launching", return_value=False), \
+                mock.patch.object(fc.fc_herdr, "agent_pids", return_value=pids) as ap, mock.patch.object(fc_started, "record") as rec, mock.patch("builtins.print"), contextlib.suppress(SystemExit):
+            fc.fc_crew.cmd_crew(a)
+        cwd = (fc.fc_crew.crew_record(proj, "shop-planner") or {}).get("cwd")
+        return (rec.call_args if rec.called else None), (ap.call_args.args[0] if ap.called else None), cwd, proj, rec.call_count
+
+    def test_both_harness_paths_record_the_lowest_pid_with_project_and_cwd(self):
+        for model in ("claude", "pi:x/y"):
+            with self.subTest(model=model):
+                call, pane, cwd, proj, count = self.start(model, [412, 77, 900])
+                self.assertEqual((count, pane, bool(cwd)), (1, "w9:p7", True))
+                self.assertEqual((call.args[:3], call.kwargs.get("cwd"), call.kwargs.get("waiter")), ((77, "teammate", str(proj)), cwd, None))
+
+    def test_a_failed_start_or_no_pid_records_nothing(self):
+        for model, pids, fail in (("claude", [412], True), ("pi:x/y", [412], True), ("claude", [], False), ("pi:x/y", [], False)):
+            with self.subTest(model=model, pids=pids, fail=fail):
+                self.assertEqual(self.start(model, pids, fail)[4], 0)
