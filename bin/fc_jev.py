@@ -148,10 +148,10 @@ def driver_e2e(case, repo):
     env = {**fc_core.clean_env(), **{k: str(v) for k, v in (case.get("env") or {}).items()}}
     with case_setup(case, repo, env):
         # In a group of its own that a SIGTERM or SIGHUP ends (fc_proc.RUNNING), like everything else the stage started.
-        p = fc_proc.run(["/bin/sh", "-c", case["driver"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
+        p = fc_proc.run_limited(["/bin/sh", "-c", case["driver"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
         out, err, code = p.stdout, p.stderr, p.returncode
         if not code and case.get("assert"):  # the independent check runs after every case, same env and cwd as the driver
-            a = fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
+            a = fc_proc.run_limited(["/bin/sh", "-c", case["assert"]], cwd=repo, env=env, timeout=case.get("timeout", 600))
             out, err, code = out + a.stdout, err + a.stderr, a.returncode
     if p.returncode and re.search(r"\b402\b|payment required|insufficient credits", p.stdout + p.stderr, re.I):
         raise fc_models.PaymentRequired("jev e2e (TypeSafe or text model)", (p.stderr or p.stdout).strip()[-300:])
@@ -231,7 +231,7 @@ def jev_e2e(case, repo):
     env_file = ["--env-file", str(fc_config.ENV_FILE)] if fc_config.ENV_FILE.exists() else []
     flags = (["--secrets", json.dumps(case["secrets"])] if case.get("secrets") else []) + (["--record", str(record)] if record else [])
     cmd = shlex.join(["uv", "run", "--quiet", *env_file, "python", "-m", "jev_ultrafast", "--hold", *flags, "--", case["url"], case["goal"]])
-    check = lambda: fc_proc.run(["/bin/sh", "-c", case["assert"]], cwd=repo, env=project_env, timeout=case.get("timeout", 600)) if case.get("assert") else None
+    check = lambda: fc_proc.run_limited(["/bin/sh", "-c", case["assert"]], cwd=repo, env=project_env, timeout=case.get("timeout", 600)) if case.get("assert") else None
     with case_setup(case, repo, project_env):
         p, a = run_held(cmd, limit, env, check)  # the assert reads the case's tab, so it runs before jev closes it
     # JEV_RESULT, its history included, is kept parsed in "run"; stdout keeps what jev and the assert printed besides.

@@ -24,9 +24,9 @@ def run(cmd, cwd=None, env=None, timeout=None):
     try:
         try:
             out, err = p.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             kill_group(p.pid)
-            p.communicate()
+            e.stdout, e.stderr = p.communicate()  # what the command printed before it was killed
             raise
         except KeyboardInterrupt:  # Ctrl-C or a SIGINT to this process: the command is part of what is being stopped
             kill_group(p.pid)
@@ -36,6 +36,16 @@ def run(cmd, cwd=None, env=None, timeout=None):
         return subprocess.CompletedProcess(cmd, p.returncode, out, err)
     finally:
         RUNNING.discard(p.pid)
+
+
+def run_limited(cmd, cwd=None, env=None, timeout=None):
+    """`run` for a check or a case, where passing the limit is a failure to report, not a crash: the CompletedProcess has exit 124 (as
+    `timeout(1)`), the output printed before the kill, and a last stderr line naming the limit. Raises Stopped after the stop."""
+    try:
+        return run(cmd, cwd=cwd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        err = (e.stderr or "") + ("\n" if e.stderr and not e.stderr.endswith("\n") else "") + f"TIMEOUT: did not finish within {timeout}s\n"
+        return subprocess.CompletedProcess(cmd, 124, e.stdout or "", err)
 
 
 def kill_group(pid):

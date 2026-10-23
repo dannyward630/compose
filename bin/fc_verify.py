@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
 
+CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
 def verify_failed(proj, rounds, findings):
     """verify ended FAIL after its fix rounds: screen the settled lines against the confirmed findings. Tool errors are not
@@ -177,13 +178,13 @@ def run_stages(repo, proj, cfg, a, tests=None):
     def run_checks(cmds, into):
         for c in cmds:
             t1, clk = time.time(), fc_proc.clock()
-            p = fc_proc.run(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=900)  # in a group of its own: a stop ends the whole suite
+            p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT)  # in a group of its own: a stop ends the whole suite
             full = fc_core.scrub(p.stdout + p.stderr)
             out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
             nap = fc_proc.slept(clk) if p.returncode else 0  # a check the machine slept through fails on the sleep: its network and its clocks stopped with it
             if p.returncode and (nap or fc_jev.tool_error(out)):
                 fc_core.say(f"check  {fc_proc.slept_text(nap) + '; run again' if nap else 'tool error; retrying once'}  {c}")
-                p = fc_proc.run(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=900)
+                p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT)
                 full = fc_core.scrub(p.stdout + p.stderr)
                 out = full[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
@@ -374,7 +375,7 @@ def fix_answers(repo, fixed, report, install=None):
     ran = [r["cmd"] for r in report.get("checks", []) + report.get("scoped", [])]
     named = [str(i.get("file") or "").lstrip("./") for i in (report.get("review") or {}).get("confirmed", [])]
     return any(q and q in removed for q in quotes) or bool(failed(report.get("e2e", []))) or \
-        any(fc_proc.run(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=fc_core.clean_env(), timeout=900).returncode == 0
+        any(fc_proc.run_limited(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT).returncode == 0
             for r in failed(report.get("checks", []) + report.get("scoped", []))) or \
         (any(n and (f == n or f.endswith("/" + n)) and not fc_gate.TEST_FILE_RE.search(f) for n in named for f in fixed)
          and fc_gate.new_tests_prove(fc_implement.timed, repo, fixed, ran, install))
