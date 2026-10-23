@@ -1465,16 +1465,16 @@ class WatchLoadWarn(unittest.TestCase):  # a warn or a cleared entry is told to 
         self.load, self.proj, self.calls = fc_load, Path(tempfile.mkdtemp()) / "hw", []
         (self.proj / "results").mkdir(parents=True)
         self.claim, self.notify = mock.Mock(return_value=True), mock.Mock()
-        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(11.0,) * 3),
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", lambda: (self.avg,) * 3),  # the last entry's avg: update() then adds nothing
                   mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: self.calls.append(a)), mock.patch.object(fc.fc_crew, "desktop_notify", self.notify),
                   mock.patch.object(fc_load, "claim", self.claim)):
             p.start(); self.addCleanup(p.stop)
         fc.fc_watch.watch_save(self.proj, "m", load_n=0)
 
     def log(self, *entries, manager="%7"):
-        if manager:
-            (self.proj / "results" / "manager.json").write_text(json.dumps({"session": manager}))
+        self.avg = entries[-1][1]
         (Path.home() / ".compose").mkdir(exist_ok=True)
+        manager and (self.proj / "results" / "manager.json").write_text(json.dumps({"session": manager}))
         (Path.home() / ".compose" / "load.json").write_text(json.dumps({"held": False, "since": None, "n": len(entries), "warn": entries[-1][0] == "warn", "claimed": [],
             "memory": None, "log": [{"n": i, "at": time.time(), "kind": k, "avg": a} for i, (k, a) in enumerate(entries, 1)]}))
 
