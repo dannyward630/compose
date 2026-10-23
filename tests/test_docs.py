@@ -678,7 +678,7 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
-        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default: a quarter of the cores, at least 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2). `COMPOSE_TEST_JOBS=<n>` is how many test files `python3 -m tests.run` runs side by side (default: half the cores; `-j` overrides it) |", reqs)
+        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 1); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2). `COMPOSE_TEST_JOBS=<n>` is how many test files `python3 -m tests.run` runs side by side (default: a quarter of the cores; `-j` overrides it) |", reqs)
         timed = [l for l in cli if l.startswith("| `timed <seconds> -- <command>` |")]
         self.assertEqual(len(timed), 1, "one timed row")
         for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "COMPOSE_QUICK_SLOTS", "SIGTERM"):
@@ -1272,7 +1272,7 @@ SETUP_ROW = "| `compose setup [--yes]` | Installs and configures everything `com
 DEVELOPMENT = [
     "## Development",
     "",
-    "Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else half the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially.",
+    "Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else a quarter of the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially.",
     "Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).",
     "Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.",
     "The CLI core is stdlib; `jev/` is a uv project, and `bp/` is one Node file with no dependencies.",

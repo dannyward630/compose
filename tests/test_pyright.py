@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = {"include": ["bin"], "typeCheckingMode": "strict", "pythonVersion": "3.9", "pythonPlatform": "Darwin"}
 COMMAND = "npx -y pyright@1.1.414 --pythonpath /usr/bin/python3"
 LINE = f"Type-check the CLI with `{COMMAND}` (strict; the error count is reported, nothing is gated on it)."
-TESTS_LINE = "Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else half the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially."
+TESTS_LINE = "Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else a quarter of the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially."
 
 
 def development():
