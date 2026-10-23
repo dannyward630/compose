@@ -496,7 +496,7 @@ class CheckoutBp(unittest.TestCase):
         return str(d)
 
     def test_the_import_put_the_checkout_bp_first(self):
-        self.assertEqual(os.environ["PATH"].split(os.pathsep)[0], CHECKOUT_BP)
+        self.assertEqual([p for p in os.environ["PATH"].split(os.pathsep) if p != str(hermetic.guard_dir())][0], CHECKOUT_BP)
         self.assertEqual(os.path.realpath(shutil.which("bp")), self.target)
 
     def test_it_wins_over_a_dangling_or_different_bp_ahead_and_keeps_the_rest_in_order(self):

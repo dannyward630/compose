@@ -1,7 +1,8 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, subprocess, sys, tempfile, time, types, unittest
+import io, json, os, shutil, subprocess, sys, tempfile, time, types, unittest
 from pathlib import Path
 from unittest import mock
+from cleanup_kit import fc
 os.environ["HERDR_ENV"] = ""
 
 
@@ -91,6 +92,89 @@ class HermeticCleanup(unittest.TestCase):
             h = Path(tempfile.mkdtemp()) / "gh"; h.write_text("#!/bin/sh\necho 1.0.0\n"); h.chmod(0o755)
             made["h"] = subprocess.run([str(h)], capture_output=True, text=True).stdout
         self.assertEqual(self.run_case(body), {"f": "2.0.0\n", "g": "#!/bin/sh\necho 1.0.0\n", "h": "1.0.0\n"})
+
+
+class HermeticMachine(unittest.TestCase):
+    """No test touches the real machine: lsof and herdr on PATH are fakes, and a process a test registers dies with it."""
+
+    def process(self, cwd):
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"], cwd=cwd)
+        p.cwd = cwd
+        self.addCleanup(lambda: (p.kill(), p.wait()))
+        return p
+
+    def alive(self, p):
+        deadline = time.time() + 5
+        while p.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+        return p.poll() is None
+
+    def test_lsof_and_herdr_on_the_path_are_the_fakes(self):
+        self.assertEqual(Path(shutil.which("lsof")).parent, hermetic.guard_dir())
+        self.assertEqual(Path(shutil.which("herdr")).parent, hermetic.guard_dir())
+        self.assertNotEqual(os.environ.get("HERDR_ENV"), "1")  # the suite is no pane of the user's herdr
+        for var in ("HERDR_SOCKET_PATH", "HERDR_SESSION", "HERDR_BIN_PATH", "HERDR_TAB_ID"):
+            self.assertNotIn(var, os.environ)
+
+    def test_the_fake_lsof_knows_only_the_listeners_a_test_registers(self):
+        scan = lambda: subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-t"], capture_output=True, text=True).stdout.split()
+        self.assertEqual(scan(), [])
+        p = self.process(tempfile.mkdtemp())
+        hermetic.listen(p.pid, 8001, Path.cwd())
+        self.assertEqual(scan(), [str(p.pid)])
+
+    def test_listeners_under_asks_lsof_twice_however_many_servers_there_are(self):
+        root = Path(tempfile.mkdtemp()).resolve()
+        inside = [self.process(root) for _ in range(12)]
+        outside = [self.process(tempfile.mkdtemp()) for _ in range(3)]
+        for i, p in enumerate(inside + outside):
+            hermetic.listen(p.pid, 9000 + i, Path(p.cwd).resolve())
+        hermetic.guard_calls(clear=True)
+        self.assertEqual(sorted(fc.fc_crew.listeners_under(root)), sorted(str(p.pid) for p in inside))
+        self.assertEqual(len(hermetic.guard_calls("lsof")), 2, hermetic.guard_calls())
+        hermetic.guard_calls(clear=True)
+        self.assertEqual(fc.fc_crew.listeners_under(tempfile.mkdtemp()), [])
+        self.assertEqual(len(hermetic.guard_calls("lsof")), 2)
+
+    def test_kill_listeners_asks_lsof_once_for_all_the_ports(self):
+        servers = {9100 + i: self.process(tempfile.mkdtemp()) for i in range(3)}
+        for port, p in servers.items():
+            hermetic.listen(p.pid, port, Path.cwd())
+        keep = self.process(tempfile.mkdtemp())
+        hermetic.listen(keep.pid, 9199, Path.cwd())
+        hermetic.guard_calls(clear=True)
+        fc.fc_jev.kill_listeners(set(servers))
+        self.assertEqual(len(hermetic.guard_calls("lsof")), 1, hermetic.guard_calls())
+        self.assertEqual([self.alive(p) for p in servers.values()], [False] * 3)
+        self.assertTrue(self.alive(keep))
+
+    def run_case(self, body):
+        class Case(unittest.TestCase):
+            def test_it(self):
+                body(self)
+        return unittest.TextTestRunner(stream=io.StringIO()).run(unittest.defaultTestLoader.loadTestsFromTestCase(Case))
+
+    def test_a_test_that_starts_a_herdr_agent_starts_none_and_fails(self):
+        def body(case):
+            with mock.patch.dict(os.environ, {"HERDR_ENV": "1", "HERDR_SOCKET_PATH": "/nowhere/herdr.sock"}):
+                case.assertIsNone(fc.fc_herdr.herdr("agent", "start", "p-tester", "--cwd", tempfile.mkdtemp()))
+        result = self.run_case(body)
+        self.assertEqual(len(result.failures), 1, result.errors)
+        self.assertIn("real herdr", result.failures[0][1])
+        self.assertIn("herdr agent start p-tester", result.failures[0][1])
+
+    def test_a_test_that_reads_herdrs_version_is_not_a_failure(self):
+        result = self.run_case(lambda case: case.assertEqual(subprocess.run(["herdr", "--version"], capture_output=True, text=True).returncode, 0))
+        self.assertTrue(result.wasSuccessful(), result.failures)
+
+    def test_a_process_a_test_registers_is_killed_when_the_test_ends(self):
+        made = {}
+        def body(case):
+            made["p"] = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+            hermetic.listen(made["p"].pid, 9300, Path.cwd())
+        self.run_case(body)
+        self.addCleanup(lambda: (made["p"].kill(), made["p"].wait()))
+        self.assertFalse(self.alive(made["p"]))
 
 
 class HermeticModules(unittest.TestCase):
