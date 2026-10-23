@@ -1009,5 +1009,34 @@ class NoTestToWrite(unittest.TestCase):
         self.assertEqual(self.testcrews(only="003", print_=False)[1], ["tests-003"])
 
 
+class ContractSlice(unittest.TestCase):
+    CONTRACT = "pre\n## types\nT\n### sub\ns\n## task 001\nA\n### a-sub\nx\n## task 002\nB\n### b-sub\ny\n## helpers\nH\n### task 009\nnot a section\n## task 10\nC\n"
+
+    def test_keeps_shared_parts_and_its_own_section_in_contract_order(self):
+        self.assertEqual(fc.fc_briefs.contract_slice(self.CONTRACT, "001"),
+                         "pre\n## types\nT\n### sub\ns\n## task 001\nA\n### a-sub\nx\n## helpers\nH\n### task 009\nnot a section\n")
+        self.assertEqual(fc.fc_briefs.contract_slice(self.CONTRACT, "002"),
+                         "pre\n## types\nT\n### sub\ns\n## task 002\nB\n### b-sub\ny\n## helpers\nH\n### task 009\nnot a section\n")
+
+    def test_the_id_must_equal_the_heading_id(self):
+        sliced = fc.fc_briefs.contract_slice(self.CONTRACT, "10")
+        self.assertIn("## task 10\nC\n", sliced)
+        self.assertNotIn("## task 001", sliced); self.assertNotIn("## task 002", sliced)
+
+    def test_a_contract_without_task_sections_comes_back_unchanged(self):
+        for text in ("", "plain text", "pre\n## types\nT\n### sub\ns\n", "## a\nb\n## c\nd"):
+            self.assertEqual(fc.fc_briefs.contract_slice(text, "001"), text)
+
+    def test_test_brief_ends_with_the_slice(self):
+        brief = fc.fc_briefs.test_brief({"id": "002", "protected": ["tests/test_a.py"], "test": "true"}, self.CONTRACT)
+        self.assertEqual(brief.split("CONTRACT:\n", 1)[1], fc.fc_briefs.contract_slice(self.CONTRACT, "002"))
+        self.assertNotIn("## task 001", brief)
+
+    def test_groundwork_brief_holds_the_format_line(self):
+        line = ("Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) "
+                "with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.")
+        self.assertIn(line, fc.fc_briefs.GROUNDWORK_BRIEF.splitlines())
+
+
 if __name__ == "__main__":
     unittest.main()
