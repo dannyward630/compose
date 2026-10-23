@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
 
 
 def verify_failed(proj, rounds, findings):
@@ -388,6 +388,11 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     rejected, tests = [], None  # the first round runs the full checks; a fix round only the tests of what its fix changed
     branch = lambda: fc_core.sh(["git", "branch", "--show-current"], repo, check=False).stdout.strip()
     stands_on = branch()
+    lap = time.time()
+    def round_logged(ok):
+        nonlocal lap
+        fc_history.record(proj, repo, "verify-round", round=len(rounds), outcome="pass" if ok else "fail", seconds=round(time.time() - lap, 1))
+        lap = time.time()
     for rnd in range(a.fix + 1):
         if cfg.get("main_repo"):  # a fix round may have changed the lockfile
             fc_worktree.ready_checkout(cfg["main_repo"], repo, install=cfg.get("install"))
@@ -398,6 +403,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                         "and the stages judged that code, not the stack top; run verify again")
             sys.exit(1)
         rounds.append(report)
+        round_logged(ok)
         fc_ledger.verify_record(proj, repo, report)
         report["sufficiency"] = fc_accept.jev_sufficiency(cfg, proj, repo) if not a.skip_review and cfg.get("jev_acceptance", True) else None
         while True:
@@ -406,6 +412,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                 break
             ok, report, findings = run_stages(repo, proj, cfg, a, tests)
             rounds.append(report)
+            round_logged(ok)
             fc_ledger.verify_record(proj, repo, report)
             report["sufficiency"] = fc_accept.jev_sufficiency(cfg, proj, repo) if not a.skip_review and cfg.get("jev_acceptance", True) else None
         if failed:
@@ -533,6 +540,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     fc_core.say((f"review {'PASS' if ok else 'FAIL'} (review and acceptance only; the full verify runs the checks and e2e)" if review_only else
                  f"smoke {'PASS' if ok else 'FAIL'} ({', '.join('no ' + x for x in left_out)})" if left_out else f"verify {'PASS' if ok else 'FAIL'}")
                 + f"  wall {fc_core.fmt(final['seconds'])}  rounds={len(rounds)}")
+    fc_history.record(proj, repo, "verify-end", rounds=len(rounds), seconds=final["seconds"], cost=final["cost"]["total"], outcome="pass" if ok else "fail")
     if ok and not left_out:
         fc_linear.linear_reconcile(proj, verified=True)
     fc_core.say(fc_core.LEDGER.line())

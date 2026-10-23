@@ -265,6 +265,16 @@ def is_info(e):
 
 URGENT = re.compile(r"event (?:stall=|halt=|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
+ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=)|sign-in", re.I)
+
+def is_quiet(a, proj, sources):
+    """Whether this watch wakes only for what needs attention: the engineering manager's `--from orchestrator` watch, or any watch given
+    `--attention`; `--all` turns it off. Then only an URGENT or ATTENTION line wakes it, and the progress lines before it (task states, a
+    verify result, a run's end, working pings) are printed in the same wake, never alone."""
+    if getattr(a, "all", False):
+        return False
+    return bool(getattr(a, "attention", False)) or (not os.environ.get("COMPOSE_ROLE") and fc_herdr.agent_name(proj.name, "orchestrator") in sources)
+
 def yolo_mark(proj, events):
     """Under the posture on (yolo or away), a question line tells the engineering manager it answers it itself, and who set the posture when another session did."""
     if not (y := fc_tasks.yolo_state(proj)):
@@ -317,6 +327,7 @@ def cmd_watch(a, rewake=False):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     sources = [fc_herdr.agent_ref(proj.name, x.strip()) for x in (a.from_ or "").split(",") if x.strip()]
     key = watch_key()
+    quiet = is_quiet(a, proj, sources)
     if a.now:
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("ended"), "verify": None, "halt": None,
@@ -364,9 +375,9 @@ def cmd_watch(a, rewake=False):
             after = watch_snapshot(repo, proj, agents)
             stalls = watch_stalls(proj, after, limit, key=key)
             ev = look(after, stalls)
-            if ev and all(is_info(e) for e in ev):  # progress pings alone: they wait for a wake to travel with, `before` stays put
+            if ev and all(is_info(e) or quiet and not (URGENT.search(e) or ATTENTION.search(e)) for e in ev):  # progress alone: it waits for a wake to travel with, `before` stays put
                 held_since = held_since or time.time()
-                if time.time() - held_since < INFO_HOLD:
+                if quiet or time.time() - held_since < INFO_HOLD:  # a quiet watch holds it until something needs attention
                     ev = []
             if ev:
                 if settle and not any(URGENT.search(e) for e in ev):  # the rest of the burst joins this wake

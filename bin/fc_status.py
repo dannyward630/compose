@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost, fc_history
 
 
 def project_head(repo, proj):
@@ -253,7 +253,8 @@ def cmd_projects(a):
 def cmd_cost(a):
     """Tokens per teammate session and per run provider; --json prints the rows and their total."""
     proj = fc_core.project_dir(a)
-    rows = fc_cost.rows(proj)
+    runs = [e for e in fc_history.read(a.repo, proj.name, 0) if e["kind"] == "run-end"]  # every run of the project, not only the latest
+    rows = fc_cost.rows(proj, runs)
     if a.json:
         print(json.dumps({"rows": rows, "total": fc_cost.total(rows)}, indent=2))
     else:
@@ -263,6 +264,9 @@ def cmd_status(a):
     """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress.
     --digest prints one honest line per project instead: the answer to "where are we"."""
     repo = Path(a.repo).resolve()
+    if getattr(a, "history", None) is not None:  # past runs, from the history the worktrees do not hold
+        print(fc_history.render(fc_history.read(repo, a.project, a.history)))
+        return
     projects = fc_core.all_projects(repo)
     if a.project:
         projects = {a.project: projects[a.project]} if a.project in projects else {}

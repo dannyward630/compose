@@ -3,6 +3,7 @@ fc_prompt
 fc_proc
 fc_auth
 fc_config
+fc_history
 fc_tiers
 fc_tierspend
 fc_budget

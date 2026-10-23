@@ -99,7 +99,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.compose/skill-seen/` | the skill files each session last saw |
 | `~/.compose/.env` | verify's `TEXT_MODEL*` and `TYPESAFE_MODEL` lines, no keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
-| `~/.compose/tool-bugs.jsonl` | every project's tool-bug reports, with the issue URL once filed |
+| `~/.compose/tool-bugs.jsonl`, `~/.compose/history.jsonl` | every project's tool-bug reports with the issue URL once filed, and one line per run start, run end, task result and verify round (time, task, model, attempts, duration, cost, outcome; no prompts or secrets) |
 | `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |
