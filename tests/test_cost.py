@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
+import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -134,6 +134,70 @@ class SessionUsage(unittest.TestCase):
             self.assertGreater(loads.call_count, n)
             write(log, [asst("m1", input_tokens=7, output_tokens=2)], 1_000_100)
             self.assertEqual(fc_sessions.usage(log), dict(want, input=7))
+
+
+class SessionDiskCache(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        p = mock.patch("pathlib.Path.home", return_value=self.home)
+        p.start()
+        self.addCleanup(p.stop)
+        self.log = self.home / "s.jsonl"
+        self.saved = self.home / ".compose" / "usage" / (hashlib.sha1(str(self.log).encode()).hexdigest() + ".json")
+
+    def read(self):
+        """usage() as a new process calls it: nothing in memory. Returns (result, opens of the log, message lines parsed)."""
+        fc_sessions._cache.clear()
+        opened, parsed, real_open, real_loads = [], [], open, json.loads
+        spy_open = lambda f, *a, **k: (opened.append(str(f)), real_open(f, *a, **k))[1]
+        spy_loads = lambda s, *a, **k: (parsed.append("message" in str(s)), real_loads(s, *a, **k))[1]
+        with mock.patch("builtins.open", spy_open), mock.patch("io.open", spy_open), mock.patch.object(fc_sessions.json, "loads", spy_loads):
+            result = fc_sessions.usage(self.log)
+        return result, opened.count(str(self.log)), sum(parsed)
+
+    def two(self):
+        write(self.log, [asst("m1", input_tokens=1, output_tokens=2), asst("m2", input_tokens=3, output_tokens=4)], 1_000_000)
+
+    def test_unchanged_log_is_not_opened_by_a_new_process(self):
+        self.two()
+        want, opens, _ = self.read()
+        self.assertEqual(opens, 1)
+        saved = json.loads(self.saved.read_text())
+        self.assertEqual(sorted(saved), ["model", "offset", "result", "seen", "stat", "sums", "turns"])
+        self.assertEqual((saved["seen"], saved["offset"], saved["result"]), (["m1", "m2"], self.log.stat().st_size, want))
+        self.assertEqual([x.name for x in self.saved.parent.iterdir()], [self.saved.name])
+        before = self.saved.read_bytes()
+        self.assertEqual(self.read(), (want, 0, 0))
+        self.assertEqual(self.saved.read_bytes(), before)
+
+    def test_grown_log_is_read_from_the_saved_offset_and_matches_a_fresh_read(self):
+        self.two()
+        self.read()
+        m3, m2, m4 = (json.dumps(asst(i, input_tokens=5, output_tokens=6)) for i in ("m3", "m2", "m4"))
+        with self.log.open("a") as f:
+            f.write(m3 + "\n" + m2 + "\n" + m4[:20])
+        result, opens, parsed = self.read()
+        self.assertEqual((result["turns"], opens, parsed), (3, 1, 2))
+        with self.log.open("a") as f:
+            f.write(m4[20:] + "\n")
+        result, opens, parsed = self.read()
+        self.assertEqual((result["turns"], opens, parsed), (4, 1, 1))
+        self.saved.unlink()
+        self.assertEqual(self.read()[0], result)
+
+    def test_log_rewritten_shorter_is_read_from_the_start(self):
+        self.two()
+        self.read()
+        write(self.log, [asst("m9", input_tokens=7, output_tokens=8)], 1_000_001)
+        self.assertEqual(self.read(), ({"model": "claude-sonnet-5-5", "turns": 1, "input": 7, "cache_created": 0, "cache_read": 0, "output": 8}, 1, 1))
+        self.assertEqual(json.loads(self.saved.read_text())["offset"], self.log.stat().st_size)
+
+    def test_broken_cache_file_is_ignored(self):
+        self.two()
+        want = self.read()[0]
+        self.assertTrue(self.saved.exists())
+        self.saved.write_text('{"offset": 99, "seen": [')
+        self.assertEqual(self.read(), (want, 1, 2))
 
 
 def project():
