@@ -728,7 +728,7 @@ class CodexArgv(unittest.TestCase):
     def test_exact_list(self):
         trust = "projects={%s={trust_level=\"trusted\"}}" % json.dumps(os.path.realpath(self.cwd))
         text = json.dumps("p\n\nThe compose skill is the file /s/SKILL.md.")
-        self.assertEqual(self.argv(), ["-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"', "-s", "workspace-write", "-a", "never",
+        self.assertEqual(self.argv(), ["-c", "check_for_update_on_startup=false", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"', "-s", "workspace-write", "-a", "never",
                                        "-c", "sandbox_workspace_write.network_access=true", "-c", trust, "-c", "developer_instructions=" + text,
                                        "--add-dir", str(self.results), "--add-dir", self.dirs[0], "--add-dir", self.dirs[1]])
 
@@ -737,7 +737,14 @@ class CodexArgv(unittest.TestCase):
             argv = self.argv(model, None)
             self.assertNotIn("-m", argv)
             self.assertFalse([a for a in argv if "model_reasoning_effort" in a])
-            self.assertEqual(argv[:2], ["-s", "workspace-write"])
+            self.assertEqual(argv[:4], ["-c", "check_for_update_on_startup=false", "-s", "workspace-write"])
+
+    def test_update_check_is_off_once_and_parses_as_false(self):
+        for model, effort in (("codex:gpt-6.1-sol", "high"), ("codex", None), ("codex:x", None), ("codex", "high")):
+            argv = self.argv(model, effort)
+            self.assertEqual(argv[:2], ["-c", "check_for_update_on_startup=false"], model)
+            self.assertEqual(sum(a.startswith("check_for_update_on_startup") for a in argv), 1, model)
+            self.assertEqual(tomllib.loads(argv[1]), {"check_for_update_on_startup": False})
 
     def test_work_goes_last_and_repeats_or_missing_repos_are_left_out(self):
         self.assertEqual(self.adds(self.argv(work=self.work)), [str(self.results), *self.dirs, str(self.work), *self.wdirs])
@@ -785,6 +792,7 @@ class CodexStart(unittest.TestCase):
         self.assertEqual((start[3:10], rec["effort"], "skill" in rec), (("--kind", "codex", "--pane", "w9:p7", "--timeout", "60000", "--"), "high", True))
         argv = fc_harness.crew_argv("codex:gpt-6.1-sol", "high", fc.fc_crew.TRUST_PROMPT, fc.fc_crew.CLI_REPO / "SKILL.md", rec["cwd"], fc.fc_crew.crew_dir(proj).parent, None)
         self.assertEqual([str(x) for x in start[10:]], [str(x) for x in argv])
+        self.assertEqual(start[10:12], ["-c", "check_for_update_on_startup=false"])
         ready.assert_not_called()
         self.assertFalse([c for c in calls if any("key" in str(x) for x in c[:2])])  # Codex's "Hooks need review" dialog is never answered
 
@@ -796,6 +804,8 @@ class CodexStart(unittest.TestCase):
     def test_claude_and_pi_roles_start_as_before(self):
         start, ready, rec = self.start(entry="claude:claude-sonnet-5-5")[:3]
         self.assertEqual((start[4], ready.call_count, "skill" in rec, self.start(entry="pi:x/y")[0][4]), ("claude", 1, False, "pi"))
+        self.assertFalse([x for x in start if "check_for_update" in str(x)])
+        self.assertFalse([x for x in self.start(entry="pi:x/y")[0] if "check_for_update" in str(x)])
         with self.assertRaises(SystemExit): self.start(entry="claude:claude-sonnet-5-5", trusted=False)  # only a Codex teammate skips the trust check
 
     def test_crew_pick_full_accepts_codex_and_refuses_the_rest_exactly(self):
@@ -864,6 +874,7 @@ class CodexLead(unittest.TestCase):
             argv = lambda **kw: [str(x) for x in fn(m, "high", "p", "/s/SKILL.md", cwd, res, **kw)]
             add = lambda *dirs: [x for d in dirs for x in ("--add-dir", str(d))]
             self.assertEqual(argv(more=()), argv())
+            self.assertEqual(argv(more=(a, b))[:2], ["-c", "check_for_update_on_startup=false"])
             self.assertEqual(argv(more=(a, b)), argv() + add(a, b))
             self.assertEqual(argv(more=(a, None, a, b)), argv() + add(a, b))
             self.assertEqual(argv(work=b, more=(a,)), argv(work=b) + add(a))
