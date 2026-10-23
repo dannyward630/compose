@@ -1,6 +1,6 @@
 """Green check results kept by the git tree they ran on, so the same command on the same files is not run twice.
 Imports only lower modules."""
-import hashlib, json, os, tempfile, time
+import hashlib, json, os, shutil, tempfile, time
 from pathlib import Path
 import fc_core
 
@@ -17,7 +17,7 @@ def tree_of(repo, rev=None):
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
         if real.exists():
-            (Path(tmp) / "index").write_bytes(real.read_bytes())
+            shutil.copy2(real, Path(tmp) / "index")  # with its time: git rehashes a same-size edit of the index's own second only against that
         if fc_core.sh(["git", "add", "-A"], repo, check=False, env=env).returncode:
             return ""
         p = fc_core.sh(["git", "write-tree"], repo, check=False, env=env)

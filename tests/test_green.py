@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, shutil, subprocess, tempfile, unittest
+import io, json, os, shutil, subprocess, tempfile, time, unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +78,21 @@ class GreenStore(Repo):
         self.git("add", "-A"); self.git("commit", "-qm", "same files")
         self.assertEqual(fc.fc_green.tree_of(self.repo), added)
         self.assertEqual(fc.fc_green.tree_of(self.repo, "HEAD~1"), clean)
+
+    def test_an_edit_made_in_the_second_the_index_was_written_is_still_seen_a_second_later(self):
+        # git rehashes a file whose stat matches its index entry only when it is as new as the index file itself: a copy of the
+        # index must keep the real one's time, or a same-size edit of that second is taken for the committed file
+        for _ in range(20):
+            self.git("commit", "-q", "--allow-empty", "-m", "again"); self.git("add", "-A")
+            (self.repo / "a.txt").write_text("two\n" if (self.repo / "a.txt").read_text() == "one\n" else "one\n")  # the same size
+            if int((self.repo / "a.txt").stat().st_mtime) == int((self.repo / ".git" / "index").stat().st_mtime):
+                break
+            time.sleep(1)  # a second boundary came between: try again
+        time.sleep(1.1)
+        tree = fc.fc_green.tree_of(self.repo)
+        self.git("add", "-A")
+        self.assertEqual(tree, self.git("write-tree"))
+        self.assertNotEqual(tree, self.git("rev-parse", "HEAD^{tree}"))
 
     def test_a_folder_that_is_not_a_repo_has_no_tree(self):
         self.assertEqual(fc.fc_green.tree_of(Path(tempfile.mkdtemp())), "")
