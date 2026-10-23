@@ -171,12 +171,17 @@ def digest(repo, proj):
 
 def load_lines():
     s = fc_load.update()
-    low = f"{fc_load.limits()['low']:.1f}"
+    lim = fc_load.limits()
+    low = f"{lim['low']:.1f}"
     fmt = lambda t: time.strftime("%H:%M", time.localtime(t))
     if s["held"]:
         return [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, held since {fmt(s['since'])}: nothing new starts until it falls below {low}"]
     rel = [e for e in s["log"] if e["kind"] == "released"]
-    return [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, released at {fmt(rel[-1]['at'])} (below {low})"] if rel and time.time() - rel[-1]["at"] < 600 else []
+    out = [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, released at {fmt(rel[-1]['at'])} (below {low})"] if rel and time.time() - rel[-1]["at"] < 600 else []
+    warn = [e for e in s["log"] if e["kind"] == "warn"]
+    if s.get("warn") and warn:
+        out.append(f"load: {s['avg']:.1f} on {os.cpu_count()} cores is above the warn mark {lim['warn']:.1f} since {fmt(warn[-1]['at'])}: a hold starts above {lim['high']:.1f}")
+    return out
 
 def render_status(repo, projects):
     out = []
