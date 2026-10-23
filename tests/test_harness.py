@@ -371,6 +371,44 @@ class ClaudeTopLevel(unittest.TestCase):
         self.assertEqual(fc_config.settings(self.CFG, None), fc_config.settings(self.CFG))
 
 
+class CodexDefaultBlock(unittest.TestCase):
+    CFG = {"models": {"implementer": "claude:sonnet", "fallback": "claude:opus", "fix": "claude:opus",
+                      "crew": {"orchestrator": {"model": "claude:opus", "effort": "high", "fallback": ["claude:opus", "pi:x/y"]},
+                               "wayfinder": "claude:opus", "planner": "pi:openai/gpt-6-astra", "tests": "claude:haiku"}}}
+    setUp = HarnessBlock.setUp
+
+    def test_every_claude_crew_role_becomes_codex_and_a_pi_role_keeps_its_value(self):
+        crew = fc_config.settings(self.CFG, "codex")[1]["models"]["crew"]
+        self.assertEqual({k: (v["model"] if isinstance(v, dict) else v) for k, v in crew.items()},
+                         {"orchestrator": "codex", "wayfinder": "codex", "tests": "codex", "planner": "pi:openai/gpt-6-astra", "default": "codex", "designer": "codex"})
+        self.assertEqual((crew["orchestrator"]["effort"], crew["orchestrator"]["fallback"]), ("high", ["pi:x/y"]))  # the Claude fallback equals its own model, so it is dropped
+
+    def test_claude_implementer_fallback_fix_and_test_reader_become_codex_and_none_stays(self):
+        models = fc_config.settings(self.CFG, "codex")[1]["models"]
+        self.assertEqual((models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader")), ("codex",) * 4)
+        models = fc_config.settings({**self.CFG, "models": {**self.CFG["models"], "fallback": None, "fix": None}}, "codex")[1]["models"]
+        self.assertEqual((models["fallback"], models["fix"]), (None, None))
+
+    def test_a_config_block_wins_whole_and_is_not_merged_under_the_derived_one(self):
+        block = {"models": {"crew": {"default": "codex:gpt-6-sol"}}}
+        models = fc_config.settings({**self.CFG, "harnesses": {"codex": block}}, "codex")[1]["models"]
+        self.assertEqual((models["crew"], models["implementer"]), ({"default": "codex:gpt-6-sol"}, "claude:sonnet"))
+
+    def test_gemini_grok_and_an_unknown_name_with_no_block_still_exit(self):
+        cfg = {k: v for k, v in self.CFG.items() if k != "harnesses"}
+        for name in ("gemini", "grok", "nope"):
+            with self.subTest(name=name):
+                with self.assertRaises(SystemExit) as e: fc_config.settings(cfg, name)
+                self.assertEqual(str(e.exception), f'{fc_config.CONFIG_PATH}: no "harnesses.{name}" block')
+
+    def test_the_settings_hold_no_harnesses_key_and_the_input_and_its_file_are_unchanged(self):
+        cfg_before = json.dumps(self.CFG, sort_keys=True)
+        self.assertNotIn("harnesses", fc_config.settings(self.CFG, "codex")[1])
+        fc_config.write_config(self.CFG); file_before = fc_config.CONFIG_PATH.read_bytes()
+        with mock.patch.dict(os.environ): fc_config.apply_config(move=False, harness="codex")
+        self.assertEqual((fc_config.HARNESS, json.dumps(self.CFG, sort_keys=True), fc_config.CONFIG_PATH.read_bytes()), ("codex", cfg_before, file_before))
+
+
 class HarnessPassDown(unittest.TestCase):
     BLOCK = lambda m, t: {"models": {"crew": {"default": m, "tests": t}}}
     CFG = {"models": {"crew": {"default": "claude:top", "tests": "claude:toptests"}},
