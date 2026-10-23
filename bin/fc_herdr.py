@@ -157,6 +157,9 @@ def pane_processes(pane):
     return [p for p in info.get("foreground_processes", []) if p.get("pid") != info.get("shell_pid")] \
         if info.get("foreground_process_group_id") != info.get("shell_pid") else []
 
+def agent_pids(pane):
+    raise NotImplementedError("not implemented")
+
 def pane_launching(agent, pane):
     """True when `agent` is registered by name, listed on `pane`, or the pane runs a process that is still becoming it."""
     return bool(herdr("agent", "get", agent)) or any(ag.get("pane_id") == pane for ag in live_agents()) or bool(pane_processes(pane))

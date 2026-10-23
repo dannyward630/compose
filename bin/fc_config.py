@@ -52,6 +52,7 @@ os.environ.setdefault("GRAFT_NO_IGNORE", "1")
 CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> claude:<model-id>
 PARALLEL = None  # `parallel` from the config; None keeps each command's own default
 CLAUDE_PARALLEL = 3  # `claude_parallel` from the config: how many Claude Code writers (run's tasks, testcrews' test writers) run at once
+LOAD = {}  # `load` from the config: the keys that move limits() off its defaults
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}

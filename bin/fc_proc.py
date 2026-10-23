@@ -214,3 +214,6 @@ def slot(say=None, quick=False):
     finally:
         for fd in fds:
             os.close(fd)  # closing releases the lock
+
+def nice_floor(pid=None, floor=10):
+    raise NotImplementedError("not implemented")

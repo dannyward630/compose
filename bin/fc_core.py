@@ -43,6 +43,9 @@ def sh(cmd, cwd, timeout=None, check=True, env=None):
         raise RuntimeError(f"{cmd}\n{p.stdout}\n{p.stderr}")
     return p
 
+def worktree_branches(repo):
+    raise NotImplementedError("not implemented")
+
 def worktrees(repo):
     """Every checkout of this repository (main plus linked worktrees), as paths."""
     out = []

@@ -12,6 +12,7 @@ herdr_login_screen
 herdr_await_start
 herdr_start_crew
 pane_processes
+agent_pids
 pane_launching
 pane_kill
 agent_name

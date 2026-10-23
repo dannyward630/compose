@@ -10,6 +10,8 @@ NET_NUDGE
 STALL_SECONDS
 watch_mem
 watch_save
+watch_base
+load_events
 watch_lock
 watch_stalls
 RUN_ENDED

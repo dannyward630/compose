@@ -4,6 +4,7 @@ say
 Ledger
 LEDGER
 sh
+worktree_branches
 worktrees
 repo_link
 project_config

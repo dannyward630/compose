@@ -2,8 +2,10 @@ fc_core
 fc_harness
 fc_prompt
 fc_proc
+fc_started
 fc_auth
 fc_config
+fc_load
 fc_history
 fc_tiers
 fc_tierspend
@@ -46,6 +48,7 @@ fc_f0pages
 fc_ask
 fc_hooks
 fc_crew
+fc_shed
 fc_toolbug
 fc_init
 fc_clean

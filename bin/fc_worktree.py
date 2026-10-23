@@ -5,6 +5,12 @@ import fc_core, fc_config, fc_tasks
 
 # ---------- stacks (gh stack) ----------
 
+_prefixes = {}
+_commons = {}
+
+def refs_stamp(common):
+    raise NotImplementedError("not implemented")
+
 def task_prefix(repo, proj):
     """What every task, bench and test-writer branch of the project starts with: verify.json `task_prefix` when recorded, else
     `fast/<project>/` while such branches exist (recorded once), else the project branch plus `-`."""
@@ -18,6 +24,11 @@ def task_prefix(repo, proj):
             fc_core.atomic_write(f, json.dumps({**rec, "task_prefix": f"fast/{proj.name}/"}, indent=2))
         return f"fast/{proj.name}/"
     return fc_core.project_branch(proj) + "-"
+
+_heads = {}
+
+def heads(repo):
+    raise NotImplementedError("not implemented")
 
 def rename_legacy_branches(repo, proj):
     """Move a project whose `fast/<project>/` branches were never pushed onto the names a new project gets, once: every local

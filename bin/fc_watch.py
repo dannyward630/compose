@@ -117,6 +117,12 @@ def watch_save(proj, key, **kv):
     fc_core.atomic_write(f.with_suffix(".tmp"), json.dumps(mem))
     f.with_suffix(".tmp").replace(f)  # atomic: a reader never sees half a file
 
+def watch_base(proj, key):
+    raise NotImplementedError("not implemented")
+
+def load_events(proj, key):
+    raise NotImplementedError("not implemented")
+
 def watch_lock(proj, key, wait=True):
     """One live watch per watcher, held until the returned file closes. None when another holds it and wait is False."""
     (proj / "results").mkdir(parents=True, exist_ok=True)

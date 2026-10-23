@@ -169,6 +169,9 @@ def digest(repo, proj):
             out.append(f"{f.stem} asks: {last.get('message', '')[:100]}")
     return "; ".join(out)
 
+def load_lines():
+    raise NotImplementedError("not implemented")
+
 def render_status(repo, projects):
     out = []
     for proj in projects:

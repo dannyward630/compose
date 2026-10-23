@@ -9,6 +9,7 @@ board
 FAILED_STATES
 verify_why
 digest
+load_lines
 render_status
 project_summary
 cmd_projects
