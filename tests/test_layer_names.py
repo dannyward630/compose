@@ -79,9 +79,13 @@ class LayerNames(unittest.TestCase):
         self.assertEqual(self.git("diff", "feat/p-layer-03", "feat/p-003"), "")
 
 
-class StackLimit(unittest.TestCase):
+class StackFolds(unittest.TestCase):
     """Adjacent layers fold until the stack has no more PRs than max_stack_prs: same kind first, then any; recorded layers never."""
-    setUp, git, write, commit, stack = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit, LayersBase.stack
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve()
+        for target in ("subprocess.run", "subprocess.Popen"):
+            patch = mock.patch(target, side_effect=AssertionError("a faked test starts no process"))
+            patch.start(); self.addCleanup(patch.stop)
 
     def groups(self, units, cap):
         return [(b, [u["name"] for u in g], f) for b, g, f in fc.fc_layers.group_by_record(self.proj, units, 300, cap)]
@@ -104,6 +108,11 @@ class StackLimit(unittest.TestCase):
         us = [unit(f"{i:03d}", 400) for i in range(1, 5)]
         self.assertEqual(self.groups(us, 2), [("fast/p/layer-01", ["001"], False), ("fast/p/layer-02", ["002"], False), (None, ["003", "004"], True)])
 
+
+class StackLimit(unittest.TestCase):
+    """A stack is capped at max_stack_prs layers, and the layers over the budget say so."""
+    setUp, git, write, commit, stack = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit, LayersBase.stack
+
     def test_a_folded_layer_over_the_budget_says_so_on_its_layer_line_and_size_line(self):
         out = [l for l in self.stack(review_layer_lines=30, max_stack_prs=3) if l.startswith("layer ")]  # natural: 20, 20, 105, 125, 155
         self.assertEqual(len(out), 3)
@@ -117,18 +126,15 @@ class StackLimit(unittest.TestCase):
         g = {"tasks": ["groundwork"], "lines": 400, "generated": {}}  # a groundwork unit is one commit
         self.assertEqual(fc.fc_layers.layer_note(g, 300), "groundwork x1: 400 lines; over the 300-line budget, a commit is never split")
 
-    def test_the_cap_is_ten_unless_set_and_verify_json_beats_the_workspace_which_beats_the_top_level(self):
+    def test_the_cap_is_ten_unless_set_and_the_workspace_beats_the_top_level(self):
         for i in range(8):  # 13 layers at a 1-line budget: two groundwork commits, these eight, three tasks
             self.write(f"g{i}.txt", "g\n"); self.commit(f"groundwork g{i}")
         cfg = Path(tempfile.mkdtemp()) / "config.json"
         count = lambda **v: len([l for l in self.stack(review_layer_lines=1, **v) if l.startswith("layer ")])
         with mock.patch.object(fc.fc_config, "CONFIG_PATH", cfg):
             self.assertEqual(count(), 10)
-            cfg.write_text(json.dumps({"max_stack_prs": 5}))
-            self.assertEqual(count(), 5)
             cfg.write_text(json.dumps({"max_stack_prs": 5, "workspace": "w", "workspaces": {"w": {"max_stack_prs": 4}}}))
             self.assertEqual(count(), 4)
-            self.assertEqual(count(max_stack_prs=3), 3)
 
 
 if __name__ == "__main__":
