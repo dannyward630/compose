@@ -177,5 +177,45 @@ class UnknownBaseline(unittest.TestCase):
             self.assertFalse(fc.fc_gate.touches(wt, "HEAD", [])(ship))
 
 
+class AfterChecks(unittest.TestCase):
+    """Task 003 (NEB-1705): after_checks keeps the non-suite checks, then the test: of each code task that owns a changed path."""
+
+    CHECKS = ["python3 -m compileall -q bin", "python3 -m tests.run", "python3 -m unittest discover -s tests"]
+    TASKS = [{"id": "001", "files": ["a.py"], "protected": ["tests/test_a.py"], "test": "python3 -m unittest tests.test_a"},
+             {"id": "002", "files": ["b.py"], "protected": ["tests/test_b.py"], "test": "python3 -m unittest tests.test_b"},
+             {"id": "003", "kind": "design", "files": ["c.md"], "protected": ["tests/test_c.py"], "test": "true"},
+             {"id": "004", "files": ["b.py", "d.py"], "protected": [], "test": "python3 -m unittest tests.test_d"}]
+
+    def after(self, changed, own="", checks=CHECKS, tasks=TASKS):
+        return fc.fc_gate.after_checks(list(checks), [dict(t) for t in tasks], changed, own)
+
+    def test_a_suite_check_is_left_out_and_a_non_suite_check_is_kept_in_order(self):
+        self.assertEqual(self.after([]), ["python3 -m compileall -q bin"])
+        self.assertEqual(self.after([], checks=["true", "python3 -m tests.run", "python3 -m compileall -q bin", "false"]), ["true", "python3 -m compileall -q bin", "false"])
+
+    def test_the_test_of_each_code_task_owning_a_changed_path_follows_the_checks_in_task_order(self):
+        compile_ = "python3 -m compileall -q bin"
+        self.assertEqual(self.after(["b.py"]), [compile_, "python3 -m unittest tests.test_b", "python3 -m unittest tests.test_d"])
+        self.assertEqual(self.after(["d.py", "a.py"]), [compile_, "python3 -m unittest tests.test_a", "python3 -m unittest tests.test_d"])
+
+    def test_a_protected_path_selects_its_task_and_a_design_task_never_runs(self):
+        self.assertEqual(self.after(["tests/test_b.py"])[1:], ["python3 -m unittest tests.test_b"])
+        self.assertEqual(self.after(["c.md", "tests/test_c.py"]), ["python3 -m compileall -q bin"])
+
+    def test_a_path_in_no_task_adds_no_test(self):
+        self.assertEqual(self.after(["README.md", "x/y.py"]), ["python3 -m compileall -q bin"])
+
+    def test_the_own_test_is_never_in_the_list_even_as_a_check_or_for_a_second_task(self):
+        own = "python3 -m unittest tests.test_a"
+        self.assertEqual(self.after(["a.py"], own=own), ["python3 -m compileall -q bin"])
+        self.assertEqual(self.after([], own="python3 -m compileall -q bin"), [])
+        self.assertEqual(self.after(["b.py"], own="python3 -m unittest tests.test_d")[1:], ["python3 -m unittest tests.test_b"])
+
+    def test_no_command_appears_twice(self):
+        shared = [dict(t, test="python3 -m unittest tests.test_a") for t in self.TASKS[:2]]
+        checks = ["python3 -m unittest tests.test_a", "python3 -m compileall -q bin", "python3 -m compileall -q bin"]
+        self.assertEqual(self.after(["a.py", "b.py"], checks=checks, tasks=shared), ["python3 -m unittest tests.test_a", "python3 -m compileall -q bin"])
+
+
 if __name__ == "__main__":
     unittest.main()
