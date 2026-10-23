@@ -85,3 +85,41 @@ class LoadWait(unittest.TestCase):
             with mock.patch.dict(os.environ, env):
                 waited, said, upd = self.run_wait([99.0], **kw)
             self.assertEqual((waited, said, upd.call_count, self.sleep.call_count), (0.0, [], 0, 0))
+
+
+class LoadWarn(unittest.TestCase):
+    def setUp(self):
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)  # warn is 10.0, low 8.0, high 12.0
+        os.environ.pop("COMPOSE_NO_LOAD", None)
+        self.file = Path.home() / ".compose" / "load.json"
+
+    def state(self): return json.loads(self.file.read_text())
+
+    def test_warn_logs_once_when_crossed_and_cleared_below_low_nothing_between(self):
+        s = fc_load.update(avg=9.9); self.assertEqual((bool(s.get("warn")), s["new"], self.file.exists()), (False, [], False))
+        s = fc_load.update(avg=10.0); e = s["new"][0]  # at warn counts
+        self.assertEqual((s["warn"], s["held"], s["n"], e["n"], e["kind"], e["avg"]), (True, False, 1, 1, "warn", 10.0))
+        before = self.file.read_text()
+        for avg in (11.5, 10.0, 9.0, 8.0): self.assertEqual((fc_load.update(avg=avg)["new"], self.state()["warn"]), ([], True))
+        self.assertEqual(self.file.read_text(), before)
+        s = fc_load.update(avg=7.9); self.assertEqual((s["warn"], s["n"], [x["kind"] for x in s["new"]]), (False, 2, ["cleared"]))
+        self.assertEqual(fc_load.update(avg=7.0)["new"], [])
+        s = fc_load.update(avg=11.0); self.assertEqual((s["warn"], s["n"], [x["kind"] for x in s["log"]]), (True, 3, ["warn", "cleared", "warn"]))
+
+    def test_claim_is_true_once_per_entry_and_kept_in_the_state(self):
+        self.assertEqual((fc_load.claim(1), fc_load.claim(1), fc_load.claim(2), fc_load.claim(2), fc_load.claim(1)), (True, False, True, False, False))
+        self.assertEqual(self.state()["claimed"], [1, 2])
+        fc_load.update(avg=11.0); fc_load.claim(3); s = self.state()  # update and claim keep each other's fields
+        self.assertEqual((s["claimed"], s["warn"]), ([1, 2, 3], True))
+        fc_load.update(avg=11.5); self.assertEqual(self.state()["claimed"], [1, 2, 3])
+
+    def test_claimed_keeps_the_last_50(self):
+        for n in range(1, 61): fc_load.claim(n)
+        self.assertEqual(self.state()["claimed"], list(range(11, 61)))
+
+    def test_one_caller_across_processes_wins(self):
+        env = {**os.environ, "HOME": str(Path.home()), "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "bin")}
+        procs = [subprocess.Popen([sys.executable, "-c", "import fc_load; print(fc_load.claim(7))"], env=env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
+        won = [p.communicate()[0].strip() for p in procs]
+        self.assertEqual((sorted(won), fc_load.claim(7)), (["False"] * 3 + ["True"], False))
