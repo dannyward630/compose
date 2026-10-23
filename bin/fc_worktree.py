@@ -9,21 +9,44 @@ _prefixes = {}
 _commons = {}
 
 def refs_stamp(common):
-    raise NotImplementedError("not implemented")
+    def st(p):
+        try:
+            s = os.stat(p)
+            return (s.st_mtime_ns, s.st_size)
+        except OSError:
+            return None
+    dirs = [d for sub in ("heads", "remotes") for d, _, _ in os.walk(Path(common) / "refs" / sub)]
+    return (st(Path(common) / "packed-refs"), *(st(d) for d in dirs))
 
 def task_prefix(repo, proj):
     """What every task, bench and test-writer branch of the project starts with: verify.json `task_prefix` when recorded, else
     `fast/<project>/` while such branches exist (recorded once), else the project branch plus `-`."""
+    key = (Path(repo).resolve(), Path(proj).resolve())
     f = proj / "verify.json"
+    def stamp():
+        if key[0] not in _commons:
+            _commons[key[0]] = common_dir(repo)
+        try:
+            s = os.stat(f)
+            vs = (s.st_mtime_ns, s.st_size)
+        except OSError:
+            vs = None
+        return (vs, refs_stamp(_commons[key[0]]) if _commons[key[0]] else None)
+    hit = _prefixes.get(key)
+    if hit and hit[0] == stamp():
+        return hit[1]
     rec = json.loads(f.read_text()) if f.exists() else {}
     if rec.get("task_prefix"):
-        return rec["task_prefix"]
-    if fc_core.sh(["git", "for-each-ref", "--format=%(refname)", f"refs/heads/fast/{proj.name}/", f"refs/remotes/*/fast/{proj.name}/*"],
-                  repo, check=False).stdout.strip():
+        answer = rec["task_prefix"]
+    elif fc_core.sh(["git", "for-each-ref", "--format=%(refname)", f"refs/heads/fast/{proj.name}/", f"refs/remotes/*/fast/{proj.name}/*"],
+                    repo, check=False).stdout.strip():
         if f.exists():
             fc_core.atomic_write(f, json.dumps({**rec, "task_prefix": f"fast/{proj.name}/"}, indent=2))
-        return f"fast/{proj.name}/"
-    return fc_core.project_branch(proj) + "-"
+        answer = f"fast/{proj.name}/"
+    else:
+        answer = fc_core.project_branch(proj) + "-"
+    _prefixes[key] = (stamp(), answer)
+    return answer
 
 _heads = {}
 
@@ -50,6 +73,7 @@ def rename_legacy_branches(repo, proj):
         return {}
     for old, n in names.items():
         fc_core.sh(["git", "branch", "-m", old, n], repo)
+    _prefixes.clear()
     values = {**names, legacy: new}
     def rename(v):
         if isinstance(v, dict):
