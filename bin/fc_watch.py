@@ -137,8 +137,27 @@ def load_events(proj, key):
     if not new:
         return []
     lim = fc_load.limits()
-    lines = [f"event load={e['kind']} avg={e['avg']:.1f} high={lim['high']:.1f} cores={lim['cores']}  (compose starts nothing new until the load falls below {lim['low']:.1f})" if e["kind"] == "held"
-             else f"event load={e['kind']} avg={e['avg']:.1f} low={lim['low']:.1f}" for e in new]
+    pane = fc_herdr.herdr_manager_record(proj).get("session")
+    lines = []
+    for e in new:
+        if e["kind"] == "held":
+            lines.append(f"event load={e['kind']} avg={e['avg']:.1f} high={lim['high']:.1f} cores={lim['cores']}  (compose starts nothing new until the load falls below {lim['low']:.1f})")
+        elif e["kind"] == "released":
+            lines.append(f"event load={e['kind']} avg={e['avg']:.1f} low={lim['low']:.1f}")
+        elif e["kind"] == "warn":
+            tell = f"load {e['avg']:.1f} on {lim['cores']} cores is above the warn mark {lim['warn']:.1f}: compose holds new starts above {lim['high']:.1f}"
+            if pane:
+                fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose-load", "--token", f"load={e['avg']:.1f} on {lim['cores']} cores")
+            if fc_load.claim(e["n"]):
+                fc_crew.desktop_notify("compose: load", tell)
+            lines.append(f"event tell={tell!r}")
+        else:
+            tell = f"load cleared: {e['avg']:.1f} on {lim['cores']} cores, below {lim['low']:.1f}"
+            if pane:
+                fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose-load", "--clear-token", "load")
+            if fc_load.claim(e["n"]):
+                fc_crew.desktop_notify("compose: load", tell)
+            lines.append(f"event tell={tell!r}")
     watch_save(proj, key, load_n=new[-1]["n"])
     return lines
 
