@@ -1193,6 +1193,11 @@ class AttentionWatch(unittest.TestCase):
         self.assertFalse(any(fc.fc_watch.ATTENTION.search(e) or fc.fc_watch.URGENT.search(e) for e in
                              ("event crew=hw-x state=working message='x'", "event task=001 state=passed", "event verify=pass")))
 
+    def test_a_mac_sleep_and_a_limit_or_silent_stall_wake_the_attention_watch(self):
+        for e in ("event sleep=woke from=01:00 to=02:00 slept=60m00.0s", "event sleep=resumed run=x", "event sleep=run-lost reason=x",
+                  "event stall=limit agent=hw-x line='usage limit reached'", "event stall=silent agent=hw-x"):
+            self.assertTrue(fc.fc_watch.ATTENTION.search(e) or fc.fc_watch.URGENT.search(e), e)
+
 
 class NetworkDrop(unittest.TestCase):
     """A teammate whose last turn ended on an API or network error sits idle with its work unreported: the watch surfaces it once."""

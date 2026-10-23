@@ -121,6 +121,13 @@ class Credit(unittest.TestCase):
                 fc.fc_run.cmd_resume(SimpleNamespace(repo=str(self.repo), project="p", parallel=None, force=force))
         self.assertEqual(seen, [False, True])
 
+    def test_one_force_flag_serves_the_credit_check_and_the_battery_stop_on_run_resume_and_verify(self):
+        for cmd in ("run", "resume", "verify"):
+            out = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), cmd, "--help"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(out.stdout.count("--force"), 2, out.stdout)  # the usage line and the one option
+            self.assertIn("battery", out.stdout)
+
 
 class PaymentHalt(unittest.TestCase):
     """A payment halt leaves the top-up link and the exact resume command where the watch can say them."""

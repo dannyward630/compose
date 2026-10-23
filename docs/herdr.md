@@ -121,7 +121,7 @@ Each watcher remembers what it last reported in `results/watch-<who>.json`.
 The `<who>` is the watcher's `COMPOSE_ROLE` (`orchestrator` for the team lead), and `manager-<pane>` for an engineering manager session in herdr pane `<pane>` (`manager` outside herdr).
 `watch --now` and `status` also say whether away or yolo is on and which session set it, since one session's `compose away` or `compose yolo` changes how every session on the project answers.
 A watch started later still reports what happened while none ran, and `watch --now` marks the current state as seen.
-That watch wakes only for what needs attention: a done, needs-user, blocked, contradiction or tool-bug report, a stall, a payment halt, a crash or a sign-in screen.
+That watch wakes only for what needs attention: a done, needs-user, blocked, contradiction or tool-bug report, a stall, a payment halt, a Mac sleep, a crash or a sign-in screen.
 The `working` reports and other progress lines wait and are printed in the same wake as the next such event.
 `--all` wakes on every line again, and `--attention` gives any other watch the same behavior.
 A billing halt is an event too, shown as `event halt=payment` with the provider, the tasks left, the top-up link as `top_up=` and the exact command that continues as `resume=`.

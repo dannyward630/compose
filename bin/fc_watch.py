@@ -272,7 +272,7 @@ def is_info(e):
 
 URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
-ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=)|sign-in", re.I)
+ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke)|sign-in", re.I)
 
 def is_quiet(a, proj, sources):
     """Whether this watch wakes only for what needs attention: the engineering manager's `--from orchestrator` watch, or any watch given
