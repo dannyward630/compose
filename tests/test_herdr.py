@@ -175,7 +175,7 @@ class SharedSpace(unittest.TestCase):
         (self.proj / "results").mkdir(parents=True)
         self.assertEqual(self.space("w7"), "w7")
         self.assertFalse([c for c in self.calls if c[:2] in (("worktree", "open"), ("workspace", "create"), ("workspace", "rename"), ("tab", "rename"))])
-        self.assertEqual(sorted(self.tabs.values()), ["1", "shop shell", "shop status"])  # the caller's own tab is left as it is
+        self.assertEqual(sorted(self.tabs.values()), ["1", "shop shell"])  # the caller's own tab is left as it is
         self.assertTrue(all(str(wt) in c for c in self.calls if c[:2] == ("tab", "create")))
         self.assertEqual(fc.fc_herdr.tab_label(self.proj, "implementers"), "shop implementers")
         self.calls = []
@@ -455,6 +455,48 @@ class AgentNice(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     getattr(fc.fc_herdr, starter)("a", "--pane", "p7")
                 ap.assert_not_called()
+
+
+class NoStatusTab(unittest.TestCase):
+    """A new project's space gets its shell tab and no status tab, whether it is a space of its own or the caller's shared one."""
+    def space(self, caller, repo_space, tabs):
+        wt = Path(tempfile.mkdtemp()).resolve()
+        proj, calls = wt / ".compose" / "shop", []
+        (proj / "results").mkdir(parents=True)
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            if args[:2] == ("worktree", "list"):
+                return {"source": {"source_workspace_id": repo_space} if repo_space else {}}
+            if args[:2] == ("worktree", "open"):
+                return {"workspace": {"workspace_id": "w9"}}
+            if args[:2] == ("tab", "list"):
+                return {"tabs": [{"tab_id": t, "label": l} for t, l in tabs.items()]}
+            if args[:2] == ("tab", "create"):
+                tabs[f"t{len(tabs) + 1}"] = args[args.index("--label") + 1]
+                return {"tab": {"tab_id": "t9"}, "root_pane": {"pane_id": "p9"}}
+            return {}
+        fc.fc_herdr.HERDR_SPACES.clear()
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
+                mock.patch.dict(os.environ, {"HERDR_WORKSPACE_ID": caller}):
+            space = fc.fc_herdr.herdr_space(proj)
+        self.assertFalse([c for c in calls if "status" in " ".join(map(str, c))])  # no tab, pane or command for a status view
+        return space, calls, [c[c.index("--label") + 1] for c in calls if c[:2] == ("tab", "create")]
+
+    def test_a_shared_space_gets_only_its_shell_tab(self):
+        space, calls, created = self.space("w7", None, {"t1": "1"})
+        self.assertEqual((space, created), ("w7", ["shop shell"]))
+        _, calls, created = self.space("w7", None, {"t1": "1", "t2": "shop shell"})  # already there: nothing is created
+        self.assertEqual(created, [])
+
+    def test_a_space_of_its_own_keeps_only_the_tab_herdr_opened_as_shell(self):
+        for repo_space in ("w3", None):
+            with self.subTest(repo_space=repo_space):
+                space, calls, created = self.space("", repo_space, {"t1": "1"})
+                self.assertEqual((space, created), ("w9", []))
+                self.assertIn(("tab", "rename", "t1", "shell"), calls)
+
+    def test_the_module_has_no_status_tab_function(self):
+        self.assertFalse(hasattr(fc.fc_herdr, "herdr_status_tab"))
 
 
 class StackLock(unittest.TestCase):
