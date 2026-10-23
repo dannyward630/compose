@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
+import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify, fc_started
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -331,6 +331,8 @@ def cmd_crew(a):
     if h and fc_herdr.herdr_login_screen(agent):
         crew_unstart(proj, name, pane, tab["tab"]["tab_id"])
         sys.exit(fc_harness.login_message(key))
+    if pids := fc_herdr.agent_pids(pane):
+        fc_started.record(min(pids), "teammate", str(proj), cwd=str(cwd))
     if not model.startswith("pi:") and (h is None or h["herdr_ready"]):
         fc_herdr.herdr_ready(agent)  # `agent start` says ready before Claude's box exists; a brief typed before it is kept unsent or lost
     try:  # the brief goes in only now: `agent start` returns once the session is idle and ready, and one launched on a prompt works on it at once, so it never looked ready and every start ran into the timeout
