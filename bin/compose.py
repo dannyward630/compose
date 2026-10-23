@@ -75,6 +75,7 @@ def detach(a):
     sys.exit(follow([sys.executable, *sys.argv], log))
 
 def main():
+    fc_proc.nice_floor()  # compose and every child it starts inherit niceness 10 or more
     fc_proc.on_termination(fc_core.remove_scratch)  # a SIGTERM or SIGHUP still removes the scratch configs and ends what timed started
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])

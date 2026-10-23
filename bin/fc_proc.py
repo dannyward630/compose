@@ -216,4 +216,12 @@ def slot(say=None, quick=False):
             os.close(fd)  # closing releases the lock
 
 def nice_floor(pid=None, floor=10):
-    raise NotImplementedError("not implemented")
+    """Raise the niceness of this process (pid None or 0) or another to at least floor; a higher niceness is never lowered.
+    Returns the niceness the process has afterwards, or None on OSError (the process is gone or not ours)."""
+    pid = pid or 0
+    try:
+        if os.getpriority(os.PRIO_PROCESS, pid) < floor:
+            os.setpriority(os.PRIO_PROCESS, pid, floor)
+        return os.getpriority(os.PRIO_PROCESS, pid)
+    except OSError:
+        return None
