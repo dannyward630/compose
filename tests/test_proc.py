@@ -248,7 +248,7 @@ class NiceFloor(unittest.TestCase):
         self.assertEqual((ret, now), (15, 15))
 
     def test_a_child_started_afterwards_inherits_it(self):
-        ret, kid = self.child("r = fc_proc.nice_floor()\nprint(json.dumps([r, int(subprocess.run(['nice'], capture_output=True, text=True).stdout)]))")
+        ret, kid = self.child("r = fc_proc.nice_floor()\nprint(json.dumps([r, int(subprocess.run([sys.executable, '-c', 'import os;print(os.getpriority(os.PRIO_PROCESS, 0))'], capture_output=True, text=True).stdout)]))")
         self.assertEqual((kid, ret >= 10), (ret, True))
 
     def test_it_raises_another_process_and_leaves_this_one(self):
