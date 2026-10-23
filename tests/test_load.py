@@ -57,3 +57,31 @@ class LoadState(unittest.TestCase):
                           ({"warn": -1}, "load.warn must be a number above 0, not -1"), ({"high": 5, "low": 5}, "load.low must be below load.high")):
             with self.assertRaises(SystemExit) as c: self.apply(load)
             self.assertEqual(c.exception.code, f"{fc_config.CONFIG_PATH}: {msg}")
+
+
+class LoadWait(unittest.TestCase):
+    def setUp(self):
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch.dict(os.environ), mock.patch("time.sleep")):
+            m = p.start(); self.addCleanup(p.stop)
+        self.sleep = m; os.environ.pop("COMPOSE_NO_LOAD", None)
+
+    def run_wait(self, avgs, **kw):
+        said = []; it = iter(avgs)
+        with mock.patch.object(fc_load, "update", side_effect=lambda avg=None: {"held": (a := next(it)) > 8.0, "avg": a}) as upd:
+            return fc_load.wait(said.append, **kw), said, upd
+
+    def test_not_held_returns_zero_and_says_nothing(self):
+        waited, said, upd = self.run_wait([5.0])
+        self.assertEqual((waited, said, upd.call_count, self.sleep.call_count), (0.0, [], 1, 0))
+
+    def test_held_says_once_polls_until_release_and_returns_the_wait(self):
+        waited, said, upd = self.run_wait([13.0, 13.5, 12.0, 9.0, 7.0])
+        self.assertEqual(said, ["load 13.0 on 8 cores is above 12.0: waiting until it falls below 8.0"])
+        self.assertEqual((upd.call_count, self.sleep.call_args_list), (5, [mock.call(fc_load.WAIT_POLL)] * 4))
+        self.assertGreaterEqual(waited, 0.0)
+
+    def test_off_switch_and_force_never_wait(self):
+        for env, kw in (({"COMPOSE_NO_LOAD": "1"}, {}), ({}, {"force": True})):
+            with mock.patch.dict(os.environ, env):
+                waited, said, upd = self.run_wait([99.0], **kw)
+            self.assertEqual((waited, said, upd.call_count, self.sleep.call_count), (0.0, [], 0, 0))
