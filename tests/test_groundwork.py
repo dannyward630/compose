@@ -589,10 +589,10 @@ class LeanPlannerBrief(unittest.TestCase):
 
     def test_the_stories_missing_step_states_the_lean_story_rule(self):
         step = self.step()
-        for phrase in ("A story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria.",
+        for phrase in ("Each story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria.",
                        'Split cues: "all", "every", several When/Then pairs, several outside systems.',
-                       "When no split fits, a time-boxed probe answers the unknown first, then the split.",
-                       "in ship order"):
+                       "No split fits: a time-boxed probe answers the unknown first, then the split.",
+                       "in ship order, with a card id per story"):
             self.assertIn(phrase, step)
         self.assertNotIn("one per user-visible slice", self.brief)
 
@@ -622,6 +622,29 @@ class LeanPlannerBrief(unittest.TestCase):
         for banned in ("—", "Product-Manager-Skills", "deanpeters"):
             self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
             self.assertNotIn(banned, self.brief)
+
+
+class TersePlannerBrief(unittest.TestCase):
+    """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
+    FEATURE = (
+        "     No plan: write `## Plan` in the feature description with `compose linear update <id> --section \"## Plan\" --file <path>`:",
+        "     numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.",
+        "     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice",
+        '     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,',
+        "     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories",
+        '     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`',
+        "     only on the product owner's go. Then check and cut each story.",
+    )
+
+    def test_the_brief_and_the_module_fit_their_caps(self):
+        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 7142)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 585)
+
+    def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
+        lines = fc.fc_briefs.PLANNER_BRIEF.splitlines()
+        first = next(n for n, l in enumerate(lines) if l.lstrip().startswith("- Feature: "))
+        self.assertTrue(lines[first].endswith("and it has a `## Plan`."), lines[first])
+        self.assertEqual(tuple(lines[first + 1:first + 1 + len(self.FEATURE)]), self.FEATURE)
 
 
 class PlanJudgmentBrief(unittest.TestCase):
