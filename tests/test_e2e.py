@@ -404,6 +404,25 @@ class ToolErrors(unittest.TestCase):
         self.assertIn(check["output_file"], findings)
         self.assertLess(len(findings), 12000)
 
+    def test_a_check_past_its_time_limit_fails_as_a_timeout_naming_the_limit_and_verify_goes_on(self):
+        with mock.patch.object(fc.fc_verify, "CHECK_TIMEOUT", 1):
+            ok, report, findings = self.check("echo started; sleep 30")
+        check = report["checks"][0]
+        self.assertFalse(ok)
+        self.assertEqual(check["exit"], 124)
+        self.assertFalse(check["tool_error"])
+        self.assertIn("started", check["output"])
+        self.assertIn("TIMEOUT: did not finish within 1s", check["output"])
+        self.assertIn("did not finish within 1s", findings)
+
+    def test_a_driver_past_its_case_limit_fails_the_case_as_a_timeout(self):
+        report, findings = {"e2e": []}, []
+        ok = fc.fc_verify.e2e_stage(Path(tempfile.mkdtemp()), {"e2e": [{"name": "a", "driver": "sleep 30", "timeout": 1}]}, {}, report, findings)
+        self.assertFalse(ok)
+        self.assertEqual(report["e2e"][0]["exit"], 124)
+        self.assertIn("TIMEOUT: did not finish within 1s", report["e2e"][0]["stderr"])
+        self.assertEqual(len(findings), 1)
+
     def test_a_check_that_ends_on_a_harness_error_is_retried_once_and_never_a_finding(self):
         d = tempfile.mkdtemp()
         ok, report, findings = self.check(f"echo x >> {d}/n; echo 'bash: nosuchtool: command not found' >&2; exit 127")

@@ -54,6 +54,14 @@ class Proc(unittest.TestCase):
         self.assertLess(time.time() - t0, 8)
         time.sleep(0.5); self.assertEqual(pids(), []); self.assertEqual(fc.fc_proc.RUNNING, set())
 
+    def test_run_limited_turns_a_timeout_into_exit_124_with_the_output_so_far_and_the_limit(self):
+        (n, pids), t0 = self.sleeps(2), time.time()
+        p = fc.fc_proc.run_limited(["sh", "-c", f"echo before; sleep {n} & sleep {n}"], timeout=1)
+        self.assertEqual((p.returncode, p.stdout), (124, "before\n"))
+        self.assertIn("TIMEOUT: did not finish within 1s", p.stderr)
+        self.assertLess(time.time() - t0, 8)
+        time.sleep(0.5); self.assertEqual(pids(), [])
+
     def test_after_the_stop_run_raises_stopped_and_starts_nothing(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
         fc.fc_proc.STOP.set()
