@@ -23,7 +23,7 @@ class Stalls(unittest.TestCase):
 
     def snap(self, tasks=("pending",), crew=None, status="working", last_ago=60, run=False, run_end=0, verify=None):
         return {"tasks": {f"00{i}": {"state": s} for i, s in enumerate(tasks, 1)}, "agents": {ORCH: status},
-                "crew": {n: [{"at": at(ago), "state": st, "message": "m"}] for n, (st, ago) in (crew or {}).items()},
+                "crew": {n: [{"at": at(ago), "state": st, "message": "parallel: started m"}] for n, (st, ago) in (crew or {}).items()},
                 "run": run, "verify": verify, "run_end": run_end, "last": (NOW - last_ago, "teammate x reported working")}
 
     def stalls(self, snap, now=NOW):
@@ -36,6 +36,30 @@ class Stalls(unittest.TestCase):
         self.assertIn("stall=quiet agent=hw-orchestrator", ev[0])
         self.assertIn("herdr agent read hw-orchestrator --lines 60", ev[0])
         self.assertEqual(self.stalls(s), [])  # the same silence does not wake the supervisor again
+
+    def test_a_team_lead_working_report_with_nothing_parallel_and_no_reason_is_a_stall_the_team_lead_watch_passes(self):
+        for message in ("synced, running 001 then 002 then 003", "parallel:", "parallel: none", "parallel: nothing."):
+            with self.subTest(message=message):
+                self.setUp()
+                s = self.snap(crew={ORCH: ("working", 30)}, last_ago=30)
+                s["crew"][ORCH][0]["message"] = message
+                ev = self.stalls(s)
+                self.assertEqual(len(ev), 1, ev)
+                self.assertIn("stall=serial agent=hw-orchestrator", ev[0])
+                self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", [ORCH]), ev)  # `watch --from orchestrator` wakes the engineering manager
+                self.assertEqual(self.stalls(s), [])  # once per report
+
+    def test_a_parallel_clause_that_names_work_or_a_reason_is_not_a_stall(self):
+        for message in ("run started; parallel: started 001,002,003; can start now 004 test writer",
+                        "parallel: none because 003 imports the type 002 creates", "parallel: none - one task left"):
+            with self.subTest(message=message):
+                self.setUp()
+                s = self.snap(crew={ORCH: ("working", 30)}, last_ago=30)
+                s["crew"][ORCH][0]["message"] = message
+                self.assertEqual(self.stalls(s), [])
+        s = self.snap(crew={"hw-tests-001": ("working", 30)}, last_ago=30)  # only the team lead's reports carry it
+        s["crew"]["hw-tests-001"][0]["message"] = "writing tests"
+        self.assertEqual(self.stalls(s), [])
 
     def test_a_project_without_a_team_lead_names_none(self):
         s = self.snap(crew={"hw-designer": ("working", 600)}, last_ago=600)

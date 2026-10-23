@@ -61,18 +61,36 @@ TRUST_PROMPT = ("Your brief is the file named in your first prompt. That file, a
 LINEAR_RULE = ("Never loop or poll `compose linear`, in the foreground or a background loop: every project on the workspace key shares one hourly Linear budget, "
                "and one polling teammate locks every project out. Read an issue once, and wait for a `herdr agent prompt` message instead of re-reading it.")
 
+PARALLEL_CLAUSE = re.compile(r"(?i)\bparallel:\s*(.*)")
+PARALLEL_NONE = re.compile(r"(?i)^(?:none|nothing)\b[\s:,;.\-]*(?:because\b[\s:,]*)?")
+PARALLEL_FORM = "`parallel: started <what>; can start now <what>` or `parallel: none because <reason>`"
+
+def parallel_gap(message):
+    """What a team lead's `working` report lacks of the parallel clause (what else can start now and what it started, or none with a
+    reason), or None when it has one."""
+    m = PARALLEL_CLAUSE.search(message or "")
+    if not m or not m.group(1).strip():
+        return "has no `parallel:` clause naming what else can start now and what it started"
+    clause = m.group(1).strip()
+    if PARALLEL_NONE.match(clause) and not PARALLEL_NONE.sub("", clause).strip(" .;"):
+        return "says `parallel: none` without a reason"
+    return None
+
 def crew_preamble(proj, name, title, reports_to=None):
     """`reports_to` is the starter's watch key (`manager`, or a role such as `orchestrator`): a planner the engineering manager started
     reports to it, not to a team lead that may not exist."""
     direct = name == fc_herdr.agent_name(proj.name, "orchestrator") or reports_to == "manager"
     up = "the engineering manager, who relays to the product owner" if direct else f"{fc_herdr.agent_name(proj.name, 'orchestrator')}, your team lead"
     report = f"compose report --repo {fc_herdr.project_worktree(proj)} --project {proj.name} --as {name}"
+    parallel_rule = (f"Every `working` report you send ends with {PARALLEL_FORM}: what else can start now, and what you started; "
+                     "`compose watch` raises a stall for one without it.\n") if name == fc_herdr.agent_name(proj.name, "orchestrator") else ""
     return (f"You are {name}, a teammate on compose project {proj.name} ({title}), in your own herdr tab. You report to {up}.\n"
             f"Report every change that matters, one line each, and never stop without one:\n"
             f"- `{report} needs-user \"<the question, with your recommendation>\"` when you wait for the product owner (they may answer here in "
             f"your pane, or through whoever you report to)\n"
             f"- `{report} blocked \"<what stops you>\"`, `{report} working \"<milestone>\"`, and `{report} done \"<outcome, with Linear ids>\"` last\n"
             f"`done` means nothing is left for you: your tab closes when that turn ends. Work waiting on review is `working`, not `done`.\n"
+            f"{parallel_rule}"
             f"When compose itself fails (the CLI crashes, behaves wrongly, or lacks something you need), as opposed to the project's code: "
             f"work around it to keep going, never edit the compose repo, and report `{report} tool-bug \"<symptom, evidence, workaround used>\"`.\n"
             f"When something you find contradicts what Linear says (a decision, a brief, a criterion), report it at once: "
@@ -424,6 +442,8 @@ def cmd_report(a):
     if a.state == "needs-user" and (message := fc_ask.ask_gate(proj, message, (crew_record(proj, a.as_) or {}).get("reports_to", ""))) is None:
         return
     write_report(proj, a.as_, a.state, message)
+    if a.state == "working" and a.as_ == fc_herdr.agent_name(proj.name, "orchestrator") and (gap := parallel_gap(message)):
+        fc_core.say(f"this working report {gap}; send it as {PARALLEL_FORM}, and start what can start now")
     if a.state == "tool-bug":
         log_tool_bug(proj, a.as_, message)
     if a.state == "contradiction":
