@@ -29,7 +29,8 @@ class LoadState(unittest.TestCase):
         self.assertEqual((s["held"], s["since"], s["n"], s["log"], s["new"], s["avg"], f.exists()), (False, None, 0, [], [], 12.0, False))
         s = fc_load.update(avg=13.0); e = s["new"][0]; self.assertEqual((s["held"], s["n"], s["since"], s["log"], e["n"], e["kind"], e["avg"], type(e["at"])), (True, 1, e["at"], [e], 1, "held", 13.0, float))
         before = f.read_text()
-        for avg in (9.0, 8.0, 14.0): self.assertEqual((fc_load.update(avg=avg)["new"], fc_load.held()), ([], True))
+        with mock.patch("os.getloadavg", return_value=(9.0, 9.0, 9.0)):  # held() reads the load: pin it between low and warn
+            for avg in (9.0, 8.0, 14.0): self.assertEqual((fc_load.update(avg=avg)["new"], fc_load.held()), ([], True))
         self.assertEqual(f.read_text(), before)
         s = fc_load.update(avg=7.0)
         self.assertEqual((s["held"], s["since"], s["n"], [x["kind"] for x in s["log"]]), (False, None, 2, ["held", "released"]))
