@@ -842,7 +842,7 @@ class CodexStart(unittest.TestCase):
         self.assertEqual((start[3:10], rec["effort"], "skill" in rec), (("--kind", "codex", "--pane", "w9:p7", "--timeout", "60000", "--"), "high", True))
         argv = fc_harness.crew_argv("codex:gpt-6.1-sol", "high", fc.fc_crew.TRUST_PROMPT, fc.fc_crew.CLI_REPO / "SKILL.md", rec["cwd"], fc.fc_crew.crew_dir(proj).parent, None)
         self.assertEqual([str(x) for x in start[10:]], [str(x) for x in argv])
-        self.assertEqual(start[10:12], ["-c", "check_for_update_on_startup=false"])
+        self.assertEqual(list(start[10:12]), ["-c", "check_for_update_on_startup=false"])
         ready.assert_not_called()
         self.assertFalse([c for c in calls if any("key" in str(x) for x in c[:2])])  # Codex's "Hooks need review" dialog is never answered
 
