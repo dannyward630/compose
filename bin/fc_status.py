@@ -13,13 +13,14 @@ def project_head(repo, proj):
     return ""
 
 def branch_facts(repo, proj, trunk_head):
-    """What git says about the project's task branches, in two calls for the whole project rather than two per task: the
-    task prefix, the branches that exist, and those merged into trunk_head."""
+    """What git says about the project's task branches: the task prefix, the branches that exist (from the repo's branch list,
+    which several projects on one repo read once per process), and those merged into trunk_head."""
     prefix = fc_worktree.task_prefix(repo, proj)
     def refs(*opts):
         out = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", *opts, f"refs/heads/{prefix}*"], repo, check=False).stdout
         return {l.removeprefix("refs/heads/") for l in out.split()}
-    return {"prefix": prefix, "have": refs(), "merged": refs(f"--merged={trunk_head}") if trunk_head else set()}
+    return {"prefix": prefix, "have": {b for b in fc_worktree.heads(repo) if b.startswith(prefix)},
+            "merged": refs(f"--merged={trunk_head}") if trunk_head else set()}
 
 def task_state(repo, proj, meta, trunk_head, facts=None):
     """One row for `status`: state, attempts, seconds, cost, branch note. State comes from the result file, the branch, and trunk
