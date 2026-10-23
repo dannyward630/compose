@@ -175,11 +175,8 @@ def suite(cmd):
 
 
 def suite_slots():
-    """How many full-suite `timed` commands run at once on this machine: COMPOSE_TEST_SLOTS, else a quarter of the cores, never under 2.
-    A suite runs its test files in parallel (tests/run.py: half the cores), so one slot per four cores keeps a machine with every slot
-    taken at about twice its core count, where one slot per suite left most of a 16-core machine idle; the floor of 2 keeps one long
-    suite from blocking every other teammate."""
-    return max(1, int(os.environ.get("COMPOSE_TEST_SLOTS") or max(2, (os.cpu_count() or 8) // 4)))
+    """How many full-suite `timed` commands run at once on this machine: one full suite at a time, unless COMPOSE_TEST_SLOTS says more."""
+    return max(1, int(os.environ.get("COMPOSE_TEST_SLOTS") or 1))
 
 
 @contextlib.contextmanager
