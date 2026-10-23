@@ -340,8 +340,10 @@ class BoardOneListing(unittest.TestCase):
         for d in (fc.fc_worktree._heads, fc.fc_worktree._prefixes, fc.fc_worktree._commons): d.clear()
         self.repo = Path(tempfile.mkdtemp())
         self.git("init", "-q", "-b", "main"); self.git("commit", "-q", "--allow-empty", "-m", "init")
-        for b in ("compose/p-001", "compose/q-001", "other/p-009"):
+        for b in ("compose/p-001", "other/p-009"):
             self.git("branch", b)
+        self.git("checkout", "-q", "-b", "compose/q-001"); self.git("commit", "-q", "--allow-empty", "-m", "q")
+        self.git("checkout", "-q", "main")
         self.git("checkout", "-q", "-b", "compose/p-002"); self.git("commit", "-q", "--allow-empty", "-m", "two")
         self.git("checkout", "-q", "-b", "compose/p"); self.git("checkout", "-q", "main")
         self.git("merge", "-q", "--no-ff", "-m", "m", "compose/p-001")
@@ -364,9 +366,10 @@ class BoardOneListing(unittest.TestCase):
         with mock.patch("subprocess.run", wraps=subprocess.run) as run:
             p, q = self.facts("p"), self.facts("q")
         calls = [c.args[0] for c in run.call_args_list if "for-each-ref" in c.args[0]]
-        self.assertEqual(len([c for c in calls if not any(a.startswith("--merged") for a in c)]), 1)
-        self.assertEqual(len([c for c in calls if any(a.startswith("--merged") for a in c)]), 2)
+        merged = [c for c in calls if any(a.startswith("--merged") for a in c)]
         self.assertEqual((p["have"], q["have"], q["merged"]), ({"compose/p-001", "compose/p-002"}, {"compose/q-001"}, set()))
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(len(calls) - len(merged), 1)
 
 
 if __name__ == "__main__":
