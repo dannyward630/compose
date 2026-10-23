@@ -123,3 +123,46 @@ class LoadWarn(unittest.TestCase):
         procs = [subprocess.Popen([sys.executable, "-c", "import fc_load; print(fc_load.claim(7))"], env=env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
         won = [p.communicate()[0].strip() for p in procs]
         self.assertEqual((sorted(won), fc_load.claim(7)), (["False"] * 3 + ["True"], False))
+
+
+class LoadMemory(unittest.TestCase):
+    def setUp(self):
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch.dict(os.environ)):
+            p.start(); self.addCleanup(p.stop)  # high is 12.0, low 8.0
+        os.environ.pop("COMPOSE_NO_LOAD", None)
+        self.file = Path.home() / ".compose" / "load.json"
+
+    def update(self, level, avg):
+        with mock.patch.object(fc_load, "memory_level", return_value=level): return fc_load.update(avg=avg)
+
+    def test_warn_or_critical_holds_with_why_memory_at_any_load(self):
+        for level in (2, 4):
+            self.file.unlink(missing_ok=True)
+            s = self.update(level, 1.0); e = s["new"][0]
+            self.assertEqual((s["held"], s["memory"], e["kind"], e["why"], json.loads(self.file.read_text())["memory"]), (True, level, "held", "memory", level))
+        self.file.unlink()
+        self.assertEqual((self.update(2, 13.0)["new"][0]["why"], self.update(4, 13.0)["new"], self.update(2, 13.0)["held"]), ("memory", [], True))
+
+    def test_held_for_memory_releases_only_at_level_1_or_none_with_load_below_low(self):
+        self.update(2, 1.0)
+        for level, avg in ((2, 1.0), (4, 1.0), (1, 9.0), (None, 9.0), (1, 8.0)): self.assertEqual((self.update(level, avg)["held"], self.update(level, avg)["new"]), (True, []))
+        for level in (1, None):
+            s = self.update(level, 7.0)
+            self.assertEqual((s["held"], s["memory"], [e["kind"] for e in s["new"]], json.loads(self.file.read_text())["held"]), (False, level, ["released"], False))
+            self.update(2, 1.0)
+
+    def test_normal_or_missing_level_keeps_the_load_rules_with_why_load(self):
+        for level in (1, None):
+            self.file.unlink(missing_ok=True)
+            self.assertEqual((self.update(level, 9.0)["held"], self.update(level, 12.0)["held"]), (False, False))
+            s = self.update(level, 13.0); e = s["new"][0]
+            self.assertEqual((s["held"], s["memory"], e["kind"], e["why"]), (True, level, "held", "load"))
+            self.assertEqual((self.update(level, 7.0)["held"], self.update(None, 7.0)["new"]), (False, []))
+
+    def test_memory_level_is_an_int_or_none_without_a_subprocess_and_none_when_the_call_fails(self):
+        with mock.patch("subprocess.run", side_effect=AssertionError("no subprocess")), mock.patch("subprocess.Popen", side_effect=AssertionError("no subprocess")):
+            level = fc_load.memory_level()
+        self.assertTrue(level is None or level in (1, 2, 4))
+        failing = mock.Mock(); failing.sysctlbyname.return_value = -1
+        for p in (mock.patch("ctypes.util.find_library", return_value="no-such-libc"), mock.patch("ctypes.CDLL", return_value=failing), mock.patch("ctypes.CDLL", side_effect=OSError)):
+            with p: self.assertIsNone(fc_load.memory_level())
