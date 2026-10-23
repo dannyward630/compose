@@ -1,0 +1,3 @@
+PRETTIER_EXT
+prettier_opted_in
+format_files

@@ -678,7 +678,7 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("designer extras not set up", doctor[0])
         self.assertIn("| trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |", reqs)
         self.assertIn("| `COMPOSE_NO_TRAIL=1` | skip trail |", reqs)
-        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2) |", reqs)
+        self.assertIn("| `COMPOSE_TEST_SLOTS=<n>` | how many full-suite `compose timed` commands run at once on this machine (default: a quarter of the cores, at least 2); the next waits for a slot and says so. `COMPOSE_QUICK_SLOTS=<n>` is the same for every other command (`--help`, `uv sync`, or a test run with a `-k`/`-run`/`--grep` filter or one test file or module), in lanes apart from the suites (default 2). `COMPOSE_TEST_JOBS=<n>` is how many test files `python3 -m tests.run` runs side by side (default: half the cores; `-j` overrides it) |", reqs)
         timed = [l for l in cli if l.startswith("| `timed <seconds> -- <command>` |")]
         self.assertEqual(len(timed), 1, "one timed row")
         for part in ("exit 124", "scratch", "COMPOSE_TEST_SLOTS", "COMPOSE_QUICK_SLOTS", "SIGTERM"):
@@ -686,6 +686,14 @@ class NoGraftWord(unittest.TestCase):
         # Only the tool word changes: the neighbouring env row stays, and the old graft env row is gone.
         self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)
         self.assertFalse([l for l in reqs if "COMPOSE_NO_GRAFT" in l], "COMPOSE_NO_GRAFT")
+
+    def test_compose_no_policies_is_in_the_env_table_and_the_rows_that_stop_on_policies(self):
+        cli, reqs = read("docs/cli.md").splitlines(), read("docs/requirements.md")
+        self.assertIn("| `COMPOSE_NO_POLICIES=1` |", reqs)
+        for cmd in ("route", "verify", "quick <id>..."):
+            row = [l for l in cli if l.startswith(f"| `{cmd}` |")]
+            self.assertEqual(len(row), 1, cmd)
+            self.assertIn("COMPOSE_NO_POLICIES=1" if cmd != "quick <id>..." else "one `quick: ...` line", row[0])
 
     def test_how_it_works_and_new_machine(self):
         self.assert_no_graft("docs/how-it-works.md", "docs/new-machine.md")
@@ -1069,6 +1077,12 @@ class ReadyCheckpoints(unittest.TestCase):
         for word in ("sync", "run", "verify", "clean"):
             self.assertRegex(row, rf"`(compose )?{word}`")
 
+    def test_cli_init_row_names_the_herdr_tabs_and_how_to_skip_them(self):
+        row = self.row("init")
+        for word in ("`<slug> shell`", "`<slug> status`", "`COMPOSE_NO_HERDR=1`"):
+            self.assertIn(word, row)
+        self.assertNotIn("\u2014", row)
+
     def test_cli_sync_and_clean_rows_name_ready_and_keep_what_they_said(self):
         tasks = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
         projects = read("docs/cli.md").split("### Projects\n", 1)[1].split("### Tasks\n", 1)[0]
@@ -1258,7 +1272,7 @@ SETUP_ROW = "| `compose setup [--yes]` | Installs and configures everything `com
 DEVELOPMENT = [
     "## Development",
     "",
-    "Run the CLI tests with `python3 -m unittest discover -s tests`.",
+    "Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else half the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially.",
     "Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).",
     "Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.",
     "The CLI core is stdlib; `jev/` is a uv project, and `bp/` is one Node file with no dependencies.",
@@ -1329,7 +1343,7 @@ class MachineDocs(unittest.TestCase):
         self.assertLines("docs/new-machine.md", MACHINE, 101)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 138)
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 139)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):
@@ -1676,6 +1690,39 @@ class MentionsNamePostures(unittest.TestCase):
     def test_no_em_dash(self):
         for rel, *_ in self.LINES:
             self.assertNotIn("—", read(rel))
+
+
+class TiersBudgetAndPartialStacks(unittest.TestCase):
+    def test_cli_rows_name_the_tier_and_budget_commands_and_the_stack_flags(self):
+        cli = read("docs/cli.md")
+        tiers = cli.split("### Tiers and budget\n", 1)[1].split("\n## ", 1)[0]
+        for word in ("compose tier --project", "no-frontier", "results/tier.json", "compose budget --project", "default 25", "results/budget.json", "needs-user"):
+            self.assertIn(word, tiers)
+        stack = next(l for l in cli.splitlines() if l.startswith("| `stack`"))
+        for word in ("--update", "--force-with-lease", "stack  hold", "nothing to submit", "origin/<base>"):
+            self.assertIn(word, stack)
+        land = next(l for l in cli.splitlines() if l.startswith("| `land`"))
+        for word in ("N of M layer(s) submitted", "land   left"):
+            self.assertIn(word, land)
+
+    def test_config_documents_tiers_prices_and_the_errors_for_a_bad_prices(self):
+        cfg = read("docs/config.md")
+        for word in ("| `models.tiers` |", "| `prices` |", "## Model tiers, prices and the frontier budget", "compose budget --project <slug> frontier <dollars>",
+                     "prices must be an object of model id to 2 or 4 numbers", "`+?`", "claude:claude-opus-5-5"):
+            self.assertIn(word, cfg)
+
+    def test_tasks_documents_the_tier_key_and_the_sections_name_the_new_commands(self):
+        tasks = read("docs/tasks.md")
+        self.assertIn("## Model tier\n", tasks)
+        self.assertIn("tier must be cheap, standard, frontier or no-frontier", tasks)
+        self.assertIn("`model:` line", tasks)
+        self.assertIn("--update", read("sections/4.md"))
+        self.assertIn("land   left", read("sections/7.md"))
+        self.assertIn("compose budget --project <slug> frontier <dollars>", read("sections/0h.md"))
+
+    def test_the_new_lines_have_no_em_dash(self):
+        for rel in ("docs/config.md", "sections/4.md", "sections/7.md", "sections/0h.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
 
 
 if __name__ == "__main__":

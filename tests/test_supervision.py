@@ -650,7 +650,7 @@ class Timed(unittest.TestCase):
 
     def test_timed_runs_at_most_the_machines_slots_at_once_and_says_so_while_it_waits(self):
         """Five teammates each running a suite at once leave the machine doing little else: a timed command holds one of
-        COMPOSE_TEST_SLOTS (default 2) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
+        COMPOSE_TEST_SLOTS (default a quarter of the cores, at least 2) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
         import subprocess as sp, time
         d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
         script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")
@@ -1170,6 +1170,58 @@ class QuietWatch(unittest.TestCase):
     def test_the_watch_has_no_timeout_by_default(self):
         out = subprocess.run([sys.executable, str(Path(fc.__file__).resolve()), "watch", "--help"], capture_output=True, text=True).stdout
         self.assertIn("default 0 = forever", out)
+
+
+class AttentionWatch(unittest.TestCase):
+    """The engineering manager's `--from orchestrator` watch (and any watch given --attention) wakes only for what needs attention."""
+    def setUp(self):
+        self.quiet = QuietWatch("test_a_held_ping_wakes_after_info_hold")
+        self.quiet.setUp()
+
+    def snap(self, *reports, state="pending"):
+        s = wsnap(state)
+        s["crew"] = {"hw-orchestrator": [{"at": at(60 - i), "state": st, "message": f"{m}; parallel: started m" if st == "working" else m}
+                                         for i, (st, m) in enumerate(reports)]}
+        return s
+
+    def watch(self, base, snaps, **kw):
+        return self.quiet.watch(base, snaps, hold=0, **kw)
+
+    def test_the_orchestrator_watch_holds_a_progress_ping_past_the_hold(self):
+        base, ping = self.snap(("working", "started")), self.snap(("working", "started"), ("working", "tests green"))
+        self.assertFalse(any("tests green" in l for l in self.watch(base, [ping], from_="orchestrator", timeout=0.2)))
+
+    def test_held_progress_travels_with_the_next_attention_line(self):
+        base = self.snap(("working", "started"))
+        ping = self.snap(("working", "started"), ("working", "tests green"))
+        for last in (("done", "all green"), ("needs-user", "which db?"), ("tool-bug", "crashed")):
+            out = self.watch(base, [ping, ping, self.snap(("working", "started"), ("working", "tests green"), last)], from_="orchestrator")
+            self.assertTrue(any("tests green" in l for l in out) and any(f"state={last[0]} " in l for l in out), (last, out))
+
+    def test_all_wakes_on_every_line_again(self):
+        base, ping = self.snap(("working", "started")), self.snap(("working", "started"), ("working", "tests green"))
+        self.assertTrue(any("tests green" in l for l in self.watch(base, [ping], from_="orchestrator", all=True)))
+
+    def test_attention_quiets_a_watch_without_from_and_task_progress_waits_for_a_done(self):
+        base = self.snap(("working", "started"), state="running")
+        passed = self.snap(("working", "started"), state="passed")
+        done = self.snap(("working", "started"), ("done", "all green"), state="passed")
+        self.assertFalse(any("task=001" in l for l in self.watch(base, [passed], attention=True, timeout=0.2)))
+        self.assertTrue(any("task=001 state=passed" in l for l in self.watch(base, [passed], timeout=0.2)))
+        out = self.watch(base, [passed, passed, done], attention=True)
+        self.assertTrue(any("task=001 state=passed" in l for l in out) and any("tell='done: all green'" in l for l in out), out)  # the team lead's own report reaches the engineering manager as a tell
+
+    def test_a_stall_and_a_sign_in_screen_are_attention(self):
+        self.assertTrue(all(fc.fc_watch.ATTENTION.search(e) or fc.fc_watch.URGENT.search(e) for e in
+                            ("event stall=silent agent=hw-x", "event halt=payment provider=openai", "event crew=hw-x state=done message='x'",
+                             "event agent=hw-x status=blocked  sign-in screen", "event tell='done: x'")))
+        self.assertFalse(any(fc.fc_watch.ATTENTION.search(e) or fc.fc_watch.URGENT.search(e) for e in
+                             ("event crew=hw-x state=working message='x'", "event task=001 state=passed", "event verify=pass")))
+
+    def test_a_mac_sleep_and_a_limit_or_silent_stall_wake_the_attention_watch(self):
+        for e in ("event sleep=woke from=01:00 to=02:00 slept=60m00.0s", "event sleep=resumed run=x", "event sleep=run-lost reason=x",
+                  "event stall=limit agent=hw-x line='usage limit reached'", "event stall=silent agent=hw-x"):
+            self.assertTrue(fc.fc_watch.ATTENTION.search(e) or fc.fc_watch.URGENT.search(e), e)
 
 
 class NetworkDrop(unittest.TestCase):

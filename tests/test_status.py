@@ -55,6 +55,19 @@ class DoneEvidence(unittest.TestCase):
         self.assertEqual((out, self.recorded(), list((self.proj / "results").glob("999.json"))), ("999: no such task (run `compose sync` if it is new on Linear)\n", [], []))
 
 
+class TaskState(unittest.TestCase):
+    def state(self, status, have, merged):
+        proj = Path(tempfile.mkdtemp()) / "feat"
+        (proj / "results").mkdir(parents=True)
+        (proj / "results" / "021.json").write_text(json.dumps({"status": status}))
+        facts = {"prefix": "task-", "have": have, "merged": merged}
+        return fc.fc_status.task_state(proj, proj, {"id": "021", "title": "a"}, "", facts)["state"]
+
+    def test_a_passed_task_is_merged_with_its_branch_in_the_trunk_or_without_a_branch_and_an_already_green_one_stays_so(self):
+        self.assertEqual([self.state("passed", {"task-021"}, {"task-021"}), self.state("passed", set(), set()), self.state("passed", {"task-021"}, set())], ["merged", "merged", "passed"])
+        self.assertEqual([self.state("already_green", {"task-021"}, {"task-021"}), self.state("already_green", set(), set())], ["already_green"] * 2)
+
+
 class TestTiers(unittest.TestCase):
     """`status` prints the tier pins and the spend per tier right after the route cost lines."""
 

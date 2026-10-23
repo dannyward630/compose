@@ -121,7 +121,18 @@ Each watcher remembers what it last reported in `results/watch-<who>.json`.
 The `<who>` is the watcher's `COMPOSE_ROLE` (`orchestrator` for the team lead), and `manager-<pane>` for an engineering manager session in herdr pane `<pane>` (`manager` outside herdr).
 `watch --now` and `status` also say whether away or yolo is on and which session set it, since one session's `compose away` or `compose yolo` changes how every session on the project answers.
 A watch started later still reports what happened while none ran, and `watch --now` marks the current state as seen.
-A billing halt is an event too, shown as `event halt=payment`.
+That watch wakes only for what needs attention: a done, needs-user, blocked, contradiction or tool-bug report, a stall, a payment halt, a Mac sleep, a crash or a sign-in screen.
+The `working` reports and other progress lines wait and are printed in the same wake as the next such event.
+`--all` wakes on every line again, and `--attention` gives any other watch the same behavior.
+A billing halt is an event too, shown as `event halt=payment` with the provider, the tasks left, the top-up link as `top_up=` and the exact command that continues as `resume=`.
+The Mac sleeping is not a stall: when the wall clock jumps by 90 s or more between two polls (2 s apart), the watch prints one `event sleep=woke from=<time> to=<time> slept=<span>` naming the window.
+The silence alarms then wait one stall window after the wake, since nothing could move while the Mac slept.
+A run that died within 15 minutes of the wake, whose log was still being written when the Mac went to sleep and which did not halt on a payment limit, is resumed by the watch itself: `event sleep=resumed`, once per run, with `compose resume` logging to `results/resume.log`.
+Any other run that died after a wake raises `event sleep=run-lost` with the reason and the exact `compose resume --repo <repo> --project <slug>` command, and a run stopped with Ctrl-C is left alone.
+A pane that keeps showing a retry loop or a limit banner for 60 s ("Retrying ... 401", "usage limit", "try again at", "rate limited", "402") raises `event stall=limit agent=<name> line='<the matched line>'`, once per spell, instead of waiting for the quiet alarm.
+The watch reads each working teammate's pane at most every 30 s, and a spell ends when the pane stops matching.
+A teammate herdr shows as working for 30 minutes with no report and no commit raises `event stall=silent agent=<name>`; set `agent_stall_seconds` in `verify.json` to change that.
+The 4-minute quiet alarm for the team lead is unchanged, and time asleep does not count toward either.
 
 The team lead never starts `watch` itself.
 Its tab carries `COMPOSE_ROLE`, `COMPOSE_PROJECT`, and `COMPOSE_REPO`, and the plugin's Stop hook (`compose rewake`) parks a watch whenever one of its turns ends.

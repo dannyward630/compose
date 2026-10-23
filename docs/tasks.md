@@ -44,6 +44,20 @@ Three more rules apply to the block and the issue around it:
 - Only an issue with the block counts as a task.
   Stories, for example, have none.
 
+## Model tier
+
+The optional `tier:` line pins one task to `cheap`, `standard`, `frontier` or `no-frontier`.
+It beats the pin of the task's story and of the project (`compose tier`).
+It picks the model of an implementer only while the block has no `model:` line, because `model:` names the model itself.
+Any other value stops the task from loading with `<id>: tier must be cheap, standard, frontier or no-frontier, not <value>`.
+
+```compose
+id: 003
+files: src/cart.js
+test: node --test tests/cart.test.js
+tier: standard
+```
+
 ## Design tasks
 
 A design task is the same issue with `kind: design` and a `nodes:` line in place of the `files:` line.

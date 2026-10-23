@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -54,12 +54,13 @@ def cmd_triage(a):
 
 RUN_PARALLEL = 3  # tasks at once when neither --parallel nor the config's `parallel` says
 
-def require_committed(repo, stack=True):
+def require_committed(repo, stack=True, force=False):
     """The preflight of a run (fc_init.start_checks), every problem at once before anything is cloned. Every task clone starts
     from the project branch's last commit, so its tests must be committed: it stops on anything dirty, naming it (the agent wiring
     a session hook rewrites and the tools' own directories are left out: fc_worktree.dirty_paths), on a key its service rejects,
-    and with `stack` on a gh that is not logged in. A Mac on battery, a loaded machine or a crash-looping container only warns."""
-    fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them")
+    and with `stack` on a gh that is not logged in, and on a Mac on battery below 30% unless `force`. A loaded machine or a
+    crash-looping container only warns."""
+    fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them", force=force)
 
 QUEUE = "run-queue"  # results/run-queue/<id>.json: a task `compose run --only` added to the live run
 QUEUE_POLL = 2  # seconds the live run waits for a task to finish before it looks at the queue again
@@ -101,7 +102,7 @@ def cmd_run(a):
     if why:  # an e2e case that fails for the environment fails every verify, and no implementer can fix it
         sys.exit(f"run stopped before anything was cloned: {why}. Run `compose verify --project {proj.name} --prove` and fix every case it "
                  "names first; `--unproven` runs anyway.")
-    require_committed(repo, not a.no_stack)
+    require_committed(repo, not a.no_stack, getattr(a, "force", False))
     tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
@@ -192,6 +193,8 @@ def run_tasks(repo, proj, tasks, a):
     if joins_live_run(a):
         return queue_tasks(proj, tasks)
     fc_proc.keep_awake()  # a run lasts hours; a sleeping Mac stops every agent and fails every check that waits on a timeout
+    if why := fc_credit.check(repo, tasks, getattr(a, "parallel", None) or RUN_PARALLEL, getattr(a, "force", False)):
+        sys.exit("preflight stopped; nothing was cloned or run. " + why)
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
@@ -219,6 +222,7 @@ def run_tasks(repo, proj, tasks, a):
         fc_core.atomic_write((proj / "results" / "run.json"), json.dumps({"pid": os.getpid(), "started_at": started_at, "closed": closed, "reads_queue": True,
             "tasks": [m["id"] for m in tasks], "args": {"attempts": a.attempts, "parallel": a.parallel, "trunk": a.trunk, "no_stack": a.no_stack, "redo": bool(os.environ.get("COMPOSE_REDO"))}}, indent=2))
     write_marker()
+    fc_history.record(proj, repo, "run-start", tasks=len(tasks), parallel=a.parallel, attempts=a.attempts)
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
@@ -288,6 +292,7 @@ def run_tasks(repo, proj, tasks, a):
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 fc_proc.stop()
                 fc_tasks.mark_interrupted(proj)
+                fc_history.record(proj, repo, "run-end", tasks=len(results), outcome="interrupted", seconds=round(time.time() - t0, 1))
                 print(f"\n[{fc_core.now()}] run stopped by Ctrl-C; `compose resume` continues it", file=sys.stderr)
                 os._exit(130)
             for f in finished:
@@ -310,6 +315,7 @@ def run_tasks(repo, proj, tasks, a):
                             pending[q] = [d for d in pending[q] if d != metas[p]["id"]]
                     continue
                 results.append(r)
+                fc_history.record(proj, repo, "task", task=r["id"], model=metas[p].get("model"), attempts=r["attempts"], seconds=round(r["seconds"], 1), cost=r["cost"], outcome=r["status"])
                 events =fc_fast.run_events(proj, repo, metas[p], r)
                 cost = fc_costevent.run_event(proj, metas[p], r, events[-1]) if events else None
                 fc_ledger.record_task(repo, proj, metas[p], events + ([cost] if cost else []))
@@ -348,6 +354,8 @@ def run_tasks(repo, proj, tasks, a):
         triage(repo, proj, [r["id"] for r in results if r["status"] == "passed"])
     fc_core.say(f"run done   {passed}/{len(results)} passed  wall {fc_core.fmt(total)}  sum of task time {fc_core.fmt(sum(r['seconds'] for r in results))}")
     fc_core.say(fc_core.LEDGER.line())
+    fc_history.record(proj, repo, "run-end", tasks=len(results), passed=passed, seconds=round(total, 1), cost=fc_core.LEDGER.snapshot()["total"],
+                      providers=fc_history.providers(fc_core.LEDGER.snapshot()), outcome="halted" if halt else "passed" if passed == len(results) else "failed")
     if passed and not a.no_stack:
         fc_stack.register_stack(repo, proj, a.trunk)
     if halt:
@@ -400,9 +408,9 @@ def cmd_resume(a):
     else:
         state = json.loads(path.read_text())
     fc_core.say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
-    ns = argparse.Namespace(repo=str(repo), project=proj.name, **state["args"])
+    ns = argparse.Namespace(repo=str(repo), project=proj.name, force=getattr(a, "force", False), **state["args"])
     if state["command"] == "run":
-        require_committed(repo, not getattr(ns, "no_stack", False))
+        require_committed(repo, not getattr(ns, "no_stack", False), getattr(a, "force", False))
         redo, since = bool(state["args"].get("redo")), since_of(state["halted_at"])
         if redo:  # the tasks that had not started still read passed from before the redo; only a result newer than the stop is new
             os.environ["COMPOSE_REDO"] = "1"
@@ -410,6 +418,7 @@ def cmd_resume(a):
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
+        ns.force = getattr(a, "force", False)
         ns.parallel = getattr(a, "parallel", None) or fc_config.PARALLEL or getattr(ns, "parallel", None) or RUN_PARALLEL  # flag, config, the halted run's
         fc_core.say(f"resume {len(tasks)} task(s): {', '.join(m['id'] for m in tasks)}")
         run_tasks(repo, proj, tasks, ns)

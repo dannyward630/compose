@@ -13,7 +13,6 @@ SLEPT_MIN
 clock
 slept
 slept_text
-SLOTS
 QUICK_SLOTS
 SLOT_SAY_AFTER
 SCOPED_RE
@@ -21,4 +20,5 @@ SUITE_RE
 _parts
 scoped
 suite
+suite_slots
 slot

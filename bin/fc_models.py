@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers, fc_tiers
+import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers, fc_tiers, fc_notify
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -90,7 +90,7 @@ def pi_agent_dir(cwd):
     """The agent directory a task's pi runs with, beside the task clone as <clone>.pi-agent: the user's models.json and auth.json
     by link, and a settings.json of its own that pins pi's default compaction. pi merges nothing from the user's global
     settings then: a large compaction.reserveTokens there (meant for a small local model) made GLM's turns compact every few
-    tool calls until the 180 s limit."""
+    tool calls until the turn limit."""
     adir = Path(cwd).parent / (Path(cwd).name + ".pi-agent")
     adir.mkdir(exist_ok=True)
     for name in ("models.json", "auth.json"):
@@ -358,17 +358,20 @@ def cmd_models(a):
 
 
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
-TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, and the task's test runs after the turn, not in it
+TURN_TIMEOUT = 300  # seconds one implementer turn may take; a Sonnet turn of 10 to 18 tool calls and a GLM turn that compacts ran past 180 s, and the task's test runs after the turn, not in it
 
 
 def payment_halt(repo, proj, command, remaining, args, err):
-    """Save what is left to do, tell the user where to top up, exit 3. `compose resume` picks it up."""
+    """Save what is left to do, tell the user where to top up, exit 3. `compose resume` picks it up. The saved state carries the top-up
+    page and the exact resume command too, so `watch` can put both in its `halt=payment` event."""
+    key = next((k for k in TOP_UP if k in err.provider.lower()), None)
+    resume = f"compose resume --repo {repo} --project {proj.name}"
     state = {"command": command, "remaining": remaining, "args": args, "provider": err.provider, "message": err.message,
-             "halted_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+             "halted_at": time.strftime("%Y-%m-%d %H:%M:%S"), "top_up": TOP_UP.get(key), "resume": resume}
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write((proj / "results" / "resume.json"), json.dumps(state, indent=2))
     (proj / "results" / "run.json").unlink(missing_ok=True)
-    key = next((k for k in TOP_UP if k in err.provider.lower()), None)
+    fc_notify.send(proj, f"payment required at {err.provider}: top up, then compose resume ({len(remaining)} task(s) left)")
     print()
     print(f"PAYMENT REQUIRED  provider: {err.provider}")
     print(f"  {err.message}")
@@ -378,7 +381,7 @@ def payment_halt(repo, proj, command, remaining, args, err):
         print(f"  stopped with {len(remaining)} task(s) left: {', '.join(remaining)}. Passed tasks keep their branches.")
     else:
         print("  stopped during verify; task branches are untouched.")
-    print(f"  then continue where it stopped:  compose resume --repo {repo} --project {proj.name}")
+    print(f"  then continue where it stopped:  {resume}")
     sys.exit(3)
 
 

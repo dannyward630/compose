@@ -85,11 +85,31 @@ class Slots(unittest.TestCase):
 
     def test_only_a_whole_suite_takes_a_suite_slot(self):
         suites = ("python3 -m unittest discover -s tests", "pytest", "npm test", "make test", "go test ./...", "cd app && npm run test", "cargo nextest run",
-                  "uv run pytest tests", "pytest -k a; pytest")
+                  "uv run pytest tests", "pytest -k a; pytest", "python3 -m tests.run", "cd compose && python3 -m tests.run -j 4")
         others = ("python3 bin/compose.py --help", "bp help", "uv sync --locked", "git status", "npm install test-pkg", "cd app", "",
-                  "pytest -k foo", "node --test test/bp.test.mjs", "pytest tests/test_a.py tests/test_b.py", "npm test -- -t foo")
+                  "pytest -k foo", "node --test test/bp.test.mjs", "pytest tests/test_a.py tests/test_b.py", "npm test -- -t foo",
+                  "python3 -m tests.run test_ship.py", "python3 -m tests.run test_ship test_layers")
         for c in suites: self.assertTrue(fc.fc_proc.suite(c), c)
         for c in others: self.assertFalse(fc.fc_proc.suite(c), c)
+
+    def test_suite_slots_are_a_quarter_of_the_cores_never_under_two_and_the_env_overrides_them(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("COMPOSE_TEST_SLOTS", None)
+            for cores, want in ((None, 2), (1, 2), (4, 2), (8, 2), (16, 4), (18, 4), (64, 16)):
+                with mock.patch("os.cpu_count", return_value=cores):
+                    self.assertEqual(fc.fc_proc.suite_slots(), want, cores)
+            os.environ["COMPOSE_TEST_SLOTS"] = "1"
+            with mock.patch("os.cpu_count", return_value=64):
+                self.assertEqual(fc.fc_proc.suite_slots(), 1)
+            os.environ["COMPOSE_TEST_SLOTS"] = "0"
+            self.assertEqual(fc.fc_proc.suite_slots(), 1)
+
+    def test_a_16_core_machine_holds_four_suites_at_once(self):
+        with mock.patch.dict(os.environ), mock.patch("os.cpu_count", return_value=16):
+            os.environ.pop("COMPOSE_TEST_SLOT", None); os.environ.pop("COMPOSE_TEST_SLOTS", None)
+            with fc.fc_proc.slot() as a, fc.fc_proc.slot() as b, fc.fc_proc.slot() as c, fc.fc_proc.slot() as d:
+                self.assertEqual((a, b, c, d), ("0", "1", "2", "3"))
+            self.assertEqual(sorted(x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()), ["0", "1", "2", "3"])
 
     def test_a_command_that_is_not_a_suite_runs_while_every_suite_slot_is_held(self):
         with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}):

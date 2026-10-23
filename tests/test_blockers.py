@@ -64,6 +64,11 @@ class OutsideBlockers(unittest.TestCase):
         self.assertEqual(still, {"NEB-10": "found task 001: found-001 is not in main (missing %s one); found: no stack built yet" % self.git("rev-parse", "--short", "found-001")})
         self.assertIn("NEB-10", fc.fc_tasks.waiting(fc.fc_tasks.load_tasks(self.app), out)["010"]["reason"])
 
+    def test_a_route_hold_is_no_blocker_and_is_not_judged(self):
+        (self.app / "results" / "tasks.json").write_text(json.dumps({"feature": {"id": "NEB-2"}, "issues": {}, "tasks": [
+            {"id": "010", "kind": "code", "linear": "NEB-20", "waits_on": ["the route (policies unreadable: x)"]}]}))
+        self.assertEqual(self.released(), ({}, {}))
+
     def test_a_task_rebased_into_the_stack_counts_when_the_stack_top_is_in_the_trunk(self):
         self.git("checkout", "-q", "-b", "found-001"); self.commit("one"); self.git("checkout", "-q", "main")
         self.git("checkout", "-q", "-b", "found-layer-01"); self.commit("one again"); self.git("checkout", "-q", "main")

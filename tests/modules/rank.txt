@@ -3,6 +3,7 @@ fc_prompt
 fc_proc
 fc_auth
 fc_config
+fc_history
 fc_tiers
 fc_tierspend
 fc_budget
@@ -22,7 +23,9 @@ fc_tierpin
 fc_costevent
 fc_fast
 fc_claude
+fc_notify
 fc_models
+fc_credit
 fc_routejev
 fc_route
 fc_quick
@@ -54,9 +57,11 @@ fc_setup
 fc_update
 fc_figmaplan
 fc_figma
+fc_testred
 fc_briefs
 fc_libapi
 fc_gate
+fc_format
 fc_implement
 fc_shrink
 fc_jev
@@ -74,6 +79,8 @@ fc_regress
 fc_run
 fc_status
 fc_spec
+fc_sleep
+fc_stall
 fc_watch
 fc_yolo
 fc_bench
