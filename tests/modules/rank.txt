@@ -63,6 +63,7 @@ fc_libapi
 fc_gate
 fc_format
 fc_implement
+fc_shrink
 fc_jev
 fc_accept
 fc_reroute
