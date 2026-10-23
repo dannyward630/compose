@@ -176,7 +176,8 @@ A file that is not an object, or a `frontier` that is negative or not a number, 
 
 A harness is the program that runs a model, and [harnesses.md](harnesses.md) lists them.
 A `harnesses.<name>` block is merged over the workspace's settings one level deep for a session of that harness.
-Each block needs `models.crew.default`, and Claude Code needs no block.
+Each block needs `models.crew.default`.
+Claude Code needs no block, and Codex has a built-in one that a `codex` block replaces, see [harnesses.md](<harnesses.md>).
 The `harnesses` key itself is gone from the merged settings.
 
 ```json
@@ -194,7 +195,7 @@ The `harnesses` key itself is gone from the merged settings.
 }
 ```
 
-A Codex session reads its crew models from the `codex` block, and every other key from the workspace.
+A Codex session reads its crew models from the `codex` block, else from the default made from the top level, which puts every Claude model on bare `codex`, and every other key from the workspace.
 
 ## Providers
 
@@ -334,7 +335,7 @@ A bad entry stops the command with one line that names the entry.
 | `prices must be an object of model id to 2 or 4 numbers, not <value>` | Make `prices` a map of model id to a list of 2 or 4 numbers. |
 | `prices.<model> must be 2 or 4 numbers` | Give that model 2 numbers (input, output) or 4 (input, output, cache write, cache read). |
 | `providers.<name> is reserved: codex, gemini, grok name harnesses, not providers` | Pick another name. |
-| `no "harnesses.<name>" block` | Add the block for that harness, see [Harnesses](#harnesses). |
+| `no "harnesses.<name>" block` | Add the block for that harness, which only `gemini` and `grok` need today, see [Harnesses](<#harnesses>). |
 | `harnesses.<name>.models.crew has no "default"` | Add `models.crew.default` to the block. |
 | `... teammate sessions run in Claude Code, pi, ...: use ...; OpenCode ids are for implementers only` | Use an id of a harness the line names under `models.crew`. |
 

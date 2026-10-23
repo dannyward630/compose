@@ -82,7 +82,12 @@ Without the flag it is `COMPOSE_HARNESS`.
 Without that it is the harness whose own session variable is set, which for Codex is `CODEX_THREAD_ID`, so a session started by hand in Codex picks the `codex` block with no flag.
 That check comes before `CLAUDECODE`, because a Codex started from a Claude Code shell still carries `CLAUDECODE=1`.
 With none of them it is `claude` under Claude Code (`CLAUDECODE=1`), and `claude` has no block.
-A harness other than `claude` with no block stops with a line saying so, and a block whose `models.crew` has no `default` stops too.
+A harness with a built-in default needs no block in `~/.compose/config.json`.
+Codex has one, made from the top level: every role on `claude` or a `claude:<id>` model runs on `codex`, Codex's own default model, and a role on any other model keeps it.
+A `harnesses.codex` block replaces that default whole.
+compose never writes the block or any other part of the config.
+A block whose `models.crew` has no `default` stops with a line saying so.
+A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today.
 
 A block with no `designer` entry still gets the built-in designer default, `claude:claude-opus-5-5`, which needs Claude Code.
 
