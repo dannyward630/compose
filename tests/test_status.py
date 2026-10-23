@@ -11,7 +11,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_ledger, fc_tierspend, fc_load  # noqa: E402
+import fc_ledger, fc_tierspend, fc_load, fc_shed  # noqa: E402
 
 
 class DoneEvidence(unittest.TestCase):
@@ -274,3 +274,34 @@ class StatusLoadWarn(unittest.TestCase):
     def test_cleared_or_a_state_without_warn_gives_no_warn_line(self):
         self.assertEqual(self.lines(warn=False, log=self.log(("warn", 900), ("cleared", 60))), [])
         self.assertEqual(self.lines(log=[]), [])
+
+
+class StatusShedLine(unittest.TestCase):
+    HOT = {"pid": 11, "cpu": 54.6, "command": "node"}
+
+    def lines(self, hold=None, freed=(), hot=None, held=False):
+        load = {"held": held, "since": time.time() if held else None, "n": 1, "log": [], "avg": 13.0, "new": []}
+        shed = {"hold": hold, "freed": list(freed), "hot": hot, "paused": []}
+        with mock.patch.object(fc_load, "update", return_value=load), mock.patch.object(fc_shed, "state", return_value=shed), mock.patch("os.cpu_count", return_value=8):
+            return fc.fc_status.load_lines()
+
+    def freed(self, *ats):
+        return [{"pid": 100 + i, "kind": "agent", "project": "myproj", "why": "waiter gone", "at": at} for i, at in enumerate(ats)]
+
+    def test_a_hold_counts_the_freed_entries_at_or_after_its_time_and_gives_the_hot_line(self):
+        t = time.time() - 3600
+        lines = self.lines({"n": 1, "at": t}, self.freed(t - 60, t, t + 10), self.HOT)
+        self.assertEqual(lines, ["shed: freed 2 since " + time.strftime("%H:%M", time.localtime(t)), "shed: hottest not started by compose: node (pid 11, 55% cpu), left alone"])
+
+    def test_the_hot_line_shows_alone_and_no_freed_since_the_hold_gives_no_freed_line(self):
+        t = time.time() - 600
+        self.assertEqual(self.lines({"n": 1, "at": t}, hot=self.HOT), ["shed: hottest not started by compose: node (pid 11, 55% cpu), left alone"])
+        self.assertEqual(self.lines({"n": 1, "at": t}, self.freed(t - 1)), [])
+
+    def test_no_hold_gives_no_shed_lines_whatever_else_is_in_the_state(self):
+        self.assertEqual(self.lines(None, self.freed(time.time() - 60), self.HOT), [])
+
+    def test_the_shed_lines_come_after_the_load_lines(self):
+        t = time.time() - 60
+        lines = self.lines({"n": 1, "at": t}, self.freed(t), self.HOT, held=True)
+        self.assertEqual([l.split(":")[0] for l in lines], ["load", "shed", "shed"])
