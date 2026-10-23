@@ -436,7 +436,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             fc_core.say(f"{tid} attempt {attempt} contradiction  {found[:160]}")
             status = "contradiction"
             break
-        test = checked("after the task")(meta["test"], wt, int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT), env=fc_core.clean_env())
+        sha = fc_green.tree_of(wt)
+        if line := fc_green.taken(proj, sha, meta["test"]):  # the task's own test, green on these very files already
+            fc_core.say(f"{tid} test    {line}")
+            test = subprocess.CompletedProcess(meta["test"], 0, "", "")
+        else:
+            test = run_test(meta, wt)
+            fc_green.record(proj, sha, meta["test"], test.returncode)
         now = fc_gate.check_state(checked("after the task"), checks, wt, limit) if checks and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
         # What passed on the base is asked only for a check that fails after the task: a suite that passes needs no base run.
         ahead = fc_gate.baseline_state(checked("on its base"), checks, wt, (base, tuple(delete)), limit) if any(c["exit"] for c in now.values()) else {}
