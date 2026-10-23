@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_load
 
 
 def snap(proj):
@@ -1321,3 +1322,42 @@ class PreambleNamesTrail(unittest.TestCase):
         brief = " ".join((fc.fc_crew.crew_dir(self.proj) / "shop-tests-001.brief.md").read_text().split())
         self.assertIn("trail output with file:line", brief)  # the brief the session reads carries the new preamble
         self.assertTrue(brief.endswith("Write the test."))
+
+
+class CrewLoadWait(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
+        self.proj.mkdir(parents=True)
+        self.calls = []
+
+    def herdr(self, *args, **kw):
+        self.calls.append(args)
+        return {"agents": []} if args[:2] == ("agent", "list") else {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {"agent": {"agent_status": "working"}}
+
+    def crew(self, action, wait, force=None, battery=None):
+        a = type("A", (), {"action": action, "role": "planner", "title": "planner", "brief": "Go.", "force": False} | ({} if force is None else {"force": force}))
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc_load, "wait", wait) as w, \
+                mock.patch.object(fc.fc_crew.fc_checks, "battery_stop", return_value=battery), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch("builtins.print"), contextlib.suppress(SystemExit):
+            fc.fc_crew.cmd_crew(a)
+        return w
+
+    def test_start_waits_before_opening_anything_then_starts(self):
+        w = self.crew("start", mock.Mock(side_effect=lambda say, force=False: self.calls.append("waited")))
+        self.assertEqual(self.calls[0], "waited")  # nothing was opened while it waited
+        self.assertIn(("tab", "create"), [c[:2] for c in self.calls[1:]])  # then the teammate started
+        self.assertEqual(w.call_count, 1)
+
+    def test_wait_gets_say_and_force(self):
+        for force, want in ((None, False), (True, True)):
+            w = self.crew("start", mock.Mock(), force)
+            self.assertTrue(callable(w.call_args.args[0]))
+            self.assertEqual(w.call_args.args[1], want)
+
+    def test_a_refused_wait_or_low_battery_starts_nothing_and_other_actions_never_wait(self):
+        self.crew("start", mock.Mock(side_effect=SystemExit("held")))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.crew("start", mock.Mock(), battery="9%").call_count, 0)  # the battery check comes first
+        for action in ("list", "focus", "stop"):
+            self.assertEqual(self.crew(action, mock.Mock()).call_count, 0, action)
