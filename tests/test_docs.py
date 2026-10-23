@@ -2059,3 +2059,48 @@ class HarnessSessionOrder(unittest.TestCase):
 
     def test_no_em_dash(self):
         self.assertNotIn("—", self.page)
+
+
+class HarnessDefaultBlockDocs(unittest.TestCase):
+    CLAUDE = "With none of them it is `claude` under Claude Code (`CLAUDECODE=1`), and `claude` has no block."
+    SIX = [
+        "A harness with a built-in default needs no block in `~/.compose/config.json`.",
+        "Codex has one, made from the top level: every role on `claude` or a `claude:<id>` model runs on `codex`, Codex's own default model, and a role on any other model keeps it.",
+        "A `harnesses.codex` block replaces that default whole.",
+        "compose never writes the block or any other part of the config.",
+        "A block whose `models.crew` has no `default` stops with a line saying so.",
+        "A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today.",
+    ]
+
+    def setUp(self):
+        self.page, self.config = read("docs/harnesses.md"), read("docs/config.md")
+
+    def test_models_per_harness_has_the_six_lines_after_the_claude_line(self):
+        lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        i = lines.index(self.CLAUDE)
+        self.assertEqual(lines[i + 1:i + 1 + len(self.SIX)], self.SIX)
+
+    def test_config_harnesses_section_says_codex_has_a_default(self):
+        sec = self.config.split("\n## Harnesses\n", 1)[1].split("\n## ", 1)[0]
+        lines = sec.splitlines()
+        self.assertIn("Each block needs `models.crew.default`.", lines)
+        i = lines.index("Each block needs `models.crew.default`.")
+        self.assertEqual(lines[i + 1], "Claude Code needs no block, and Codex has a built-in one that a `codex` block replaces, see [harnesses.md](<harnesses.md>).")
+        self.assertIn("A Codex session reads its crew models from the `codex` block, else from the default made from the top level, which puts every Claude model on bare `codex`, and every other key from the workspace.", lines)
+        for word in ("harnesses.md", "models.crew.default", "one level deep"):
+            self.assertIn(word, sec)
+
+    def test_error_row_names_gemini_and_grok_as_the_harnesses_needing_a_block(self):
+        errors = self.config.split("\n## When the config is wrong\n", 1)[1].split("\n## ", 1)[0]
+        rows = [l for l in errors.splitlines() if l.startswith('| `no "harnesses.<name>" block`')]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("Add the block for that harness, which only `gemini` and `grok` need today, see [Harnesses](<#harnesses>).", rows[0])
+
+    def test_no_line_says_a_codex_session_without_a_block_stops(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            for l in text.splitlines():
+                self.assertIsNone(re.search(r"(?i)codex.*\bno\b.*\bblock\b.*\bstops?\b|with no block stops", l), f"{rel}: {l}")
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            self.assertNotIn("—", text, rel)
