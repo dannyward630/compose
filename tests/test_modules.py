@@ -27,7 +27,7 @@ MODULES = {m: listed(m) for m in RANK}
 HELPERS = {"fc_cost", "fc_mcp", "fc_sessions"}
 SETDEFAULTS = ["os.environ.setdefault('GRAFT_NO_GITIGNORE', '1')", "os.environ.setdefault('GRAFT_NO_IGNORE', '1')"]
 CONFIG_ONLY = ("DEFAULT_MODEL", "FALLBACK_MODEL", "FALLBACK_AFTER", "TEST_READER", "OPENROUTER_KEY", "LINEAR_KEY", "WORKSPACE", "CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK")
-LAUNCHER_SHA = "6da43b058089b473dce7bba234756d8af893868a06c45fa7cc8a0280ae40f676"
+LAUNCHER_SHA = "471a44a7ee5817b057bddaf43972cd238de82763ea64f7d7443808aec3a6b716"
 SUBCOMMANDS = list(listed("subcommands"))
 
 
