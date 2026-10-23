@@ -305,3 +305,28 @@ class StatusShedLine(unittest.TestCase):
         t = time.time() - 60
         lines = self.lines({"n": 1, "at": t}, self.freed(t), self.HOT, held=True)
         self.assertEqual([l.split(":")[0] for l in lines], ["load", "shed", "shed"])
+
+
+class StatusPausedLine(unittest.TestCase):
+    def lines(self, paused, hold=None, hot=None, freed=()):
+        load = {"held": False, "since": None, "n": 1, "log": [], "avg": 3.0, "new": []}
+        shed = {"hold": hold, "freed": list(freed), "hot": hot, "paused": paused}
+        with mock.patch.object(fc_load, "update", return_value=load), mock.patch.object(fc_shed, "state", return_value=shed), mock.patch("os.cpu_count", return_value=8):
+            return fc.fc_status.load_lines()
+
+    def paused(self, *specs):
+        return [{"pid": pid, "kind": kind, "project": project, "at": 1000.0 + i} for i, (pid, kind, project) in enumerate(specs)]
+
+    def test_paused_agents_give_one_line_in_the_order_given(self):
+        lines = self.lines(self.paused((41, "implementer", "myproj"), (52, "teammate", "other"), (63, "implementer", "-")))
+        self.assertEqual(lines, ["shed: paused 3: implementer 41 (myproj), teammate 52 (other), implementer 63 (-)"])
+
+    def test_one_paused_agent_and_none_paused(self):
+        self.assertEqual(self.lines(self.paused((41, "teammate", "myproj"))), ["shed: paused 1: teammate 41 (myproj)"])
+        self.assertEqual(self.lines([]), [])
+
+    def test_the_line_comes_after_the_other_shed_lines(self):
+        t = time.time() - 600
+        freed = [{"pid": 7, "kind": "agent", "project": "myproj", "why": "waiter gone", "at": t}]
+        lines = self.lines(self.paused((41, "teammate", "myproj")), {"n": 1, "at": t}, {"pid": 11, "cpu": 54.6, "command": "node"}, freed)
+        self.assertEqual([l[:13] for l in lines], ["shed: freed 1", "shed: hottest", "shed: paused "])
