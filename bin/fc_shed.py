@@ -102,7 +102,7 @@ def tick():
                 s["hot"] = {"pid": row[0], "cpu": row[2], "command": cmd}
                 lines.append(f"event shed=hot pid={row[0]} cpu={row[2]:.0f} command={cmd} (not started by compose, left alone)")
             now, step = time.time(), s.get("step_at")
-            if now - s["hold"]["at"] >= 120 and (step is None or now - step >= 60):
+            if (st["memory"] == 4 or now - s["hold"]["at"] >= 120) and (step is None or now - step >= 60):
                 done = {e["pid"] for e in s["paused"]}
                 for r in sorted(recs, key=lambda r: r["at"], reverse=True):
                     pids = tree(r["pid"], rows)
