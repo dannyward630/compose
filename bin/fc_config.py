@@ -143,7 +143,7 @@ def settings(cfg, harness=None):
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS, PRICES, HARNESS
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -168,6 +168,13 @@ def apply_config(move=True, harness=None):
     CLAUDE_PARALLEL = st.get("claude_parallel", 3)
     if type(CLAUDE_PARALLEL) is not int or CLAUDE_PARALLEL < 1:
         sys.exit(f"{CONFIG_PATH}: claude_parallel must be a whole number of 1 or more, not {CLAUDE_PARALLEL!r}")
+    LOAD = st.get("load", {})
+    for k in ("high", "low", "warn"):
+        v = LOAD.get(k, 1)
+        if type(v) not in (int, float) or v <= 0:
+            sys.exit(f"{CONFIG_PATH}: load.{k} must be a number above 0, not {LOAD[k]!r}")
+    if "high" in LOAD and "low" in LOAD and LOAD["low"] >= LOAD["high"]:
+        sys.exit(f"{CONFIG_PATH}: load.low must be below load.high")
     WORKSPACE = name
     HARNESS = harness
     auth = fc_auth.read_auth(AUTH_PATH)
