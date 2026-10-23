@@ -13,4 +13,5 @@ start_checks
 cmd_doctor
 created_from
 move_onto
+undo_worktree
 cmd_init

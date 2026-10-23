@@ -159,6 +159,9 @@ def slot_on(repo, branch, holder, detach=False):
 
 def checkout_in_slot(path, branch, detach=False):
     fc_core.sh(["git", "checkout", "-q", *(["--detach"] if detach else []), branch], path)
+    for d in TOOL_DIRS:  # an earlier holder's link to a checkout's tool folder: `return` keeps it, and a dead one makes mkdir raise
+        if (path / d.rstrip("/")).is_symlink():
+            (path / d.rstrip("/")).unlink()
     for d in fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], path, check=False).stdout.splitlines():
         if Path(d).name in fc_config.DEP_DIRS and (path / d).is_symlink():
             (path / d).unlink()
