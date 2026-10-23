@@ -110,15 +110,22 @@ def watch_mem(proj, key):
     except (OSError, json.JSONDecodeError):
         return {}
 
-def watch_save(proj, key, **kv):
-    mem = watch_mem(proj, key) | kv
+def watch_save(proj, key, base=None, **kv):
     f = proj / "results" / f"watch-{key}.json"
     f.parent.mkdir(parents=True, exist_ok=True)
+    if base is not None:
+        b = f.with_suffix(".base")
+        fc_core.atomic_write(b.with_suffix(".tmp"), json.dumps(base))
+        b.with_suffix(".tmp").replace(b)
+    mem = {k: v for k, v in watch_mem(proj, key).items() if k != "base"} | kv
     fc_core.atomic_write(f.with_suffix(".tmp"), json.dumps(mem))
     f.with_suffix(".tmp").replace(f)  # atomic: a reader never sees half a file
 
 def watch_base(proj, key):
-    raise NotImplementedError("not implemented")
+    try:
+        return json.loads((proj / "results" / f"watch-{key}.base").read_text())
+    except (OSError, json.JSONDecodeError):
+        return watch_mem(proj, key).get("base")
 
 def load_events(proj, key):
     raise NotImplementedError("not implemented")
@@ -147,6 +154,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limi
     on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch and n not in closed]
     mem = watch_mem(proj, key)
+    was = json.dumps([sorted(mem.get("fired", [])), mem.get("seen", {}), mem.get("spells", {})])
     fired, seen = set(mem.get("fired", [])), mem.get("seen", {})
     lead = orch in snap.get("crew", {}) or orch in snap["agents"]  # a project started without a team lead (a designer started directly) never has one
     who = f" agent={orch}" if lead else ""
@@ -200,10 +208,11 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limi
         since = seen[orch][1]
         if lead and status in ("idle", "done") and (pending or on_hold) and now_s - since >= limit:
             fire(f"idle:{since}", f"idle agent={orch} the team lead has been {status} since {hm(since)} with {len(pending + on_hold)} task(s) pending")
-    try:
-        watch_save(proj, key, fired=sorted(fired), seen=seen, spells=spells)
-    except OSError:
-        pass
+    if json.dumps([sorted(fired), seen, spells]) != was:
+        try:
+            watch_save(proj, key, fired=sorted(fired), seen=seen, spells=spells)
+        except OSError:
+            pass
     return ev
 
 RUN_ENDED = {"crashed": "  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `compose resume`",
@@ -369,7 +378,7 @@ def cmd_watch(a, rewake=False):
         return
     with lock:  # held until this watch returns or exits
         fc_proc.keep_awake()  # a sleeping Mac sleeps the team it watches
-        before = watch_mem(proj, key).get("base") or watch_snapshot(repo, proj)
+        before = watch_base(proj, key) or watch_snapshot(repo, proj)
         emit = (lambda s: print(s, file=sys.stderr)) if rewake else print
         parent = os.getppid()
         deadline = time.time() + a.timeout if a.timeout else None
