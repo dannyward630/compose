@@ -465,7 +465,7 @@ class TestCrewTiers(unittest.TestCase):
     def test_each_role_starts_on_its_tier(self):
         got = {r: fc.fc_crew.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "wayfinder")}
         sonnet, haiku, opus, fable = (f"claude:claude-{m}" for m in ("sonnet-5-5", "haiku-5-5", "opus-5-5", "fable-5-1"))
-        self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": haiku, "planner": opus, "wayfinder": fable})
+        self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": sonnet, "planner": opus, "wayfinder": fable})
 
     def test_a_raw_model_starts_unchanged_for_any_role(self):
         for role in ("tests", "orchestrator", "explore"):

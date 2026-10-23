@@ -136,7 +136,7 @@ A model id names the harness that runs it.
 ## Model tiers, prices and the frontier budget
 
 Every model belongs to one of three tiers: `cheap`, `standard` and `frontier`.
-Each role starts on the highest tier it may use: `small`, `tests`, `test_reader` and `fix` on cheap, `explore`, `research`, `perf`, `toolsmith`, `groundwork`, `orchestrator` and the implementer on standard, and `planner`, `wayfinder`, `designer` and `designer-plan` on frontier.
+Each role starts on the highest tier it may use: `small` and `test_reader` on cheap, `explore`, `research`, `perf`, `toolsmith`, `groundwork`, `orchestrator`, the implementer and the code-writing `tests` and `fix` roles on standard, and `planner`, `wayfinder`, `designer` and `designer-plan` on frontier.
 An implementer with no `model:` of its own starts on cheap, or on standard when its route's depth is `DEEP`.
 A cheap model that fails `fallback_after` attempts moves to the first standard model.
 `compose tier` pins a tier for a story or the whole project, and a task's `tier:` key pins one task ([cli.md](cli.md), [tasks.md](tasks.md#model-tier)).
