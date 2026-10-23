@@ -188,6 +188,8 @@ def load_lines():
             out.append(f"shed: freed {n} since {fmt(shed['hold']['at'])}")
         if shed["hot"]:
             out.append(f"shed: hottest not started by compose: {shed['hot']['command']} (pid {shed['hot']['pid']}, {shed['hot']['cpu']:.0f}% cpu), left alone")
+    if shed["paused"]:
+        out.append(f"shed: paused {len(shed['paused'])}: " + ", ".join(f"{e['kind']} {e['pid']} ({e['project']})" for e in sorted(shed["paused"], key=lambda e: e["at"])))
     return out
 
 def render_status(repo, projects):
