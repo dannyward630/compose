@@ -54,3 +54,52 @@ class SufficiencyVerify(unittest.TestCase):
                     self.assertEqual((rounds[0]["sufficiency"], rounds2[0]["sufficiency"]), (EVENTS, []))
                     self.assertEqual((code, final["passed"], len(rounds)), (0 if ok else 1, ok, 1))
                     self.assertEqual((code2, final2["passed"], len(rounds2)), (code, ok, 1))
+
+
+import fc_load  # noqa: E402
+
+SUITE, SCOPED, E2E = "python3 -m unittest discover -s tests", "python3 -m unittest tests/test_a.py", [{"name": "x"}]
+
+
+class VerifyLoadWait(unittest.TestCase):
+    def stages(self, cfg, force=None, **flags):
+        log, runs, say = [], [], mock.Mock()
+
+        @contextlib.contextmanager
+        def slot(say, quick=False):
+            log.append(("slot", quick)); yield "7"; log.append(("free",))
+
+        def run(cmd, cwd=None, env=None, timeout=None):
+            runs.append(cmd); log.append(("run", cmd[-1], env.get("COMPOSE_TEST_SLOT")))
+            bad = cmd[-1] == "make bad" and len(runs) == 1  # the first run fails with a tool error: one retry
+            return mock.Mock(returncode=int(bad), stdout="command not found" if bad else "", stderr="")
+        a = type("A", (), {"skip_e2e": False, "skip_review": True, **flags, **({} if force is None else {"force": force})})()
+        with mock.patch.object(fc_load, "wait", side_effect=lambda say, force=False: log.append(("wait", say, force))), \
+                mock.patch.object(fc.fc_proc, "slot", slot), mock.patch.object(fc.fc_proc, "run_limited", run), \
+                mock.patch.object(fc.fc_verify, "e2e_stage", side_effect=lambda *x, **k: log.append(("e2e",)) or True), \
+                mock.patch.object(fc.fc_herdr, "herdr_verify_panes"), mock.patch.object(fc.fc_herdr, "herdr_stage"), \
+                mock.patch.object(fc.fc_herdr, "herdr_space"), mock.patch.object(fc.fc_core, "say", say), \
+                contextlib.redirect_stdout(io.StringIO()):
+            fc.fc_verify.run_stages(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), cfg, a)
+        return log, say
+
+    def test_checks_wait_then_each_check_runs_in_its_own_slot_with_it_in_the_env(self):
+        log, say = self.stages({"checks": [SUITE, SCOPED]})
+        self.assertEqual(log, [("wait", say, False), ("slot", False), ("run", SUITE, "7"), ("free",), ("slot", True), ("run", SCOPED, "7"), ("free",)])
+
+    def test_the_retry_runs_in_the_same_slot_with_it_in_the_env(self):
+        log, say = self.stages({"checks": ["make bad"]})
+        self.assertEqual(log, [("wait", say, False), ("slot", True), ("run", "make bad", "7"), ("run", "make bad", "7"), ("free",)])
+
+    def test_e2e_waits_before_it_is_submitted_and_after_the_checks_stage(self):
+        self.assertEqual([e[0] for e in self.stages({"checks": [SCOPED], "e2e": E2E})[0]], ["wait", "slot", "run", "free", "wait", "e2e"])
+        self.assertEqual([e[0] for e in self.stages({"e2e": E2E})[0]], ["wait", "e2e"])
+
+    def test_force_is_passed_to_every_wait(self):
+        log, _ = self.stages({"checks": [SCOPED], "e2e": E2E}, force=True)
+        self.assertEqual([e[2] for e in log if e[0] == "wait"], [True, True])
+
+    def test_a_stage_that_does_not_start_never_waits(self):
+        for cfg, flags in (({"checks": [SCOPED]}, {"review_only": True}), ({"e2e": E2E}, {"skip_e2e": True}), ({}, {})):
+            with self.subTest(cfg=cfg, flags=flags):
+                self.assertEqual([e for e in self.stages(cfg, **flags)[0] if e[0] == "wait"], [])
