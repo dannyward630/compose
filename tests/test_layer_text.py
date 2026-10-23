@@ -246,9 +246,8 @@ class PrBody(unittest.TestCase):
 REPOS = {}
 
 
-class SharedFixture(unittest.TestCase):
-    """LayersBase builds its fixture once per class: a setUp after the first runs no git process, and every test starts from the same state."""
-    git, write, commit = LayersBase.git, LayersBase.write, LayersBase.commit
+class SharedFixture(LayersBase):
+    """LayersBase builds its fixture once per class, in setUpClass: no setUp runs a git process, and every test starts from the same state."""
 
     @classmethod
     def setUpClass(cls):
@@ -256,17 +255,18 @@ class SharedFixture(unittest.TestCase):
         def gone():
             assert not os.listdir(cls.scratch), "the class's temporary directories are removed"
         cls.addClassCleanup(shutil.rmtree, cls.scratch)
-        cls.addClassCleanup(gone)
+        cls.addClassCleanup(gone)  # registered before the kit's cleanups, so it runs after them
         patch = mock.patch.object(tempfile, "tempdir", cls.scratch); patch.start(); cls.addClassCleanup(patch.stop)
+        super().setUpClass()
 
     def setUp(self):
         with mock.patch("subprocess.Popen", wraps=subprocess.Popen) as popen:
-            LayersBase.setUp(self)
+            super().setUp()
         self.ran_git.append(popen.called)
 
     def leave_leftovers(self):
         cls, ran = type(self), self.ran_git
-        self.assertTrue(ran[0] and not any(ran[1:]), "the first setUp builds the fixture, no later one runs git")
+        self.assertFalse(any(ran), "no setUp runs a git process")
         self.assertEqual(Path(shutil.which("gh")).read_text(), FAKE_GH_STACK, "the fake gh is first on PATH")
         self.assertEqual(REPOS.setdefault(cls, self.repo), self.repo, "the same paths in every test")
         self.assertEqual(self.proj, self.repo / ".compose" / "p")
