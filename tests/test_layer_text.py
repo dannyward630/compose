@@ -73,10 +73,9 @@ if a[:2] == ["pr", "edit"]: json.dump({"title": a[a.index("--title") + 1], "body
         self.assertEqual(self.pr(), {"title": "hand", "body": "written"})
 
 
-class PrTitle(unittest.TestCase):
+class PrTitle(LayersBase):
     """A layer's PR is titled from its commits: one commit's subject, else its first task's title or first commit's subject and N more
     tasks or commits, never past TITLE_CHARS before its (i/n)."""
-    setUp, git, write, commit, stack = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit, LayersBase.stack
     METAS = [{"id": "001", "title": "001: Add the toggle"}, {"id": "002", "title": "Add the panel"}, {"id": "003", "title": "Add the menu"}]
 
     def title(self, tasks, subjects, n=2, branch="compose/p-layer-01"):
@@ -112,9 +111,9 @@ class PrTitle(unittest.TestCase):
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
         self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more task (3/4)")
         self.assertEqual(self.title(["groundwork"], ["Ignore build output"]), "JS-2888: Ignore build output (1/2)")
-        LayersBase.pr_file(self, "001-002", LayersBase.WRITTEN)  # a written title gets the key and the count too, within the same cap
+        self.pr_file("001-002", self.WRITTEN)  # a written title gets the key and the count too, within the same cap
         self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Keep the toggle's state across reloads (3/4)")
-        LayersBase.pr_file(self, "001-002", LayersBase.WRITTEN.replace("reloads", "reloads " + "x" * 30))
+        self.pr_file("001-002", self.WRITTEN.replace("reloads", "reloads " + "x" * 30))
         self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"], 4, "js-2888-react-beside-vue-layer-03"), "JS-2888: Add the toggle and 1 more task (3/4)")
         self.linear()
         self.assertEqual(self.title(["001", "002", "003"], ["toggle work", "panel work", "menu work"], 1), "JS-2888: Stacked [PRs]")
@@ -159,9 +158,8 @@ class PrTitle(unittest.TestCase):
         self.assertEqual(self.title(["002", "003"], ["panel work", "menu work"]), "JS-2888: Add the panel and 1 more task (1/2)")  # the stories do not fit
 
 
-class PrBody(unittest.TestCase):
+class PrBody(LayersBase):
     """A layer's PR body: Why from its stories, What changed, How it was tested and Tickets, from results files and its own commits."""
-    setUp, git, write, commit = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit
     METAS = [{"title": f"Build {m['id']}", "files": [], "after": "", **m} for m in [
              {"id": "001", "linear": "NEB-1", "test": "python3 -m unittest tests.toggle", "protected": ["t004.test", "t001.test"],
               "body": "## Goal\n\nIn `bin/toggle.py` (L10-L40), flip `state`.\n"},

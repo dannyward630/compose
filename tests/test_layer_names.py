@@ -7,9 +7,8 @@ os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
 
 
-class LayerNames(unittest.TestCase):
+class LayerNames(LayersBase):
     """The Layers project with its task branches under the task prefix: the layers and the chain take their names from it."""
-    setUp, git, write, commit, stack, changed = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit, LayersBase.stack, LayersBase.changed
 
     def rename(self, prefix):
         for t in ("001", "002", "003"):
@@ -109,9 +108,8 @@ class StackFolds(unittest.TestCase):
         self.assertEqual(self.groups(us, 2), [("fast/p/layer-01", ["001"], False), ("fast/p/layer-02", ["002"], False), (None, ["003", "004"], True)])
 
 
-class StackLimit(unittest.TestCase):
+class StackLimit(LayersBase):
     """A stack is capped at max_stack_prs layers, and the layers over the budget say so."""
-    setUp, git, write, commit, stack = LayersBase.setUp, LayersBase.git, LayersBase.write, LayersBase.commit, LayersBase.stack
 
     def test_a_folded_layer_over_the_budget_says_so_on_its_layer_line_and_size_line(self):
         out = [l for l in self.stack(review_layer_lines=30, max_stack_prs=3) if l.startswith("layer ")]  # natural: 20, 20, 105, 125, 155

@@ -43,8 +43,6 @@ class LayersBase(unittest.TestCase):
 
     def setUp(self):
         cls = type(self)
-        if "template" not in cls.__dict__:
-            LayersBase._build(self)
         shutil.rmtree(cls.root)
         shutil.copytree(cls.template, cls.root, symlinks=True)
         self.env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{cls.root / 'bin'}:{os.environ['PATH']}"}); self.env.start(); self.addCleanup(self.env.stop)
