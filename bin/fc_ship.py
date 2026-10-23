@@ -200,13 +200,23 @@ def gh(args, cwd):
     return subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                           env={**os.environ, "GH_PROMPT_DISABLED": "1"})
 
+def pr_view(which, cwd):
+    """(the pull request for a PR number or a head branch or None, gh's error). The error is empty when gh found the PR
+    or said there is none; any other failure of `gh pr view` is named in it."""
+    p = gh(["pr", "view", str(which), "--json", "number,baseRefName,state,isDraft,headRefOid,url,mergeStateStatus"], cwd)
+    said = (p.stderr or p.stdout).strip()
+    if p.returncode:
+        if "no pull requests found" in said.lower() or "could not resolve to a pullrequest" in said.lower():
+            return None, ""
+        return None, said.splitlines()[-1][:300] if said else f"gh exited {p.returncode}"
+    try:
+        return json.loads(p.stdout), ""
+    except ValueError:
+        return None, "gh printed no JSON"
+
 def pr_info(which, cwd):
     """The pull request for a PR number or a head branch, or None."""
-    p = gh(["pr", "view", str(which), "--json", "number,baseRefName,state,isDraft,headRefOid,url,mergeStateStatus"], cwd)
-    try:
-        return json.loads(p.stdout) if p.returncode == 0 else None
-    except ValueError:
-        return None
+    return pr_view(which, cwd)[0]
 
 def required_checks(n, cwd):
     """'pass' | 'pending' | 'none' (no required checks) | 'fail: <names>' | 'error: <gh's words>' for a PR's required checks."""
@@ -316,7 +326,11 @@ def cmd_land(a):
     rec = json.loads(kept.read_text()) if kept.exists() else {}
     if set(rec.get("orig", {})) != set(names):
         rec = {"orig": {b: fc_core.sh(["git", "rev-parse", b], repo).stdout.strip() for b in names}, "pr": {}}
-    infos = {b: pr_info(rec["pr"].get(b) or b, repo) for b in names}
+    views = {b: pr_view(rec["pr"].get(b) or b, repo) for b in names}
+    infos = {b: views[b][0] for b in names}
+    for b in names:
+        if views[b][1]:  # gh itself failed: the PR may exist, so say what gh said instead of "no pull request"
+            stop(f"gh pr view failed for {b}: {views[b][1]}")
     missing = [b for b in names if not infos[b]]
     cut = next((i for i, b in enumerate(names) if not infos[b]), len(names))
     if not cut:

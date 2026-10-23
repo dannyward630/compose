@@ -511,8 +511,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
             if tests is None:
                 fc_core.say("fix    scope  the fix changed a file no task names; the next round runs the full checks")
             unrouted = fc_reroute.catch_up(main, proj, fc_tasks.load_tasks(proj), [order[-1].removeprefix(fc_worktree.task_prefix(main, proj))], base, ("scope",)) if order else {}
-            for id, why in unrouted.items():
-                fc_core.say(f"verify FAIL  route not recorded for {id}: {why}")
+            fc_reroute.say_unrouted(unrouted)
             if unrouted:
                 break
         else:

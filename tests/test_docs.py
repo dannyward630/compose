@@ -687,6 +687,14 @@ class NoGraftWord(unittest.TestCase):
         self.assertIn("| `COMPOSE_NO_TREEHOUSE=1` | use plain git worktrees even with treehouse installed |", reqs)
         self.assertFalse([l for l in reqs if "COMPOSE_NO_GRAFT" in l], "COMPOSE_NO_GRAFT")
 
+    def test_compose_no_policies_is_in_the_env_table_and_the_rows_that_stop_on_policies(self):
+        cli, reqs = read("docs/cli.md").splitlines(), read("docs/requirements.md")
+        self.assertIn("| `COMPOSE_NO_POLICIES=1` |", reqs)
+        for cmd in ("route", "verify", "quick <id>..."):
+            row = [l for l in cli if l.startswith(f"| `{cmd}` |")]
+            self.assertEqual(len(row), 1, cmd)
+            self.assertIn("COMPOSE_NO_POLICIES=1" if cmd != "quick <id>..." else "one `quick: ...` line", row[0])
+
     def test_how_it_works_and_new_machine(self):
         self.assert_no_graft("docs/how-it-works.md", "docs/new-machine.md")
         how, machine = read("docs/how-it-works.md").splitlines(), read("docs/new-machine.md").splitlines()
@@ -1069,6 +1077,12 @@ class ReadyCheckpoints(unittest.TestCase):
         for word in ("sync", "run", "verify", "clean"):
             self.assertRegex(row, rf"`(compose )?{word}`")
 
+    def test_cli_init_row_names_the_herdr_tabs_and_how_to_skip_them(self):
+        row = self.row("init")
+        for word in ("`<slug> shell`", "`<slug> status`", "`COMPOSE_NO_HERDR=1`"):
+            self.assertIn(word, row)
+        self.assertNotIn("\u2014", row)
+
     def test_cli_sync_and_clean_rows_name_ready_and_keep_what_they_said(self):
         tasks = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
         projects = read("docs/cli.md").split("### Projects\n", 1)[1].split("### Tasks\n", 1)[0]
@@ -1329,7 +1343,7 @@ class MachineDocs(unittest.TestCase):
         self.assertLines("docs/new-machine.md", MACHINE, 101)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 138)
+        self.assertLines("docs/requirements.md", REQUIREMENTS, 139)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):

@@ -1,5 +1,6 @@
 import hermetic  # first: no test sees the real home
 import json, os, subprocess, unittest
+from unittest import mock
 from ship_kit import Ship, fc
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
@@ -32,6 +33,15 @@ class Land(Ship):
             fc.fc_ship.cmd_land(self.args(yes=True, method=None, timeout=1))
         self.assertIn(f"verify is running on p (pid {proc.pid}", str(e.exception))
         self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
+
+    def test_a_gh_failure_is_told_apart_from_a_missing_pull_request(self):
+        self.submit()
+        with mock.patch.dict(os.environ, {"FAKE_GH_VIEW_FAIL": "error connecting to api.github.com"}):
+            out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertIn("land   STOP  gh pr view failed for compose/p-layer-01: error connecting to api.github.com", out)
+        self.assertFalse(any("has no pull request" in l for l in out))
+        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
 
     def test_a_stack_that_was_not_submitted_names_the_missing_pull_request(self):
         self.run_cmd(fc.fc_ship.cmd_stack, submit=False)

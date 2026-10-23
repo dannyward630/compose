@@ -52,7 +52,10 @@ if a[0] == "stack":
     done()
 n, p = find(a[2]) if len(a) > 2 else (None, None)
 if a[:2] == ["pr", "view"]:
-    if not p: done(1)
+    if os.environ.get("FAKE_GH_VIEW_FAIL"):
+        print(os.environ["FAKE_GH_VIEW_FAIL"], file=sys.stderr); done(1)
+    if not p:
+        print('no pull requests found for branch "' + a[2] + '"', file=sys.stderr); done(1)
     print(json.dumps({"number": int(n), "baseRefName": p["base"], "state": p["state"], "isDraft": p["draft"], "headRefOid": head(p),
                       "url": "https://github.com/o/r/pull/" + n, "mergeStateStatus": "BEHIND" if p.get("behind") else "CLEAN", "title": p["title"], "body": p["body"]}))
 elif a[:2] == ["pr", "edit"]:
