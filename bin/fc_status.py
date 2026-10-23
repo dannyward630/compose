@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost, fc_history
+import fc_cost, fc_core, fc_load, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost, fc_history
 
 
 def project_head(repo, proj):
@@ -170,7 +170,13 @@ def digest(repo, proj):
     return "; ".join(out)
 
 def load_lines():
-    raise NotImplementedError("not implemented")
+    s = fc_load.update()
+    low = f"{fc_load.limits()['low']:.1f}"
+    fmt = lambda t: time.strftime("%H:%M", time.localtime(t))
+    if s["held"]:
+        return [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, held since {fmt(s['since'])}: nothing new starts until it falls below {low}"]
+    rel = [e for e in s["log"] if e["kind"] == "released"]
+    return [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, released at {fmt(rel[-1]['at'])} (below {low})"] if rel and time.time() - rel[-1]["at"] < 600 else []
 
 def render_status(repo, projects):
     out = []
@@ -279,6 +285,8 @@ def cmd_status(a):
         for wt, proj in projects.values():
             print(digest(wt, proj))
         return
+    for l in load_lines():
+        print(l)
     print("\n".join(render_status(wt, [proj]) for wt, proj in projects.values()), end="")
 
 def cmd_done(a):
