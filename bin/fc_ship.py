@@ -101,7 +101,7 @@ def layer_checks(repo, proj, layers, trunk, wt):
         leaned = False
         for c, (new, hit, ok, unknown) in (against_base(repo, cfg, wt, base, top, failed, on_base).items() if failed else ()):
             if unknown or new or hit:
-                why = (f"its run on the base {base[:9]} timed out or names no failing test" if unknown else
+                why = (f"cannot tell whether {ids_text(new)} fail on the base too: its run on the base {base[:9]} timed out or names no failing test" if unknown else
                        "; ".join(x for x in (f"passes on the base {base[:9]}, fails here: {ids_text(new)}" if new else "",
                                              f"fails on the base too, in what this stack changes: {ids_text(hit)}" if hit else "",
                                              f"{len(ok)} more already fail on the base and are ignored" if ok else "") if x))

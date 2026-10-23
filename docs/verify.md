@@ -29,6 +29,9 @@ The top layer runs every check and the `test` of its own tasks.
 A lower layer runs the `test` of its own tasks and the cheap checks, the ones that are not a whole test suite, so the full suite runs once, on the stack as a whole.
 A failing test that fails on the stack's base too, in a test or module the stack does not change, was red before this work: the submit goes on and the test is listed as accepted.
 A test that passes on the base, or that the stack touches, refuses the submit, as does a failure that names no test or a base run that timed out.
+A base run that timed out or names no failing test is never taken for red: the refusal names the failing tests and says they cannot be told from new ones.
+The same holds for each attempt of a task in `compose run`: when the checks run before the task are unknown, a failing test outside the task's reach is run on the base tree, and it is accepted only when it fails there too.
+A task whose base run is unknown there as well is rejected as a regression, with a line naming the test and the reason, and gets no further attempt.
 `land_method` (`squash`, `merge`, or `rebase`; default `squash`) is how `compose land` merges each PR.
 `review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.
 One that names no branch (a project made before init recorded it holds `main`, also in a repository whose trunk is `master`) reads as the repository's default branch.
@@ -53,6 +56,8 @@ One that names no branch (a project made before init recorded it holds `main`, a
    Then the case's `assert` checks the real DOM or log.
 5. **fix** sends confirmed findings to the fix model.
    Protected files are reverted, and the stages rerun for up to `--fix` rounds before they escalate.
+   A round is discarded when it answers no reproduced failure: it must change a failing check, or remove a line a confirmed finding cites.
+   A round that answers a confirmed finding by adding code, with no failing check before it, is kept when it changes a file the finding names and its own new test fails without the rest of the fix and passes with it.
    A fix commit holds only the files the fixer changed: never the agent wiring (`.claude/settings.json`), which a session hook rewrites, nor files a check left behind.
    Uncommitted changes of your own skip the fix, so a bad fix can always be reverted.
    A verify passes only once the full checks pass on the final code, so the fixes' scoped tests never hide a regression.

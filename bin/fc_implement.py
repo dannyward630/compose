@@ -259,6 +259,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
     checks, limit = fc_core.project_config(proj).get("checks") or [], int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
     ahead = fc_gate.baseline_state(timed, checks, wt, (fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip(), tuple(delete)), limit)  # what passes before the first turn
+    learned = {}  # base-tree runs of the checks whose ids settle needed, shared by this task's attempts
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
     section = fc_libapi.section(wt, meta["files"], words)
@@ -424,11 +425,17 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "contradiction"
             break
         test = run_test(meta, wt)
-        broke, red_on_base = fc_gate.regressions(ahead, fc_gate.check_state(timed, checks, wt, limit), fc_gate.touches(wt, base)) if ahead and test.returncode == 0 else ([], [])  # the task's own test is not the only one that must hold
+        now = fc_gate.check_state(timed, checks, wt, limit) if ahead and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
+        broke, red_on_base = fc_gate.regressions(ahead, now, fc_gate.touches(wt, base)) if now else ([], [])
+        if red_on_base:  # unknown is never base-red: the base tree says which of these it failed too
+            more, cannot = fc_gate.settle(timed, wt, base, tuple(delete), limit, red_on_base, now, learned)
+            broke, red_on_base = broke + more, [t for t in red_on_base if t not in more]
+        else:
+            cannot = []
         tampered = [f for f, d in fc_core.digests(wt, meta["protected"]).items() if d != before[f]]
         lines, new_docs, stray = fc_gate.branch_budget(wt, base, allowed=meta["files"] if meta["files"] or delete else None, delete=delete)
         entry = {"attempt": n, **({"cut_short": True} if cut else {}), "seconds": round(time.time() - t0, 1), "tool_calls": tools, "usage": usage,
-                 "test_exit": test.returncode, "tampered": tampered, **({"broke": broke} if broke else {}), **({"red on base (baseline unknown)": red_on_base} if red_on_base else {}), "lines": lines, "new_docs": new_docs, "stray": stray,
+                 "test_exit": test.returncode, "tampered": tampered, **({"broke": broke} if broke else {}), **({"base unknown": cannot} if cannot else {}), **({"red on base (baseline unknown)": red_on_base} if red_on_base else {}), "lines": lines, "new_docs": new_docs, "stray": stray,
                  "refused": fc_readguard.refused(wt) - ref_before,
                  "reply": reply[-1500:], "test_output": (test.stdout + test.stderr)[-3000:]}
         log.append(entry)
@@ -436,7 +443,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         if isinstance(session, dict):
             fc_herdr.herdr_label(session, f"attempt {attempt}/{attempts}", cost)
         over = lines > fc_config.MAX_DIFF_LINES
-        verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray and not broke else "fail"
+        verdict = "pass" if test.returncode == 0 and not over and not new_docs and not stray and not broke and not cannot else "fail"
         output, reader = test.stdout + test.stderr, None
         if test.returncode != 0 and not tampered:  # the reader's brief, written before the line so its cost is on it
             (proj / "results").mkdir(parents=True, exist_ok=True)
@@ -451,9 +458,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.say(f"{tid} attempt {n} {verdict}  {fc_core.fmt(entry['seconds'])}  tools={tools}  lines={lines}  refused={entry['refused']}  ${usage['cost']:.4f}"
             + (f"  reader ${reader['cost']:.4f}" + (f" (list ${reader['reference_cost']:.4f})" if reader.get("reference_cost") else "") if reader else "")
             + (f"  OVER {fc_config.MAX_DIFF_LINES}" if over else "") + (f"  new docs: {', '.join(new_docs)}" if new_docs else "")
-            + (f"  outside files: {', '.join(stray)}" if stray else "") + (f"  broke: {', '.join(broke)[:160]}" if broke else ""))
+            + (f"  outside files: {', '.join(stray)}" if stray else "") + (f"  broke: {', '.join(broke)[:160]}" if broke else "")
+            + (f"  cannot tell if red on base: {'; '.join(cannot)[:300]}" if cannot else ""))
         if tampered:
             status = "rejected_tampered"
+            break
+        if cannot:  # another attempt cannot change what the base run did
+            status = "rejected_regression"
             break
         if verdict == "pass":
             status = "passed"

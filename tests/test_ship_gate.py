@@ -158,6 +158,7 @@ class BaseFailures(Based):
         self.assertEqual(code, 1)
         self.assertIn("its run on the base", self.stop(out))
         self.assertIn("names no failing test", self.stop(out))
+        self.assertIn(f"cannot tell whether {OLD[6:]} fail on the base too", self.stop(out))
         self.assertFalse(any("stack submit" in c for c in self.log()))
 
     def test_a_timeout_is_refused_as_before(self):
