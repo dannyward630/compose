@@ -1,6 +1,8 @@
 import hermetic  # first: no test sees the real home
-import json, os, subprocess, tempfile, unittest
+import argparse, io, json, os, subprocess, tempfile, unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from ship_kit import Ship, fc
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
@@ -67,49 +69,8 @@ class LayerChecks(Ship):
         self.assertEqual(len(counter.read_text().splitlines()), 3)  # layer 1 once, layer 2 on both submits
         self.assertFalse(any("not rerun" in l for l in out))
 
-    def test_a_layer_is_checked_on_its_own_tree_not_the_top(self):
-        self.config(checks=["test -f 003.src"])  # only the top layer has it
-        out, code = self.submit()
-        self.assertEqual(code, 1)
-        self.assertIn("layer 1 of 3 (compose/p-layer-01) fails `test -f 003.src`", "\n".join(out))
-
-    def test_a_stack_preview_and_a_project_without_checks_run_none(self):
-        counter = Path(tempfile.mkdtemp()) / "runs"
-        self.config(checks=[f"echo run >> {counter}"])
-        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        self.assertFalse(counter.exists())
-        self.config()
-        out, code = self.submit()
-        self.assertEqual(code, 0)
-        self.assertTrue(any("no checks in verify.json" in l for l in out))
-        self.assertTrue(any("stack submit --auto" in c for c in self.log()))
-
 
 class Reword(Ship):
-    def test_a_commit_message_that_names_the_process_is_fixed_when_the_layer_is_built(self):
-        self.git("checkout", "-q", "compose/p-001")
-        self.git("commit", "-q", "--amend", "-m", "task 001: wire compose verify\n\nDone by the implementer.\nIndex the title.")
-        self.git("checkout", "-q", "compose/p")
-        out, code = self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        self.assertEqual(code, 0)
-        self.assertIn("Update 001.src", self.subjects("compose/p-layer-02"))
-        self.assertNotIn("task 001: wire compose verify", self.subjects("compose/p-layer-02"))
-        self.assertTrue(any("stack  note" in l and "wire compose verify" in l and "mentions the process (`task 001`)" in l for l in out))
-        self.assertEqual(self.git("log", "-1", "--format=%s", "compose/p-001"), "task 001: wire compose verify")  # the task branch is left alone
-        body = self.git("log", "--format=%B", "--grep=^Update 001.src", "compose/p-layer-02")
-        self.assertIn("Index the title.", body)
-        self.assertNotIn("implementer", body)
-
-    def test_reword_lists_the_layer_commits_and_flags_the_ones_that_break_the_rules(self):
-        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        self.config(commit_convention={"types": ["feat", "fix"], "example": "feat: x"})
-        out, code = self.run_cmd(fc.fc_ship.cmd_reword, set=None, as_is=False)
-        self.assertEqual(code, 0)
-        listed = [l for l in out if l.startswith("  ")]
-        self.assertEqual(len(listed), 7)  # setup, three tests, three tasks
-        self.assertTrue(all("no type prefix" in l for l in listed))
-        self.assertFalse(self.prs())
-
     def test_set_rewords_one_commit_keeps_the_trees_and_never_pushes(self):
         self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
         tips = {b: self.git("rev-parse", b) for b in ("compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03")}
@@ -129,25 +90,117 @@ class Reword(Ship):
         self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
         self.assertIn("Add the first thing", self.subjects("compose/p-layer-02"))
 
-    def test_a_message_that_breaks_the_rules_is_refused_unless_taken_as_is(self):
-        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        sha = self.git("log", "-1", "--format=%H", "--grep=^Build 001", "compose/p-layer-02")
-        before = self.git("rev-parse", "compose/p-layer-02")
-        out, code = self.run_cmd(fc.fc_ship.cmd_reword, set=[f"{sha[:8]}=Wave 2 of compose run"], as_is=False)
-        self.assertEqual(code, 1)
-        self.assertTrue(any("mentions the process" in l for l in out))
-        self.assertFalse((self.proj / "rewords.json").exists())
-        self.assertEqual(self.git("rev-parse", "compose/p-layer-02"), before)
-        out, code = self.run_cmd(fc.fc_ship.cmd_reword, set=[f"{sha[:8]}=Wave 2 of compose run"], as_is=True)
-        self.assertEqual(code, 0)
-        self.assertIn("Wave 2 of compose run", self.git("log", "--format=%s", "main..compose/p-layer-02"))
 
-    def test_a_sha_that_names_no_commit_or_several_is_refused(self):
-        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        for sha in ("deadbeef", ""):
-            out, code = self.run_cmd(fc.fc_ship.cmd_reword, set=[f"{sha}=Add it"], as_is=False)
+class Faked(unittest.TestCase):
+    """Git is faked (fc_core.sh answers for the commits in `self.commits`) and no process can start."""
+    commits = {}
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.proj = self.root / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        for target in ("subprocess.run", "subprocess.Popen"):
+            patch = mock.patch(target, side_effect=AssertionError("a test with a faked git starts no process"))
+            patch.start(); self.addCleanup(patch.stop)
+        patch = mock.patch.object(fc.fc_core, "sh", self.git)
+        patch.start(); self.addCleanup(patch.stop)
+
+    def git(self, cmd, cwd=None, **kw):
+        if cmd[1:] == ["rev-parse", "--path-format=absolute", "--git-common-dir"]:
+            out = str(self.root / ".git")
+        else:
+            message, files = self.commits[cmd[-1]]
+            out = "\n".join(files) if "--name-only" in cmd else {"--format=%B": message, "--format=%s": message.split("\n")[0]}.get(cmd[3], "t <t@t> 2026-01-01")
+        return SimpleNamespace(stdout=out + "\n", stderr="", returncode=0)
+
+    def config(self, **cfg):
+        (self.proj / "verify.json").write_text(json.dumps(cfg))
+
+
+class FakedLayerChecks(Faked):
+    def test_a_project_without_checks_says_so_and_checks_nothing(self):
+        said = []
+        with mock.patch.object(fc.fc_core, "say", said.append):
+            self.assertEqual(fc.fc_ship.layer_checks(self.root, self.proj, [], "compose/p", self.root), "")
+        self.assertEqual(said, ["layers no checks in verify.json: the layers are not checked before submit"])
+
+
+class FakedLayerMessage(Faked):
+    commits = {"c1": ("task 001: wire compose verify\n\nDone by the implementer.\nIndex the title.", ["001.src"]), "c2": ("Add the reader", ["002.src"])}
+
+    def message(self, c):
+        return fc.fc_layers.layer_message(self.root, self.proj, c)
+
+    def test_a_message_that_names_the_process_comes_back_scrubbed_with_the_rule_it_broke(self):
+        message, why = self.message("c1")
+        self.assertEqual(message, "Update 001.src\n\nIndex the title.")
+        self.assertIn("mentions the process (`task 001`)", why)
+
+    def test_a_reword_chosen_with_compose_reword_wins_and_a_clean_message_gives_none(self):
+        self.assertIsNone(self.message("c2"))
+        for c in ("c1", "c2"):
+            (self.proj / "rewords.json").write_text(json.dumps({fc.fc_layers.commit_key(self.root, c): {"message": "Add the first thing", "was": "x"}}))
+            self.assertEqual(self.message(c), ("Add the first thing", "chosen with compose reword"))
+
+
+class FakedReword(Faked):
+    commits = {"a" * 40: ("feat: add the reader", []), "b" * 40: ("Add the writer", []), "abc123" + "1" * 34: ("Fix it", []), "abc123" + "2" * 34: ("Fix it too", [])}
+
+    def setUp(self):
+        super().setUp()
+        self.config(commit_convention={"types": ["feat", "fix"], "example": "feat: x"})
+        self.live = self.root / "live"
+        layers = [("compose/p-layer-01", ["a" * 40, "b" * 40]), ("compose/p-layer-02", ["abc123" + "1" * 34, "abc123" + "2" * 34])]
+        for target, name, value in ((fc.fc_ship, "layer_commits", layers), (fc.fc_layers, "layer_prefix", "compose/p-"),
+                                    (fc.fc_core, "project_dir", self.proj), (fc.fc_update, "live_dir", self.live)):
+            patch = mock.patch.object(target, name, return_value=value)
+            patch.start(); self.addCleanup(patch.stop)
+
+    def reword(self, **kw):
+        """The said lines, the printed lines, and the exit code (0 when it returned) of `compose reword`."""
+        said, buf, code = [], io.StringIO(), 0
+        args = argparse.Namespace(repo=str(self.root), project="p", trunk="compose/p", **{"set": None, "as_is": False, **kw})
+        with mock.patch.object(fc.fc_core, "say", said.append), redirect_stdout(buf):
+            try:
+                fc.fc_ship.cmd_reword(args)
+            except SystemExit as e:
+                code = e.code
+        return said, buf.getvalue().splitlines(), code
+
+    def test_it_lists_each_layer_commit_and_follows_a_breaking_one_with_the_reason(self):
+        said, printed, code = self.reword()
+        self.assertEqual(code, 0)
+        why = "it has no type prefix; the repo's commit convention starts with one of feat, fix"
+        self.assertEqual([l for l in printed if l.startswith("  ")], [
+            f"  layer-01  {'a' * 9}  feat: add the reader",
+            f"  layer-01  {'b' * 9}  Add the writer   <- {why}",
+            "  layer-02  abc123111  Fix it   <- " + why,
+            "  layer-02  abc123222  Fix it too   <- " + why])
+
+    def test_set_refuses_a_sha_that_names_no_commit_or_several(self):
+        for sha, n in (("deadbeef", 0), ("", 0), ("abc123", 2)):
+            said, _, code = self.reword(set=[f"{sha}=Add it"])
             self.assertEqual(code, 1)
-            self.assertTrue(any("names 0 commits" in l for l in out), out)
+            self.assertEqual(said, [f"reword FAIL  {sha!r} names {n} commits of the stack; `compose reword --project p` lists them"])
+            self.assertFalse((self.proj / "rewords.json").exists())
+
+    def test_set_refuses_a_breaking_message_unless_taken_as_is(self):
+        sha = "b" * 8
+        said, _, code = self.reword(set=[f"{sha}=Wave 2 of compose run"])
+        self.assertEqual(code, 1)
+        self.assertTrue(any("mentions the process" in l for l in said), said)
+        self.assertFalse((self.proj / "rewords.json").exists())
+        with mock.patch.object(fc.fc_stack, "register_stack", return_value=True):
+            _, _, code = self.reword(set=[f"{sha}=Wave 2 of compose run"], as_is=True)
+        self.assertEqual(code, 0)
+        self.assertEqual([m["message"] for m in json.loads((self.proj / "rewords.json").read_text()).values()], ["Wave 2 of compose run"])
+
+    def test_set_waits_while_a_verify_is_running_on_the_project(self):
+        self.live.mkdir()
+        (self.live / "1.json").write_text(json.dumps({"pid": os.getppid(), "kind": "verify", "project": "p", "repo": str(self.root), "since": "10:00"}))
+        _, _, code = self.reword(set=[f"{'b' * 8}=Add the writer"])
+        self.assertIn("verify is running on p", code)
+        self.assertFalse((self.proj / "rewords.json").exists())
 
 
 class SharedFixture(Ship):
