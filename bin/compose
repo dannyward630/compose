@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """Run compose.py from the directory this file really lives in, however it was called: by its path in the repo, through
-an install symlink such as ~/.local/bin/compose, or through a chain of symlinks (realpath follows every link)."""
-import os, sys
-os.execv(sys.executable, [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "compose.py"), *sys.argv[1:]])
+an install symlink such as ~/.local/bin/compose, or through a chain of symlinks (realpath follows every link). The guard
+hook runs on every tool call, so `guard` loads only fc_hooks; everything else runs compose.py in this same interpreter."""
+import os, runpy, sys
+HERE = os.path.dirname(os.path.realpath(__file__))
+if sys.argv[1:2] == ["guard"]:
+    sys.path.insert(0, HERE)
+    import fc_hooks
+    fc_hooks.cmd_guard(None)
+    sys.exit(0)
+runpy.run_path(os.path.join(HERE, "compose.py"), run_name="__main__")
