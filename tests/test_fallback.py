@@ -1496,7 +1496,9 @@ class SiblingStubs(unittest.TestCase):
     TESTS = {"tests/test_one.py": "import unittest, m\n\n\nclass One(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(m.one(), 1)\n",
              "tests/test_names.py": "import unittest, m\n\n\nclass Names(unittest.TestCase):\n    def test_two_is_defined(self):\n        self.assertTrue(hasattr(m, 'two'))\n"}
 
-    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",), tests=None):
+    NAMES = "python3 -m unittest discover -s tests -p test_names.py"
+
+    def run_one(self, answers, checks=(), tests=None, others=None, own=None):
         root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
         git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main")
@@ -1504,7 +1506,10 @@ class SiblingStubs(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         (proj / "verify.json").write_text(json.dumps({"checks": list(checks)}))
         task = {"id": "001", "title": "one", "files": ["m.py"], "protected": ["tests/test_one.py"], "model": "pi:p/primary", "after": "", "linear": "ENG-1",
-                "test": "python3 -m unittest discover -s tests -p test_one.py", "body": "## Goal\nMake one() return 1."}
+                "test": own or "python3 -m unittest discover -s tests -p test_one.py", "body": "## Goal\nMake one() return 1."}
+        if others:  # the other tasks as synced: id -> (the file it owns, its test)
+            (proj / "results").mkdir(); (proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [task] + [
+                {"id": i, "title": i, "files": [f], "protected": [], "after": "", "linear": f"ENG-{i}", "test": t, "body": "## Goal\nx"} for i, (f, t) in others.items()]}))
         prompts, turn = [], iter(answers)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt); (Path(cwd) / "m.py").write_text(next(turn))
@@ -1518,22 +1523,35 @@ class SiblingStubs(unittest.TestCase):
         return result, prompts
 
     def test_a_passing_task_that_deleted_a_sibling_stub_is_rejected_and_told_which_test_broke(self):
-        result, prompts = self.run_one(["def one():\n    return 1\n", "def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"])
+        result, prompts = self.run_one(["def one():\n    return 1\n", "def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], others={"002": ("m.py", self.NAMES)})
         self.assertEqual((result["status"], result["attempts"]), ("passed", 2))
         self.assertEqual(result["log"][0]["test_exit"], 0)
         self.assertIn("test_two_is_defined", " ".join(result["log"][0]["broke"]))
         self.assertIn("test_two_is_defined", prompts[1])
 
     def test_a_task_that_ends_with_a_sibling_stub_gone_does_not_pass(self):
-        result, _ = self.run_one(["def one():\n    return 1\n"] * 2)
+        result, _ = self.run_one(["def one():\n    return 1\n"] * 2, others={"002": ("m.py", self.NAMES)})
         self.assertEqual(result["status"], "rejected_regression")
 
-    def test_a_suite_is_not_run_on_the_base_when_it_passes_after_the_task(self):
+    def counted(self, cmd="true"):
         counter = Path(tempfile.mkdtemp()) / "runs"; self.addCleanup(shutil.rmtree, counter.parent, True)
-        suite = f"echo run >> {counter}; python3 -m unittest discover -s tests"
+        return counter, f"echo run >> {counter}; {cmd}"
+
+    def test_a_whole_suite_check_runs_neither_after_the_task_nor_on_its_base(self):
+        counter, suite = self.counted("python3 -m unittest discover -s tests && false")
         result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=(suite,))
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(counter.read_text().split(), ["run"])  # once, after the task: the base run only answers a failure
+        self.assertFalse(counter.exists())
+
+    def test_the_test_of_a_task_owning_a_changed_file_runs_once_and_no_other_test_runs(self):
+        (sibling, covering), (far, elsewhere), (mine, own) = self.counted(self.NAMES), self.counted(), self.counted("python3 -m unittest discover -s tests -p test_one.py")
+        result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], own=own, others={"002": ("m.py", covering), "003": ("other.py", elsewhere)})
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual([c.read_text().split() if c.exists() else [] for c in (sibling, far, mine)], [["run"], [], ["run"] * 2])  # the task's own test: red before the attempt, green after it, never again as a check
+
+    def test_a_covering_test_that_fails_on_the_base_too_is_not_blamed_on_the_task(self):
+        result, _ = self.run_one([self.FIX], tests=self.UNTOUCHED, others={"002": ("m.py", self.NAMES)})
+        self.assertEqual((result["status"], result["log"][0].get("broke")), ("passed", None))
 
     def test_a_check_that_runs_says_what_it_runs_before_it_starts(self):
         self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("true",))
