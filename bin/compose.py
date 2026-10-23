@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -88,6 +88,7 @@ def main():
                             ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
+                            ("review", fc_taskreview.cmd_review, "Mercury's diff review of one task's change (--only ids) or of a commit range (--range base..tip), recorded on the task's Linear issue"),
                             ("bench", fc_bench.cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", fc_status.cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
@@ -186,6 +187,9 @@ def main():
             s.add_argument("--no-stack", action="store_true", help="do not rebase the existing layers before dispatch or register passed branches with gh stack")
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
             s.add_argument("--unproven", action="store_true", help="run although `verify --prove` has not passed on the current e2e cases")
+        if name == "review":
+            s.add_argument("--only", help="comma-separated task ids: each task's own change, against the layer it sits on")
+            s.add_argument("--range", help="<base>..<tip>: a change that is not a task branch, such as a merged feature; --only then names the tasks whose brief and criteria it is judged against")
         if name in ("run", "resume", "verify"):
             s.add_argument("--force", action="store_true", help="start although the Mac runs on its battery below 30%% or (run, resume) the OpenRouter key's credit looks too low for the tasks that start at once")
         if name == "resume":
@@ -361,7 +365,7 @@ def main():
     if a.fn not in (fc_config.cmd_workspace, fc_hooks.cmd_guard, fc_watch.cmd_rewake, fc_hooks.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config(move=not getattr(a, "dry_run", False))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
-        if a.cmd in ("run", "verify", "bench", "resume"):  # the commands that spend; `watch` output stays one line
+        if a.cmd in ("run", "verify", "review", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")
     try:
         a.fn(a)

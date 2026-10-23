@@ -4,6 +4,7 @@ update
 init
 run
 verify
+review
 bench
 resume
 done
