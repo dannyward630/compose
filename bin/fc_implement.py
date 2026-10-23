@@ -258,7 +258,14 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
     checks, limit = fc_core.project_config(proj).get("checks") or [], int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
-    ahead = fc_gate.baseline_state(timed, checks, wt, (fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip(), tuple(delete)), limit)  # what passes before the first turn
+    def checked(where):  # the project's checks run a long time: each one says what it runs, and where, before it starts
+        def run(cmd, tree, secs, env=None):
+            fc_core.say(f"{tid} checks  `{cmd}` {where}, up to {secs}s")
+            r = timed(cmd, tree, secs, env=env)
+            if r.returncode == 124:
+                fc_core.say(f"{tid} checks  `{cmd}` {where} timed out after {secs}s")
+            return r
+        return run
     learned = {}  # base-tree runs of the checks whose ids settle needed, shared by this task's attempts
     goal = re.search(r"## Goal\n(.*?)(?:\n## |\Z)", body, re.S)
     words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
@@ -425,10 +432,12 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             status = "contradiction"
             break
         test = run_test(meta, wt)
-        now = fc_gate.check_state(timed, checks, wt, limit) if ahead and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
+        now = fc_gate.check_state(checked("after the task"), checks, wt, limit) if checks and test.returncode == 0 else {}  # the task's own test is not the only one that must hold
+        # What passed on the base is asked only for a check that fails after the task: a suite that passes needs no base run.
+        ahead = fc_gate.baseline_state(checked("on its base"), checks, wt, (base, tuple(delete)), limit) if any(c["exit"] for c in now.values()) else {}
         broke, red_on_base = fc_gate.regressions(ahead, now, fc_gate.touches(wt, base)) if now else ([], [])
         if red_on_base:  # unknown is never base-red: the base tree says which of these it failed too
-            more, cannot = fc_gate.settle(timed, wt, base, tuple(delete), limit, red_on_base, now, learned)
+            more, cannot = fc_gate.settle(checked("on its base"), wt, base, tuple(delete), limit, red_on_base, now, learned)
             broke, red_on_base = broke + more, [t for t in red_on_base if t not in more]
         else:
             cannot = []

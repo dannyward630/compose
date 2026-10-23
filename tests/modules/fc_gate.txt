@@ -4,6 +4,7 @@ BASELINES
 BASELINE_LOCK
 CHECKS_TIMEOUT
 check_state
+base_tree
 baseline_state
 IMPORT_RE
 touches

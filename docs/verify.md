@@ -30,7 +30,10 @@ A lower layer runs the `test` of its own tasks and the cheap checks, the ones th
 A failing test that fails on the stack's base too, in a test or module the stack does not change, was red before this work: the submit goes on and the test is listed as accepted.
 A test that passes on the base, or that the stack touches, refuses the submit, as does a failure that names no test or a base run that timed out.
 A base run that timed out or names no failing test is never taken for red: the refusal names the failing tests and says they cannot be told from new ones.
-The same holds for each attempt of a task in `compose run`: when the checks run before the task are unknown, a failing test outside the task's reach is run on the base tree, and it is accepted only when it fails there too.
+In `compose run`, the checks run on a task's tree after each attempt whose own test passes, and a suite that passes there is never run on the base.
+Only when a check fails after the task does `run` take the checks on the task's base, in a scratch clone of it, once per base commit; a base run that timed out is not kept.
+Each check prints a `<id> checks  `<command>` after the task, up to <N>s` or `on its base` line before it starts, and a `timed out` line past the limit, so a long check never leaves the log silent.
+When that base run is unknown, a failing test outside the task's reach is run on the base tree, and it is accepted only when it fails there too.
 A task whose base run is unknown there as well is rejected as a regression, with a line naming the test and the reason, and gets no further attempt.
 `land_method` (`squash`, `merge`, or `rebase`; default `squash`) is how `compose land` merges each PR.
 `review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.

@@ -6,6 +6,7 @@ require_committed
 QUEUE
 QUEUE_POLL
 joins_live_run
+still_open
 queue_tasks
 cmd_run
 preflight
