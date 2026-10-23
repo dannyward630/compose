@@ -95,8 +95,10 @@ class LayerScope(Gate):
         self.assertEqual(len(self.ran()), 4)
         self.assertEqual(len([l for l in out if "unchanged since its checks passed" in l]), 3)
         self.config(checks=[f"echo cheap >> {self.counter}", f": unittest; echo suite2 >> {self.counter}"])  # only the top layer's commands change
-        self.submit()
-        self.assertEqual(self.ran()[4:], ["cheap", "suite2"])  # the top layer runs both again; the lower ones are unchanged
+        out, code = self.submit()
+        self.assertEqual(self.ran()[4:], ["suite2"])  # the top layer reruns only the changed command: `cheap` is green on its tree, so it is taken
+        self.assertEqual(len([l for l in out if "not rerun" in l and "cheap" in l]), 1)
+        self.assertEqual(len([l for l in out if "unchanged since its checks passed" in l]), 2)  # the lower layers are unchanged
 
 
 class Based(Gate):
