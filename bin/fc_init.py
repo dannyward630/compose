@@ -253,6 +253,16 @@ def move_onto(wt, proj, after, after_name):
     fc_core.atomic_write(proj / "verify.json", json.dumps({**cfg, "review_base": after, "after": after_name}, indent=2))
     print(f"branch {branch} moved onto {after}")
 
+def undo_worktree(here, wt, branch):
+    """Give back the worktree a failed init made, and delete `branch` (None when it existed before init), so the same command runs again."""
+    if fc_worktree.use_treehouse():
+        fc_worktree.park_slot(wt, "HEAD")  # detached where it stands, so the branch is free to delete
+        fc_worktree.release_slot(here, wt)
+    else:
+        fc_core.sh(["git", "worktree", "remove", "--force", str(wt)], here, check=False)
+    if branch:
+        fc_core.sh(["git", "branch", "-D", branch], here, check=False)
+
 def cmd_init(a):
     """Create the project's worktree `../compose-<name>` on its branch (`compose/<name>`, or --branch; from the branch the user is on,
     or with --after from another project's branch, for a feature that needs that feature's code), with the
@@ -275,7 +285,7 @@ def cmd_init(a):
         sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:
         sys.exit(f"no branch {after}: `compose init --project {a.after}` that project first")
-    existing, base = fc_core.all_projects(here).get(name), None  # base: the review base a new verify.json records
+    existing, base, made = fc_core.all_projects(here).get(name), None, None  # base: the review base a new verify.json records; made: (worktree, branch init created)
     if existing:
         wt, proj = existing
         print(f"project {name} already exists at {wt}")
@@ -297,7 +307,8 @@ def cmd_init(a):
     else:
         start = after or fc_core.sh(["git", "branch", "--show-current"], here).stdout.strip()  # empty on a detached HEAD
         base = start or fc_worktree.default_branch(here)
-        if fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0:
+        new_branch = fc_core.sh(["git", "rev-parse", "--verify", "-q", branch], here, check=False).returncode != 0
+        if new_branch:
             fc_core.sh(["git", "branch", branch, after or "HEAD"], here)
         if fc_worktree.use_treehouse():
             wt = fc_worktree.slot_on(here, branch, f"compose:{name}:project")
@@ -308,22 +319,28 @@ def cmd_init(a):
             if wt.exists():
                 sys.exit(f"{wt} exists already; remove it or pass --here")
             fc_core.sh(["git", "worktree", "add", "-q", str(wt), branch], here)
+        made = (wt, branch if new_branch else None)
         proj = wt / ".compose" / name
         print(f"worktree {wt}  branch {branch} (from {start or 'HEAD'})")
-    if fc_worktree.ignore_tool_files(wt):
-        fc_core.sh(["git", "add", ".gitignore"], wt)
-        fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
-    (proj / "results").mkdir(parents=True, exist_ok=True)
-    setup_trail(wt)
-    link = fc_core.repo_link(here)  # the repo's Linear project (step 0): the main checkout's file, which every worktree reads
-    if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own
-        (wt / ".compose" / "linear.json").write_text(link.read_text())
-    if not (proj / "verify.json").exists():
-        fc_core.atomic_write((proj / "verify.json"), json.dumps({
-            "checks": [], "docs": ["README.md"], "e2e": [],
-            "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
-            "jev_acceptance": True, "acceptance_threshold": 0.6, **({"review_base": base} if base else {}),
-            **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
+    try:
+        if fc_worktree.ignore_tool_files(wt):
+            fc_core.sh(["git", "add", ".gitignore"], wt)
+            fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
+        (proj / "results").mkdir(parents=True, exist_ok=True)
+        setup_trail(wt)
+        link = fc_core.repo_link(here)  # the repo's Linear project (step 0): the main checkout's file, which every worktree reads
+        if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own
+            (wt / ".compose" / "linear.json").write_text(link.read_text())
+        if not (proj / "verify.json").exists():
+            fc_core.atomic_write((proj / "verify.json"), json.dumps({
+                "checks": [], "docs": ["README.md"], "e2e": [],
+                "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
+                "jev_acceptance": True, "acceptance_threshold": 0.6, **({"review_base": base} if base else {}),
+                **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
+    except BaseException:  # nothing half-made stays behind
+        if made:
+            undo_worktree(here, *made)
+        raise
     if fc_herdr.herdr_space(proj):
         print(f"herdr space {fc_herdr.HERDR_SPACES[name]} with tabs {fc_herdr.tab_label(proj, 'shell')!r} and {fc_herdr.tab_label(proj, 'status')!r}")
         fc_herdr.herdr_name_manager(proj)

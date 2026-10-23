@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, unittest
+import argparse, importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -97,6 +97,29 @@ class Treehouse(unittest.TestCase):
         self.assertFalse((again / "client" / "node_modules").is_symlink())
         self.assertTrue((wt / "client" / "node_modules").is_dir())
         self.assertTrue((again / "node_modules").is_dir())
+
+    def test_init_in_a_slot_with_a_dangling_tool_link_leaves_no_half_made_project_and_runs_again(self):
+        # an earlier holder's `.compose` link to a checkout that is gone made `mkdir` raise FileExistsError after the branch was
+        # checked out in the slot; the re-run then found the branch held by a slot with no project
+        self.cap(1)
+        slot = fc.fc_worktree.slot_on(self.repo, "main", "compose:old:stackroot", detach=True)
+        fc.fc_worktree.exclude_paths(self.repo, ["/.compose"])  # what stack_worktree adds, so `return` keeps the link
+        (slot / ".compose").symlink_to(self.repo.parent / "gone" / ".compose")
+        self.assertEqual(fc.fc_worktree.treehouse(self.repo, "return", "--force", str(slot), check=False).returncode, 0)
+        self.assertTrue((slot / ".compose").is_symlink())
+        wt, proj = self.init()
+        self.assertEqual(wt.resolve(), slot.resolve())
+        self.assertFalse((wt / ".compose").is_symlink())
+        self.assertTrue((proj / "verify.json").exists())
+
+    def test_a_failed_init_hands_its_slot_and_branch_back_so_the_next_run_starts_clean(self):
+        self.cap(1)
+        args = argparse.Namespace(repo=str(self.repo), project="p", branch=None, here=False, after=None)
+        with mock.patch.object(fc.fc_init, "setup_trail", side_effect=OSError("boom")), self.assertRaises(OSError):
+            fc.fc_init.cmd_init(args)
+        self.assertEqual(self.git("branch", "--list", "compose/p"), "")
+        self.assertEqual(set(self.status().values()), {"available"})
+        self.init()
 
     def cap(self, n):
         (self.repo / "treehouse.toml").write_text(f"max_trees = {n}\n")
