@@ -160,3 +160,39 @@ class StackNote(unittest.TestCase):
             for p in list(self.proj.glob("*.bak")) + list((self.proj / "results").glob("*.bak")): p.rename(p.with_suffix(".json"))
         for n in ("01", "02", "03"): self.git("branch", "-D", f"compose/p-layer-{n}")
         self.assertNotIn("stack", self.render()[1])
+
+
+class NoWatchFlag(unittest.TestCase):
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["compose", *argv]), redirect_stdout(out), mock.patch.object(sys, "stderr", err):
+            try:
+                fc.main()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue(), err.getvalue()
+
+    def board(self, *argv):
+        projects = {"p": (Path("/wt"), Path("/wt/.compose/p"))}
+        with mock.patch.object(fc.fc_core, "all_projects", return_value=projects), mock.patch.object(fc.fc_status, "render_status", return_value="BOARD\n") as render, \
+             mock.patch.object(fc.fc_status, "digest", return_value="DIGEST") as digest, mock.patch.object(fc.fc_history, "read", return_value=["h"]), \
+             mock.patch.object(fc.fc_history, "render", return_value="HISTORY"), mock.patch("time.sleep", side_effect=AssertionError("redraw loop")):
+            return *self.main("status", "--repo", "/wt", *argv), render.call_count, digest.call_count
+
+    def test_the_watch_flag_is_rejected_by_argparse_before_anything_runs(self):
+        with mock.patch.object(fc.fc_status, "cmd_status") as status:
+            code, out, err = self.main("status", "--watch")
+        self.assertEqual((code, out, status.call_count), (2, "", 0))
+        self.assertIn("unrecognized arguments: --watch", err)
+
+    def test_the_status_help_line_is_exact_and_no_longer_mentions_redrawing(self):
+        text = " ".join(self.main("--help")[1].split())
+        self.assertIn("status projects and every task's state, attempts, time, cost, stack layer watch ", text)
+
+    def test_plain_status_prints_the_board_once_and_returns(self):
+        self.assertEqual(self.board(), (0, "BOARD\n", "", 1, 0))
+
+    def test_digest_and_history_print_what_they_printed_before(self):
+        self.assertEqual(self.board("--digest"), (0, "DIGEST\n", "", 0, 1))
+        self.assertEqual(self.board("--history"), (0, "HISTORY\n", "", 0, 0))
