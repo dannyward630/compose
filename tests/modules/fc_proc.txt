@@ -3,6 +3,7 @@ Stopped
 HOOKS
 RUNNING
 run
+run_limited
 kill_group
 stop
 on_termination
