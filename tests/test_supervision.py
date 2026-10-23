@@ -1525,7 +1525,8 @@ class WatchShed(unittest.TestCase):  # the shed's lines ride along with the load
         self.load, self.proj = fc_load, Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
         self.tick = mock.Mock(return_value=[])
-        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(10.0,) * 3), mock.patch.object(fc_shed, "tick", self.tick)):
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(9.0,) * 3), mock.patch.object(fc_shed, "tick", self.tick),  # 9.0: above low, below warn and high, so update() adds no entry
+                  mock.patch.object(fc.fc_herdr, "herdr"), mock.patch.object(fc.fc_crew, "desktop_notify"), mock.patch.object(fc_load, "claim", return_value=True)):
             p.start(); self.addCleanup(p.stop)
 
     def events(self):
@@ -1535,9 +1536,9 @@ class WatchShed(unittest.TestCase):  # the shed's lines ride along with the load
         fc.fc_watch.watch_save(self.proj, "m", load_n=0)
         self.load.update(avg=13.0)
         self.tick.return_value = ["event shed=freed pid=1", "event shed=hold n=1"]
-        held, *shed = self.events()
-        self.assertIn("load=held", held)
-        self.assertEqual(shed, self.tick.return_value)
+        out = self.events()
+        self.assertIn("load=held", out[0])
+        self.assertEqual(out[-2:], self.tick.return_value)  # whatever else the load log adds, the shed's two lines are last
 
     def test_an_idle_shed_adds_nothing_and_is_asked_on_every_call(self):
         self.assertEqual((self.events(), self.events(), self.events()), ([], [], []))
