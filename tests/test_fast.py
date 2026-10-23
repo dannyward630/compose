@@ -214,6 +214,49 @@ class UnprovenRun(unittest.TestCase):
         self.assertEqual(pre.call_args.args[0] - {None}, {"m", fc.fc_models.fallback_for("m")} - {None})
         self.assertIn("001 keep    already in the live run", say.call_args_list[0].args[0])
 
+    def beside_live_run(self, ended, **marker):
+        """`compose run --only 052` beside a live run (this test's parent process) that has ended the tasks `ended` {id: status}; returns (say lines, queued ids, SystemExit or None)."""
+        repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
+        self.proj = proj
+        for tid, status in ended.items():
+            (proj / "results" / f"{tid}.json").write_text(json.dumps({"id": tid, "status": status}))
+        self.marker = lambda **kw: (proj / "results" / "run.json").write_text(json.dumps({"pid": os.getppid(), "tasks": ["001", "052"], "reads_queue": True, **kw}))
+        self.marker(**marker)
+        mock.patch.object(fc.fc_core, "project_dir", lambda a: proj).start()
+        mock.patch.object(fc.fc_run, "QUEUE_POLL", 0.01).start()
+        a = SimpleNamespace(cmd="run", repo=str(repo), project="p", only="052")
+        stop = None
+        with mock.patch.object(fc.fc_run, "preflight"), mock.patch.object(fc.fc_core, "say") as say:
+            try:
+                fc.fc_run.run_tasks(repo, proj, [{"id": "052", "model": "m"}], a)
+            except SystemExit as e:
+                stop = e
+        return [c.args[0] for c in say.call_args_list], sorted(f.stem for f in (proj / "results" / "run-queue").glob("*.json")), stop
+
+    def test_a_task_the_live_run_ended_without_passing_is_queued_on_it_again_and_one_that_passed_there_is_kept(self):
+        say, queued, _ = self.beside_live_run({"052": "contradiction"}, open=["001"])
+        self.assertEqual((queued, [l.split("(")[0] for l in say]), (["052"], ["052 queued  added to the live run "]))
+        say, queued, _ = self.beside_live_run({"052": "passed"}, open=["001"])
+        self.assertEqual((queued, say), ([], [f"052 keep    its result is passed in the live run (pid {os.getppid()})"]))
+
+    def test_a_task_the_live_run_still_has_open_makes_run_only_say_it_waits_for_that_pid_and_then_decide_by_how_the_run_ended_it(self):
+        def ends(status):
+            def sleep(_):
+                (self.proj / "results" / "052.json").write_text(json.dumps({"id": "052", "status": status}))
+                self.marker(open=[])
+            return sleep
+        for status, queued in (("contradiction", ["052"]), ("passed", [])):
+            with mock.patch.object(fc.fc_run.time, "sleep", ends(status)):
+                say, got, _ = self.beside_live_run({}, open=["052"])
+            self.assertEqual(say[0], f"052 waits   for the live run (pid {os.getppid()}) to finish it; it runs again if it does not pass")
+            self.assertEqual(got, queued)
+
+    def test_a_task_waited_for_stops_with_the_start_again_line_when_the_live_run_ends_first(self):
+        with mock.patch.object(fc.fc_run.time, "sleep", lambda _: self.marker(open=[], closed=True)):
+            say, queued, stop = self.beside_live_run({}, open=["052"])
+        self.assertEqual((queued, say[0].split("(")[0]), ([], "052 waits   for the live run "))
+        self.assertIn("start it again: compose run --project p --only 052", str(stop))
+
     def test_run_only_refuses_a_live_run_that_does_not_read_the_queue_and_writes_no_queue_file(self):
         repo = Path(tempfile.mkdtemp()).resolve(); proj = repo / ".compose" / "p"; (proj / "results").mkdir(parents=True)
         a = SimpleNamespace(cmd="run", repo=str(repo), project="p", only="001,004")
@@ -236,6 +279,17 @@ class UnprovenRun(unittest.TestCase):
             say, rows, code, _ = self.run_tasks([("001", "")], {"001": "passed"})
         self.assertEqual((rows, code), ({"001": "passed"}, 0))
         self.assertEqual([l for l in say if " not run " in l], ["009 not run  queued as the run ended; start it again: compose run --project p --only 009"])
+
+    def test_a_task_queued_again_after_the_run_ended_it_without_passing_runs_again_and_one_that_is_running_or_passed_is_left_alone(self):
+        def queue(proj, tid):
+            if tid == "002":  # `compose run --only 001` hands 001 over after the run ended it as a contradiction
+                (proj / "results" / "run-queue").mkdir(exist_ok=True)
+                for t in ("001", "002"):
+                    fc.fc_core.atomic_write(proj / "results" / "run-queue" / f"{t}.json", json.dumps({"id": t, "title": t, "after": "", "files": [], "protected": [], "test": "true", "model": "m", "linear": f"ENG-{t}"}))
+        mock.patch.object(fc.fc_run, "QUEUE_POLL", 0.05).start()
+        say, rows, code, _ = self.run_tasks([("001", ""), ("002", "")], {"001": "contradiction", "002": "passed"}, queue)
+        self.assertEqual(sorted(self.started), ["001", "001", "002"])  # 002 is running when it is queued: not started twice
+        self.assertEqual([l for l in say if " joined " in l], ["001 joined  added to the run while it goes on"])
 
 
 class UnprovenWhy(unittest.TestCase):
