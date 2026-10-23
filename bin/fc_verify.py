@@ -14,10 +14,13 @@ def verify_failed(proj, rounds, findings):
         except Exception as e:  # noqa: BLE001  the verdict stands without the screen
             fc_core.say(f"verify reflect failed ({str(e)[:200]})")
 
-def review_inputs(repo, proj, cfg):
-    base = fc_worktree.review_base(repo, cfg) or "main"
-    diff = fc_core.sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
-    tasks = fc_tasks.load_tasks(proj)
+def review_inputs(repo, proj, cfg, tasks=None, diff=None):
+    """(diff, plan, docs, protected) the reviewers read. `tasks` and `diff` default to every task and the project's diff against
+    its base; `compose review` passes one task's (or a range's) own."""
+    if diff is None:
+        base = fc_worktree.review_base(repo, cfg) or "main"
+        diff = fc_core.sh(["git", "diff", f"{base}...HEAD"], repo, check=False).stdout
+    tasks = fc_tasks.load_tasks(proj) if tasks is None else tasks
     named = sorted({f for t in tasks for f in t["files"] + t["protected"]})
     if not diff.strip():
         # On the base branch itself there is no range; review the current content of every file the tasks name.
@@ -45,6 +48,10 @@ def review_inputs(repo, proj, cfg):
     docs = "\n\n".join(f"==== {d} ====\n{(repo / d).read_text()}" for d in cfg.get("docs", []) if (repo / d).exists())
     protected = sorted({f for t in tasks for f in t["protected"]})
     return diff, plan, docs, protected
+
+def issue_line(i):
+    """One review finding on one line: its [severity/perspective], file:line, and note."""
+    return f"[{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}"
 
 def e2e_stage(repo, cfg, panes, report, findings, results=None, retry=True, keep=False):
     """Every e2e case against one shared setup. Returns whether all passed. Runs beside review and jev, which only call models.
@@ -220,7 +227,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
             print(f"           {rv['error']}")
         for i in rv["issues"]:
             mark = "confirmed" if i["confirmed"] else "judge err" if i.get("judge_error") else "unjudged " if i.get("unjudged") else "dropped  "
-            print(f"           {mark} [{i.get('severity')}/{i.get('perspective')}] {i.get('file')}{':' + str(i['line']) if i.get('line') else ''}: {' '.join(i.get('note', '').split())}")
+            print(f"           {mark} {issue_line(i)}")
         for i in rv["confirmed"]:
             findings.append(f"[{i['severity']}] {i['file']}: {i['note']}\nEvidence: {i.get('evidence', '')}"
                             + (f"\nMust read: {i['fix'] or '(remove the line)'}" if "fix" in i else ""))

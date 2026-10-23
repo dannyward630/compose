@@ -70,6 +70,7 @@ fc_reroute
 fc_depth
 fc_review
 fc_verify
+fc_taskreview
 fc_ship
 fc_prove
 fc_regwriter
