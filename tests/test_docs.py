@@ -2104,3 +2104,32 @@ class HarnessDefaultBlockDocs(unittest.TestCase):
     def test_neither_page_has_an_em_dash(self):
         for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
             self.assertNotIn("—", text, rel)
+
+
+class HarnessTierDocs(unittest.TestCase):
+    SIX_LAST = "A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today."
+    HARNESS_LINE = "In a Codex session with no block, every `models.tiers` entry on a `claude` or `claude:<id>` model, the default lists included, also runs on `codex` with its effort kept, and a `harnesses.codex` block still replaces that default whole."
+    CONFIG_LINE = "A Codex session with no `harnesses.codex` block also puts every entry of these lists on a `claude` or `claude:<id>` model on bare `codex`, with its effort kept, and a `codex` block still replaces that default whole, see [harnesses.md](<harnesses.md>)."
+
+    def setUp(self):
+        self.page, self.config = read("docs/harnesses.md"), read("docs/config.md")
+
+    def test_harnesses_line_follows_the_sixth_line_then_a_blank_line(self):
+        lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        i = lines.index(self.SIX_LAST)
+        self.assertEqual(lines[i + 1:i + 3], [self.HARNESS_LINE, ""])
+
+    def test_config_line_follows_the_tiers_fence_with_a_blank_line_each_side(self):
+        lines = self.config.split("\n## Model tiers, prices and the frontier budget\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        j = [i for i, l in enumerate(lines) if l.startswith('"models": { "tiers"')]
+        self.assertEqual(len(j), 1, j)
+        self.assertEqual(lines[j[0] + 1:j[0] + 5], ["```", "", self.CONFIG_LINE, ""])
+        self.assertTrue(lines[j[0] + 5].startswith("`prices` gives the list price"), lines[j[0] + 5])
+
+    def test_each_line_is_one_physical_line_and_appears_once(self):
+        self.assertEqual(self.page.splitlines().count(self.HARNESS_LINE), 1)
+        self.assertEqual(self.config.splitlines().count(self.CONFIG_LINE), 1)
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            self.assertNotIn("—", text, rel)
