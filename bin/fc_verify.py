@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
 
 
 def verify_failed(proj, rounds, findings):
@@ -356,16 +356,21 @@ def wrong_layer(tasks, files, top):
     owners = {f: sorted(t["id"] for t in code if f in t["files"]) for f in files}
     return {f: o for f, o in owners.items() if o and top not in o} if top else {}
 
-def fix_answers(repo, fixed, report):
+def fix_answers(repo, fixed, report, install=None):
     """Whether a fix round answers something reproduced: it removes the line a confirmed review finding quotes, an e2e case
-    failed (the next round reruns it), or a check that failed passes when run again."""
+    failed (the next round reruns it), a check that failed passes when run again, or it changes the file a confirmed finding
+    names and adds a test of its own that fails without the fix and passes with it (a fix that only adds code, a guard)."""
     diff = fc_core.sh(["git", "--literal-pathspecs", "diff", "-U0", "HEAD", "--", *fixed], repo, check=False).stdout
     removed = " ".join(" ".join(l[1:] for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")).split())
     quotes = [" ".join(str(i.get("evidence") or "").split()) for i in (report.get("review") or {}).get("confirmed", [])]
     failed = lambda rs: [r for r in rs if r["exit"] and not r.get("tool_error")]
+    ran = [r["cmd"] for r in report.get("checks", []) + report.get("scoped", [])]
+    named = [str(i.get("file") or "").lstrip("./") for i in (report.get("review") or {}).get("confirmed", [])]
     return any(q and q in removed for q in quotes) or bool(failed(report.get("e2e", []))) or \
         any(fc_proc.run(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=fc_core.clean_env(), timeout=900).returncode == 0
-            for r in failed(report.get("checks", []) + report.get("scoped", [])))
+            for r in failed(report.get("checks", []) + report.get("scoped", []))) or \
+        (any(n and (f == n or f.endswith("/" + n)) and not fc_gate.TEST_FILE_RE.search(f) for n in named for f in fixed)
+         and fc_gate.new_tests_prove(fc_implement.timed, repo, fixed, ran, install))
 
 def fix_message(reply, files, conv=None):
     """The fixer's one-line description of its change; when it gave none, or one about the process, the files it changed.
@@ -492,7 +497,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         # (a fix commits on the top layer), or when it answers nothing reproduced. The last stage run failed, so verify ends FAIL.
         why = (f"touched files outside the stack ({', '.join(stray[:8])})" if stray else
                f"changed a file of layer {', '.join(sorted({x for o in foreign.values() for x in o}))}, not the top layer {top}: {', '.join(foreign)}" if foreign else
-               "changed no failing check and removed no line a confirmed finding cites" if fixed and not fix_answers(repo, fixed, report) else None)
+               "changed no failing check and removed no line a confirmed finding cites" if fixed and not fix_answers(repo, fixed, report, cfg.get("install")) else None)
         if why:
             if set(fixed) - added:
                 fc_core.sh(["git", "--literal-pathspecs", "checkout", "-q", "HEAD", "--", *sorted(set(fixed) - added)], repo)

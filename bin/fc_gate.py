@@ -1,6 +1,7 @@
 """The pass gate of a task: what its branch may change (size, documents, files) and what must still pass after it.
 Imports only lower modules."""
-import re, threading
+import re, shutil, tempfile, threading
+from pathlib import Path
 import fc_core, fc_config, fc_worktree
 
 def branch_budget(wt, base, allowed=None, delete=()):
@@ -82,11 +83,12 @@ def touches(wt, base, changed=None):
 def regressions(before, after, touches=lambda tid: True):
     """(broke, unknown): what passed on the base and fails now (a failing test id the base run did not print, or a check that exited 0 and no longer does),
     and what is red on a base whose run is unknown. A check that was already red tells nothing about the task beyond its new failures.
-    Where the base is unknown a failing id is a regression only when `touches(id)`; the rest are ids the base may well have printed."""
+    A check with no recorded base run is unknown. Where the base is unknown a failing id is a regression only when `touches(id)`;
+    the rest are ids the base may have printed, which `settle` then learns from the base tree."""
     broke, unknown = [], []
     for cmd, now in after.items():
-        was = before.get(cmd)
-        if was and now["exit"] != 0:
+        was = before.get(cmd) or {"exit": None, "failing": [], "unknown": True}  # no recorded base run is unknown too
+        if now["exit"] != 0:
             new = [t for t in now["failing"] if t not in was["failing"]]
             if was.get("unknown"):
                 broke += [t for t in new if touches(t)]
@@ -95,7 +97,65 @@ def regressions(before, after, touches=lambda tid: True):
                 broke += new or ([f"`{cmd}` exits {now['exit']}"] if was["exit"] == 0 else [])
     return broke, unknown
 
+def settle(run, wt, base, delete, limit, red, after, learned):
+    """(broke, why): `red`, the ids failing after a task on a base whose run is unknown, checked against the base tree itself.
+    Each check that prints one runs on a scratch clone of `wt` at `base` with the task's `delete`s applied, once per run in `learned`.
+    An id that fails there too is base-red; any other is a regression. `why` names the ids and the reason when that base run is unknown again."""
+    todo = {c: [t for t in s["failing"] if t in red] for c, s in after.items()}
+    todo = {c: ids for c, ids in todo.items() if ids}
+    missing = [c for c in todo if c not in learned]
+    if missing:
+        root = Path(tempfile.mkdtemp(prefix="compose-base-"))
+        try:
+            tree = root / "tree"
+            fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(wt), str(tree)], wt)
+            fc_core.sh(["git", "checkout", "-q", base], tree)
+            if delete:
+                fc_core.sh(["git", "rm", "-r", "-q", "--"] + list(delete), tree)
+            fc_worktree.ready_checkout(wt, tree)
+            learned.update(check_state(run, missing, tree, limit))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+    broke, why = [], []
+    for cmd, ids in todo.items():
+        was = learned[cmd]
+        if was["unknown"]:
+            why.append(f"{', '.join(ids)}: the base run of `{cmd}` " + ("timed out" if was["exit"] == 124 else f"exited {was['exit']} and printed no failing test"))
+        else:
+            broke += [t for t in ids if t not in was["failing"]]
+    return broke, why
+
 def advice(broke):
     """The next prompt's problem when a passing task broke something that passed before it."""
     return ("Your change breaks what passed before it. Code outside this task, other tasks' stubs included, must stay as it was; "
             "restore it. Now failing: " + "; ".join(broke[:10]))
+
+TEST_FILE_RE = re.compile(r"(?:^|/)(?:tests?|__tests__|spec)/|(?:^|/)test_[^/]*$|_test\.\w+$|\.(?:test|spec)\.\w+$")
+
+def new_tests_prove(run, repo, fixed, cmds, install=None):
+    """Whether a fix has a test of its own that proves it: on a clone of `repo`'s HEAD the fix's test files alone fail a test id
+    of theirs that `cmds` print, and with the rest of the fix that id passes. False when the fix has no test file or nothing but test files."""
+    tests = [f for f in fixed if TEST_FILE_RE.search(f)]
+    if not tests or len(tests) == len(fixed) or not cmds:
+        return False
+    root = Path(tempfile.mkdtemp(prefix="compose-fix-"))
+    try:
+        tree = root / "tree"
+        fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(repo), str(tree)], repo)
+        fc_worktree.ready_checkout(repo, tree, install=install)
+        def put(files):
+            for f in files:
+                if (repo / f).exists():
+                    (tree / f).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(repo / f, tree / f)
+                else:
+                    (tree / f).unlink(missing_ok=True)
+        put(tests)
+        without = check_state(run, cmds, tree, CHECKS_TIMEOUT)
+        mine = touches(tree, "HEAD", tests)
+        theirs = {c: [t for t in s["failing"] if mine(t)] for c, s in without.items()}
+        put(fixed)
+        within = check_state(run, cmds, tree, CHECKS_TIMEOUT)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return any(not within[c]["unknown"] and any(t not in within[c]["failing"] for t in theirs[c]) for c in cmds)

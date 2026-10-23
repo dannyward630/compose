@@ -304,12 +304,12 @@ class ReadyCheckout(unittest.TestCase):
 
 
 class FixScope(unittest.TestCase):
-    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None, report=None, rerun=0, top=None):
+    def verify(self, writes, reply="", cfg=None, pack="", tasks=(), trunk="main", dirty=None, artifact=None, report=None, rerun=0, top=None, layer=None):
         """A stack with one layer changing a.go; the first stage run fails, the fixer writes `writes`, later runs pass.
         `self.scopes` holds the tests each stage run was given (None: the full checks). `dirty` (path: text) is in the worktree
         before verify starts, over a tracked .claude/settings.json; `artifact` is a file the first stage run leaves behind. The first
         stage run's `report` (by default one failing check, `c1`) is what the fix answers; the check exits `rerun` when verify runs it
-        again. `top` is the task id of the stack's top layer."""
+        again. `top` is the task id of the stack's top layer. `layer` (path: text) is more of what the layer commits."""
         root = Path(tempfile.mkdtemp())
         repo, proj = root / "repo", root / "proj"
         repo.mkdir(); proj.mkdir()
@@ -320,7 +320,9 @@ class FixScope(unittest.TestCase):
         git("add", "-A"); git("commit", "-qm", "init")
         git("checkout", "-qb", "layer")
         (repo / "a.go").write_text("b\n")
-        git("commit", "-qam", "layer")
+        for f, text in (layer or {}).items():
+            (repo / f).parent.mkdir(exist_ok=True); (repo / f).write_text(text)
+        git("add", "-A"); git("commit", "-qm", "layer")
         for f, text in (dirty or {}).items():
             (repo / f).write_text(text)
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -396,6 +398,29 @@ class FixScope(unittest.TestCase):
         self.assertEqual((code, len(res["rejected_fixes"])), (1, 1))  # it leaves that line alone
         code, _, res = self.verify({"a.go": "fixed\n"}, report={"e2e": [{"name": "n", "exit": 1}]})  # a failing e2e case is its own reproduction
         self.assertEqual((code, res["rejected_fixes"]), (0, []))
+
+    GUARD = {"m.py": "def f(x):\n    return x\n", "tests/__init__.py": "",
+             "tests/test_m.py": "import unittest\nfrom m import f\n\n\nclass T(unittest.TestCase):\n    def test_keeps(self):\n        self.assertEqual(f(1), 1)\n"}
+    ADDED = "\n    def test_none(self):\n        self.assertEqual(f(None), 0)\n"
+    GUARDED = "def f(x):\n    if x is None:\n        return 0\n    return x\n"
+    CHECK = "python3 -m unittest discover -s tests -t ."
+
+    def additive(self, writes, file="m.py", **kw):
+        """A fix that only adds code, for a confirmed finding about `file`; no check failed, so nothing but its own tests could show it."""
+        report = {"checks": [{"cmd": self.CHECK, "exit": 0}], "review": {"pass": False, "issues": [], "confirmed": [{"file": file, "evidence": "return x"}]}}
+        return self.verify(writes, report=report, layer=self.GUARD, **kw)
+
+    def test_an_additive_fix_for_a_confirmed_finding_is_kept_when_its_new_test_fails_without_it_and_passes_with_it(self):
+        code, repo, res = self.additive({"m.py": self.GUARDED, "tests/test_m.py": self.GUARD["tests/test_m.py"] + self.ADDED})
+        self.assertEqual((code, res["rejected_fixes"], (repo / "m.py").read_text()), (0, [], self.GUARDED))
+        self.assertEqual(self.committed(repo)[0], ["m.py", "tests/test_m.py"])
+
+    def test_an_additive_fix_is_still_discarded_when_it_has_no_test_that_fails_without_it_or_answers_no_confirmed_finding(self):
+        passes = self.GUARD["tests/test_m.py"] + "\n    def test_again(self):\n        self.assertEqual(f(2), 2)\n"
+        for writes, file in (({"m.py": self.GUARDED}, "m.py"), ({"m.py": self.GUARDED, "tests/test_m.py": passes}, "m.py"),
+                             ({"m.py": self.GUARDED, "tests/test_m.py": self.GUARD["tests/test_m.py"] + self.ADDED}, "other.py")):
+            code, repo, res = self.additive(writes, file=file)
+            self.assertEqual((code, len(res["rejected_fixes"]), (repo / "m.py").read_text()), (1, 1, self.GUARD["m.py"]), writes)
 
     def test_a_fix_round_commits_only_to_the_layer_that_owns_the_changed_file(self):
         tasks = [{"id": "003", "files": ["a.go"], "protected": [], "test": "t3"}, {"id": "007", "files": ["b.go"], "protected": [], "test": "t7"}]
@@ -1471,11 +1496,11 @@ class SiblingStubs(unittest.TestCase):
     TESTS = {"tests/test_one.py": "import unittest, m\n\n\nclass One(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(m.one(), 1)\n",
              "tests/test_names.py": "import unittest, m\n\n\nclass Names(unittest.TestCase):\n    def test_two_is_defined(self):\n        self.assertTrue(hasattr(m, 'two'))\n"}
 
-    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",)):
+    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",), tests=None):
         root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
         git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main")
-        for f, t in {"m.py": self.STUBS, ".gitignore": "__pycache__/\n", **self.TESTS}.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
+        for f, t in {"m.py": self.STUBS, ".gitignore": "__pycache__/\n", **(tests or self.TESTS)}.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         (proj / "verify.json").write_text(json.dumps({"checks": list(checks)}))
         task = {"id": "001", "title": "one", "files": ["m.py"], "protected": ["tests/test_one.py"], "model": "pi:p/primary", "after": "", "linear": "ENG-1",
@@ -1503,6 +1528,26 @@ class SiblingStubs(unittest.TestCase):
     def test_a_check_that_was_red_before_the_task_is_not_blamed_on_it(self):
         result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("python3 -m unittest discover -s tests -p test_one.py && false",))
         self.assertEqual(result["status"], "passed")
+
+    # test_three reads m.py as text, imports nothing the task changes, and fails before and after it.
+    UNTOUCHED = {"tests/test_one.py": TESTS["tests/test_one.py"],
+                 "tests/test_names.py": "import unittest\n\n\nclass Names(unittest.TestCase):\n    def test_three(self):\n        self.assertIn('def three', open('m.py').read())\n"}
+    ID = "test_three (test_names.Names.test_three)"
+    FIX = "def one():\n    return 1\n"
+
+    def test_an_id_failing_after_a_task_whose_base_run_is_unknown_is_not_taken_for_base_red(self):
+        unknown = "grep -q 'return 1' m.py || exit 2; python3 -m unittest discover -s tests -p test_names.py"
+        result, _ = self.run_one([self.FIX], checks=(unknown,), tests=self.UNTOUCHED)
+        self.assertEqual((result["status"], result["attempts"]), ("rejected_regression", 1))
+        self.assertIn(self.ID, " ".join(result["log"][0]["base unknown"]))
+        self.assertIn("exited 2 and printed no failing test", " ".join(result["log"][0]["base unknown"]))
+
+    def test_an_id_that_fails_on_the_base_tree_too_is_accepted_when_the_first_base_run_was_unknown(self):
+        counter = Path(tempfile.mkdtemp()) / "runs"; self.addCleanup(shutil.rmtree, counter.parent, True)
+        flaky = f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}; [ $n = 0 ] && exit 2; python3 -m unittest discover -s tests -p test_names.py"
+        result, _ = self.run_one([self.FIX], checks=(flaky,), tests=self.UNTOUCHED)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["log"][0]["red on base (baseline unknown)"], [self.ID])
 
 
 class TestTierEscalation(unittest.TestCase):
