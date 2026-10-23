@@ -1,7 +1,7 @@
 """Run compose's test suite in parallel: `python3 -m tests.run [-j N] [test_x.py ...]`.
 
 Each tests/test_*.py runs as `python3 -m unittest discover -s tests -p <file>` in a process of its own, N at a time
-(-j, else COMPOSE_TEST_JOBS, else half the cores), the biggest files first. It prints one line per finished file, then
+(-j, else COMPOSE_TEST_JOBS, else a quarter of the cores), the biggest files first. It prints one line per finished file, then
 unittest's own failure blocks and its summary for the whole run (`Ran N tests in Ts`, `OK` or `FAILED (failures=, errors=)`), on
 stderr like unittest, so the FAIL:/ERROR: lines are the ones fc_gate.FAILING_RE reads. A file whose process dies or prints no
 summary is one error named after it. It exits 1 on any failure. `python3 -m unittest discover -s tests` still runs the same
@@ -38,8 +38,8 @@ def run_file(path):
 
 
 def default_jobs():
-    """COMPOSE_TEST_JOBS, else half the cores (at least 1)."""
-    return max(1, int(os.environ.get("COMPOSE_TEST_JOBS") or (os.cpu_count() or 2) // 2))
+    """COMPOSE_TEST_JOBS, else a quarter of the cores (at least 1)."""
+    return max(1, int(os.environ.get("COMPOSE_TEST_JOBS") or (os.cpu_count() or 4) // 4))
 
 
 def stop(signum, _frame):
