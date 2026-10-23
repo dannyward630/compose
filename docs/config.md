@@ -242,7 +242,7 @@ A name ending in `_API_KEY` is treated as a secret and kept out of logs, but key
   `run` and `resume` use the flag, else this, else 3 (`resume` falls back to the halted run's value).
   `testcrews` starts every writer at once when it is unset.
   `designcrews` never reads it, since Figma's write rate limit caps its builders.
-- `claude_parallel` is a second cap for Claude Code sessions only, because parallel Opus writers slow a machine more than the same number of pi calls.
+- `claude_parallel` is a second cap for Claude Code sessions only, because parallel Claude writers slow a machine more than the same number of pi calls.
   pi and OpenCode tasks do not count against it.
   A task that only falls back to Claude mid-run is not counted either.
 - A value that is not a whole number of 1 or more stops every command.
