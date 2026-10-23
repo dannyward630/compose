@@ -1,7 +1,7 @@
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load
 
 CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
@@ -183,15 +183,17 @@ def run_stages(repo, proj, cfg, a, tests=None):
                 into.append({"cmd": c, "exit": 0, "seconds": 0, "output": "", "tool_error": False})
                 continue
             t1, clk = time.time(), fc_proc.clock()
-            p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT)  # in a group of its own: a stop ends the whole suite
-            full = fc_core.scrub(p.stdout + p.stderr)
-            out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
-            nap = fc_proc.slept(clk) if p.returncode else 0  # a check the machine slept through fails on the sleep: its network and its clocks stopped with it
-            if p.returncode and (nap or fc_jev.tool_error(out)):
-                fc_core.say(f"check  {fc_proc.slept_text(nap) + '; run again' if nap else 'tool error; retrying once'}  {c}")
-                p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT)
+            with fc_proc.slot(fc_core.say, not fc_proc.suite(c)) as held:
+                env = {**fc_core.clean_env(), "COMPOSE_TEST_SLOT": held}
+                p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=env, timeout=CHECK_TIMEOUT)  # in a group of its own: a stop ends the whole suite
                 full = fc_core.scrub(p.stdout + p.stderr)
-                out = full[-3000:]
+                out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
+                nap = fc_proc.slept(clk) if p.returncode else 0  # a check the machine slept through fails on the sleep: its network and its clocks stopped with it
+                if p.returncode and (nap or fc_jev.tool_error(out)):
+                    fc_core.say(f"check  {fc_proc.slept_text(nap) + '; run again' if nap else 'tool error; retrying once'}  {c}")
+                    p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=env, timeout=CHECK_TIMEOUT)
+                    full = fc_core.scrub(p.stdout + p.stderr)
+                    out = full[-3000:]
             tool = bool(p.returncode) and fc_jev.tool_error(out)
             fc_green.record(proj, tree, c, p.returncode)
             awake = time.time() - t1 - fc_proc.slept(clk)  # the time the check ran, not the time the lid was closed
@@ -209,6 +211,8 @@ def run_stages(repo, proj, cfg, a, tests=None):
 
     checks_pass = None  # no checks ran: the reviewers are not told the tests pass
     if not review_only:
+        if cfg.get("checks") or tests:
+            fc_load.wait(fc_core.say, getattr(a, "force", False))
         fc_herdr.herdr_stage(panes, "checks", "working", "" if tests is None else "the fix's tests")
         if tests is not None:
             fc_core.say(f"check  scope  {len(tests)} task test(s) for the fix; the full checks run once every stage passes")
@@ -217,6 +221,8 @@ def run_stages(repo, proj, cfg, a, tests=None):
     # e2e drives a browser for minutes while review and jev only wait on model calls: run them side by side, after checks
     # (which may bind the same ports as e2e_setup). Findings from both land in the same list.
     pool = ThreadPoolExecutor(max_workers=1)
+    if not a.skip_e2e and cfg.get("e2e") and not review_only:
+        fc_load.wait(fc_core.say, getattr(a, "force", False))
     e2e = pool.submit(e2e_stage, repo, cfg, panes, report, findings, proj / "results") if not a.skip_e2e and cfg.get("e2e") and not review_only else None
     if not a.skip_review and cfg.get("review", True):
         t1 = time.time()
