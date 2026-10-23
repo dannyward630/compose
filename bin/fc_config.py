@@ -82,6 +82,36 @@ def session_harness(flag=None):
     Claude Code ($CLAUDECODE=1), else None."""
     return flag or os.environ.get("COMPOSE_HARNESS") or fc_harness.detected() or ("claude" if os.environ.get("CLAUDECODE") == "1" else None)
 
+def _stand_in_block(out, stand):
+    """A harness block derived from the merged settings: each Claude model becomes `stand`."""
+    swap = lambda m: stand if isinstance(m, str) and (m == "claude" or m.startswith("claude:")) else m
+    models = out.get("models") or {}
+    crew = {}
+    for role, e in (models.get("crew") or {}).items():
+        if isinstance(e, dict):
+            e = dict(e)
+            e["model"] = swap(e.get("model"))
+            if "fallback" in e:
+                fbs = e["fallback"] if isinstance(e["fallback"], list) else [e["fallback"]]
+                fbs = [{**f, "model": swap(f.get("model"))} if isinstance(f, dict) else swap(f) for f in fbs]
+                fbs = [f for f in fbs if (f.get("model") if isinstance(f, dict) else f) != e["model"]]
+                if fbs:
+                    e["fallback"] = fbs
+                else:
+                    del e["fallback"]
+        else:
+            e = swap(e)
+        crew[role] = e
+    crew.setdefault("default", stand)
+    for role in CREW_DEFAULTS:
+        crew.setdefault(role, stand)
+    block = {"crew": crew}
+    for k in ("implementer", "fallback", "fix", "test_reader"):
+        m = models.get(k, TEST_READER if k == "test_reader" else None)
+        if m is not None:
+            block[k] = swap(m)
+    return {"models": block}
+
 def settings(cfg, harness=None):
     """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep, then
     harness's block under "harnesses" merged over that the same way ("harnesses" itself never reaches the result)."""
@@ -96,6 +126,9 @@ def settings(cfg, harness=None):
     for n, block in blocks.items():
         if "default" not in (block.get("models") or {}).get("crew", {}):
             sys.exit(f'{CONFIG_PATH}: harnesses.{n}.models.crew has no "default"')
+    stand = fc_harness.HARNESSES.get(harness, {}).get("stand_in")
+    if stand and harness not in blocks:
+        blocks = {**blocks, harness: _stand_in_block(out, stand)}
     if harness and harness != "claude" and harness not in blocks:
         sys.exit(f'{CONFIG_PATH}: no "harnesses.{harness}" block')
     for k, v in (blocks.get(harness) or {}).items():

@@ -94,7 +94,7 @@ def _codex_hash(event, group):
 
 HARNESSES = {
     "codex": {"name": "Codex", "kind": "codex", "exe": "codex", "home_env": "CODEX_HOME", "home": "~/.codex", "sigil": "$",
-              "session_env": "CODEX_THREAD_ID",
+              "session_env": "CODEX_THREAD_ID", "stand_in": "codex",
               "example": "gpt-6.1-sol", "herdr_ready": False, "probe": _codex_probe, "result": _codex_result, "argv": _codex_argv,
               "events": _codex_events, "once": _codex_once,
               "login_check": ("login", "status"), "login": ("login",),
