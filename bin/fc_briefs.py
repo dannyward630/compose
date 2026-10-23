@@ -45,6 +45,7 @@ Write {contract} (outside the repo; never commit it) with exactly what a test wr
 - every stub's exact signature, and which task implements it
 - the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
 - per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
+Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.
 Signatures and exact lines are copied from the briefs, never added: implementers see the brief and the code, never the contract.
 A test that would need a value, line, or rule no brief states is `blocked "<task>: brief lacks <what>"`, for the planner to add.
 Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the team lead says so.
@@ -333,7 +334,7 @@ def cmd_toolsmith(a):
 
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
-
+def contract_slice(contract, tid): return "".join(p for p in re.split(r"(?m)^(?=## )", contract) if not (m := re.match(r"## task (\S+)", p)) or m.group(1) == tid)
 def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
     """`rebuilt`: the task passed before a re-plan changed its brief (testcrews --redo), so its file holds the old brief's test."""
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
@@ -358,7 +359,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"
-            f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
+            f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract_slice(contract, meta['id'])}")
 
 def cmd_testcrews(a):
     """Start one test-writing teammate per task that has a protected test, in parallel, each briefed with its task and the groundwork's shared contract.
