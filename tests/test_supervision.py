@@ -1519,5 +1519,37 @@ class WatchLoadWarn(unittest.TestCase):  # a warn or a cleared entry is told to 
         self.assertEqual((len(self.metadata()), self.notify.call_count), (1, 1))
 
 
+class WatchShed(unittest.TestCase):  # the shed's lines ride along with the load lines on every tick
+    def setUp(self):
+        import fc_load, fc_shed
+        self.load, self.proj = fc_load, Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.tick = mock.Mock(return_value=[])
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(10.0,) * 3), mock.patch.object(fc_shed, "tick", self.tick)):
+            p.start(); self.addCleanup(p.stop)
+
+    def events(self):
+        return fc.fc_watch.load_events(self.proj, "m")
+
+    def test_the_shed_lines_come_after_the_load_lines(self):
+        fc.fc_watch.watch_save(self.proj, "m", load_n=0)
+        self.load.update(avg=13.0)
+        self.tick.return_value = ["event shed=freed pid=1", "event shed=hold n=1"]
+        held, *shed = self.events()
+        self.assertIn("load=held", held)
+        self.assertEqual(shed, self.tick.return_value)
+
+    def test_an_idle_shed_adds_nothing_and_is_asked_on_every_call(self):
+        self.assertEqual((self.events(), self.events(), self.events()), ([], [], []))
+        self.assertEqual(self.tick.call_count, 3)
+
+    def test_the_shed_lines_come_with_no_load_change_and_on_the_first_call(self):
+        self.tick.return_value = ["event shed=freed pid=1"]
+        self.assertEqual((self.events(), self.events()), (self.tick.return_value,) * 2)
+
+    def test_a_shed_line_wakes_a_quiet_watcher(self):
+        self.assertTrue(fc.fc_watch.ATTENTION.search("event shed=freed pid=1"))
+
+
 if __name__ == "__main__":
     unittest.main()
