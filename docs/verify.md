@@ -25,8 +25,10 @@ Verify reads `.compose/<project>/verify.json`.
 
 `commit_convention` (`{"types": [...], "example": "feat: ..."}`) makes every commit the CLI makes, and every teammate brief, start with a type prefix: tests are `test`, docs `docs`, dependencies and config `chore` or `build`, fixes `fix`, the rest `feat`.
 `checks` also gate `compose stack --submit`: each layer is checked on its own tree, bottom up, and a failing layer refuses the submit.
-The top layer runs every check and the `test` of its own tasks.
-A lower layer runs the `test` of its own tasks and the cheap checks, the ones that are not a whole test suite, so the full suite runs once, on the stack as a whole.
+The top layer runs every check and the `test` of the tasks it is the lowest layer for.
+A task is tested on the lowest layer that holds its code and every test commit written for it.
+That is the layer with its code, unless a test appended to a shared file had to follow an earlier test into a higher layer: then the task is tested there, where its test exists.
+A lower layer runs the `test` of the tasks it is the lowest layer for and the cheap checks, the ones that are not a whole test suite, so the full suite runs once, on the stack as a whole.
 A failing test that fails on the stack's base too, in a test or module the stack does not change, was red before this work: the submit goes on and the test is listed as accepted.
 A test that passes on the base, or that the stack touches, refuses the submit, as does a failure that names no test or a base run that timed out.
 A base run that timed out or names no failing test is never taken for red: the refusal names the failing tests and says they cannot be told from new ones.

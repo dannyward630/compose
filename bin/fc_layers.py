@@ -235,7 +235,8 @@ def review_units(repo, proj, base, trunk, chain, held=()):
     protects its files, as long as it applies there without the earlier commits on its files placed higher (a test written in
     its own part of a shared file skips them; one written on top of them does not). Else it goes no lower than the highest of
     them, to the first task at or above it that protects its files; one no task owns is a groundwork unit of its own right
-    above the highest one's unit, never inside it."""
+    above the highest one's unit, never inside it. A unit's `owned` says which tasks each of its test commits is for (its writer's
+    task, else every task that protects its files), so build_layers can tell where a task's tests exist."""
     protected = {m["id"]: set(m["protected"]) for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
     ids = [b.removeprefix(fc_worktree.task_prefix(repo, proj)) for b in chain]
     def unit(name, commits, key=None):
@@ -244,9 +245,10 @@ def review_units(repo, proj, base, trunk, chain, held=()):
         for _, _, g in facts:
             for f, n in g.items():
                 gen[f] = gen.get(f, 0) + n
-        return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen}
+        return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen,
+                "owned": {c: of[c] for c in commits if c in of}}
     # slot 2i is task i's unit, 2i+1 the groundwork right above it; placed: (commit, slot, files) of each commit placed in one
-    ground, slots, placed, writers = [], {}, [], test_writers(proj, protected)
+    ground, slots, placed, writers, of = [], {}, [], test_writers(proj, protected), {}
     for c, at in (l.split() for l in fc_core.sh(["git", "log", "--reverse", "--no-merges", "--format=%H %at", f"{base}..{trunk}"], repo).stdout.splitlines()):
         files = set(commit_facts(repo, c)[0])
         writer = next((t for t, a, b in writers if a <= int(at) <= b and files and files <= protected[t]), None)
@@ -260,6 +262,7 @@ def review_units(repo, proj, base, trunk, chain, held=()):
         fits = lambda slot: floor is None or slot >= floor or applies_without(repo, c, [p for p, s in on if s > slot], files)
         if owners:
             slot = next((2 * i for i in owners if fits(2 * i)), floor)
+            of[c] = [ids[i] for i in owners]
         else:
             slot = None if floor is None else floor | 1
         if slot is None:
@@ -349,12 +352,14 @@ def group_by_record(proj, units, budget, max_prs=None, landed=()):
 def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=(), landed=()):
     """Cut the project into review layers on `base`: branches `<layer_prefix>layer-NN`, each at most `budget` counted lines
     (groundwork first, then tasks with their tests), rebuilt from the commits every time. Returns [{branch, tasks, lines,
-    generated, commits, units}] (units: the commits of each entry of tasks, in order). The layers are built on a detached HEAD and
+    generated, commits, units, tested}] (units: the commits of each entry of tasks, in order; tested: the tasks whose `test` the gate
+    runs on the layer: the lowest one that holds a task's code and every test commit written for it). The layers are built on a detached HEAD and
     the layer branches move only once all of them are built and add up to the same tree as the task chain; else nothing is
     changed, STACK_STOP says why, and it returns None."""
     units = review_units(repo, proj, base, trunk, chain, held)  # groundwork is layers of its own, never mixed into a task's
     groups = group_by_record(proj, units, budget, max_prs, landed)
     layers, tips, prev, prefix = [], [], base, layer_prefix(repo, proj)
+    code_at, test_at = {}, {}  # task -> index of the layer with its code, and of the last layer with a test commit for it
     cfg_file = Path(proj) / "verify.json"
     if cfg_file.exists() and fc_core.project_config(proj).get("layer_prefix") != prefix:  # recorded once, so later stacks never have to guess
         fc_core.atomic_write(cfg_file, json.dumps({**fc_core.project_config(proj), "layer_prefix": prefix}, indent=2))
@@ -397,6 +402,11 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
         layers.append({"branch": branch, "tasks": [u["name"] for u in g], "keys": [u["key"] for u in g], "lines": sum(u["lines"] for u in g), "generated": gen,
                        "commits": [c for cs in units for c in cs], "units": units,
                        **({"fold_cap": max_prs} if folded else {})})
+        for u in g:
+            if u["name"] != "groundwork":
+                code_at[u["name"]] = len(layers) - 1
+            for ts in u.get("owned", {}).values():
+                test_at.update({t: len(layers) - 1 for t in ts})
         prev = fc_core.sh(["git", "rev-parse", "HEAD"], wt).stdout.strip()
         tips.append(prev)
     fc_core.sh(["git", "checkout", "-q", "--detach", trunk], wt, check=False)
@@ -406,6 +416,10 @@ def build_layers(repo, proj, base, trunk, chain, wt, budget, max_prs=None, held=
         if differ:
             stop(f"the layers differ from {chain[-1]} in {', '.join(differ)}; {kept}")
             return None
+    for l in layers:
+        l["tested"] = []
+    for t, at in code_at.items():  # a task is tested on the lowest layer with its code and its tests, which may be above its code
+        layers[max(at, test_at.get(t, 0))]["tested"].append(t)
     for l, tip in zip(layers, tips):
         fc_core.sh(["git", "branch", "-f", l["branch"], tip], repo)
     for old in layer_branches(repo, proj):

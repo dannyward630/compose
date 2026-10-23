@@ -85,6 +85,23 @@ class Layers(LayersBase):
         self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
+    def test_a_task_is_tested_on_the_lowest_layer_that_holds_its_code_and_its_test_commits(self):
+        """003's test is on the shared file first and 001's writer, tests-001, appends right after it, so 001's test rides in 003's
+        layer: 001 is tested there, while 002 still is on its own layer."""
+        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
+                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
+                 {"id": "003", "protected": ["t003.test", "shared.test"], "files": ["003.src"], "after": ""}]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("t003.test", "u\n" * 5); self.write("shared.test", "c3\n"); self.commit("tests for 003")
+        crew = self.proj / "results" / "crew"; crew.mkdir()
+        (crew / f"{fc.fc_herdr.agent_name('p', 'tests-001')}.status").write_text("".join(json.dumps({"at": at, "state": "working", "message": m}) + "\n"
+            for at, m in (("2026-01-01 10:00:00", "started"), ("2026-01-01 10:05:00", "test ready: 1234567"))))
+        self.write("shared.test", "c3\nc1\n"); self.git("add", "-A"); self.git("commit", "-qm", "tests for 001", "--date", "2026-01-01T10:02:00")
+        built, real = [], fc.fc_layers.build_layers
+        with mock.patch.object(fc.fc_layers, "build_layers", lambda *a, **k: built.append(real(*a, **k)) or built[-1]):
+            self.stack()
+        self.assertEqual([l["tested"] for l in built[0]], [[], ["002"], ["001", "003"]])
+
     def test_a_test_commit_skips_an_earlier_one_on_its_file_it_does_not_build_on(self):
         """Task 004 has not passed: the test its writer made rides in the top layer. 001's test comes after it on the same file, in
         another part of it: it still lands in 001's layer. One that edits 004's test follows that test into the top layer."""
