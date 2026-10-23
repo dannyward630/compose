@@ -264,7 +264,7 @@ def cmd_cost(a):
         print(fc_cost.render(rows))
 
 def cmd_status(a):
-    """Every project across the repository's worktrees with every task's state. --watch redraws every 2 s while runs write progress.
+    """Every project across the repository's worktrees with every task's state.
     --digest prints one honest line per project instead: the answer to "where are we"."""
     repo = Path(a.repo).resolve()
     if getattr(a, "history", None) is not None:  # past runs, from the history the worktrees do not hold
@@ -279,19 +279,7 @@ def cmd_status(a):
         for wt, proj in projects.values():
             print(digest(wt, proj))
         return
-    while True:
-        text = "\n".join(render_status(wt, [proj]) for wt, proj in projects.values())
-        if a.watch:
-            sys.stdout.write("\x1b[2J\x1b[H" + f"compose status  {fc_core.now()}  (ctrl-c to stop)\n\n" + text)
-            sys.stdout.flush()
-            try:
-                time.sleep(2)
-            except KeyboardInterrupt:
-                print()
-                return
-        else:
-            print(text, end="")
-            return
+    print("\n".join(render_status(wt, [proj]) for wt, proj in projects.values()), end="")
 
 def cmd_done(a):
     """Record that the team lead finished tasks by hand (status hand_done) so `status` tells the truth, and move each one In

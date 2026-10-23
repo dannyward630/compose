@@ -102,7 +102,7 @@ def main():
                             ("ready", fc_linear.cmd_ready, "mark the stories and features that can start now with the Ready label in Linear, and print them"),
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
-                            ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer; --watch redraws live"),
+                            ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer"),
                             ("watch", fc_watch.cmd_watch, "block until a task finishes, an agent blocks, a run ends, or verify finishes; print one event line and exit"),
                             ("top", fc_status.cmd_top, "check out the stack top in the CLI worktree for manual testing; --detach to release it"),
                             ("stack", fc_ship.cmd_stack, "cut unmerged task branches into review layers (verify.json review_layer_lines, default 300) as one gh stack on the real base; --submit checks each layer on its own tree, then pushes and opens one draft PR per layer"),
@@ -211,7 +211,6 @@ def main():
             s.add_argument("--all", action="store_true", help="wake on every progress line too, even for --from orchestrator")
             s.add_argument("--from", dest="from_", help="only these teammates wake you (roles or agent names, comma-separated); the engineering manager passes orchestrator, its team lead's role")
         if name == "status":
-            s.add_argument("--watch", action="store_true", help="redraw every 2 seconds")
             s.add_argument("--history", nargs="?", type=int, const=fc_history.SHOWN, metavar="N", help=f"the last N (default {fc_history.SHOWN}) lines of this repository's run history (runs, task results, verify rounds), kept outside the worktrees, instead of the board")
             s.add_argument("--digest", action="store_true", help="one line per project: tasks done, run, last verify and why it failed, questions waiting")
         if name == "stack":
