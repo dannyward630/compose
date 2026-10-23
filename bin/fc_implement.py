@@ -1,6 +1,6 @@
 import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -49,6 +49,9 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
                 *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []), *fc_providers.pi_args(model),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
+        pids = fc_herdr.agent_pids(pane)
+        if pids:
+            fc_started.record(min(pids), "implementer", str(proj), waiter=os.getpid(), cwd=cwd)
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")
@@ -182,6 +185,7 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
                              stdin=stdin, start_new_session=True, env=env)
         fc_proc.RUNNING.add(p.pid)
         try:
+            fc_started.record(p.pid, "timed", None, waiter=os.getpid(), until=time.time() + limit, cwd=str(cwd))
             out, err = p.communicate(timeout=limit)
             return subprocess.CompletedProcess(cmd, p.returncode, fc_core.scrub(out), fc_core.scrub(err))
         except subprocess.TimeoutExpired:
@@ -197,6 +201,7 @@ def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
             return subprocess.CompletedProcess(cmd, 124, out[-2000:], (err[-1000:] + "\n" + HANG_HINT.format(limit=limit)).strip())
         finally:
             fc_proc.RUNNING.discard(p.pid)
+            fc_started.forget(p.pid)
             fc_core.flag_home(before, f"`{cmd}`", sid=p.pid)  # the command runs in a session of its own
 
 def run_test(meta, wt):
