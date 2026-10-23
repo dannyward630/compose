@@ -7,6 +7,7 @@ import fc_core, fc_config, fc_tasks
 
 _prefixes = {}
 _commons = {}
+_heads = {}
 
 def refs_stamp(common):
     def st(p):
@@ -48,10 +49,20 @@ def task_prefix(repo, proj):
     _prefixes[key] = (stamp(), answer)
     return answer
 
-_heads = {}
-
 def heads(repo):
-    raise NotImplementedError("not implemented")
+    """The local branch names, listed once and again only when the refs change."""
+    key = Path(repo).resolve()
+    if key not in _commons:
+        _commons[key] = common_dir(repo)
+    common = _commons[key]
+    stamp = refs_stamp(common) if common else None
+    hit = _heads.get(common)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    out = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", "refs/heads"], repo, check=False).stdout
+    names = {l.removeprefix("refs/heads/") for l in out.split()}
+    _heads[common] = (stamp, names)
+    return names
 
 def rename_legacy_branches(repo, proj):
     """Move a project whose `fast/<project>/` branches were never pushed onto the names a new project gets, once: every local
