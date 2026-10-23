@@ -81,7 +81,7 @@ def board_stamp(repo, proj):
             return (s.st_mtime_ns, s.st_size)
         except OSError:
             return None
-    files = sorted((f.name, st(f)) for f in (*proj.glob("*.json"), *(proj / "results").glob("*.json")))
+    files = sorted((f.name, st(f)) for f in (*proj.glob("*.json"), *(proj / "results").glob("*.json")) if not (f.parent.name == "results" and f.name.startswith("watch-")))
     gitdir, common = git_dirs(repo)
     refs = sorted((d, st(d)) for d, _, _ in os.walk(common / "refs" / "heads"))
     return (tuple(files), fc_tasks.run_alive(proj), st(gitdir / "HEAD"), st(common / "packed-refs"), tuple(refs))
