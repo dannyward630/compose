@@ -332,5 +332,42 @@ class RouteRow(unittest.TestCase):
         self.assertEqual(self.row({"id": "001", "linear": "XX-1"}), {"workflow": "-", "depth": "-", "escalations": 0, "fix_rounds": 0})
 
 
+class BoardOneListing(unittest.TestCase):
+    """Projects on one repo read its branch list once; each still asks git for its own merged branches."""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV); env.start(); self.addCleanup(env.stop)
+        for d in (fc.fc_worktree._heads, fc.fc_worktree._prefixes, fc.fc_worktree._commons): d.clear()
+        self.repo = Path(tempfile.mkdtemp())
+        self.git("init", "-q", "-b", "main"); self.git("commit", "-q", "--allow-empty", "-m", "init")
+        for b in ("compose/p-001", "compose/q-001", "other/p-009"):
+            self.git("branch", b)
+        self.git("checkout", "-q", "-b", "compose/p-002"); self.git("commit", "-q", "--allow-empty", "-m", "two")
+        self.git("checkout", "-q", "-b", "compose/p"); self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "m", "compose/p-001")
+        self.trunk = self.git("rev-parse", "HEAD")
+
+    def git(self, *a):
+        return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def facts(self, name, trunk=None):
+        proj = self.repo / ".compose" / name
+        proj.mkdir(parents=True, exist_ok=True)
+        (proj / "verify.json").write_text(json.dumps({"task_prefix": f"compose/{name}-"}))
+        return fc.fc_status.branch_facts(self.repo, proj, self.trunk if trunk is None else trunk)
+
+    def test_have_is_the_branches_that_start_with_the_prefix_and_merged_those_in_trunk(self):
+        self.assertEqual(self.facts("p"), {"prefix": "compose/p-", "have": {"compose/p-001", "compose/p-002"}, "merged": {"compose/p-001"}})
+        self.assertEqual(self.facts("p", trunk="")["merged"], set())
+
+    def test_two_projects_on_one_repo_list_the_branches_once_and_each_reads_its_own_merged(self):
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            p, q = self.facts("p"), self.facts("q")
+        calls = [c.args[0] for c in run.call_args_list if "for-each-ref" in c.args[0]]
+        self.assertEqual(len([c for c in calls if not any(a.startswith("--merged") for a in c)]), 1)
+        self.assertEqual(len([c for c in calls if any(a.startswith("--merged") for a in c)]), 2)
+        self.assertEqual((p["have"], q["have"], q["merged"]), ({"compose/p-001", "compose/p-002"}, {"compose/q-001"}, set()))
+
+
 if __name__ == "__main__":
     unittest.main()
