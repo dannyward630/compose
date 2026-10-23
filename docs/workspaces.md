@@ -60,7 +60,6 @@ The active workspace is merged over the top level:
           { "model": "claude:claude-opus-5-5", "effort": "high" }
         ]
       },
-      "groundwork": "claude:claude-opus-5-5",
       "default": "claude:claude-sonnet-5-5",
       "small": "claude:claude-haiku-5-5"
     }
@@ -122,7 +121,7 @@ Set it at the top level, or in one workspace to override it there.
 `testcrews` prints the tasks past the cap, with the command that starts them.
 
 `claude_parallel` (default 3) is a second cap, for Claude Code sessions only: `run` and `resume` start at most that many Claude Code tasks at once, and `testcrews` at most that many Claude Code test writers.
-It exists because parallel Claude writers (Opus above all) can make the machine crawl; pi and OpenCode tasks do not count against it and fill the remaining `parallel` slots.
+It exists because parallel Claude writers can make the machine crawl; pi and OpenCode tasks do not count against it and fill the remaining `parallel` slots.
 A Claude task that waits for a slot says so once, and starts as soon as another Claude task ends.
 Set it at the top level, or in one workspace, like `parallel`; a value that is not a whole number of 1 or more stops every command.
 A task that only falls back to Claude mid-run, after its pi model failed, is not counted.
