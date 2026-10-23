@@ -1334,5 +1334,73 @@ class SharedGuidance(unittest.TestCase):
                 self.assertIn(needle, pre, (name, needle))
 
 
+class WatchBaseFile(unittest.TestCase):  # the memory is written only on a change; its base snapshot has its own file
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.json, self.base = (self.proj / "results" / f"watch-m.{x}" for x in ("json", "base"))
+
+    def watch(self, snap, repo=".", timeout=0.3):
+        a = SimpleNamespace(repo=repo, now=False, from_=None, timeout=timeout, interval=0.01, stall=10_000, rewake=False, settle=0)
+        out = []
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_key", return_value="m"), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", snap), mock.patch.object(fc.fc_crew, "desktop_notify"), \
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": ""}):
+            with contextlib.suppress(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        return out
+
+    def test_stalls_save_only_on_a_change(self):
+        snap = {"tasks": {"001": {"state": "pending"}}, "agents": {ORCH: "working"}, "crew": {}, "run": False, "run_end": 0, "last": (NOW - 600, "x")}
+        self.assertEqual(len(fc.fc_watch.watch_stalls(self.proj, snap, 240, now_s=NOW, key="m")), 1)
+        self.assertIn("quiet:", self.json.read_text())  # a stall that fired is saved
+        os.utime(self.json, ns=(1, 1))
+        self.assertEqual(fc.fc_watch.watch_stalls(self.proj, snap, 240, now_s=NOW + 1, key="m"), [])
+        self.assertEqual(self.json.stat().st_mtime_ns, 1)  # nothing new: unwritten
+
+    def test_the_base_is_saved_beside_the_memory_not_in_it(self):
+        fc.fc_watch.watch_save(self.proj, "m", fired=["a"], base=wsnap("passed"))
+        self.assertEqual(json.loads(self.json.read_text()), {"fired": ["a"]})
+        self.assertEqual(json.loads(self.base.read_text()), wsnap("passed"))
+        fc.fc_watch.watch_save(self.proj, "m", woke=[1, 2])
+        self.assertEqual(json.loads(self.json.read_text()), {"fired": ["a"], "woke": [1, 2]})  # the memory's other keys save as before
+        self.assertEqual(fc.fc_watch.watch_base(self.proj, "m"), wsnap("passed"))
+
+    def test_the_base_falls_back_to_an_older_memory_file_then_to_none(self):
+        self.assertIsNone(fc.fc_watch.watch_base(self.proj, "m"))
+        self.json.write_text(json.dumps({"fired": [], "base": wsnap("running")}))
+        self.assertEqual(fc.fc_watch.watch_base(self.proj, "m"), wsnap("running"))
+        self.base.write_text(json.dumps(wsnap("passed")))
+        self.assertEqual(fc.fc_watch.watch_base(self.proj, "m"), wsnap("passed"))  # the base file wins
+
+    def test_a_watch_starts_from_the_base_file_or_the_older_memory(self):
+        for f, mem in ((self.base, wsnap("running")), (self.json, {"base": wsnap("running")})):
+            with self.subTest(f.name):
+                self.base.unlink(missing_ok=True); self.json.unlink(missing_ok=True)
+                f.write_text(json.dumps(mem))
+                self.assertTrue(any("event task=001 state=passed" in l for l in self.watch(lambda *a, **k: wsnap("passed"))))
+
+    def test_a_quiet_loop_runs_no_git_and_writes_no_file_after_its_first_tick(self):
+        repo, runs, marks, real, run = Path(tempfile.mkdtemp()), [], [], fc.fc_watch.watch_snapshot, subprocess.run
+        env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        for a in (("init", "-q", "-b", "main"), ("commit", "-q", "--allow-empty", "-m", "init")):
+            run(["git", *a], cwd=repo, check=True, capture_output=True, env={**os.environ, **env})
+        self.proj = repo / ".compose" / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": [{"id": "001", "title": "t"}]}))
+        def snapshot(*a, **k):
+            marks.append((len(runs), {f.name: f.stat().st_mtime_ns for f in (self.proj / "results").iterdir()}))
+            if len(marks) > 5:
+                raise SystemExit  # six ticks seen
+            return real(*a, **k)
+        spy = lambda cmd, *a, **k: (runs.append(cmd) if cmd[0] == "git" else None, run(cmd, *a, **k))[1]
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={"agents": []}):
+            fc.fc_watch.watch_save(self.proj, "m", base=real(repo, self.proj))
+            with mock.patch.object(subprocess, "run", spy):
+                self.watch(snapshot, repo=str(repo), timeout=0)
+        self.assertEqual(len(marks), 6)
+        self.assertEqual(marks[-1], marks[2], "git ran or a file was written after the first ticks")  # tick 1 may write once, which the board stamp sees in tick 2
+
+
 if __name__ == "__main__":
     unittest.main()
