@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_status, fc_briefs, fc_sleep, fc_stall
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_load, fc_status, fc_briefs, fc_sleep, fc_stall
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
@@ -128,7 +128,19 @@ def watch_base(proj, key):
         return watch_mem(proj, key).get("base")
 
 def load_events(proj, key):
-    raise NotImplementedError("not implemented")
+    st = fc_load.update()
+    mem = watch_mem(proj, key)
+    if mem.get("load_n") is None:
+        watch_save(proj, key, load_n=st["n"])
+        return []
+    new = [e for e in st["log"] if e["n"] > mem["load_n"]]
+    if not new:
+        return []
+    lim = fc_load.limits()
+    lines = [f"event load={e['kind']} avg={e['avg']:.1f} high={lim['high']:.1f} cores={lim['cores']}  (compose starts nothing new until the load falls below {lim['low']:.1f})" if e["kind"] == "held"
+             else f"event load={e['kind']} avg={e['avg']:.1f} low={lim['low']:.1f}" for e in new]
+    watch_save(proj, key, load_n=new[-1]["n"])
+    return lines
 
 def watch_lock(proj, key, wait=True):
     """One live watch per watcher, held until the returned file closes. None when another holds it and wait is False."""
@@ -290,7 +302,7 @@ def is_info(e):
 
 URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
-ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke)|sign-in", re.I)
+ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke|load=)|sign-in", re.I)
 
 def is_quiet(a, proj, sources):
     """Whether this watch wakes only for what needs attention: the engineering manager's `--from orchestrator` watch, or any watch given
@@ -392,7 +404,7 @@ def cmd_watch(a, rewake=False):
         woke = watch_mem(proj, key).get("woke")  # the last sleep this watcher saw: a run found dead after it is the sleep's
         scope = lambda snap: watch_scope(proj, snap)
         def look(after, stalls):
-            lines = watch_events(before, after) + (owner_lines(proj.name, before, after) if not os.environ.get("COMPOSE_ROLE") else [])
+            lines = watch_events(before, after) + (owner_lines(proj.name, before, after) if not os.environ.get("COMPOSE_ROLE") else []) + load_events(proj, key)
             return yolo_mark(proj, watch_filter(lines + stalls, proj.name, sources, *scope(after)))
         while True:
             time.sleep(a.interval)
