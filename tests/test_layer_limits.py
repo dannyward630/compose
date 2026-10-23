@@ -110,19 +110,28 @@ class UnknownBaseline(unittest.TestCase):
     def run_of(self, script, limit=1):
         return lambda cmd, wt, lim, env=None: fc.fc_implement.timed(script, wt, lim, env=env)
 
+    def repo(self, d, name=""):
+        """(repo, head): a one-commit repo in `d/name`, the base a baseline is taken on."""
+        d = Path(d, name); d.mkdir(exist_ok=True)
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=d, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q"); git("commit", "-q", "--allow-empty", "-m", "init")
+        return Path(d), git("rev-parse", "HEAD")
+
     def test_a_baseline_cut_off_by_its_limit_is_unknown_and_not_kept(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(fc.fc_gate, "CHECKS_TIMEOUT", 1):
             script = "echo 'FAIL: test_a (t.T.test_a)'; python3 -c \"print('x' * 5000)\"; sleep 30"
-            got = fc.fc_gate.baseline_state(self.run_of(script), ["suite"], Path(d), "sha-unknown", 1)
+            repo, head = self.repo(d)
+            got = fc.fc_gate.baseline_state(self.run_of(script), ["suite"], repo, (head, ()), 1)
             self.assertEqual((got["suite"]["exit"], got["suite"]["unknown"]), (124, True))
-            self.assertNotIn(("sha-unknown", ("suite",)), fc.fc_gate.BASELINES)
+            self.assertNotIn(((head, ()), ("suite",)), fc.fc_gate.BASELINES)
 
     def test_a_clean_or_listed_baseline_is_known_and_kept(self):
         with tempfile.TemporaryDirectory() as d:
             for name, script, exit_ in (("clean", "true", 0), ("listed", "echo 'FAIL: test_a (t.T.test_a)'; exit 1", 1)):
-                got = fc.fc_gate.baseline_state(self.run_of(script), [name], Path(d), "sha-" + name, 5)
+                repo, head = self.repo(d, name)
+                got = fc.fc_gate.baseline_state(self.run_of(script), [name], repo, (head, ()), 5)
                 self.assertEqual((got[name]["exit"], got[name]["unknown"]), (exit_, False))
-                self.assertIn(("sha-" + name, (name,)), fc.fc_gate.BASELINES)
+                self.assertIn(((head, ()), (name,)), fc.fc_gate.BASELINES)
 
     def test_a_non_zero_exit_that_lists_no_id_is_unknown(self):
         with tempfile.TemporaryDirectory() as d:

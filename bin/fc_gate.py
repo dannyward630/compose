@@ -1,6 +1,6 @@
 """The pass gate of a task: what its branch may change (size, documents, files) and what must still pass after it.
 Imports only lower modules."""
-import re, shutil, tempfile, threading
+import contextlib, re, shutil, tempfile, threading
 from pathlib import Path
 import fc_core, fc_config, fc_worktree
 
@@ -42,14 +42,31 @@ def check_state(run, cmds, wt, limit):
         state[cmd] = {"exit": r.returncode, "failing": failing, "unknown": r.returncode == 124 or (r.returncode != 0 and not failing)}
     return state
 
+@contextlib.contextmanager
+def base_tree(wt, base, delete):
+    """A scratch clone of `wt` at `base` with the task's `delete`s applied: what the task started from, whatever it has edited since."""
+    root = Path(tempfile.mkdtemp(prefix="compose-base-"))
+    try:
+        tree = root / "tree"
+        fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(wt), str(tree)], wt)
+        fc_core.sh(["git", "checkout", "-q", base], tree)
+        if delete:
+            fc_core.sh(["git", "rm", "-r", "-q", "--"] + list(delete), tree)
+        fc_worktree.ready_checkout(wt, tree)
+        yield tree
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
 def baseline_state(run, cmds, wt, base, limit):
-    """check_state on a task's base, once per base: tasks that start from the same commit share it. None when the project has no checks.
-    A state with an unknown check is not kept: the next task on that base takes it again."""
+    """check_state on a task's base, in a scratch clone of it, once per base: tasks that start from the same commit share it.
+    `base` is (commit, deletes). None when the project has no checks. A task asks for it only when a check fails after the task:
+    a suite that passes needs no base run. A state with an unknown check is not kept: the next task on that base takes it again."""
     if not cmds:
         return None
     with BASELINE_LOCK:
         if (base, tuple(cmds)) not in BASELINES:
-            state = check_state(run, cmds, wt, limit)
+            with base_tree(wt, *base) as tree:
+                state = check_state(run, cmds, tree, limit)
             if any(c["unknown"] for c in state.values()):
                 return state
             BASELINES[base, tuple(cmds)] = state
@@ -105,17 +122,8 @@ def settle(run, wt, base, delete, limit, red, after, learned):
     todo = {c: ids for c, ids in todo.items() if ids}
     missing = [c for c in todo if c not in learned]
     if missing:
-        root = Path(tempfile.mkdtemp(prefix="compose-base-"))
-        try:
-            tree = root / "tree"
-            fc_core.sh(["git", "clone", "--quiet", "--shared", "--no-hardlinks", str(wt), str(tree)], wt)
-            fc_core.sh(["git", "checkout", "-q", base], tree)
-            if delete:
-                fc_core.sh(["git", "rm", "-r", "-q", "--"] + list(delete), tree)
-            fc_worktree.ready_checkout(wt, tree)
+        with base_tree(wt, base, delete) as tree:
             learned.update(check_state(run, missing, tree, limit))
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
     broke, why = [], []
     for cmd, ids in todo.items():
         was = learned[cmd]

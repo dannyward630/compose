@@ -1511,8 +1511,11 @@ class SiblingStubs(unittest.TestCase):
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), \
-                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            return fc.fc_implement.run_task(repo, proj, task, 2), prompts
+                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}), \
+                redirect_stdout(io.StringIO()) as said:
+            result = fc.fc_implement.run_task(repo, proj, task, 2)
+        self.said = said.getvalue()
+        return result, prompts
 
     def test_a_passing_task_that_deleted_a_sibling_stub_is_rejected_and_told_which_test_broke(self):
         result, prompts = self.run_one(["def one():\n    return 1\n", "def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"])
@@ -1524,6 +1527,19 @@ class SiblingStubs(unittest.TestCase):
     def test_a_task_that_ends_with_a_sibling_stub_gone_does_not_pass(self):
         result, _ = self.run_one(["def one():\n    return 1\n"] * 2)
         self.assertEqual(result["status"], "rejected_regression")
+
+    def test_a_suite_is_not_run_on_the_base_when_it_passes_after_the_task(self):
+        counter = Path(tempfile.mkdtemp()) / "runs"; self.addCleanup(shutil.rmtree, counter.parent, True)
+        suite = f"echo run >> {counter}; python3 -m unittest discover -s tests"
+        result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=(suite,))
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(counter.read_text().split(), ["run"])  # once, after the task: the base run only answers a failure
+
+    def test_a_check_that_runs_says_what_it_runs_before_it_starts(self):
+        self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("true",))
+        line = next(l for l in self.said.splitlines() if "checks" in l)
+        self.assertIn("001 checks  `true` after the task, up to 900s", line)
+        self.assertLess(self.said.index("001 start"), self.said.index(line))
 
     def test_a_check_that_was_red_before_the_task_is_not_blamed_on_it(self):
         result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("python3 -m unittest discover -s tests -p test_one.py && false",))
@@ -1542,9 +1558,9 @@ class SiblingStubs(unittest.TestCase):
         self.assertIn(self.ID, " ".join(result["log"][0]["base unknown"]))
         self.assertIn("exited 2 and printed no failing test", " ".join(result["log"][0]["base unknown"]))
 
-    def test_an_id_that_fails_on_the_base_tree_too_is_accepted_when_the_first_base_run_was_unknown(self):
+    def test_an_id_that_fails_on_the_base_tree_too_is_accepted_when_the_run_on_the_base_was_unknown(self):
         counter = Path(tempfile.mkdtemp()) / "runs"; self.addCleanup(shutil.rmtree, counter.parent, True)
-        flaky = f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}; [ $n = 0 ] && exit 2; python3 -m unittest discover -s tests -p test_names.py"
+        flaky = f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}; [ $n = 1 ] && exit 2; python3 -m unittest discover -s tests -p test_names.py"
         result, _ = self.run_one([self.FIX], checks=(flaky,), tests=self.UNTOUCHED)
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["log"][0]["red on base (baseline unknown)"], [self.ID])
