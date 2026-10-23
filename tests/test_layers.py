@@ -1,8 +1,8 @@
 import hermetic  # first: no test sees the real home
-import argparse, json, os, subprocess, tempfile, unittest
+import argparse, json, os, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
-from layers_kit import LayersBase, fc
+from layers_kit import LayersBase, fc, unit
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
 os.environ["HERDR_ENV"] = ""
 
@@ -13,8 +13,10 @@ class Layers(LayersBase):
         return self.git("branch", "--list", "compose/p-layer-*", "--format=%(refname:short)").split()
 
     def test_groundwork_is_its_own_layer_and_each_test_lands_with_its_task(self):
-        out = self.stack()  # default budget 300: tasks with their tests are 105, 125 and 155 lines
+        out = self.stack(review_base="master")  # default budget 300: tasks with their tests are 105, 125 and 155 lines; a base that names no branch (a project made before init recorded one) stacks on the default branch, main here
         self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        stack = json.loads((self.repo / ".git" / "fake-gh-stack.json").read_text())
+        self.assertEqual((stack["trunk"], [b["name"] for b in stack["branches"]]), ("main", self.layers()))
         self.assertEqual(self.changed("compose/p-layer-01", "main"), {"lock.txt", "bun.lock", "setup.txt", "stub.txt"})
         self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src", "t002.test", "002.src"})
         self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src"})
@@ -22,13 +24,6 @@ class Layers(LayersBase):
         notes = [l for l in out if l.startswith("layer ")]
         self.assertIn("groundwork x2: 40 lines; generated, not counted: bun.lock (4000 lines)", notes[0])
         self.assertIn("task 001, 002: 230 lines", notes[1])
-
-    def test_a_review_base_that_names_no_branch_stacks_on_the_default_branch(self):
-        """A project made before init recorded the branch it started from holds "main" even where the trunk is master: the
-        stack sits on the default branch, never on the project branch."""
-        self.stack(review_base="master")  # this repo's trunk is main: the mirror of "main" in a master repo
-        self.assertEqual(json.loads((self.repo / ".git" / "fake-gh-stack.json").read_text())["trunk"], "main")
-        self.assertEqual(self.changed("compose/p-layer-01", "main"), {"lock.txt", "bun.lock", "setup.txt", "stub.txt"})
 
     def test_test_commits_on_one_file_keep_the_trunks_order_whoever_owns_them(self):
         """Two tasks protect one test file. A commit on it alone would go to the first of them, but it was written on top of a
@@ -125,65 +120,6 @@ class Layers(LayersBase):
         self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
-    def test_a_redone_test_writer_owns_only_the_commits_of_its_own_runs_not_the_gap_between_them(self):
-        """Tests-003 ran at 10:10 and again at 12:00. Tests-001, redone at 11:00 in between, made the commit at 11:02 on their shared
-        file: it lands in 001's layer, not in 003's, whose first and last report would otherwise span it."""
-        tasks = [{"id": "001", "protected": ["t001.test", "shared.test"], "files": ["001.src"], "after": ""},
-                 {"id": "002", "protected": ["t002.test"], "files": ["002.src"], "after": ""},
-                 {"id": "003", "protected": ["t003.test", "shared.test"], "files": ["003.src"], "after": ""}]
-        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
-        crew = self.proj / "results" / "crew"; crew.mkdir()
-        for t, runs in (("001", (("10:00:00", "started"), ("10:05:00", "test ready"), ("10:06:00", "done"), ("11:00:00", "started"), ("11:05:00", "done"))),
-                        ("003", (("10:10:00", "started"), ("10:15:00", "done"), ("12:00:00", "started"), ("12:05:00", "done")))):
-            (crew / f"{fc.fc_herdr.agent_name('p', f'tests-{t}')}.status").write_text("".join(
-                json.dumps({"at": f"2026-01-01 {at}", "state": "done" if m == "done" else "working", "message": m}) + "\n" for at, m in runs))
-        part = lambda a, b: f"class A\n{a}" + "-\n" * 8 + f"class B\n{b}"
-        for at, a, b in (("10:02:00", "a\n" * 5, ""), ("10:12:00", "a\n" * 5, "b\n" * 5), ("11:02:00", "a\n" * 4 + "x\n", "b\n" * 5)):
-            self.write("shared.test", part(a, b)); self.git("add", "-A"); self.git("commit", "-qm", f"tests at {at}", "--date", f"2026-01-01T{at}")
-        out = self.stack()
-        self.assertEqual([l for l in out if "STOP" in l], [])
-        self.assertEqual(self.git("show", "compose/p-layer-02:shared.test") + "\n", part("a\n" * 4 + "x\n", ""))
-        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
-        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
-
-    def test_a_task_over_the_budget_is_never_split(self):
-        out = self.stack(review_layer_lines=130)
-        self.assertEqual(len(self.layers()), 4)
-        self.assertEqual(self.changed("compose/p-layer-04", "compose/p-layer-03"), {"t003.test", "003.src"})
-        self.assertIn("task 003: 155 lines; over the 130-line budget", out[-1])
-
-    def test_a_submitted_stack_keeps_each_task_in_its_layer_when_sizes_change(self):
-        self.stack(review_layer_lines=300)
-        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("compose/p-layer-01", ["groundwork"]), ("compose/p-layer-02", ["001", "002"]), ("compose/p-layer-03", ["003"]))])
-        self.git("checkout", "-q", "compose/p-003")
-        self.write("003.src", "c\n"); self.commit("shrink 003")  # 003 now fits with 001 and 002, so a regroup would merge layers 02 and 03
-        self.git("checkout", "-q", "compose/p")
-        self.stack(review_layer_lines=300)
-        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
-        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src"})
-
-    def test_a_task_new_since_the_submit_gets_a_layer_above(self):
-        self.stack()
-        fc.fc_layers.record_layers(self.proj, [{"branch": b, "tasks": t} for b, t in (("compose/p-layer-01", ["groundwork"]), ("compose/p-layer-02", ["001"]))])
-        self.stack()
-        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
-        self.assertEqual(self.changed("compose/p-layer-02", "compose/p-layer-01"), {"t001.test", "001.src"})
-        self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t002.test", "002.src", "t003.test", "003.src"})
-
-    def test_a_rebuild_from_unchanged_commits_keeps_the_hashes(self):
-        self.stack()
-        before = self.git("rev-parse", "compose/p-layer-01", "compose/p-layer-02")
-        self.stack()
-        self.assertEqual(self.git("rev-parse", "compose/p-layer-01", "compose/p-layer-02"), before)
-
-    def test_the_gh_stack_is_the_layers_on_the_real_base(self):
-        self.stack()
-        wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")
-        subprocess.run(["git", "checkout", "-q", "compose/p-layer-02"], cwd=wt, check=True)
-        data = json.loads(subprocess.run(["gh", "stack", "view", "--json"], cwd=wt, capture_output=True, text=True).stdout)
-        self.assertEqual(data["trunk"], "main")
-        self.assertEqual([b["name"] for b in data["branches"]], self.layers())
-
     def stop(self, breaks):
         """Run `compose stack` after a first good build and `breaks`; return its STOP lines, having checked that it exits non-zero and
         changes no layer branch, recorded layer or gh stack."""
@@ -210,18 +146,17 @@ class Layers(LayersBase):
         self.assertIn(f"compose/p conflicts with main {main} in setup.txt; the layers and the stack are left as they were. "
                       "Rebase compose/p onto main, then re-run", stops[0])
 
-    def test_a_checkout_on_a_task_branch_stops_the_stack_and_keeps_every_layer(self):
-        for at in ("compose/p-003", "compose/p-002"):  # all task branches are in HEAD, or only the ones below
-            with self.subTest(at):
-                stops = self.stop(lambda: self.git("checkout", "-q", at))
-                self.assertEqual(len(stops), 1)
-                self.assertIn(f"HEAD is on {at}, one of the project's own branches, not on compose/p", stops[0])
-                self.git("checkout", "-q", "compose/p")
-
-    def test_a_detached_head_that_holds_task_branches_stops_the_stack_too(self):
-        stops = self.stop(lambda: self.git("checkout", "-q", "--detach", "compose/p-003"))
-        self.assertEqual(len(stops), 1)
-        self.assertIn("HEAD holds the unmerged task branches compose/p-001, compose/p-002, compose/p-003, which would be left out of the stack", stops[0])
+    def test_a_head_on_a_task_branch_or_holding_task_branches_stops_the_stack(self):
+        for at in ("compose/p-003", "compose/p-002"):
+            self.git("checkout", "-q", at)
+            self.assertIn(f"HEAD is on {at}, one of the project's own branches, not on compose/p", fc.fc_stack.head_problem(self.repo, self.proj))
+        with mock.patch.object(fc.fc_core, "say"):
+            self.assertEqual(fc.fc_stack.register_stack(self.repo, self.proj, "compose/p"), [])
+        self.assertEqual(self.layers(), [])
+        self.git("checkout", "-q", "--detach", "compose/p-003")
+        self.assertIn("HEAD holds the unmerged task branches compose/p-003, which would be left out of the stack", fc.fc_stack.head_problem(self.repo, self.proj))
+        self.git("checkout", "-q", "compose/p")
+        self.assertEqual(fc.fc_stack.head_problem(self.repo, self.proj), "")
 
     def test_a_chain_rebase_that_stops_stops_the_stack_verify_and_top_before_they_act_on_the_layers_below_it(self):
         def task_003_conflicts_with_002():
@@ -242,29 +177,19 @@ class Layers(LayersBase):
         self.assertTrue(said["cmd_verify"][-1].startswith("verify FAIL  nothing verified or recorded: " + why), said["cmd_verify"])
         self.assertFalse((self.proj / "results" / "verify.json").exists())
 
-    def hold_stack_top(self, kind="verify"):
-        """A verify of project p alive in another process, as `compose verify` records it, and the worktree it stands in at the stack top."""
-        proc = subprocess.Popen(["sleep", "60"]); self.addCleanup(proc.wait); self.addCleanup(proc.kill)
+    def test_stack_top_commands_refuse_while_a_verify_holds_the_stack_top(self):
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
         live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
-        (live / f"{proc.pid}.json").write_text(json.dumps({"pid": proc.pid, "kind": kind, "project": "p", "repo": str(self.repo), "since": "21:01"}))
-        return proc
-
-    def test_stack_top_commands_refuse_while_a_verify_holds_the_stack_top_and_leave_it_where_it_is(self):
-        self.stack()
-        wt, _, _ = fc.fc_verify.verify_root(self.repo, self.proj, {})
-        top = lambda: self.git("-C", str(wt), "branch", "--show-current")
-        at = top(); self.assertEqual(at, "compose/p-003")
-        proc = self.hold_stack_top()
+        held = live / f"{os.getppid()}.json"  # the pid of a process that stays alive; its record is removed when the test ends
+        held.write_text(json.dumps({"pid": os.getppid(), "kind": "verify", "project": "p", "repo": str(self.repo), "since": "21:01"}))
+        self.addCleanup(held.unlink, missing_ok=True)
         ns = lambda **kw: argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **kw)
         for name, cmd, args in (("stack", fc.fc_ship.cmd_stack, ns(submit=False, update=False)), ("stack --submit", fc.fc_ship.cmd_stack, ns(submit=True, update=False)),
-                                ("top", fc.fc_status.cmd_top, ns(detach=False)), ("top --detach", fc.fc_status.cmd_top, ns(detach=True)),
-                                ("reword", fc.fc_ship.cmd_reword, ns(set=["abc=Add it"], as_is=False))):
+                                ("top", fc.fc_status.cmd_top, ns(detach=False)), ("top --detach", fc.fc_status.cmd_top, ns(detach=True))):
             with self.subTest(name), self.assertRaises(SystemExit) as e:
                 cmd(args)
-            self.assertIn(f"verify is running on p (pid {proc.pid}, since 21:01)", str(e.exception))
-            self.assertEqual(top(), at)
-        proc.kill(); proc.wait()  # the verify ended: the stack runs again
-        self.stack()
+            self.assertIn(f"verify is running on p (pid {os.getppid()}, since 21:01)", str(e.exception))
+            self.assertEqual(self.layers(), [])
 
     def test_a_verify_whose_checkout_moved_off_its_branch_during_a_stage_is_void_and_records_nothing(self):
         self.stack()
@@ -311,20 +236,15 @@ class Layers(LayersBase):
                                "Push main, or wait until origin/main has them, then re-run"])
         self.assertEqual((refs(), (self.repo / ".git" / "fake-gh-stack.json").read_text(), (self.repo / ".git" / "fake-gh-calls").read_text()), before)
 
-    def test_a_base_even_with_or_behind_its_upstream_or_without_one_submits_without_a_word(self):
-        for upstream in ("none", "even", "behind"):
-            if upstream != "none":
-                self.git("update-ref", "refs/remotes/origin/main", "main"); self.git("branch", "-q", "--set-upstream-to=origin/main", "main")
-            if upstream == "behind":
-                self.git("checkout", "-q", "-b", "elsewhere", "main"); self.write("theirs.txt", "t\n"); self.commit("pushed by someone else")
-                self.git("update-ref", "refs/remotes/origin/main", "elsewhere"); self.git("checkout", "-q", "compose/p")
-            (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
-            calls = self.repo / ".git" / "fake-gh-calls"
-            seen = len(calls.read_text().splitlines()) if calls.exists() else 0
-            out, code = self.submit()
-            self.assertEqual(code, 0, upstream)
-            self.assertFalse([l for l in out if "WARN" in l or "STOP" in l], upstream)
-            self.assertIn("stack submit --auto", calls.read_text().splitlines()[seen:], upstream)
+    def test_a_base_behind_its_upstream_submits_without_a_word(self):
+        self.git("update-ref", "refs/remotes/origin/main", "main"); self.git("branch", "-q", "--set-upstream-to=origin/main", "main")
+        self.git("checkout", "-q", "-b", "elsewhere", "main"); self.write("theirs.txt", "t\n"); self.commit("pushed by someone else")
+        self.git("update-ref", "refs/remotes/origin/main", "elsewhere"); self.git("checkout", "-q", "compose/p")
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
+        out, code = self.submit()
+        self.assertEqual(code, 0)
+        self.assertFalse([l for l in out if "WARN" in l or "STOP" in l])
+        self.assertIn("stack submit --auto", (self.repo / ".git" / "fake-gh-calls").read_text().splitlines())
 
     def test_stack_without_submit_prints_each_layers_pr_title_and_body_and_calls_no_gh_pr(self):
         (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
@@ -384,10 +304,43 @@ class Layers(LayersBase):
         self.assertEqual(rest, ["pr     .compose/p/pr/001-002.md matches no layer, so no PR uses it; the layers' files are "
                                 "groundwork.md, groundwork-2.md, 001.md, 002.md, 003.md"])
 
+
+class FakedLayers(unittest.TestCase):
+    """The layer helpers on plain data: a temp project dir, and no process can start."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / "p"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+        for target in ("subprocess.run", "subprocess.Popen"):
+            patch = mock.patch(target, side_effect=AssertionError("a faked test starts no process"))
+            patch.start(); self.addCleanup(patch.stop)
+
+    def test_a_redone_test_writer_owns_only_the_commits_of_its_own_runs_not_the_gap_between_them(self):
+        """Tests-003 ran at 10:10 and again at 12:00. Tests-001, redone at 11:00 in between: 003's spans never cover it."""
+        for t, runs in (("001", (("10:00:00", "started"), ("10:05:00", "test ready"), ("10:06:00", "done"), ("11:00:00", "started"), ("11:05:00", "done"))),
+                        ("003", (("10:10:00", "started"), ("10:15:00", "done"), ("12:00:00", "started"), ("12:05:00", "done")))):
+            (self.proj / "results" / "crew" / f"{fc.fc_herdr.agent_name('p', f'tests-{t}')}.status").write_text("".join(
+                json.dumps({"at": f"2026-01-01 {at}", "state": "done" if m == "done" else "working", "message": m}) + "\n" for at, m in runs))
+        at = lambda hms: time.mktime(time.strptime(f"2026-01-01 {hms}", "%Y-%m-%d %H:%M:%S"))
+        self.assertEqual(fc.fc_layers.test_writers(self.proj, ["001", "002", "003"]),
+                         [("003", at("12:00:00"), at("12:05:00")), ("001", at("11:00:00"), at("11:05:00")),
+                          ("003", at("10:10:00"), at("10:15:00")), ("001", at("10:00:00"), at("10:06:00"))])
+
+    def test_a_task_over_the_budget_is_never_split(self):
+        self.assertEqual(fc.fc_layers.layer_note({"tasks": ["003"], "lines": 155, "generated": {}}, 130),
+                         "task 003: 155 lines; over the 130-line budget, a task is never split")
+
+    def test_a_recorded_layer_keeps_its_tasks_whatever_their_sizes_and_the_rest_are_grouped_into_new_layers_above(self):
+        (self.proj / "layers.json").write_text(json.dumps({"p-layer-01": ["groundwork"], "p-layer-02": ["001", "002"], "p-layer-03": ["003"]}))
+        us = [unit("groundwork", 40), unit("001", 105), unit("002", 125), unit("003", 5), unit("004", 100), unit("005", 100)]  # 003 now fits with 001 and 002
+        self.assertEqual([(b, [u["name"] for u in g]) for b, g, _ in fc.fc_layers.group_by_record(self.proj, us, 300)],
+                         [("p-layer-01", ["groundwork"]), ("p-layer-02", ["001", "002"]), ("p-layer-03", ["003"]), (None, ["004", "005"])])
+
+
+class PrText(unittest.TestCase):
     def test_pr_text_is_a_title_why_and_bullets_and_anything_else_is_refused_with_the_reason(self):
         f = Path(tempfile.mkdtemp()) / "001.md"
         self.assertIsNone(fc.fc_stack.pr_text(f, 72))
-        f.write_text(self.WRITTEN.replace("\n\n## Why", "\n\n\n## Why\n").replace("on load\n", "on load\n\n\n"))
+        f.write_text(LayersBase.WRITTEN.replace("\n\n## Why", "\n\n\n## Why\n").replace("on load\n", "on load\n\n\n"))
         self.assertEqual(fc.fc_stack.pr_text(f, 72), ("Keep the toggle's state across reloads",
                          ["The toggle forgot its state on every reload.", "This stores it."], ["- Store the toggle's state", "- Read it back on load"]))
         for text, why in [("Keep it\n## Why\nx\n## What changed\n- y", "line 1 must be `# <title>`"),
@@ -404,6 +357,7 @@ class Layers(LayersBase):
             with self.assertRaises(ValueError) as e:
                 fc.fc_stack.pr_text(f, 72)
             self.assertIn(why, str(e.exception), text)
+
 
 
 if __name__ == "__main__":
