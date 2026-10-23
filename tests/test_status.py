@@ -4,14 +4,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-import sys
+import sys, time
 os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_ledger, fc_tierspend  # noqa: E402
+import fc_ledger, fc_tierspend, fc_load  # noqa: E402
 
 
 class DoneEvidence(unittest.TestCase):
@@ -196,3 +196,55 @@ class NoWatchFlag(unittest.TestCase):
     def test_digest_and_history_print_what_they_printed_before(self):
         self.assertEqual(self.board("--digest"), (0, "DIGEST\n", "", 0, 1))
         self.assertEqual(self.board("--history"), (0, "HISTORY\n", "", 0, 0))
+
+
+class StatusLoadLine(unittest.TestCase):
+    def lines(self, held=False, since=None, log=(), avg=13.26):
+        state = {"held": held, "since": since, "n": len(log), "log": list(log), "avg": avg, "new": []}
+        with mock.patch.object(fc_load, "update", return_value=state) as update, mock.patch("os.cpu_count", return_value=8):
+            return fc.fc_status.load_lines(), update.call_count
+
+    def released(self, ago, *older):
+        return [*older, {"n": 2, "at": time.time() - ago, "kind": "released", "avg": 7.0}]
+
+    def clock(self, ago):
+        return time.strftime("%H:%M", time.localtime(time.time() - ago))
+
+    def test_held_gives_the_held_line_with_its_since_time(self):
+        lines, calls = self.lines(held=True, since=time.time() - 3600, log=[{"n": 1, "at": time.time() - 3600, "kind": "held", "avg": 13.0}])
+        self.assertEqual(calls, 1)
+        self.assertRegex(lines[0], r"^load: 13\.3 on 8 cores, held since %s: nothing new starts until it falls below \d+\.\d$" % self.clock(3600))
+        self.assertEqual(len(lines), 1)
+
+    def test_a_release_under_ten_minutes_ago_gives_the_released_line_and_older_gives_none(self):
+        lines, _ = self.lines(log=self.released(540))
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], r"^load: 13\.3 on 8 cores, released at %s \(below \d+\.\d\)$" % self.clock(540))
+        self.assertEqual(self.lines(log=self.released(660))[0], [])
+
+    def test_the_last_release_decides_the_window(self):
+        old = {"n": 1, "at": time.time() - 3000, "kind": "released", "avg": 7.0}
+        self.assertIn("released at " + self.clock(300), self.lines(log=self.released(300, old))[0][0])
+        self.assertEqual(self.lines(log=[old, {**old, "n": 2, "kind": "held", "at": time.time() - 2000}, {**old, "n": 3, "at": time.time() - 900}])[0], [])
+
+    def test_a_hold_after_a_recent_release_gives_only_the_held_line_and_the_empty_state_none(self):
+        lines, _ = self.lines(held=True, since=time.time() - 60, log=self.released(120))
+        self.assertEqual((len(lines), "held since" in lines[0]), (1, True))
+        self.assertEqual(self.lines()[0], [])
+
+    def status(self, *flags):
+        a = SimpleNamespace(repo="/wt", project=None, digest="--digest" in flags, history=0 if "--history" in flags else None, watch=False)
+        state = {"held": True, "since": time.time(), "n": 1, "log": [], "avg": 13.0, "new": []}
+        projects = {"p": (Path("/wt"), Path("/wt/.compose/p"))}
+        out = io.StringIO()
+        with mock.patch.object(fc_load, "update", return_value=state), mock.patch("os.cpu_count", return_value=8), mock.patch.object(fc.fc_core, "all_projects", return_value=projects), \
+             mock.patch.object(fc.fc_status, "render_status", return_value="BOARD\n"), mock.patch.object(fc.fc_status, "digest", return_value="DIGEST"), \
+             mock.patch.object(fc.fc_history, "read", return_value=[]), mock.patch.object(fc.fc_history, "render", return_value="HISTORY"), redirect_stdout(out):
+            fc.fc_status.cmd_status(a)
+        return out.getvalue()
+
+    def test_plain_status_prints_the_lines_once_before_the_projects_and_digest_and_history_do_not(self):
+        out = self.status()
+        self.assertTrue(out.startswith("load: 13.0 on 8 cores, held since ") and out.endswith("\nBOARD\n"), out)
+        self.assertEqual(out.count("load:"), 1)
+        self.assertEqual((self.status("--digest"), self.status("--history")), ("DIGEST\n", "HISTORY\n"))
