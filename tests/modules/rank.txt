@@ -55,6 +55,7 @@ fc_setup
 fc_update
 fc_figmaplan
 fc_figma
+fc_testred
 fc_briefs
 fc_libapi
 fc_gate

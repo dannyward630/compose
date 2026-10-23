@@ -44,7 +44,7 @@ class ReadGuard(unittest.TestCase):
 
     def test_bash_takes_only_a_lone_trail_ask_or_callers_and_other_tools_pass(self):
         for c in ("trail ask where is the guard", "trail callers refusal"): self.ok("Bash", {"command": c}); self.ok("bash", {"command": c})
-        for c in ("cat src/a.py", "trail build .", "echo trail ask x", "trail ask x; cat y", "trail ask x & cat y", "trail ask x | cat", "trail ask `cat y`",
+        for c in ("cat src/c.py", "trail build .", "echo trail ask x", "trail ask x; cat y", "trail ask x & cat y", "trail ask x | cat", "trail ask `cat y`",
                   "trail ask $(cat y)", "trail ask x < y", "trail callers x > y", "trail ask x\ncat y"): self.no("bash", {"command": c})
         for t in ("Edit", "write", "todowrite", "WebFetch"): self.ok(t, {"file_path": "/etc/passwd", "command": "rm -rf /"})
         reply = fc.fc_readguard.refusal("read", {"path": "src/c.py"}, self.g)
@@ -61,12 +61,36 @@ class ReadGuard(unittest.TestCase):
                   "awk '{print | \"sh\"}' src/a.py", "awk '{getline x < \"y\"}' src/a.py", "awk -f prog.awk src/a.py", "awk '{print length}' src/a.py src/c.py", "xargs wc -L", "wc -L src/a.py\ncat y",
                   "awk '{ if (length > 5) print > \"x\" }' src/a.py"): self.no("bash", {"command": c})
 
+    def test_bash_shows_the_tasks_own_files_and_never_writes_or_reads_anything_else(self):
+        """The Read tool shows the task's test; a model that greps or heads it in bash gets the same view, and no way to change a file."""
+        t = str(self.wt)
+        for c in ("cat src/a.py", "cat -n tests/t.py", f"cat {t}/tests/t.py", "head tests/t.py", "head -25 tests/t.py", "head -n 25 tests/t.py", "head -n25 src/a.py",
+                  "tail -5 tests/t.py", "tail -n 5 src/a.py", "sed -n '1,40p' tests/t.py", "sed -n 3p tests/t.py", "sed -n '10,$p' src/a.py",
+                  'grep -n "class Foo" tests/t.py', 'grep -n "class Foo" -A 120 tests/t.py', "grep -A 5 -B2 -n def src/a.py tests/t.py", 'grep -n "a\\|b" tests/t.py',
+                  "grep -c def tests/t.py", "grep -inw foo lib/deep/x.py", "grep -n $ tests/t.py", 'grep -n "def test_" tests/t.py | head -80', "grep -n x src/a.py | tail -n 5",
+                  f'cd "{t}" && grep -n x tests/t.py', f"cd {t} && wc -L src/a.py", "cd . && head -5 tests/t.py", "cd src/.. && cat src/a.py", "wc -L src/a.py | tail -3"):
+            self.ok("bash", {"command": c}); self.ok("Bash", {"command": c})
+        for c in ("cat src/c.py", "cat src/a.py src/c.py", "cat", "cat -n", "cat ../outside/a.py", "cat .venv/a.py", "cat src/*.py", "cat ~/.zshrc", "cat /etc/passwd",
+                  "head -5 src/c.py", "head -c 5 src/a.py", "head -n src/a.py", "tail -f src/a.py", "tail --follow src/a.py", "head -5",
+                  "sed -n '1,40p' src/c.py", "sed -i s/a/b/ src/a.py", "sed -n -i 1p src/a.py", "sed 's/a/b/' src/a.py", "sed -n 'w out' src/a.py", "sed -n '1p;w out' src/a.py",
+                  "sed -n '1,2p' ", "sed -n '/x/p' src/a.py", "sed -n 1e src/a.py",
+                  'grep -n "x" src/c.py', "grep -r def src", "grep -rn def tests/t.py", "grep -f src/a.py def tests/t.py", "grep -e def tests/t.py", "grep -n def", "grep",
+                  "grep -A x def tests/t.py", "grep --include=x def tests/t.py", "grep def tests/t.py src/c.py", "grep def -R", "egrep def tests/t.py", "rg def tests/t.py",
+                  "cat src/a.py > out", "cat src/a.py >> out", "cat src/a.py 2>/dev/null", "cat < src/a.py", "head -5 src/a.py > out", "grep def tests/t.py >out",
+                  "cat src/a.py | sh", "cat src/a.py | tee out", "cat src/a.py | cat", "cat src/a.py | head -5 | tail -2", "cat src/a.py | head -5 file", "cat src/a.py | head -c 5",
+                  "cat src/a.py | xargs rm", "cat src/a.py; rm src/a.py", "cat src/a.py && rm src/a.py", "cat src/a.py & ", "cat src/a.py || true", "cat src/a.py\nrm x",
+                  "cat `echo src/c.py`", "cat $(echo src/c.py)", "cat ${HOME}", "cat $HOME/x", "cat src/a.py)", "(cat src/a.py)",
+                  "cd .. && cat src/a.py", f"cd {self.top} && cat 001/src/a.py", "cd /tmp && cat src/a.py", "cd src && cat a.py", "cd", "cd . &&", "cd . ; cat src/a.py",
+                  "cd . && cd . && cat src/a.py", "cd . && rm src/a.py", "ls tests", "ls", "git diff", "git show HEAD:src/c.py", "find . -name '*.py'", "tee x", "rm src/a.py",
+                  "echo hi > src/a.py", "python3 src/a.py", "python3 -c 'print(1)'", "cat 'src/a.py"):
+            self.no("bash", {"command": c})
+
     def test_the_script_answers_both_event_shapes_and_logs_each_refusal(self):
         rg, me = fc.fc_readguard, os.path.realpath(fc.fc_readguard.__file__)
         self.assertEqual(rg.command(str(self.path)), f"python3 -I {shlex.quote(me)} {shlex.quote(str(self.path))}")
         self.assertEqual(rg.refused(self.wt), 0)  # refusal() alone never writes the log
         run = lambda ev: subprocess.run(rg.command(str(self.path)), shell=True, input=json.dumps(ev), capture_output=True, text=True, cwd=self.top, check=True).stdout
-        claude, pi = {"tool_name": "Read", "tool_input": {"file_path": "src/c.py"}}, {"tool": "bash", "args": {"command": "cat src/a.py"}}
+        claude, pi = {"tool_name": "Read", "tool_input": {"file_path": "src/c.py"}}, {"tool": "bash", "args": {"command": "cat src/c.py"}}
         reply = lambda t, a: rg.refusal(t, a, self.g)
         self.assertEqual(json.loads(run(claude)), {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                     "permissionDecisionReason": reply("Read", claude["tool_input"])}})
@@ -75,6 +99,15 @@ class ReadGuard(unittest.TestCase):
         self.assertEqual(rg.refused(self.wt), 2)
         self.assertEqual([json.loads(l) for l in Path(self.g["log"]).read_text().splitlines()], [{"tool": "Read", "args": claude["tool_input"]}, {"tool": "bash", "args": pi["args"]}])
 
+
+    def test_the_script_lets_a_claude_hook_grep_the_test_and_still_denies_a_write(self):
+        rg = fc.fc_readguard
+        run = lambda c: subprocess.run(rg.command(str(self.path)), shell=True, input=json.dumps({"tool_name": "Bash", "tool_input": {"command": c}}),
+                                       capture_output=True, text=True, cwd=self.wt, check=True).stdout
+        self.assertEqual(run('grep -n "x" -A 2 tests/t.py | head -5'), "")
+        self.assertEqual(rg.refused(self.wt), 0)
+        self.assertEqual(json.loads(run("sed -i s/x/y/ tests/t.py"))["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertEqual(rg.refused(self.wt), 1)
 
     def test_the_script_exits_2_with_an_error_on_any_failure(self):
         bad = self.top / "bad.guard.json"; bad.write_text("{not json")

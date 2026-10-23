@@ -90,7 +90,7 @@ def pi_agent_dir(cwd):
     """The agent directory a task's pi runs with, beside the task clone as <clone>.pi-agent: the user's models.json and auth.json
     by link, and a settings.json of its own that pins pi's default compaction. pi merges nothing from the user's global
     settings then: a large compaction.reserveTokens there (meant for a small local model) made GLM's turns compact every few
-    tool calls until the 180 s limit."""
+    tool calls until the turn limit."""
     adir = Path(cwd).parent / (Path(cwd).name + ".pi-agent")
     adir.mkdir(exist_ok=True)
     for name in ("models.json", "auth.json"):
@@ -358,7 +358,7 @@ def cmd_models(a):
 
 
 TEST_TIMEOUT = 120  # seconds a task's test may run before it counts as hung; a task's block can set `test_timeout:`
-TURN_TIMEOUT = 180  # seconds one implementer turn may take; GLM turns take 10 to 40 s, and the task's test runs after the turn, not in it
+TURN_TIMEOUT = 300  # seconds one implementer turn may take; a Sonnet turn of 10 to 18 tool calls and a GLM turn that compacts ran past 180 s, and the task's test runs after the turn, not in it
 
 
 def payment_halt(repo, proj, command, remaining, args, err):
