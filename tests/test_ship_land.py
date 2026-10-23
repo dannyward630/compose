@@ -1,5 +1,7 @@
 import hermetic  # first: no test sees the real home
-import json, os, subprocess, unittest
+import argparse, io, json, os, re, subprocess, tempfile, unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 from unittest import mock
 from ship_kit import Ship, fc
 os.environ["COMPOSE_NO_TREEHOUSE"] = "1"
@@ -11,43 +13,6 @@ class Land(Ship):
         out, code = self.submit()
         self.assertEqual(code, 0, out)
         self.assertEqual(sorted(self.prs()), ["1", "2", "3"])
-
-    def test_without_yes_it_prints_the_plan_and_changes_nothing(self):
-        self.submitted()
-        refs = lambda: subprocess.run(["git", "--git-dir", str(self.origin), "for-each-ref"], capture_output=True, text=True).stdout
-        before, log = refs(), self.log()
-        out, code = self.land(yes=False)
-        self.assertEqual(code, 0)
-        self.assertTrue(any("land   plan  3 of 3 layer(s) submitted, verify not run; landing 3 into main by squash, bottom up:" in l for l in out))
-        self.assertTrue(any("nothing was merged or pushed" in l and "--yes" in l for l in out))
-        self.assertEqual(refs(), before)
-        self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
-
-    def test_it_refuses_while_a_verify_holds_the_stack_top_and_merges_nothing(self):
-        self.submitted()
-        proc = subprocess.Popen(["sleep", "60"]); self.addCleanup(proc.wait); self.addCleanup(proc.kill)
-        live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
-        (live / f"{proc.pid}.json").write_text(json.dumps({"pid": proc.pid, "kind": "verify", "project": "p", "repo": str(self.repo), "since": "21:01"}))
-        log = self.log()
-        with self.assertRaises(SystemExit) as e:
-            fc.fc_ship.cmd_land(self.args(yes=True, method=None, timeout=1))
-        self.assertIn(f"verify is running on p (pid {proc.pid}", str(e.exception))
-        self.assertEqual([c for c in self.log()[len(log):] if not c.startswith("pr view")], [])
-
-    def test_a_gh_failure_is_told_apart_from_a_missing_pull_request(self):
-        self.submit()
-        with mock.patch.dict(os.environ, {"FAKE_GH_VIEW_FAIL": "error connecting to api.github.com"}):
-            out, code = self.land()
-        self.assertEqual(code, 1)
-        self.assertIn("land   STOP  gh pr view failed for compose/p-layer-01: error connecting to api.github.com", out)
-        self.assertFalse(any("has no pull request" in l for l in out))
-        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
-
-    def test_a_stack_that_was_not_submitted_names_the_missing_pull_request(self):
-        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
-        out, code = self.land(yes=False)
-        self.assertEqual(code, 1)
-        self.assertTrue(any("has no pull request" in l and "compose stack --submit" in l for l in out))
 
     def test_it_merges_bottom_up_waits_for_checks_and_moves_each_next_pr_onto_the_base(self):
         self.submitted()
@@ -72,17 +37,6 @@ class Land(Ship):
         self.assertFalse((self.proj / "results" / "land.json").exists())
         self.assertEqual(self.git("branch", "--show-current"), "compose/p")  # the user's checkout never moved
 
-    def test_a_failing_check_on_the_first_pr_stops_before_anything_is_merged_or_moved(self):
-        self.submitted()
-        pushed_before = self.git("rev-parse", "compose/p-layer-03")
-        self.set_pr(1, checks=["fail"])
-        out, code = self.land()
-        self.assertEqual(code, 1)
-        self.assertTrue(any("required checks on #1 (compose/p-layer-01): fail: ci" in l for l in out))
-        self.assertEqual(self.prs()["1"]["state"], "OPEN")
-        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
-        self.assertEqual(self.git("rev-parse", "compose/p-layer-03"), pushed_before)
-
     def test_a_failing_check_stops_the_land_and_a_rerun_resumes_where_it_stopped(self):
         self.submitted()
         self.set_pr(2, checks=["fail"])
@@ -100,31 +54,6 @@ class Land(Ship):
         self.assertEqual(len([c for c in self.log() if c.startswith("pr merge")]), merges + 2)  # PR 1 is not merged twice
         self.assertTrue(any("#1" in l and "already merged" in l for l in out))
 
-    def test_checks_that_stay_pending_stop_it_at_the_timeout(self):
-        self.submitted()
-        self.set_pr(1, checks=["pending"])
-        out, code = self.land(timeout=0)
-        self.assertEqual(code, 1)
-        self.assertTrue(any("still pending after 0 minutes" in l for l in out))
-        self.assertEqual(self.prs()["1"]["state"], "OPEN")
-
-    def test_a_refused_merge_stops_with_what_github_said(self):
-        self.submitted()
-        self.set_pr(1, refuse="Pull request is not mergeable: the base branch policy prohibits the merge")
-        out, code = self.land()
-        self.assertEqual(code, 1)
-        self.assertTrue(any("gh pr merge #1" in l and "base branch policy prohibits" in l for l in out))
-
-    def test_a_pr_whose_head_is_not_what_was_submitted_is_not_merged(self):
-        self.submitted()
-        self.git("checkout", "-q", "compose/p-layer-01")
-        self.write("extra.txt", "x\n"); self.commit("Local change")
-        self.git("checkout", "-q", "compose/p")
-        out, code = self.land()
-        self.assertEqual(code, 1)
-        self.assertTrue(any("has commits compose did not push" in l or "submit" in l for l in out))
-        self.assertFalse(any(c.startswith("pr merge") for c in self.log()))
-
     def test_a_next_layer_that_conflicts_with_the_base_stops_with_the_files_and_pushes_nothing(self):
         self.submitted()
         self.set_pr(1, extra=["002.src", "from the base\n"])
@@ -138,53 +67,156 @@ class Land(Ship):
         self.assertEqual(self.prs()["2"]["base"], "compose/p-layer-01")
         self.assertEqual(self.git("-C", str(fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")), "status", "--porcelain"), "")  # no rebase left half done
 
-    def test_a_pr_behind_the_base_is_updated_before_it_merges(self):
-        self.submitted()
-        self.set_pr(1, behind=True)
-        out, code = self.land()
-        self.assertEqual(code, 0, out)
-        self.assertIn("pr update-branch 1 --rebase", self.log())
-        self.assertEqual([p["state"] for p in self.prs().values()], ["MERGED"] * 3)
 
-    def stacked(self):
-        self.submitted()
-        for n in (1, 2, 3):
-            self.set_pr(n, stacked=True)
+class FakedLand(unittest.TestCase):
+    """`cmd_land` over a fake GitHub (a pull request per branch, every call recorded) and a fake git: no process starts."""
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        self.proj = self.repo / ".compose" / "p"
+        (self.proj / "results").mkdir(parents=True)
+        (self.proj / "verify.json").write_text("{}")
+        self.calls, self.prs, self.branches, self.view_fail = [], {}, [], ""
+        for patch in (mock.patch.object(fc.fc_ship, "gh", self.gh), mock.patch.object(fc.fc_core, "sh", self.sh),
+                      mock.patch.object(fc.fc_layers, "layer_branches", lambda repo, proj: self.branches),
+                      mock.patch.object(fc.fc_stack, "layer_base", lambda repo, proj, trunk: "main"),
+                      mock.patch.object(fc.fc_worktree, "stack_worktree", lambda repo, proj, trunk: self.repo),
+                      mock.patch.object(fc.fc_ship, "LAND_POLL", 0), mock.patch.object(fc.fc_ship, "LAND_SETTLE", 0),
+                      mock.patch("subprocess.run", side_effect=AssertionError("subprocess.run")), mock.patch("subprocess.Popen", side_effect=AssertionError("subprocess.Popen"))):
+            patch.start(); self.addCleanup(patch.stop)
 
-    def test_a_github_stack_merges_through_the_async_api_and_keeps_the_heads_github_rewrote(self):
-        self.stacked()
-        top = self.git("rev-parse", "compose/p-layer-03")
-        out, code = self.land()
-        self.assertEqual(code, 0, out)
-        self.assertEqual([p["state"] for p in self.prs().values()], ["MERGED"] * 3)
-        log = self.log()
-        self.assertFalse([c for c in log if c.startswith(("pr merge", "pr update-branch")) or ("pr edit" in c and "--base" in c)])
-        puts = [c for c in log if " PUT " in f" {c} "]
-        self.assertEqual(len(puts), 3)
-        self.assertTrue(all("merge_method=squash" in c and "merge_action=direct_merge" in c and "sha=" in c for c in puts), puts)
-        self.assertLess(log.index("pr ready 1"), log.index(puts[0]))
-        self.assertEqual(self.git("rev-parse", "compose/p-layer-03"), top)  # compose rebased and pushed nothing
-        self.assertEqual(out[-1], "next: compose clean --project p")
+    def submitted(self, layers, prs=None, **kw):
+        """`layers` layers, the first `prs` of them (all by default) with an open pull request, which `kw` sets."""
+        self.calls.clear()
+        self.branches = [f"compose/p-layer-0{i}" for i in range(1, layers + 1)]
+        self.prs = {b: {"number": i, "baseRefName": "main", "state": "OPEN", "isDraft": False, "headRefOid": self.tip(b), "url": f"https://github.test/p/pull/{i}",
+                        "mergeStateStatus": "CLEAN", "checks": "pass", "refuse": "", "stacked": False, **kw}
+                    for i, b in enumerate(self.branches[:prs], 1)}
 
-    def test_a_github_stack_follows_the_merge_method(self):
-        self.stacked()
-        self.land(method="rebase")
-        puts = [c for c in self.log() if " PUT " in f" {c} "]
-        self.assertTrue(puts and all("merge_method=rebase" in c for c in puts), puts)
+    def tip(self, branch):
+        return f"sha-of-{branch}"
 
-    def test_a_github_stack_merge_that_fails_stops_with_what_github_said(self):
-        self.stacked()
-        self.set_pr(1, refuse="Required status check is expected")
+    def pr(self, which):
+        return next((p for b, p in self.prs.items() if which in (b, str(p["number"]))), None)
+
+    def done(self, args, out="", err="", code=0):
+        return subprocess.CompletedProcess(args, code, out, err)
+
+    def gh(self, args, cwd):
+        self.calls.append(" ".join(args))
+        if args[:2] == ["pr", "view"]:
+            p = self.pr(args[2])
+            return self.done(args, json.dumps(p)) if p and not self.view_fail else self.done(args, err=self.view_fail or "no pull requests found for branch", code=1)
+        if args[:2] == ["pr", "checks"]:
+            return self.done(args, json.dumps([] if self.pr(args[2])["checks"] == "none" else [{"name": "ci", "bucket": self.pr(args[2])["checks"]}]))
+        if args[:2] == ["api", "graphql"]:
+            return self.done(args, json.dumps({"data": {"repository": {"pullRequest": {"stack": {"size": 2} if self.pr(next(a[2:] for a in args if a.startswith("n=")))["stacked"] else None}}}}))
+        p = self.pr(args[2]) if args[0] == "pr" else self.pr(re.search(r"pulls/(\d+)/", args[3]).group(1))
+        if args[:2] == ["pr", "merge"] and p["refuse"]:
+            return self.done(args, err=p["refuse"], code=1)
+        if args[:2] == ["api", "-X"] and p["refuse"]:
+            return self.done(args, json.dumps({"status": "failed", "details": {"message": p["refuse"]}}))
+        if args[:2] == ["pr", "update-branch"]:
+            p.update(mergeStateStatus="CLEAN", headRefOid=p["headRefOid"] + "-rebased")
+        if args[:2] in (["pr", "merge"], ["api", "-X"]):
+            p["state"] = "MERGED"
+        return self.done(args, json.dumps({"status": "merged"}))
+
+    def sh(self, cmd, cwd, **kw):
+        out = {"worktree": f"worktree {self.repo}\n", "branch": "compose/p\n", "rev-parse": "/common\n" if "--git-common-dir" in cmd else self.tip(cmd[-1])}.get(cmd[1], "")
+        return self.done(cmd, out, code=1 if cmd[1:3] == ["merge-base", "--is-ancestor"] else 0)  # the layer above is rebased already
+
+    def land(self, **kw):
+        """The said and printed lines of `compose land` and its exit code."""
+        out, buf, code = [], io.StringIO(), 0
+        a = argparse.Namespace(repo=str(self.repo), project="p", trunk="compose/p", **{"yes": True, "method": None, "timeout": 1, **kw})
+        with mock.patch.object(fc.fc_core, "say", out.append), redirect_stdout(buf):
+            try:
+                fc.fc_ship.cmd_land(a)
+            except SystemExit as e:
+                code = e.code
+        return out + buf.getvalue().splitlines(), code
+
+    def merged(self):
+        return [p["state"] == "MERGED" for p in self.prs.values()]
+
+
+class FakedLandPlan(FakedLand):
+    def test_without_yes_the_plan_stops_at_the_first_layer_without_a_pr_and_the_method_follows_the_flag_then_verify_json(self):
+        self.submitted(3, prs=2)
+        out, code = self.land(yes=False)
+        self.assertEqual(code, 0)
+        self.assertIn("land   plan  2 of 3 layer(s) submitted, verify not run; landing 2 into main by squash, bottom up:", out)
+        self.assertIn("land   nothing was merged or pushed. Re-run with --yes once the user has said to land this stack", out)
+        self.assertEqual([c for c in self.calls if not c.startswith("pr view")], [])
+        (self.proj / "results" / "verify.json").write_text(json.dumps({"passed": True}))
+        (self.proj / "verify.json").write_text(json.dumps({"land_method": "rebase"}))
+        self.assertIn("land   plan  2 of 3 layer(s) submitted, verify PASS; landing 2 into main by rebase, bottom up:", self.land(yes=False)[0])
+        (self.proj / "results" / "verify.json").write_text(json.dumps({"passed": False}))
+        self.assertIn("land   plan  2 of 3 layer(s) submitted, verify FAIL; landing 2 into main by merge, bottom up:", self.land(yes=False, method="merge")[0])
+
+
+class FakedLandStops(FakedLand):
+    def test_it_stops_with_nothing_merged_on_a_gh_failure_and_on_a_bottom_layer_without_a_pr(self):
+        self.submitted(2)
+        self.view_fail = "error connecting to api.github.com"
         out, code = self.land()
         self.assertEqual(code, 1)
-        self.assertTrue(any("merge of #1" in l and "Required status check is expected" in l for l in out), out)
-        self.assertEqual(self.prs()["1"]["state"], "OPEN")
+        self.assertIn("land   STOP  gh pr view failed for compose/p-layer-01: error connecting to api.github.com", out)
+        self.submitted(2, prs=0)
+        self.view_fail = ""
+        out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertIn("land   STOP  compose/p-layer-01, compose/p-layer-02 has no pull request: `compose stack --submit` first", out)
+        self.assertFalse([c for c in self.calls if not c.startswith("pr view")])
 
-    def test_the_merge_method_follows_the_flag_then_verify_json(self):
-        self.submitted()
-        self.config(land_method="rebase")
-        self.land()
-        self.assertEqual([c for c in self.log() if c.startswith("pr merge")][0], "pr merge 1 --rebase")
+    def test_with_yes_it_refuses_while_a_verify_is_live(self):
+        self.submitted(2)
+        live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
+        pid = os.getppid()  # a process that is alive and is not this one
+        record = live / f"{pid}.json"
+        record.write_text(json.dumps({"pid": pid, "kind": "verify", "project": "p", "repo": str(self.repo), "since": "21:01"}))
+        self.addCleanup(record.unlink, missing_ok=True)  # the live dir outlives a test, and its records are read by every later land
+        out, code = self.land()
+        self.assertIn(f"verify is running on p (pid {pid}", code)
+        self.assertFalse([c for c in self.calls if not c.startswith("pr view")])
+
+    def test_the_first_layer_stops_the_land_with_nothing_merged_and_says_why(self):
+        for why, state, kw in (("required checks on #1 (compose/p-layer-01): fail: ci", {"checks": "fail"}, {}),
+                               ("required checks on #1 (compose/p-layer-01) still pending after 0 minutes; re-run to resume", {"checks": "pending"}, {"timeout": 0}),
+                               ("gh pr merge #1 (compose/p-layer-01): Pull request is not mergeable", {"refuse": "Pull request is not mergeable"}, {}),
+                               ("PR #1 (compose/p-layer-01) has commits compose did not push (other, local sha-of-co); `compose stack --submit` first", {"headRefOid": "other"}, {})):
+            with self.subTest(why):
+                self.submitted(2)
+                self.prs["compose/p-layer-01"].update(state)
+                out, code = self.land(**kw)
+                self.assertEqual(code, 1)
+                self.assertIn(f"land   STOP  {why}. Layers below it are merged; re-run `compose land` to resume", out)
+                self.assertEqual(self.merged(), [False, False])
+
+
+class FakedLandMerges(FakedLand):
+    def test_a_behind_pr_is_updated_before_it_merges_and_a_partial_land_says_what_is_left(self):
+        self.submitted(3, prs=2)
+        self.prs["compose/p-layer-01"]["mergeStateStatus"] = "BEHIND"
+        (self.proj / "verify.json").write_text(json.dumps({"land_method": "rebase"}))
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c for c in self.calls if c.startswith(("pr update-branch", "pr merge"))], ["pr update-branch 1 --rebase", "pr merge 1 --rebase", "pr merge 2 --rebase"])
+        self.assertEqual(out[-3:], ["land   done  2 layer(s) merged into main", "land   left  1 layer(s) not submitted: they rebuild on main at the next compose stack", "next: compose stack --submit --project p"])
+
+    def test_a_pr_in_a_github_stack_merges_through_the_async_api_and_a_failed_status_stops(self):
+        self.submitted(2, stacked=True)
+        out, code = self.land()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.merged(), [True, True])
+        puts = [f"api -X PUT repos/{{owner}}/{{repo}}/pulls/{n}/merge-async -f sha=sha-of-compose/p-layer-0{n} -f merge_method=squash -f merge_action=direct_merge" for n in (1, 2)]
+        self.assertEqual([c for c in self.calls if c.startswith(("pr merge", "api -X"))], puts)
+        self.submitted(2, stacked=True)
+        self.prs["compose/p-layer-01"]["refuse"] = "Required status check is expected"
+        out, code = self.land()
+        self.assertEqual(code, 1)
+        self.assertIn("land   STOP  merge of #1 failed: Required status check is expected (compose/p-layer-01). Layers below it are merged; re-run `compose land` to resume", out)
+        self.assertEqual(self.merged(), [False, False])
 
 
 if __name__ == "__main__":
