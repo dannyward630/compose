@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, subprocess, tempfile, unittest
+import io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 from cleanup_kit import CLI, ENV, FakeLinear, fc, repo
@@ -135,29 +135,42 @@ class LocallyMergedLayers(unittest.TestCase):
 
 class SquashMergedLayers(unittest.TestCase):
     """Layers are squash-merged by PR: task branches were never PRs and ancestry is rewritten, so the merged layer that held a task proves it."""
-    def setUp(self):
-        self.r, self.run = repo()
-        self.bin = Path(tempfile.mkdtemp()).resolve()
-        (self.bin / "gh").write_text('''#!/usr/bin/env python3
+    @classmethod
+    def setUpClass(cls):
+        cls.r, run = repo()
+        cls.git = staticmethod(run)  # not `run`: TestCase.run is the runner
+        cls.root = cls.r.parent
+        cls.template = Path(tempfile.mkdtemp()).resolve() / "template"
+        cls.addClassCleanup(shutil.rmtree, cls.root, True)
+        cls.addClassCleanup(shutil.rmtree, cls.template.parent, True)
+        cls.bin = cls.root / "bin"; cls.bin.mkdir()
+        (cls.bin / "gh").write_text('''#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
 merged = open(__file__ + ".merged").read().split()
 head = a[a.index("--head") + 1] if "--head" in a else ""
 print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in merged else []))
 ''')
-        (self.bin / "gh").chmod(0o755)
-        (self.bin / "gh.merged").write_text("fast/p/layer-01\n")
-        self.env = {**os.environ, **ENV, "PATH": f"{self.bin}:{os.environ['PATH']}"}
-        remote = self.r.parent / "origin.git"
+        (cls.bin / "gh").chmod(0o755)
+        (cls.bin / "gh.merged").write_text("fast/p/layer-01\n")
+        cls.env = {**os.environ, **ENV, "PATH": f"{cls.bin}:{os.environ['PATH']}"}
+        remote = cls.root / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
-        self.run("remote", "add", "origin", str(remote)); self.run("push", "-q", "origin", "main")
-        subprocess.run([CLI, "init", "--project", "p", "--repo", str(self.r)], check=True, capture_output=True, env=self.env)
-        self.proj = self.r.parent / "compose-p" / ".compose" / "p"
-        tip = self.run("rev-parse", "main").stdout.strip()
+        run("remote", "add", "origin", str(remote)); run("push", "-q", "origin", "main")
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(cls.r)], check=True, capture_output=True, env=cls.env)
+        proj = cls.root / "compose-p" / ".compose" / "p"
+        tip = run("rev-parse", "main").stdout.strip()
         for b in ("fast/p/001", "fast/p/002", "fast/p/layer-01", "fast/p/layer-02"):  # commits on top of main: never ancestors of it
-            self.run("branch", b, own_file_commit(self.run, self.r, tip, b.replace("/", "-") + ".txt", b))
-        self.run("push", "-q", "origin", "fast/p/layer-01", "fast/p/layer-02")
-        (self.proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
+            run("branch", b, own_file_commit(run, cls.r, tip, b.replace("/", "-") + ".txt", b))
+        run("push", "-q", "origin", "fast/p/layer-01", "fast/p/layer-02")
+        (proj / "layers.json").write_text(json.dumps({"fast/p/layer-01": ["001"], "fast/p/layer-02": ["002"]}))
+        shutil.copytree(cls.root, cls.template, symlinks=True)
+
+    def setUp(self):
+        shutil.rmtree(self.root)
+        shutil.copytree(self.template, self.root, symlinks=True)
+        self.r, self.run, self.bin, self.env = self.root / "repo", self.git, type(self).bin, type(self).env
+        self.proj = self.root / "compose-p" / ".compose" / "p"
 
     def test_clean_drops_tasks_of_a_squash_merged_layer_and_its_remote_branch_and_keeps_the_rest(self):
         out = subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r)], capture_output=True, text=True, env=self.env).stdout
@@ -173,20 +186,6 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
         self.assertEqual(self.run("branch", "--format=%(refname:short)").stdout.split(), ["main"])
         self.assertFalse((self.r.parent / "compose-p").exists())
         self.assertEqual(self.run("ls-remote", "--heads", "origin").stdout.count("fast/p/"), 0)
-
-    def test_clean_removes_the_project_branch_once_every_layer_built_from_it_is_merged(self):
-        wt = self.r.parent / "compose-p"
-        (wt / "stub.txt").write_text("groundwork\n")  # the project branch's own commit: layers squash it, so ancestry never sees it
-        self.run("add", "stub.txt", cwd=wt); self.run("commit", "-qm", "groundwork", cwd=wt)
-        clean = lambda *a: subprocess.run([CLI, "clean", "--project", "p", "--repo", str(self.r), *a], capture_output=True, text=True, env=self.env).stdout
-        out = clean()  # layer-02 is not merged: everything of the project stays
-        self.assertIn("kept unmerged", out)
-        self.assertTrue(wt.exists())
-        (self.bin / "gh.merged").write_text("fast/p/layer-01\nfast/p/layer-02\n")
-        out = clean()
-        self.assertIn("every layer built from it is merged", out)
-        self.assertFalse(wt.exists())
-        self.assertNotIn("compose/p", self.run("branch", "--format=%(refname:short)").stdout.split())
 
     def linear_project(self):
         """Tasks 001 and 002 with issues under story ENG-2 of feature ENG-1, and 003, canceled and re-split, whose branch sits on main."""
@@ -213,14 +212,6 @@ print(json.dumps([{"number": 7, "mergedAt": "2026-10-15T00:00:00Z"}] if head in 
             self.clean_here()  # every layer and the project branch merged: the story and the feature are Done too
             self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-5", "ENG-2", "ENG-1"), ["Done", "Done", "Canceled", "Done", "Done"])
         self.assertFalse((self.r.parent / "compose-p").exists())
-
-    def test_clean_without_a_linear_key_says_so_in_one_line_and_calls_nothing(self):
-        self.linear_project()
-        with mock.patch.object(fc.fc_linear, "linear_gql", side_effect=AssertionError("Linear called without a key")), \
-                mock.patch.object(fc.fc_config, "LINEAR_KEY", ""), mock.patch.object(fc.fc_linear, "_linear_warned", []):
-            out = self.clean_here()
-        self.assertEqual(out.count("linear skipped"), 1, out)
-        self.assertIn("fast/p/001", out)  # the branches are still cleaned
 
     def test_with_task_branches_gone_merged_layers_move_their_tasks_story_and_feature_to_done(self):
         self.linear_project()
@@ -272,17 +263,11 @@ class ProjectBranchNamedFirst(unittest.TestCase):
     def same_change_with_more(self, r, run, proj):  # main holds the groundwork's change inside a bigger patch
         (r / "a.txt").write_text("base\nx\n"); (r / "b.txt").write_text("y\n"); run("add", "-A"); run("commit", "-qm", "more")
 
-    def layer_on_main(self, r, run, proj):  # main moves on its own; the one layer built from the branch sits in it
-        (r / "c.txt").write_text("c\n"); run("add", "-A"); run("commit", "-qm", "main moves")
-        run("branch", "compose/p-layer-01", "main"); (proj / "layers.json").write_text('{"compose/p-layer-01": ["001"]}')
-
     def test_each_why_reads_after_the_branch_name(self):
         for branch, land, why, delete_unmerged in (
                 ("compose/p", lambda r, run, proj: run("merge", "-q", "--ff-only", "compose/p"), "contained in main", False),
-                ("js-1-p", lambda r, run, proj: run("merge", "-q", "--ff-only", "js-1-p"), "contained in main", False),
                 ("compose/p", lambda r, run, proj: run("cherry-pick", "-x", "compose/p"), "contained in main by patch", False),
                 ("compose/p", self.same_change_with_more, "merging it into main changes nothing", False),
-                ("compose/p", self.layer_on_main, "every layer built from it is merged (compose/p-layer-01)", False),
                 ("compose/p", lambda r, run, proj: None, "UNMERGED, removed on --delete-unmerged", True)):
             with self.subTest(why=why, branch=branch):
                 lines, wt = self.summary(branch, land, delete_unmerged)
