@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import argparse, importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
+import argparse, shutil, importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -118,23 +118,46 @@ done()
 
 class Ship(unittest.TestCase):
     """A project with groundwork and three tasks, stacked into three layers, a local bare origin, and a fake gh."""
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp()).resolve()
+        cls.template = Path(tempfile.mkdtemp()).resolve()
+        cls.addClassCleanup(shutil.rmtree, cls.root, True)
+        cls.addClassCleanup(shutil.rmtree, cls.template, True)
+        build = cls()
+        build.paths()
+        build.state.parent.mkdir(); build.origin.mkdir(); build.repo.mkdir()
+        (build.state.parent / "gh").write_text(FAKE_GH); (build.state.parent / "gh").chmod(0o755)
+        with build.patched_env():
+            build.build()
+        shutil.rmtree(cls.template)
+        shutil.copytree(cls.root, cls.template, symlinks=True)
+
+    def paths(self):
+        self.origin = self.root / "origin"
+        self.repo = self.root / "repo"
+        self.state = self.root / "bin" / "state.json"
+        self.proj = self.repo / ".compose" / "p"
+
+    def patched_env(self):
+        return mock.patch.dict(os.environ, {**ENV, "PATH": f"{self.state.parent}:{os.environ['PATH']}", "FAKE_ORIGIN": str(self.origin), "FAKE_GH_STATE": str(self.state)})
+
     def setUp(self):
-        bin_ = Path(tempfile.mkdtemp()).resolve()
-        (bin_ / "gh").write_text(FAKE_GH); (bin_ / "gh").chmod(0o755)
-        self.origin = Path(tempfile.mkdtemp()).resolve()
-        self.state = bin_ / "state.json"
-        self.env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{bin_}:{os.environ['PATH']}", "FAKE_ORIGIN": str(self.origin), "FAKE_GH_STATE": str(self.state)})
+        shutil.rmtree(self.root)
+        shutil.copytree(self.template, self.root, symlinks=True)
+        self.paths()
+        self.env = self.patched_env()
         self.env.start(); self.addCleanup(self.env.stop)
         for patch in (mock.patch.object(fc.fc_ship, "LAND_POLL", 0), mock.patch.object(fc.fc_ship, "LAND_SETTLE", 0)):
             patch.start(); self.addCleanup(patch.stop)
+
+    def build(self):
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
-        self.repo = Path(tempfile.mkdtemp()).resolve()
         self.git("init", "-q", "-b", "main")
         self.git("remote", "add", "origin", str(self.origin))
         self.write("README.md", "hi\n"); self.commit("init")
         self.git("push", "-q", "-u", "origin", "main")
         self.git("checkout", "-q", "-b", "compose/p")
-        self.proj = self.repo / ".compose" / "p"
         (self.proj / "results").mkdir(parents=True)
         (self.repo / ".git" / "info" / "exclude").write_text("/.compose/\n")
         self.write("setup.txt", "s\n" * 20); self.commit("Add the setup files")
