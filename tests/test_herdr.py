@@ -411,6 +411,52 @@ class AgentStartRace(unittest.TestCase):
             self.assertEqual(e.call_count, 3)
 
 
+class AgentNice(unittest.TestCase):
+    def pids(self, procs, floored):
+        with mock.patch.object(fc.fc_herdr, "pane_processes", return_value=[{"pid": p} for p in procs]) as pp, \
+             mock.patch.object(fc.fc_proc, "nice_floor", side_effect=lambda pid: floored.get(pid)) as nf:
+            out = fc.fc_herdr.agent_pids("p1")
+        pp.assert_called_once_with("p1")
+        self.assertEqual(sorted(c.args[0] for c in nf.call_args_list), sorted(procs))
+        return out
+
+    def test_every_pane_process_is_floored_and_the_pids_come_back_sorted(self):
+        self.assertEqual(self.pids([30, 10, 20], {30: 10, 10: 12, 20: 10}), [10, 20, 30])
+
+    def test_a_pid_that_vanished_is_left_out(self):
+        self.assertEqual(self.pids([30, 10, 20], {30: 10, 10: 10}), [10, 30])
+        self.assertEqual(self.pids([5], {}), [])
+
+    def test_a_pane_with_nothing_running_has_no_pids(self):
+        self.assertEqual(self.pids([], {}), [])
+
+    def start(self, starter, patched, result, *args):
+        calls = []
+        with mock.patch.object(fc.fc_herdr, patched, side_effect=lambda *a, **k: calls.append("start") or result), \
+             mock.patch.object(fc.fc_herdr, "agent_pids", side_effect=lambda pane: calls.append(pane)) as ap:
+            out = getattr(fc.fc_herdr, starter)("a", *args)
+        return out, calls, ap
+
+    def test_both_starters_floor_the_pane_after_a_start_and_return_what_they_did(self):
+        started = {"agent": {"name": "a"}}
+        for starter, patched, result in (("herdr_start_crew", "herdr", started), ("herdr_agent_start", "herdr_error", (started, None))):
+            with self.subTest(starter):
+                out, calls, ap = self.start(starter, patched, result, "--pane", "p7", "--x")
+                self.assertEqual(out, started)
+                self.assertEqual(calls, ["start", "p7"])
+                out, calls, ap = self.start(starter, patched, result, "--x")
+                self.assertEqual(out, started)
+                ap.assert_not_called()
+
+    def test_a_failed_start_floors_nothing(self):
+        for starter, patched, err in (("herdr_start_crew", "herdr", RuntimeError("pane_not_found")), ("herdr_agent_start", "herdr_error", None)):
+            with self.subTest(starter), mock.patch.object(fc.fc_herdr, patched, side_effect=err, return_value=(None, "pane_not_found")), \
+                 mock.patch.object(fc.fc_herdr, "agent_pids") as ap, mock.patch.object(time, "sleep"):
+                with self.assertRaises(RuntimeError):
+                    getattr(fc.fc_herdr, starter)("a", "--pane", "p7")
+                ap.assert_not_called()
+
+
 class StackLock(unittest.TestCase):
     def test_parallel_linearize_calls_never_overlap(self):
         """Parallel tasks with `after:` all linearize in the one stack worktree; overlapping git there crashed a run."""
