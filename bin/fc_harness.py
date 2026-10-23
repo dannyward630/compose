@@ -31,7 +31,7 @@ def _git_dirs(f):
     return [Path(l).resolve() for l in p.stdout.splitlines()[:2]] if p and p.returncode == 0 else []
 
 def _codex_argv(cid, effort, prompt, skill, cwd, results, work=None, more=()):
-    argv = []
+    argv = ["-c", "check_for_update_on_startup=false"]
     if cid is not None:
         argv += ["-m", cid]
     if effort:
