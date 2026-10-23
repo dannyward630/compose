@@ -254,6 +254,56 @@ class PrefixCache(unittest.TestCase):
         self.assertEqual((type(stamps[0]), len(set(stamps))), (tuple, 4))
 
 
+class HeadsListing(unittest.TestCase):
+    git = StackWorktree.git
+
+    def setUp(self):
+        StackWorktree.setUp(self)
+        for cache in ("_prefixes", "_commons", "_heads"): getattr(fc.fc_worktree, cache).clear()
+
+    def run_git(self, fn, *a):
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            return fn(*a), [c.args[0] for c in run.call_args_list]
+
+    def heads(self, repo=None):
+        got, cmds = self.run_git(fc.fc_worktree.heads, repo or self.repo)
+        return got, [c for c in cmds if "for-each-ref" in c]
+
+    def layers(self):
+        return self.run_git(fc.fc_layers.layer_branches, self.repo, self.proj)
+
+    def test_one_listing_gives_the_local_branch_names_and_an_unchanged_repo_runs_no_git(self):
+        self.git("branch", "fast/p/001")
+        self.git("update-ref", "refs/remotes/origin/remote-only", "HEAD")
+        got, listing = self.heads()
+        self.assertEqual((set(got), len(listing)), ({"main", "fast/p/001"}, 1))
+        self.assertEqual(self.run_git(fc.fc_worktree.heads, self.repo), (got, []))
+
+    def test_a_created_deleted_or_packed_branch_shows_in_the_next_call(self):
+        self.heads()
+        self.git("branch", "x"); self.assertIn("x", self.heads()[0])
+        self.git("pack-refs", "--all"); self.assertIn("x", self.heads()[0])
+        self.git("branch", "-D", "x"); self.assertNotIn("x", self.heads()[0])
+
+    def test_a_linked_worktree_shares_the_listing_and_sees_new_branches(self):
+        self.heads()
+        wt = self.repo / "wt"; self.git("worktree", "add", "-q", "-b", "w", str(wt))
+        got, _ = self.heads(wt)
+        self.assertEqual(set(got), {"main", "w"})
+        self.assertEqual(self.heads(wt), (got, []))
+        self.git("branch", "y"); self.assertIn("y", self.heads(wt)[0])
+
+    def test_layer_branches_are_the_numbered_layers_bottom_first_and_follow_new_ones(self):
+        for n in ("10", "2", "01-prerebase", "1", "x"): self.git("branch", f"compose/p-layer-{n}")
+        self.git("branch", "other-layer-3")
+        want = ["compose/p-layer-1", "compose/p-layer-2", "compose/p-layer-10"]
+        got, cmds = self.layers()
+        self.assertEqual((got, [c for c in cmds if "branch" in c]), (want, []))
+        self.assertEqual(self.layers(), (want, []))
+        self.git("branch", "compose/p-layer-3")
+        self.assertEqual(self.layers()[0], ["compose/p-layer-1", "compose/p-layer-2", "compose/p-layer-3", "compose/p-layer-10"])
+
+
 class ReviewGate(unittest.TestCase):
     def test_confirmed_review_findings_fail_verify(self):
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
