@@ -307,6 +307,63 @@ class TimedLoadWait(unittest.TestCase):
         self.assertEqual([e[0] for e in events], ["wait", "slot"])
         self.assertEqual(r.returncode, 0)
 
+import fc_started
+
+
+class Recorded(unittest.TestCase):
+    """A timed command and a started implementer agent are recorded in fc_started, and a timed command's record goes when it ends."""
+
+    def timed(self, cmd, limit=10, events=None):
+        events = [] if events is None else events
+        def record(*a, **k): events.append(("record", a, k)); os.kill(a[0], 0)  # the process is alive when it is recorded
+        with mock.patch.object(fc_started, "record", side_effect=record), mock.patch.object(fc_started, "forget", side_effect=lambda pid: events.append(("forget", pid))):
+            t0 = time.time()
+            r = fc.fc_implement.timed(cmd, os.getcwd(), limit)
+        return r, events, t0
+
+    def test_a_timed_command_is_recorded_with_its_waiter_and_limit_then_forgotten(self):
+        r, events, t0 = self.timed("echo $$; sleep 0.3")
+        pid = int(r.stdout.split()[0])
+        self.assertEqual([e[0] for e in events], ["record", "forget"])
+        self.assertEqual(events[0][1], (pid, "timed", None))
+        self.assertEqual({k: v for k, v in events[0][2].items() if k != "until"}, {"waiter": os.getpid(), "cwd": os.getcwd()})
+        self.assertTrue(t0 + 10 <= events[0][2]["until"] <= time.time() + 10)
+        self.assertEqual(events[1], ("forget", pid))
+
+    def test_the_record_goes_on_a_timeout_and_on_an_error_in_the_run(self):
+        r, events, _ = self.timed("sleep 5", limit=1)
+        self.assertEqual((r.returncode, [e[0] for e in events]), (124, ["record", "forget"]))
+        self.assertEqual(events[1][1], events[0][1][0])
+        events = []
+        with mock.patch.object(fc.fc_core, "scrub", side_effect=RuntimeError("scrub")), self.assertRaises(RuntimeError):
+            self.timed("true", events=events)
+        self.assertEqual([e[0] for e in events], ["record", "forget"])
+
+    def agent(self, pids=(412, 77, 90), start=None):
+        root, record = Path(tempfile.mkdtemp()), mock.Mock()
+        start = start or mock.Mock(return_value={})
+        with mock.patch.object(fc_started, "record", record), mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", start), \
+                mock.patch.object(fc.fc_herdr, "agent_pids", return_value=list(pids)) as ap, mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", return_value="p1"), \
+                mock.patch.object(fc.fc_herdr, "herdr_error", return_value=(None, "stopped")), self.assertRaises(RuntimeError):
+            fc.fc_implement.herdr_pi(str(root / "wt"), "openrouter/x/y", "hi", None, {"meta": {"id": "028", "title": "t"}, "proj": root / "shop", "space": "w9"})
+        return record, ap, root
+
+    def test_a_started_implementer_is_recorded_with_its_lowest_pid_and_project_dir(self):
+        record, ap, root = self.agent()
+        ap.assert_called_with("p1")
+        record.assert_called_once()
+        self.assertEqual(record.call_args.args, (77, "implementer", str(root / "shop")))
+        self.assertEqual(record.call_args.kwargs["waiter"], os.getpid())
+        self.assertEqual(str(record.call_args.kwargs["cwd"]), str(root / "wt"))
+
+    def test_no_pid_or_a_failed_start_records_nothing(self):
+        record, ap, _ = self.agent(pids=())
+        ap.assert_called_with("p1")
+        record.assert_not_called()
+        record, ap, _ = self.agent(start=mock.Mock(side_effect=RuntimeError("herdr agent start: agent_pane_busy")))
+        record.assert_not_called()
+        ap.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
