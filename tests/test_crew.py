@@ -1356,3 +1356,63 @@ class PreambleNamesTrail(unittest.TestCase):
         brief = " ".join((fc.fc_crew.crew_dir(self.proj) / "shop-tests-001.brief.md").read_text().split())
         self.assertIn("trail output with file:line", brief)  # the brief the session reads carries the new preamble
         self.assertTrue(brief.endswith("Write the test."))
+
+
+class TerseTemplatesA(unittest.TestCase):
+    """The planner, explore and toolsmith briefs are terse: inside their sizes, same placeholders, every command, report form, heading and step marker kept."""
+
+    def flat(self, name):
+        return " ".join(getattr(fc.fc_briefs, name).split())
+
+    def test_sizes_and_the_module_line_count(self):
+        for name, limit in (("PLANNER_BRIEF", 7142), ("EXPLORE_BRIEF", 976), ("TOOLSMITH_BRIEF", 610)):
+            with self.subTest(name):
+                self.assertLessEqual(len(getattr(fc.fc_briefs, name)), limit)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 585)
+
+    def test_each_brief_keeps_exactly_its_placeholders(self):
+        import string
+        want = {"PLANNER_BRIEF": {"issue", "name", "slug", "wt"}, "EXPLORE_BRIEF": {"feature", "slug", "wt"},
+                "TOOLSMITH_BRIEF": {"at", "cli_commit", "cli_repo", "message", "project", "repo", "reporter", "variant"}}
+        for name, fields in want.items():
+            with self.subTest(name):
+                self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(fc.fc_briefs, name)) if f}, fields)
+
+    def test_planner_keeps_its_commands_report_forms_headings_and_steps(self):
+        import re
+        text = self.flat("PLANNER_BRIEF")
+        for token in ("`compose crew start`", "`compose linear create`", "`compose linear update <id> --section \"## Plan\" --file <path>`", "`compose sync`",
+                      "`compose spec-check --project {slug}`", "`compose tasks`", "`compose change start --why \"<one line>\"`", "`compose change done`",
+                      "`compose linear doc list`", "`### Codebase brief`", "`## Plan`", "Not yet specified",
+                      "`compose report --project {slug} --as {name} needs-user \"<issue>: <n> cards <ids>; recommendation <one line>\"`",
+                      "`blocked \"<story>: not specced: <gap list>\"`", "`compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`"):
+            with self.subTest(token):
+                self.assertIn(token, text)
+        for n in range(1, 8):
+            self.assertRegex(fc.fc_briefs.PLANNER_BRIEF, rf"(?m)^{n}\. ")
+        block = re.search(r"```compose\n(.*?)```", fc.fc_briefs.PLANNER_BRIEF, re.S).group(1)
+        self.assertEqual(re.findall(r"(?m)^ *(\w+): ", block), ["id", "files", "protected", "test"])
+
+    def test_explore_and_toolsmith_keep_their_commands_and_steps(self):
+        for token in ("`trail map`", "`trail ask \"<question>\" --source`", "`trail callers <symbol>`", "`trail skeleton <file>`", "`compose linear get <id> --body`",
+                      "`compose linear update <id> --section \"## Notes\" --file <path> --expect <hash>`", "`### Codebase brief`", "`done \"<one-line summary>\"`"):
+            self.assertIn(token, self.flat("EXPLORE_BRIEF"))
+        for token in ("`# <command>: <symptom>`", "`gh issue view 1 --repo {repo}`", "`--comment <n>`", "`--new`",
+                      "`compose tool-bug file --project {project} --entry \"{at}\" --body <file>`", "{variant}"):
+            self.assertIn(token, self.flat("TOOLSMITH_BRIEF"))
+        for n in (1, 2, 3):
+            self.assertRegex(fc.fc_briefs.TOOLSMITH_BRIEF, rf"(?m)^{n}\. ")
+
+    def test_toolsmith_variants_keep_their_command_flags_and_steps(self):
+        from types import SimpleNamespace
+        log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
+        log.write_text(json.dumps({"at": "2026-10-17 15:30:00", "project": "shop", "reporter": "shop-tests", "message": "m", "cli_commit": "abc1234", "cli_repo": "/r"}) + "\n")
+        want = {"maintainer": ("compose tool-bug pr --project shop --entry", "You never merge", "\n6. "),
+                "reporter": ("--approved", "needs-user", "\n5. "), "no-gh": ("--approved", "gh auth login", "\n5. ")}
+        for state, tokens in want.items():
+            with self.subTest(state), mock.patch.object(fc.fc_crew, "TOOL_BUGS", log), mock.patch.object(fc.fc_core, "project_dir", return_value=Path("/x/shop")), \
+                    mock.patch.object(fc.fc_toolbug, "gh_status", return_value=(state, "alice9")), mock.patch("sys.stdout", io.StringIO()) as out:
+                fc.fc_briefs.cmd_toolsmith(SimpleNamespace(repo=".", project="shop"))
+                brief = out.getvalue()
+                for token in tokens + ("\n4. ", "`compose tool-bug pr" if state == "maintainer" else "`--approved`"):
+                    self.assertIn(token, brief)
