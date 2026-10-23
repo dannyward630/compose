@@ -1402,5 +1402,62 @@ class WatchBaseFile(unittest.TestCase):  # the memory is written only on a chang
         self.assertEqual(marks[-1], marks[2], "git ran or a file was written after the first ticks")  # tick 1 may write once, which the board stamp sees in tick 2
 
 
+class WatchLoadEvents(unittest.TestCase):  # the load log reaches each watcher once, as event lines
+    def setUp(self):
+        import fc_load
+        self.load, self.proj = fc_load, Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results").mkdir(parents=True)
+        self.json = self.proj / "results" / "watch-m.json"
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(10.0,) * 3)):  # between low and high: update() changes nothing
+            p.start(); self.addCleanup(p.stop)
+
+    def events(self, key="m"):
+        return fc.fc_watch.load_events(self.proj, key)
+
+    def test_a_hold_and_a_release_are_each_reported_once_after_the_first_call(self):
+        self.load.update(avg=13.0); self.load.update(avg=7.0)
+        self.assertEqual(self.events(), [])  # the first call saves where the log is
+        self.assertEqual(json.loads(self.json.read_text())["load_n"], 2)
+        self.load.update(avg=13.0)
+        held, = self.events()
+        m = re.fullmatch(r"event load=held avg=13\.0 high=(\d+\.\d) cores=8  \(compose starts nothing new until the load falls below (\d+\.\d)\)", held)
+        self.assertTrue(m, held)
+        self.assertEqual(self.events(), [])
+        self.load.update(avg=7.0)
+        self.assertEqual(self.events(), [f"event load=released avg=7.0 low={m.group(2)}"])
+        self.assertEqual(self.events(), [])
+        self.assertEqual(json.loads(self.json.read_text())["load_n"], 4)
+
+    def test_a_watcher_behind_the_log_gets_every_entry_in_order_and_a_new_one_starts_at_the_end(self):
+        fc.fc_watch.watch_save(self.proj, "m", load_n=0)
+        self.load.update(avg=13.0); self.load.update(avg=7.0)
+        late = self.events()
+        self.assertEqual([l.split()[1] for l in late], ["load=held", "load=released"])
+        self.assertEqual(self.events("other"), [])  # no earlier n saved: its first call
+        self.assertEqual(self.events(), [])
+
+    def test_nothing_is_written_when_nothing_changed(self):
+        self.load.update(avg=13.0)
+        self.events()
+        os.utime(self.json, ns=(1, 1))
+        self.events(); self.events()
+        self.assertEqual(self.json.stat().st_mtime_ns, 1)
+
+    def test_load_lines_wake_a_quiet_watcher(self):
+        for l in ("event load=held avg=13.0 high=12.0 cores=8  (compose starts nothing new until the load falls below 8.0)", "event load=released avg=7.0 low=8.0"):
+            self.assertTrue(fc.fc_watch.ATTENTION.search(l), l)
+
+    def test_cmd_watch_prints_the_load_lines(self):
+        line, out = "event load=released avg=7.0 low=8.0", []
+        a = SimpleNamespace(repo=".", now=False, from_=None, timeout=0.3, interval=0.01, stall=10_000, rewake=False, settle=0, attention=True)
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_watch, "watch_key", return_value="m"), \
+                mock.patch.object(fc.fc_watch, "watch_snapshot", lambda *a, **k: wsnap("pending")), mock.patch.object(fc.fc_crew, "desktop_notify"), \
+                mock.patch.object(fc.fc_watch, "load_events", side_effect=[[line], []]), \
+                mock.patch("builtins.print", out.append), mock.patch.dict(os.environ, {"COMPOSE_ROLE": ""}):
+            with contextlib.suppress(SystemExit):
+                fc.fc_watch.cmd_watch(a)
+        self.assertTrue(any(line in str(o) for o in out), out)
+
+
 if __name__ == "__main__":
     unittest.main()
