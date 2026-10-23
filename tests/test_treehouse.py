@@ -289,5 +289,47 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain", cwd=other), "")
 
 
+class AllProjectsBranch(unittest.TestCase):
+    """Real temp repo with linked worktrees: one git call reads every branch."""
+    def setUp(self):
+        p = mock.patch.dict(os.environ, GIT); p.start(); self.addCleanup(p.stop)
+        self.base = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, self.base, True)
+        self.repo = self.base / "app"; self.repo.mkdir()
+        self.git(self.repo, "init", "-q", "-b", "main"); self.git(self.repo, "commit", "-q", "--allow-empty", "-m", "init")
+
+    def git(self, cwd, *a):
+        return subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    def add(self, name, *flags):
+        wt = self.base / name
+        self.git(self.repo, "worktree", "add", "-q", *flags, str(wt))
+        return wt
+
+    def project(self, wt, name="p"):
+        (wt / ".compose" / name).mkdir(parents=True); (wt / ".compose" / name / "verify.json").write_text("{}")
+
+    def test_branch_per_worktree_in_git_order(self):
+        wt = self.add("wt", "-b", "compose/p"); det = self.add("det", "--detach")
+        self.assertEqual(fc.fc_core.worktree_branches(self.repo), [(self.repo, "main"), (wt, "compose/p"), (det, "")])
+        self.assertEqual(fc.fc_core.worktrees(self.repo), [self.repo, wt, det])
+
+    def test_no_git_gives_the_folder_with_no_branch(self):
+        self.assertEqual(fc.fc_core.worktree_branches(self.base), [(self.base, "")])
+
+    def test_own_worktree_wins_with_one_git_process(self):
+        wt = self.add("wt", "-b", "compose/p")
+        self.project(self.repo); self.project(wt)  # merged: the main checkout shows the folder too
+        real, calls = subprocess.run, []
+        def spy(cmd, *a, **k): calls.append(cmd); return real(cmd, *a, **k)
+        with mock.patch("subprocess.run", side_effect=spy):
+            found = fc.fc_core.all_projects(self.repo)
+        self.assertEqual(found["p"], (wt, wt / ".compose" / "p"))
+        self.assertEqual(len([c for c in calls if c[0] == "git"]), 1)
+
+    def test_detached_worktree_never_wins(self):
+        det = self.add("det", "--detach"); self.project(self.repo); self.project(det)
+        self.assertEqual(fc.fc_core.all_projects(self.repo)["p"][0], self.repo)
+
+
 if __name__ == "__main__":
     unittest.main()
