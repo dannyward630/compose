@@ -248,3 +248,29 @@ class StatusLoadLine(unittest.TestCase):
         self.assertTrue(out.startswith("load: 13.0 on 8 cores, held since ") and out.endswith("\nBOARD\n"), out)
         self.assertEqual(out.count("load:"), 1)
         self.assertEqual((self.status("--digest"), self.status("--history")), ("DIGEST\n", "HISTORY\n"))
+
+
+class StatusLoadWarn(unittest.TestCase):
+    def lines(self, held=False, **extra):
+        state = {"held": held, "since": time.time() - 60 if held else None, "n": 3, "avg": 11.26, "new": [], **extra}
+        with mock.patch.object(fc_load, "update", return_value=state), mock.patch("os.cpu_count", return_value=8):
+            return fc.fc_status.load_lines()
+
+    def log(self, *kinds):
+        return [{"n": i + 1, "at": time.time() - age, "kind": kind, "avg": 11.0} for i, (kind, age) in enumerate(kinds)]
+
+    def clock(self, ago):
+        return time.strftime("%H:%M", time.localtime(time.time() - ago))
+
+    def test_warned_and_not_held_gives_the_warn_line_with_the_last_warn_entrys_time(self):
+        lines = self.lines(warn=True, log=self.log(("warn", 7200), ("cleared", 5400), ("warn", 3600)))
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], r"^load: 11\.3 on 8 cores is above the warn mark \d+\.\d since %s: a hold starts above \d+\.\d$" % self.clock(3600))
+
+    def test_held_shows_only_the_held_line_even_when_warned(self):
+        lines = self.lines(held=True, warn=True, log=self.log(("warn", 600), ("held", 60)))
+        self.assertEqual((len(lines), "held since" in lines[0], "warn mark" in lines[0]), (1, True, False))
+
+    def test_cleared_or_a_state_without_warn_gives_no_warn_line(self):
+        self.assertEqual(self.lines(warn=False, log=self.log(("warn", 900), ("cleared", 60))), [])
+        self.assertEqual(self.lines(log=[]), [])
