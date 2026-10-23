@@ -269,5 +269,44 @@ class NiceFloor(unittest.TestCase):
         hook.assert_not_called()
 
 
+import fc_load
+
+
+class TimedLoadWait(unittest.TestCase):
+    """fc_implement.timed waits at the load gate before taking a suite slot, and a quick run or a held slot never waits."""
+
+    def run_timed(self, cmd, limit=10, wait=None):
+        """Run timed(cmd) with fc_load.wait patched; returns the result and the ordered calls to wait and slot."""
+        events, real = [], fc.fc_proc.slot
+        def spy(say=None, quick=False): events.append(("slot", quick, say)); return real(say, quick)
+        def waited(say, force=False): events.append(("wait", say)); wait and wait()
+        with mock.patch.object(fc_load, "wait", side_effect=waited), mock.patch.object(fc.fc_proc, "slot", spy):
+            return fc.fc_implement.timed(cmd, os.getcwd(), limit), events
+
+    def test_a_full_suite_waits_with_the_slots_say_before_it_takes_the_slot_and_then_runs(self):
+        r, events = self.run_timed("echo ran; pytest -h >/dev/null 2>&1 || true")
+        self.assertEqual([e[0] for e in events], ["wait", "slot"])
+        self.assertEqual(events[0][1], events[1][2])
+        self.assertIs(events[1][1], False)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "ran"))
+
+    def test_a_quick_run_does_not_wait(self):
+        for cmd in ("echo pytest -k foo", "echo hi"):
+            r, events = self.run_timed(cmd)
+            self.assertEqual([e[0] for e in events], ["slot"], cmd)
+            self.assertIs(events[0][1], True, cmd)
+
+    def test_a_process_already_under_a_slot_does_not_wait(self):
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOT": "0"}):
+            r, events = self.run_timed("pytest -h >/dev/null 2>&1 || true")
+        self.assertNotIn("wait", [e[0] for e in events])
+        self.assertEqual(r.returncode, 0)
+
+    def test_the_time_limit_starts_after_the_wait(self):
+        r, events = self.run_timed("pytest -h >/dev/null 2>&1 || true", limit=1, wait=lambda: time.sleep(1.5))
+        self.assertEqual([e[0] for e in events], ["wait", "slot"])
+        self.assertEqual(r.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
