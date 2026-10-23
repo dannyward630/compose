@@ -330,7 +330,7 @@ def cmd_toolsmith(a):
     repo, state = fc_toolbug.REPO, fc_toolbug.gh_status()[0]
     if state == "maintainer":
         variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch in your own worktree of
-   the compose repo, with a test that fails without the fix and passes with it, and run the full suite, not only your test.
+   the compose repo, with a test that fails without the fix and passes with it, and run only the test files of what you changed, never the whole suite.
    Never commit on main of any checkout, in ~/.compose/src, or in the project worktree: the tool refuses there.
 5. Commit the fix with a plain message and no `Fixes #` in it, then run
    `compose tool-bug pr --project {proj.name} --entry "{entry['at']}" --worktree <your worktree>`: it pushes your branch and opens the PR,
