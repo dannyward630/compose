@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import time
@@ -19,11 +20,21 @@ _cache = {}  # path -> what was read so far: the offset after the last complete 
 def usage(path):
     """Turns, tokens, and model of a session log. A log is append-only and a live one grows every turn to tens of MB, so
     only the bytes added since the last read are parsed; a log rewritten shorter is read from the start; a line still being
-    written (no newline yet) waits for the next read."""
+    written (no newline yet) waits for the next read. The read is also kept on disk, so a new process returns an unchanged
+    log's result without opening it and continues a grown one from the saved offset."""
     p = Path(path).resolve()
     st = os.stat(p)
+    saved = Path.home() / ".compose" / "usage" / (hashlib.sha1(str(p).encode()).hexdigest() + ".json")
     c = _cache.get(str(p))
+    if not c:
+        try:
+            c = json.loads(saved.read_text())
+            c["seen"] = set(c["seen"])
+            c["stat"] = tuple(c["stat"])
+        except (OSError, ValueError):
+            c = None
     if c and c["stat"] == (st.st_mtime, st.st_size):
+        _cache[str(p)] = c
         return c["result"]
     if not c or st.st_size < c["offset"]:
         c = {"offset": 0, "seen": set(), "model": None, "turns": 0, "sums": dict.fromkeys(KEYS.values(), 0)}
@@ -52,6 +63,11 @@ def usage(path):
     c["result"] = dict(model=c["model"], turns=c["turns"], **c["sums"])
     c["stat"] = (st.st_mtime, st.st_size)
     _cache[str(p)] = c
+    saved.parent.mkdir(parents=True, exist_ok=True)
+    tmp = saved.with_name(saved.name + ".tmp")
+    tmp.write_text(json.dumps({"offset": c["offset"], "seen": sorted(c["seen"]), "model": c["model"],
+                               "turns": c["turns"], "sums": c["sums"], "result": c["result"], "stat": c["stat"]}))
+    tmp.rename(saved)
     return c["result"]
 
 
