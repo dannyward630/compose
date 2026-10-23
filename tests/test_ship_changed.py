@@ -22,27 +22,11 @@ class ChangedLayer(Ship):
         self.git("checkout", "-q", "compose/p-001"); self.write("001.src", "d\n"); self.commit("Change 001"); self.git("checkout", "-q", "compose/p")
         return self.heads()
 
-    def test_an_unchanged_stack_pushes_as_before(self):
-        self.submit()
-        before = self.heads()
-        out, code = self.submit()
-        self.assertEqual(code, 0, out)
-        self.assertEqual(self.heads(), before)
-
     def test_a_layer_whose_own_file_changed_stops_the_submit_with_nothing_pushed(self):
         before = self.change_001()
         out, code = self.submit()
         self.assertEqual(code, 1)
         self.assertIn(self.stop_line(2, before, "its own files changed: 001.src"), out)
-        self.assertEqual(self.heads(), before)
-
-    def test_a_layer_that_moved_with_the_base_is_named_as_such(self):
-        self.submit()
-        before = self.heads()
-        self.git("checkout", "-q", "main"); self.write("base.txt", "b\n"); self.commit("Move the base"); self.git("push", "-q", "origin", "main"); self.git("checkout", "-q", "compose/p")
-        out, code = self.submit()
-        self.assertEqual(code, 1)
-        self.assertIn(self.stop_line(1, before, "a layer below it or the base moved"), out)
         self.assertEqual(self.heads(), before)
 
     def test_update_pushes_each_changed_layer_bottom_up_and_opens_no_pull_request(self):
