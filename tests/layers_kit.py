@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -37,11 +37,29 @@ else:
 
 class LayersBase(unittest.TestCase):
     """The fixture the layer tests share: a project branch with groundwork and every task's test on it, and task branches above it."""
+    @classmethod
+    def setUpClass(cls):
+        LayersBase._build(cls("setUp"))
+
     def setUp(self):
-        bin_ = Path(tempfile.mkdtemp()).resolve()
+        cls = type(self)
+        if "template" not in cls.__dict__:
+            LayersBase._build(self)
+        shutil.rmtree(cls.root)
+        shutil.copytree(cls.template, cls.root, symlinks=True)
+        self.env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{cls.root / 'bin'}:{os.environ['PATH']}"}); self.env.start(); self.addCleanup(self.env.stop)
+        self.repo, self.proj = cls.root / "repo", cls.root / "repo" / ".compose" / "p"
+        self.sizes = {"001": 100, "002": 120, "003": 150}
+
+    def _build(self):
+        cls = type(self)
+        cls.root, cls.template = Path(tempfile.mkdtemp()).resolve(), Path(tempfile.mkdtemp()).resolve() / "template"
+        cls.addClassCleanup(shutil.rmtree, cls.template.parent)
+        cls.addClassCleanup(shutil.rmtree, cls.root)
+        bin_ = cls.root / "bin"; bin_.mkdir()
         (bin_ / "gh").write_text(FAKE_GH_STACK); (bin_ / "gh").chmod(0o755)
-        self.env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{bin_}:{os.environ['PATH']}"}); self.env.start(); self.addCleanup(self.env.stop)
-        self.repo = Path(tempfile.mkdtemp()).resolve()
+        env = mock.patch.dict(os.environ, {**ENV, "PATH": f"{bin_}:{os.environ['PATH']}"}); env.start()
+        self.repo = cls.root / "repo"; self.repo.mkdir()
         self.git("init", "-q", "-b", "main")
         self.git("remote", "add", "origin", "https://github.com/o/r.git")
         self.write("README.md", "hi\n"); self.commit("init")
@@ -63,6 +81,8 @@ class LayersBase(unittest.TestCase):
             self.git("checkout", "-q", "-b", f"compose/p-{t}", base)
             self.write(f"{t}.src", "c\n" * self.sizes[t]); self.commit(f"Build {t}")
             self.git("checkout", "-q", "compose/p")
+        env.stop()
+        shutil.copytree(cls.root, cls.template, symlinks=True)
 
     def git(self, *a):
         return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
