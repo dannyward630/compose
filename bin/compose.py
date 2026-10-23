@@ -122,7 +122,7 @@ def main():
                             ("away", fc_yolo.cmd_yolo, "the product owner is away until their first message: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("yolo", fc_yolo.cmd_yolo, "the engineering manager answers until an explicit off, and the product owner may steer: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
-                            ("crew", fc_crew.cmd_crew, "start | list | focus | stop | release teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
+                            ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
@@ -272,7 +272,7 @@ def main():
             s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
             s.add_argument("--why", help="start: one line, the reason for the change")
         if name == "crew":
-            s.add_argument("action", choices=("start", "list", "focus", "stop", "release"))
+            s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator (the team lead), wayfinder, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")

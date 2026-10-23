@@ -156,7 +156,6 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
     if has_remote:
         fc_core.sh(["git", "fetch", "-q", "--prune"], repo, check=False)
     trunk = fc_core.current_branch(repo)
-    fc_crew.release_slots(proj)  # the teammates' own worktrees
     for held in fc_worktree.slots(proj).values():  # test-writing teammates' slots and stack slots go back to the pool
         fc_worktree.release_slot(repo, held)
     fc_worktree.slots(proj, {r: None for r in fc_worktree.slots(proj)})
@@ -286,7 +285,6 @@ def abandon_project(main_repo, name, wt, proj, force=False, dry=False):
         sys.exit(f"abandon  {name}: nothing removed, " + "; ".join(stop))
     if dry:
         return print(f"abandon  {name}: --dry-run, nothing removed")
-    fc_crew.release_slots(proj)
     for slot in fc_worktree.slots(proj).values():
         fc_worktree.release_slot(main_repo, slot)
     fc_worktree.slots(proj, {r: None for r in fc_worktree.slots(proj)})

@@ -13,9 +13,7 @@ treehouse
 slot_on
 checkout_in_slot
 park_slot
-RECLAIMERS
 pool_shortfall
-_pool_short
 is_slot
 default_branch
 review_base

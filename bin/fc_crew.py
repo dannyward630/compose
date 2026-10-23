@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_slots, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -176,27 +176,6 @@ def crew_effort(role, explicit=None):
     """The Claude Code effort for the entry crew_pick chose, or None to keep Claude Code's default."""
     return crew_pick(role, explicit)[1]
 
-def crew_agents():
-    """herdr's live agents, or None outside herdr or when it cannot say."""
-    listed = fc_herdr.herdr("agent", "list") if fc_herdr.herdr_env() else None
-    return None if listed is None else listed.get("agents", [])
-
-def release_slots(proj, agents=None):
-    """Hand the treehouse slot of every teammate whose session has ended (its tab is gone, whatever it reported) back to the pool.
-    Teammates whose tab herdr still lists, or when herdr cannot say, are left alone. Returns the slots returned."""
-    files = sorted(crew_dir(proj).glob("*.json"))
-    seen = [] if agents is None else [agents]
-    def closed(c):  # herdr is asked once, and only when some teammate has a slot to give back
-        seen[:] = seen or [crew_agents()]
-        return tab_closed(c, seen[0])
-    return fc_slots.release_slots(files, closed)
-
-def release_ended_slots(repo):
-    """release_slots over every project of the repository: what a full pool needs before it can lease."""
-    return [s for _, proj in fc_core.all_projects(repo).values() for s in release_slots(proj)]
-
-fc_worktree.RECLAIMERS.update(crew=release_ended_slots)
-
 def crew_workdir(cwd, wt, name, leased=False):
     """(directory, branch) a teammate session works in. A --cwd in a git repo, the project's own repo included and whatever the
     role, gets its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
@@ -226,11 +205,6 @@ def cmd_crew(a):
             live = next((ag for ag in agents or [] if ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space")), {})
             state = "ended" if last.get("state") not in (None, "done") and tab_closed(c, agents) else last.get("state", "-")
             print(f"  {c['name']:32} {state:10} {live.get('agent_status', 'closed'):8} {(c.get('model', 'claude') + (' ' + c['effort'] if c.get('effort') else '')):32} {c['title'][:30]:30} {last.get('message', '')[:70]}")
-        release_slots(proj, agents)
-        return
-    if a.action == "release":
-        for slot in release_slots(proj):
-            print(f"slot  {slot} is back in the pool")
         return
     if not a.role:
         sys.exit(f"usage: compose crew {a.action} --project {slug} --role <role>")
@@ -257,10 +231,8 @@ def cmd_crew(a):
                      f"read it with `herdr agent read {name} --lines 60`, or pass --force to close it anyway")
         fc_herdr.herdr("tab", "close", json.loads(rec.read_text())["tab"])
         crew_closed(proj, name, "crew stop" + (" --force" if a.force else ""))
-        release_slots(proj)
         print(f"teammate {name} stopped")
         return
-    release_slots(proj)  # a start leases a slot of its own: what ended teammates hold goes back first
     explicit = getattr(a, "model", None)
     pin = None if explicit and explicit not in fc_config.CREW_MODELS else fc_budget.hold(proj, fc_tiers.tier_for(fc_tiers.ceiling(explicit or a.role) or fc_tiers.ceiling(a.role), fc_tierpin.read(proj).get("project")))
     model, effort, why_model, skipped = crew_pick_full(a.role, explicit, pin)
@@ -513,8 +485,7 @@ def close_after_turn(proj, name):
     if not c or not c.get("tab") or not fc_herdr.herdr_env():
         return
     me = shutil.which("herdr") or "herdr"
-    subprocess.Popen(["sh", "-c", '"$0" agent wait "$4" --timeout 900000; "$0" tab close "$5"; sleep 3; "$1" crew release --repo "$2" --project "$3"',  # the session's process ends with its tab: its slot goes back once it has
-                      me, str(CLI_REPO / "bin" / "compose"), str(fc_herdr.project_worktree(proj)), proj.name, name, c["tab"]],
+    subprocess.Popen(["sh", "-c", f'"$0" agent wait "$1" --timeout 900000; "$0" tab close "$2"', me, name, c["tab"]],
                      start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     scratch = scratch_dir(proj, name)
     if scratch.exists():
@@ -588,7 +559,6 @@ def teardown(proj):
         fc_herdr.herdr("tab", "close", tid)
         closed.append(label)
         print(f"teardown closed {label!r}")
-    release_slots(proj)
     return closed
 
 def cmd_teardown(a):

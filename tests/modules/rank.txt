@@ -31,7 +31,6 @@ fc_route
 fc_quick
 fc_herdr
 fc_worktree
-fc_slots
 fc_checks
 fc_pi
 fc_keys
