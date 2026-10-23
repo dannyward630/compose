@@ -40,7 +40,7 @@ class Stuck(unittest.TestCase):
 
     def snap(self, state="working", status="working"):
         return {"tasks": {"001": {"state": "pending"}}, "agents": {ORCH: "idle", WORKER: status},
-                "crew": {WORKER: [{"at": at(30), "state": state, "message": "m"}], ORCH: [{"at": at(30), "state": "working", "message": "m"}]},
+                "crew": {WORKER: [{"at": at(30), "state": state, "message": "m"}], ORCH: [{"at": at(30), "state": "working", "message": "parallel: started m"}]},
                 "run": False, "verify": None, "run_end": 0, "last": (NOW - 10, "teammate x reported working")}
 
     def stalls(self, ago, snap=None, **kw):

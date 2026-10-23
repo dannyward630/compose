@@ -1180,7 +1180,8 @@ class AttentionWatch(unittest.TestCase):
 
     def snap(self, *reports, state="pending"):
         s = wsnap(state)
-        s["crew"] = {"hw-orchestrator": [{"at": at(60 - i), "state": st, "message": m} for i, (st, m) in enumerate(reports)]}
+        s["crew"] = {"hw-orchestrator": [{"at": at(60 - i), "state": st, "message": f"{m}; parallel: started m" if st == "working" else m}
+                                         for i, (st, m) in enumerate(reports)]}
         return s
 
     def watch(self, base, snaps, **kw):
