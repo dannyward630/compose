@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_load, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost, fc_history
+import fc_cost, fc_core, fc_load, fc_tasks, fc_worktree, fc_layers, fc_blockers, fc_budget, fc_change, fc_linear, fc_ledger, fc_tierpin, fc_tierspend, fc_update, fc_routecost, fc_shed, fc_history
 
 
 def project_head(repo, proj):
@@ -175,12 +175,19 @@ def load_lines():
     low = f"{lim['low']:.1f}"
     fmt = lambda t: time.strftime("%H:%M", time.localtime(t))
     if s["held"]:
-        return [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, held since {fmt(s['since'])}: nothing new starts until it falls below {low}"]
-    rel = [e for e in s["log"] if e["kind"] == "released"]
-    out = [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, released at {fmt(rel[-1]['at'])} (below {low})"] if rel and time.time() - rel[-1]["at"] < 600 else []
-    warn = [e for e in s["log"] if e["kind"] == "warn"]
-    if s.get("warn") and warn:
-        out.append(f"load: {s['avg']:.1f} on {os.cpu_count()} cores is above the warn mark {lim['warn']:.1f} since {fmt(warn[-1]['at'])}: a hold starts above {lim['high']:.1f}")
+        out = [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, held since {fmt(s['since'])}: nothing new starts until it falls below {low}"]
+    else:
+        rel = [e for e in s["log"] if e["kind"] == "released"]
+        out = [f"load: {s['avg']:.1f} on {os.cpu_count()} cores, released at {fmt(rel[-1]['at'])} (below {low})"] if rel and time.time() - rel[-1]["at"] < 600 else []
+        warn = [e for e in s["log"] if e["kind"] == "warn"]
+        if s.get("warn") and warn:
+            out.append(f"load: {s['avg']:.1f} on {os.cpu_count()} cores is above the warn mark {lim['warn']:.1f} since {fmt(warn[-1]['at'])}: a hold starts above {lim['high']:.1f}")
+    if (shed := fc_shed.state())["hold"]:
+        n = sum(e["at"] >= shed["hold"]["at"] for e in shed["freed"])
+        if n:
+            out.append(f"shed: freed {n} since {fmt(shed['hold']['at'])}")
+        if shed["hot"]:
+            out.append(f"shed: hottest not started by compose: {shed['hot']['command']} (pid {shed['hot']['pid']}, {shed['hot']['cpu']:.0f}% cpu), left alone")
     return out
 
 def render_status(repo, projects):
