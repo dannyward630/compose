@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers, fc_checks
+import fc_mcp, fc_core, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -402,6 +402,7 @@ def manager_attention(proj, events):
     only badge their panes; their questions reach the product owner through the engineering manager, which relays them."""
     if os.environ.get("COMPOSE_ROLE"):
         return
+    fc_notify.gates(proj, events)
     for e in events:
         m = re.match(r"event crew=(\S+) state=(needs-user|blocked) message=(.*)$", e)
         if not m:

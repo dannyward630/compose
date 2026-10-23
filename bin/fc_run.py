@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -193,6 +193,8 @@ def run_tasks(repo, proj, tasks, a):
     if joins_live_run(a):
         return queue_tasks(proj, tasks)
     fc_proc.keep_awake()  # a run lasts hours; a sleeping Mac stops every agent and fails every check that waits on a timeout
+    if why := fc_credit.check(repo, tasks, getattr(a, "parallel", None) or RUN_PARALLEL, getattr(a, "force", False)):
+        sys.exit("preflight stopped; nothing was cloned or run. " + why)
     models = {m["model"] for m in tasks}
     preflight(models | {fc_models.fallback_for(m) for m in models})
     a.trunk = a.trunk or fc_core.current_branch(repo)  # the branch the user started on is the stack's trunk; it is never switched
@@ -416,6 +418,7 @@ def cmd_resume(a):
         if not tasks:
             path.unlink(missing_ok=True)
             sys.exit("nothing left to run; cleared the halt")
+        ns.force = getattr(a, "force", False)
         ns.parallel = getattr(a, "parallel", None) or fc_config.PARALLEL or getattr(ns, "parallel", None) or RUN_PARALLEL  # flag, config, the halted run's
         fc_core.say(f"resume {len(tasks)} task(s): {', '.join(m['id'] for m in tasks)}")
         run_tasks(repo, proj, tasks, ns)

@@ -181,7 +181,7 @@ def main():
             s.add_argument("--redo", action="store_true", help="rebuild tasks whose passed branch still exists (otherwise they are kept)")
             s.add_argument("--unproven", action="store_true", help="run although `verify --prove` has not passed on the current e2e cases")
         if name in ("run", "resume", "verify"):
-            s.add_argument("--force", action="store_true", help="start although the Mac runs on its battery below 30%% (otherwise it stops: plug it in)")
+            s.add_argument("--force", action="store_true", help="start although the Mac runs on its battery below 30%% or (run, resume) the OpenRouter key's credit looks too low for the tasks that start at once")
         if name == "resume":
             s.add_argument("--parallel", type=int, help="tasks at once (default: parallel in ~/.compose/config.json, else the halted run's)")
         if name == "done":

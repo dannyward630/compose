@@ -124,7 +124,7 @@ A watch started later still reports what happened while none ran, and `watch --n
 That watch wakes only for what needs attention: a done, needs-user, blocked, contradiction or tool-bug report, a stall, a payment halt, a crash or a sign-in screen.
 The `working` reports and other progress lines wait and are printed in the same wake as the next such event.
 `--all` wakes on every line again, and `--attention` gives any other watch the same behavior.
-A billing halt is an event too, shown as `event halt=payment`.
+A billing halt is an event too, shown as `event halt=payment` with the provider, the tasks left, the top-up link as `top_up=` and the exact command that continues as `resume=`.
 The Mac sleeping is not a stall: when the wall clock jumps by 90 s or more between two polls (2 s apart), the watch prints one `event sleep=woke from=<time> to=<time> slept=<span>` naming the window.
 The silence alarms then wait one stall window after the wake, since nothing could move while the Mac slept.
 A run that died within 15 minutes of the wake, whose log was still being written when the Mac went to sleep and which did not halt on a payment limit, is resumed by the watch itself: `event sleep=resumed`, once per run, with `compose resume` logging to `results/resume.log`.
