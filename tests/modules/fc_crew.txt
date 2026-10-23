@@ -20,6 +20,9 @@ crew_pick_full
 crew_fallback
 crew_model
 crew_effort
+crew_agents
+release_slots
+release_ended_slots
 crew_workdir
 cmd_crew
 write_report

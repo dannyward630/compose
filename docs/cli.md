@@ -95,7 +95,7 @@ These commands start the teammates, collect their reports, and supervise the tea
 
 | Command | Does |
 |---|---|
-| `crew start\|list\|focus\|stop` | Manages teammates, the Claude sessions in the project's herdr space ([herdr.md](herdr.md)). `start` and `stop` from a session other than the project's live engineering manager refuse unless `--takeover`. `start` stops on a Mac on battery below 30% unless `--force` |
+| `crew start\|list\|focus\|stop\|release` | Manages teammates, the Claude sessions in the project's herdr space ([herdr.md](herdr.md)). `start` and `stop` from a session other than the project's live engineering manager refuse unless `--takeover`. `start` stops on a Mac on battery below 30% unless `--force`. A teammate started with `--cwd` or `--work-repo` works in a treehouse slot of its own: the slot goes back to the pool, its branch kept, once the teammate's tab is gone (its `done` turn ended, `crew stop`, `teardown`, `clean`, or a session that crashed) and nothing in it is uncommitted; a slot with uncommitted paths stays leased and a line names them. `release` does that for every ended teammate of the project now; `crew start`, `crew list` and a lease from a full pool do it on their own |
 | `explore`, `wayfinder`, `groundwork` | Prints that teammate's brief. `--extra -` appends notes from stdin |
 | `planner` | Prints the planner teammate's brief. `--issue NEB-xxx` picks the ticket, default the project's feature. `--extra -` appends notes from stdin |
 | `designer` | Prints the designer teammate's brief. `--figma <url or key>` stores the Figma file key, and `--extra -` appends notes from stdin |

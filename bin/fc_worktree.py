@@ -148,7 +148,10 @@ def slot_on(repo, branch, holder, detach=False):
     An earlier holder's borrowed installs (ready_checkout's links) go: `return` keeps ignored files, and an install through
     such a link lands in another checkout's. The slot's own installs stay."""
     exclude_paths(repo, ["/.treehouse/"])
-    p = treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder, check=False)
+    lease = lambda: treehouse(repo, "get", "--lease", "--json", "--no-fetch", "--base", default_branch(repo) or branch, "--lease-holder", holder, check=False)
+    p = lease()
+    if p.returncode and "in use or dirty" in p.stdout + p.stderr and not pool_shortfall(repo, 1):  # a full pool gave back the slots of ended teammates
+        p = lease()
     if p.returncode and "in use or dirty" in p.stdout + p.stderr:
         sys.exit(f"{holder}: " + (pool_shortfall(repo, 1) or p.stderr.strip().splitlines()[-1]))
     if p.returncode:
@@ -175,11 +178,20 @@ def park_slot(path, at):
     fc_core.sh(["git", "reset", "-q", "--hard"], path)
     fc_core.sh(["git", "clean", "-fdq"], path)  # ignored files stay, as `return` keeps them
 
+RECLAIMERS = {}  # name -> callable(repo): hands back slots whose holder is gone, returns those it freed; modules above this one register
+
 def pool_shortfall(repo, need):
     """None when the pool can lease `need` more slots, else one line: how many it needs, how many are free, who holds the rest.
     Free is an available slot, or room under max_trees (treehouse.toml in the main checkout, else treehouse's default 16)."""
     if need <= 0:
         return None
+    short = _pool_short(repo, need)
+    if short:
+        if any([r(repo) for r in RECLAIMERS.values()]):  # slots of teammates whose session ended, never returned: a full pool takes them back
+            short = _pool_short(repo, need)
+    return short
+
+def _pool_short(repo, need):
     entries = json.loads(treehouse(repo, "status", "--json", check=False).stdout or "[]")
     cfg = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo).stdout.strip()).parent / "treehouse.toml"
     m = re.search(r"^\s*max_trees\s*=\s*(\d+)", cfg.read_text(), re.M) if cfg.exists() else None
