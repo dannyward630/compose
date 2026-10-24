@@ -511,7 +511,7 @@ class FigmaPublish(unittest.TestCase):
         return {"meta": {kind: self.library[kind]}}
 
     def publish(self, **kw):
-        ns = dict(repo=".", project="p", action="publish", library=self.LIB, keys=None)
+        ns = dict(repo=".", project="p", action="publish", library=self.LIB, keys=None, withdraw=False)
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out), \
              mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", side_effect=self.api):
@@ -552,6 +552,21 @@ class FigmaPublish(unittest.TestCase):
         self.modified = "2026-10-21T00:00:10Z"
         self.assertTrue(self.publish().startswith("publish: none"))
         self.assertNotIn("figma_publish_ask", self.data())
+        self.modified = "2026-10-21T02:00:00Z"
+        self.assertTrue(self.publish().startswith("publish: ask"))
+
+    def test_a_withdrawn_ask_reads_none_until_the_publish_shows(self):
+        self.modified = "2026-10-20T11:00:00Z"
+        self.assertTrue(self.publish().startswith("publish: ask"))
+        out = self.publish(withdraw=True)
+        self.assertTrue(out.startswith("publish: none\n"), out)
+        self.assertIn("withdrawn", out)
+        self.assertNotIn("figma_publish_ask", self.data())
+        self.assertTrue(self.publish().startswith("publish: none\n"))
+        self.library["components"].append({"key": "ck3", "updated_at": "2026-10-21T00:00:00Z"})  # a publish shows: the withdrawal is spent
+        self.modified = "2026-10-21T00:00:10Z"
+        self.assertTrue(self.publish().startswith("publish: none"))
+        self.assertNotIn("figma_publish_withdrawn", self.data())
         self.modified = "2026-10-21T02:00:00Z"
         self.assertTrue(self.publish().startswith("publish: ask"))
 

@@ -137,9 +137,14 @@ def publish_state(library, keys, api):
         return "pending", f"the library was edited at {edited:%Y-%m-%d %H:%M}Z, after its last publish at {last:%Y-%m-%d %H:%M}Z", last
     return "none", f"last published {last:%Y-%m-%d %H:%M}Z, library last edited {edited:%Y-%m-%d %H:%M}Z", last
 
-def publish_ruling(data, library, keys, api):
+def publish_ruling(data, library, keys, api, withdraw=False):
     """The text `figma publish` prints, whose first line is `publish: none | open | ask`, and linear.json's data with the one open ask
-    recorded (`ask`) or cleared (`none`). An ask stays open until the publish shows in the library, so a second check says `open`."""
+    recorded (`ask`) or cleared (`none`). An ask stays open until the publish shows in the library, so a second check says `open`,
+    unless it is withdrawn: then the line reads `none` until a publish shows."""
+    if withdraw:
+        data.pop("figma_publish_ask", None)
+        data["figma_publish_withdrawn"] = {"library": library, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        return f"publish: none\nthe ask is withdrawn: do not ask the product owner to publish library {library}", data
     caps = data.get("figma_caps") or {}
     if caps and not caps.get("library_publish", True):
         return (f"publish: none\nthe {caps['plan']} plan cannot publish a library: do not ask; keep the library and its consumers in one file, "
@@ -151,7 +156,10 @@ def publish_ruling(data, library, keys, api):
     ask = data.get("figma_publish_ask") or {}
     if verdict == "none":
         data.pop("figma_publish_ask", None)
+        data.pop("figma_publish_withdrawn", None)
         return f"publish: none\n{reason}: nothing to publish, so do not ask the product owner; import the library's components and carry on", data
+    if (data.get("figma_publish_withdrawn") or {}).get("library") == library:
+        return f"publish: none\n{reason}\nthe ask was withdrawn: do not ask the product owner to publish library {library}", data
     if ask.get("library") == library and (last is None or parse_time(ask["asked_at"]) > last):
         return f"publish: open\n{reason}\nthe ask went out at {ask['asked_at']} and the publish has not shown yet: do not ask again; add anything new to that ask", data
     data["figma_publish_ask"] = {"library": library, "asked_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}

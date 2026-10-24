@@ -37,7 +37,7 @@ def framelink_fetch(key, node=None, depth=None, env_file=None):
     return r.stdout
 
 def figma_publish(a, proj):
-    """`figma publish`, run right before asking the product owner to publish a library; stores the library and the one open ask in linear.json."""
+    """`figma publish`, run right before asking the product owner to publish a library; stores the library and the one open ask in linear.json; `--withdraw` closes that ask."""
     path = proj / "linear.json"
     data = json.loads(path.read_text()) if path.exists() else {}
     library = fc_core.figma_key(a.library) if a.library else data.get("figma_library")
@@ -45,7 +45,7 @@ def figma_publish(a, proj):
         sys.exit(f"not a Figma file url or key: {a.library}" if a.library else "no library file: compose figma publish --library <url or key>")
     data["figma_library"] = library
     text, data = fc_figmaplan.publish_ruling(data, library, [k.strip() for k in (a.keys or "").split(",") if k.strip()],
-                                             lambda p: fc_figmaplan.figma_api(p, setup=FRAMELINK_SETUP))
+                                             lambda p: fc_figmaplan.figma_api(p, setup=FRAMELINK_SETUP), withdraw=a.withdraw)
     fc_core.atomic_write(path, json.dumps(data))
     if text.startswith("publish: unknown"):
         sys.exit(text)  # a publish that cannot be shown pending is never asked for

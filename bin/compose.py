@@ -309,6 +309,7 @@ def main():
             s.add_argument("--need-pages", type=int, help="check: pages per file the design needs; BLOCKED when the plan allows fewer")
             s.add_argument("--library", help="publish: the library file's url or key (stored after the first use)")
             s.add_argument("--keys", help="publish: comma-separated component keys the consumer file needs")
+            s.add_argument("--withdraw", action="store_true", help="publish: withdraw the open ask (the product owner will not publish); the line reads none until a publish shows")
             s.add_argument("--only", help="judge: comma-separated design task ids; tree: one id")
             s.add_argument("--node", help="tree: comma-separated node ids to fetch through Framelink")
             s.add_argument("--depth", type=int, help="tree: how deep Framelink walks (default: all)")
