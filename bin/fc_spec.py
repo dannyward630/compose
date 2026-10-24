@@ -1,4 +1,4 @@
-import json, re, sys
+import ast, json, re, sys
 from pathlib import Path
 import fc_core, fc_routerec, fc_tasks, fc_worktree, fc_status
 
@@ -28,22 +28,62 @@ def file_clashes(tasks):
             clashes[f] = loose
     return clashes
 
+def path_pattern(path):
+    """The regex for `path` named in prose, with or without its extension, never as part of a longer path."""
+    bare = str(Path(path).with_suffix(""))
+    return rf"(?<![\w./-]){re.escape(path)}(?![\w])|(?<![\w./-]){re.escape(bare)}(?![\w/])"
+
+def on_base(text, path, defined):
+    """Whether every name a brief's `text` uses from the Python module at `path` is already defined there at the base (`defined(path,
+    name)`), so the task needs nothing the file's owner is adding. Only a brief that names the module by its names alone (`stem.name`,
+    `from stem import name`) can say so: the path or a bare `import stem` says nothing of which part it needs."""
+    if defined is None or Path(path).suffix != ".py":
+        return False
+    stem = re.escape(Path(path).stem)
+    if re.search(path_pattern(path), text) or re.search(rf"(?<![\w./-]){stem}\.py\b|\bimport\s+{stem}\b", text):
+        return False
+    names = set(re.findall(rf"(?<![\w./-]){stem}\.([A-Za-z_]\w*)", text))
+    for m in re.finditer(rf"\bfrom\s+{stem}\s+import\s+\(?([^\n)]*)", text):
+        names |= {n.split()[0] for n in m.group(1).split(",") if n.split()}
+    return bool(names) and all(defined(path, n) for n in names)
+
+def base_definitions(repo, rev):
+    """`defined(path, name)` for on_base: whether the Python file at `path`, as it is at `rev`, defines `name` at its top level.
+    A file that is not there at `rev`, or does not parse, defines nothing."""
+    seen = {}
+    def names(path):
+        if path not in seen:
+            r = fc_core.sh(["git", "show", f"{rev}:{path}"], repo, check=False) if rev else None
+            seen[path] = set()
+            if r is not None and r.returncode == 0:
+                try:
+                    tree = ast.parse(r.stdout)
+                except SyntaxError:
+                    tree = ast.Module(body=[], type_ignores=[])
+                for n in tree.body:
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        seen[path].add(n.name)
+                    elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+                        seen[path] |= {x.id for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) for x in ast.walk(t) if isinstance(x, ast.Name)}
+        return seen[path]
+    return lambda path, name: name in names(path)
+
 def uses(text, path):
     """Whether a brief's `text` names the code at `path`: the path itself, with or without its extension, or its module called, imported or required by name.
     A bare stem is a module name only where the file name is one: `stem.name` and `import stem` for Python, `require('./stem')` for JS and TS.
     Elsewhere (a Go package, a JSON file) the stem is a word that other code or prose shares, so only the path counts."""
     stem = Path(path).stem
-    bare = str(Path(path).with_suffix(""))
-    by_path = rf"(?<![\w./-]){re.escape(path)}(?![\w])|(?<![\w./-]){re.escape(bare)}(?![\w/])"
+    by_path = path_pattern(path)
     by_module = {".py": rf"(?<![\w./-]){re.escape(stem)}\.[A-Za-z_]|\b(?:import|from)\s*{re.escape(stem)}\b"}
     for ext in (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"):
         by_module[ext] = rf"\brequire\(['\"]\./?{re.escape(stem)}\b"
     return bool(re.search("|".join(filter(None, (by_path, by_module.get(Path(path).suffix)))), text))
 
-def missing_after(tasks):
+def missing_after(tasks, defined=None):
     """Code a task's brief or test command names that other tasks own, when the task has no `after:` path to or from any of them:
     {task id: {owner id: [files]}}. The owner named is the first to change the file. The brief states every signature its test
-    asserts, so a file it names is code the test imports or calls, and the task cannot pass until the owner's change is in its worktree."""
+    asserts, so a file it names is code the test imports or calls, and the task cannot pass until the owner's change is in its worktree.
+    With `defined` (base_definitions), a file whose every name the brief uses is already on the base is no dependency (on_base)."""
     code = [m for m in tasks if m.get("kind") != "design"]
     found = {}
     for m in code:
@@ -51,7 +91,7 @@ def missing_after(tasks):
         owners = {}
         for o in code:
             for f in o["files"] if o["id"] != m["id"] else ():
-                if f not in m["files"] and not fc_worktree.GENERATED_RE.search(f) and uses(text, f):
+                if f not in m["files"] and not fc_worktree.GENERATED_RE.search(f) and uses(text, f) and not on_base(text, f, defined):
                     owners.setdefault(f, []).append(o["id"])
         for f, ids in owners.items():
             if any(ordered(tasks, m["id"], i) or ordered(tasks, i, m["id"]) for i in ids):
@@ -93,7 +133,7 @@ def cmd_tasks(a):
         print("\n  WARNING two tasks own the same file (they must be one task, or one must be `after:` the other):")
         for f, ids in clashes.items():
             print(f"    {f}: {', '.join(ids)}")
-    loose = missing_after_text(missing_after(open_tasks))
+    loose = missing_after_text(missing_after(open_tasks, base_definitions(repo, trunk_head)))
     if loose:
         print("\n  WARNING a task names code another task owns, with no `after:` on it (its test cannot pass until that code is in its worktree):")
         for line in loose:
@@ -145,9 +185,10 @@ def run_waves(tasks):
         done |= set(wave)
     return waves
 
-def spec_check(data, checks=()):
+def spec_check(data, checks=(), defined=None):
     """(ok, issue id, level, gaps) for the feature, then every non-canceled issue: a story or a task. `checks` are
-    verify.json's: a task whose `test:` is one of them runs the whole suite after every implementer turn."""
+    verify.json's: a task whose `test:` is one of them runs the whole suite after every implementer turn. `defined` says what
+    the base already has (base_definitions), so a task naming only that code needs no `after:`."""
     suite = {" ".join(c.split()) for c in checks}
     issues = [i for i in data["issues"] if (i.get("status") or "").lower() not in fc_tasks.CANCELED]
     tasks = [t for t in (fc_tasks.task_from_issue(i) for i in issues) if t]
@@ -167,7 +208,7 @@ def spec_check(data, checks=()):
     if clashes:
         detail = "; ".join(f"{f}: {', '.join(ids)}" for f, ids in clashes.items())
         gaps.append(f"two tasks own the same file (they must be one task, or one must be `after:` the other): {detail}")
-    loose = missing_after(tasks)
+    loose = missing_after(tasks, defined)
     to_run = [t for t in tasks if (t["linear_state"] or "").lower() not in ("in review", "done")]  # a passed or merged layer never runs again
     waves = run_waves(to_run)
     if len(to_run) >= 3 and len(waves) > len(to_run) / 2:
@@ -213,22 +254,24 @@ def spec_check(data, checks=()):
     return out
 
 def cmd_spec_check(a):
-    """The feature, its stories, and its tasks against the spec: one PASS or FAIL line each, exit 1 on any FAIL."""
+    """The feature, its stories, and its tasks against the spec: one PASS or FAIL line each, exit 1 on any FAIL.
+    The base is the project's head, or the repo's HEAD for --stdin, which names no project."""
+    repo = Path(a.repo).resolve()
     if a.stdin:
         try:
             d = json.loads(sys.stdin.read())
         except ValueError as e:
             sys.exit(f"spec-check: stdin is not JSON ({e}); expected {fc_tasks.SYNC_SHAPE}")
-        checks = []
+        checks, base = [], "HEAD"
     else:
         proj = fc_core.project_dir(a)
         fc_tasks.load_tasks(proj, required=True)
         cache = fc_tasks.linear_cache(proj)
         d = {"feature": cache.get("feature") or {},
              "issues": [dict(v, id=k) for k, v in (cache.get("issues") or {}).items()]}
-        checks = fc_core.project_config(proj).get("checks", [])
+        checks, base = fc_core.project_config(proj).get("checks", []), fc_status.project_head(repo, proj)
     bad = False
-    for ok, ident, level, gaps in spec_check(d, checks):
+    for ok, ident, level, gaps in spec_check(d, checks, base_definitions(repo, base)):
         print(f"{'PASS' if ok else 'FAIL'} {ident} {level}" + (f": {'; '.join(gaps)}" if gaps else ""))
         bad = bad or not ok
     if bad:

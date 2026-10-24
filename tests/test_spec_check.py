@@ -168,6 +168,31 @@ class SpecCheck(unittest.TestCase):
         self.assertEqual(miss(dict(shrink, kind="design"), jev), {})  # a design task builds a page, not code
         self.assertEqual(fc.fc_spec.missing_after_text(miss(shrink, jev)), ["004 names bin/fc_shrink.py, which 001 owns: add `after: 001`"])
 
+    def test_a_task_naming_only_code_already_on_the_base_needs_no_after(self):
+        base = {"bin/fc_tasks.py": {"load_tasks", "code_tasks"}}
+        miss = lambda body: fc.fc_spec.missing_after([owner, dict(user, body=body)], lambda path, name: name in base.get(path, ()))
+        owner = {"id": "001", "files": ["bin/fc_tasks.py"], "body": "Add a new helper to fc_tasks.", "test": "t"}
+        user = {"id": "002", "files": ["bin/fc_other.py"], "body": "", "test": "t"}
+        for body in ("Call fc_tasks.load_tasks (exists on trunk) from the new command.", "from fc_tasks import load_tasks, code_tasks"):
+            self.assertEqual(miss(body), {}, body)
+        # a name the base lacks is the owner's to add; the path or a bare import says nothing of which part it needs
+        for body in ("Call fc_tasks.new_helper.", "fc_tasks.load_tasks and fc_tasks.new_helper", "from fc_tasks import load_tasks, new_helper",
+                     "Call fc_tasks.load_tasks in bin/fc_tasks.py", "import fc_tasks; fc_tasks.load_tasks"):
+            self.assertEqual(miss(body), {"002": {"001": ["bin/fc_tasks.py"]}}, body)
+
+    def test_the_base_is_read_from_git_at_the_given_revision(self):
+        with tempfile.TemporaryDirectory() as d:
+            git = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+            git("init", "-q"); Path(d, "m.py").write_text("import os\nX = 1\nA, (B, C) = 1, (2, 3)\nT: int = 0\n\ndef f():\n    inner = 1\n\nclass K: pass\nasync def g(): pass\n")
+            Path(d, "bad.py").write_text("def broken(:\n")
+            git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+            Path(d, "m.py").write_text("def later(): pass\n")  # the worktree is not the base
+            defined = fc.fc_spec.base_definitions(d, "HEAD")
+            self.assertEqual([n for n in ("X", "A", "B", "C", "T", "f", "K", "g") if not defined("m.py", n)], [])
+            for path, name in (("m.py", "inner"), ("m.py", "os"), ("m.py", "later"), ("bad.py", "broken"), ("gone.py", "f")):
+                self.assertFalse(defined(path, name), (path, name))
+            self.assertFalse(fc.fc_spec.base_definitions(d, "")("m.py", "X"))  # no base revision defines nothing
+
     def test_spec_check_and_tasks_say_which_after_a_task_is_missing(self):
         brief = lambda **kv: task("ENG-4", "002", files="b.go", crit="- calls `a.go` Run", **kv)
         owner = task("ENG-3", "001", files="a.go")

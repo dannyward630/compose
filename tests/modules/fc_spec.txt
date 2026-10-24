@@ -1,5 +1,8 @@
 ordered
 file_clashes
+path_pattern
+on_base
+base_definitions
 uses
 missing_after
 missing_after_text
