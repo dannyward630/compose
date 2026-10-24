@@ -374,10 +374,11 @@ class MarkReady(unittest.TestCase):
         self.assertEqual(paths - {""}, {"team", "team.labels", "team.labels.nodes", "children", "children.nodes", "parent", "parent.children", "parent.children.nodes"})
 
     @staticmethod
-    def node(ident, state, *labels, blocked=False):
+    def node(ident, state, *labels, blocked=False, tasks=("Todo",)):
         rels = [{"type": "blocks", "issue": {"identifier": "ENG-99", "state": {"name": "Todo"}, "labels": {"nodes": []}}}] if blocked else []
         return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "state": {"name": state},
-                "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels}}
+                "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels},
+                "children": {"nodes": [{"state": {"name": t}} for t in tasks]}}
 
     def mark(self, *expected):
         self.assertEqual(fc.fc_linear.linear_mark_ready("ENG-1"), [{"id": i, "title": "T " + i} for i in expected])
@@ -391,10 +392,16 @@ class MarkReady(unittest.TestCase):
                                              {"id": "id-ENG-3", "labels": ["l-bug", "l-area"]}, {"id": "id-ENG-6", "labels": ["l-ready"]}])
         self.assertCountEqual(self.said, ["linear ENG-2 -> Ready", "linear ENG-3 -> not Ready", "linear ENG-6 -> Ready"])
 
+    def test_a_story_without_a_live_task_is_not_ready(self):
+        self.children = [self.node("ENG-2", "Todo", tasks=()), self.node("ENG-3", "Backlog", "Ready", tasks=("Canceled", "canceled")),
+                         self.node("ENG-4", "Todo", tasks=("Canceled", "Todo"))]
+        self.mark("ENG-4")
+        self.assertCountEqual(self.updates, [{"id": "id-ENG-3", "labels": []}, {"id": "id-ENG-4", "labels": ["l-ready"]}])
+
     def test_the_epic_children_follow_the_feature_children(self):
         self.team = [{"id": "l-ready", "name": "READY"}]
         self.children = [self.node("ENG-9", "Todo")]
-        self.parent = {"children": {"nodes": [self.node("ENG-1", "Todo", "READY"), self.node("ENG-5", "In Progress", "READY"), self.node("ENG-3", "Todo")]}}
+        self.parent = {"children": {"nodes": [self.node("ENG-1", "Todo", "READY", tasks=()), self.node("ENG-5", "In Progress", "READY"), self.node("ENG-3", "Todo", tasks=())]}}  # features need no story to be ready
         self.mark("ENG-9", "ENG-1", "ENG-3")
         self.assertCountEqual(self.updates, [{"id": "id-ENG-9", "labels": ["l-ready"]}, {"id": "id-ENG-5", "labels": []},
                                              {"id": "id-ENG-3", "labels": ["l-ready"]}])
@@ -685,7 +692,7 @@ class FeatureAfterLink(unittest.TestCase):
 
 
 class ReadyTreeQuery(unittest.TestCase):
-    FRAGMENT = """fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } }
+    FRAGMENT = """fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
     @staticmethod
