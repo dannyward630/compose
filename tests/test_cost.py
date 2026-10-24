@@ -75,7 +75,7 @@ class SessionUsage(unittest.TestCase):
         self.assertEqual(fc_sessions.find_session(cwd, START, "/p/a.brief.md"), d / "a2.jsonl")
 
     def test_usage_reads_only_what_a_log_gained_since(self):
-        """A live session's log grows every turn and reaches tens of MB; `status --watch` must not parse it whole every two seconds."""
+        """A live session's log grows every turn and reaches tens of MB; `status` must not parse it whole on every call."""
         log = self.home / "d.jsonl"
         write(log, [asst("m1", input_tokens=1, output_tokens=2), asst("m2", input_tokens=3, output_tokens=4), asst("m3", input_tokens=5, output_tokens=6)], 1_000_000)
         with mock.patch.object(fc_sessions.json, "loads", wraps=json.loads) as loads:
