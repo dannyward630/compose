@@ -63,6 +63,7 @@ fc_finish
 fc_setup
 fc_update
 fc_figmaplan
+fc_figmanodes
 fc_figma
 fc_testred
 fc_briefs

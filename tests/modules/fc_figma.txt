@@ -1,6 +1,7 @@
 FIGMA_CONNECTOR
 FRAMELINK_SETUP
 framelink_fetch
+empty_file
 figma_publish
 DESIGNER_BRIEF
 cmd_designer
@@ -24,15 +25,6 @@ confirm_asks
 figma_judge_chunks
 figma_reask
 store_figma
-STYLE_KEYS
-GENERATED_STYLE
-walk
-put
-inline_styles
-sub_id
-renamed
-restore_hidden
-self_contained
 figma_tree
 figma_capabilities
 cmd_figma
