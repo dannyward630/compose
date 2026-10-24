@@ -73,6 +73,10 @@ compose designcrews --project <slug>   # one design-NNN builder per open design 
 compose teardown --project <slug>                     # close finished tabs; the team lead's done runs it
 ```
 
+A teammate that works in a repo of its own (`--work-repo`, or `--cwd` in a git repo) holds a treehouse slot of that repo.
+`crew start` and `crew list` give back the slot of every teammate whose tab is gone, when treehouse shows that teammate as its holder and nothing in it is uncommitted; its branch stays.
+A slot with uncommitted work stays leased, with one line naming the paths.
+
 The config sets the model for each teammate role, as [workspaces.md](workspaces.md#crew-models) explains.
 
 ## Layout

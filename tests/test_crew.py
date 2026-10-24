@@ -836,6 +836,63 @@ class ToolsmithWorktree(unittest.TestCase):
         self.assertEqual((same, none), (slot, None))  # a worktree leased for this teammate runs where it was pointed
 
 
+class EndedSlots(unittest.TestCase):
+    """A teammate's treehouse slot goes back to the pool once its tab is gone, and only then: a pool of finished teammates' slots
+    left a new crew with nothing to lease."""
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, self.base, True)
+        self.repo, self.slot = self.base / "tool", self.base / "slot"
+        self.proj = self.base / "app" / ".compose" / "shop"; self.proj.mkdir(parents=True)
+        self.git(self.repo.parent, "init", "-q", "-b", "main", str(self.repo))
+        self.git(self.repo, "commit", "-q", "--allow-empty", "-m", "init")
+        self.git(self.repo, "worktree", "add", "-q", "-b", "shop-toolsmith-1", str(self.slot))
+        self.holder, self.agents, self.returned = "compose:shop-toolsmith", [], []
+        self.record("shop-toolsmith", worktree=str(self.slot), branch="shop-toolsmith-1", cwd=str(self.base / "app"))
+
+    def git(self, cwd, *a):
+        return fc.fc_core.sh(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd).stdout.strip()
+
+    def record(self, name, **c):
+        (fc.fc_crew.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps({"name": name, "agent": name, "title": "t", "space": "w1", "tab": "w1:t2", **c}))
+
+    def treehouse(self, repo, *args, check=True):
+        if args[0] == "return":
+            self.returned.append(Path(args[-1]))
+        status = [{"path": str(self.slot), "status": "leased", "lease_holder": self.holder}]
+        return subprocess.CompletedProcess(args, 0, json.dumps(status) if args[0] == "status" else "", "")
+
+    def release(self):
+        with mock.patch.object(fc.fc_worktree, "treehouse", self.treehouse), mock.patch.object(fc.fc_herdr, "herdr", return_value={"agents": self.agents}), \
+                mock.patch("builtins.print"):
+            fc.fc_crew.release_ended_slots(self.proj, self.agents or [{"name": "shop-orchestrator", "workspace_id": "w1"}])
+        return self.returned
+
+    def test_the_slot_of_a_teammate_whose_tab_is_gone_goes_back_and_its_branch_stays(self):
+        self.assertEqual(self.release(), [self.slot])
+        self.assertTrue(self.git(self.repo, "rev-parse", "--verify", "shop-toolsmith-1"))
+
+    def test_a_running_teammate_a_dirty_slot_and_a_slot_leased_to_someone_else_stay(self):
+        self.agents = [{"name": "shop-toolsmith", "workspace_id": "w1"}]
+        self.assertEqual(self.release(), [])
+        self.agents = []
+        (self.slot / "wip.txt").write_text("not committed\n")
+        self.assertEqual(self.release(), [])
+        (self.slot / "wip.txt").unlink()
+        self.holder = "compose:shop-other"
+        self.assertEqual(self.release(), [])
+
+    def test_crew_list_gives_the_slot_back(self):
+        a = type("A", (), {"action": "list", "role": None})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_worktree, "treehouse", self.treehouse), \
+                mock.patch.object(fc.fc_herdr, "herdr", return_value={"agents": [{"name": "shop-orchestrator", "workspace_id": "w1"}]}), mock.patch("builtins.print"):
+            fc.fc_crew.cmd_crew(a)
+        self.assertEqual(self.returned, [self.slot])
+
+    def test_a_team_lead_in_the_project_worktree_has_no_slot_to_give_back(self):
+        self.record("shop-toolsmith", cwd=str(self.slot))  # no branch, no worktree: it ran where it was pointed
+        self.assertEqual(self.release(), [])
+
+
 class AwaitStart(unittest.TestCase):
     """The brief is the session's initial prompt, so a prompt sent right after start cannot come first. crew start returns only
     once the agent is working on it, presses Enter if the box kept the text, sends the brief again if the box lost it, and names
