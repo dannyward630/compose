@@ -143,6 +143,10 @@ def code_tasks(tasks):
     """The tasks that change code: a design task never clones, stacks, or is judged from files."""
     return [t for t in tasks if t.get("kind") != "design"]
 
+def runnable(tasks):
+    """The code tasks an implementer builds: a `kind: hand` task is built by hand on its own branch, so it is stacked and verified but never dispatched."""
+    return [t for t in code_tasks(tasks) if t.get("kind") != "hand"]
+
 
 FINISHED = ("passed", "hand_done")  # a layer whose branch is the record: a run keeps it unless told to --redo
 

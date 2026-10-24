@@ -123,7 +123,7 @@ def cmd_run(a):
                  "names first; `--unproven` runs anyway.")
     require_committed(repo, not a.no_stack, getattr(a, "force", False))
     fc_linear.refresh_tasks(proj)  # a task edited on Linear since the last sync reaches its implementer
-    tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
+    tasks = [m for m in fc_tasks.runnable(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
     redo = bool(getattr(a, "redo", False))

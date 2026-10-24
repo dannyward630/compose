@@ -422,6 +422,12 @@ class DesignAndHandTasks(unittest.TestCase):
         self.assertEqual(got["ENG-3"], (True, "task", []))
         self.assertEqual(got["ENG-4"], (False, "task", ["empty `nodes:`"]))
 
+    def test_a_hand_task_names_files_but_has_no_protected_test(self):
+        hand = lambda ident, tid, files: task(ident, tid, files=files, protected="", kind="hand", test="python3 -m unittest tests.a")
+        got = check([hand("ENG-3", "001", "tests/a.py"), hand("ENG-4", "002", ""), task("ENG-5", "003", protected="")])
+        self.assertEqual((got["ENG-3"], got["ENG-4"]), ((True, "task", []), (False, "task", ["empty `files:`"])))
+        self.assertEqual(got["ENG-5"], (False, "task", ["empty `protected:`"]))
+
     def test_task_labelled_issue_without_a_block_is_a_hand_task_of_its_story(self):
         lowfi = {**story("ENG-5", 6, "Done"), "labels": ["Task"], "parentId": "ENG-4"}
         got = check([task("ENG-3", "001"), {**story("ENG-4", 1), "parentId": "ENG-1"}, lowfi])

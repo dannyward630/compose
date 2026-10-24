@@ -7,7 +7,7 @@ def stack_depth(proj, tasks):
     import fc_tasks
     issues = fc_tasks.linear_cache(proj).get("issues") or {}
     best, best_id = "STANDARD", None
-    for i, m in enumerate(fc_tasks.code_tasks(tasks)):
+    for i, m in enumerate(fc_tasks.runnable(tasks)):
         route = fc_routerec.parse_route((issues.get(m.get("linear")) or {}).get("description") or "")
         depth = route.get("depth") if route else None
         if depth not in fc_tasks.DEPTHS:

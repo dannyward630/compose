@@ -185,7 +185,7 @@ def spec_check(data, checks=()):
             else:
                 if not meta["files"] and not meta["delete"]:
                     gaps.append("empty `files:`")
-                if not meta["protected"] and not meta["delete"] and meta.get("route") != "check-only":  # no test to write: it deletes, or its check is the proof
+                if not meta["protected"] and not meta["delete"] and meta.get("route") != "check-only" and meta["kind"] != "hand":  # no test to write: it deletes, its check is the proof, or it is built by hand
                     gaps.append("empty `protected:`")
             gaps += missing_after_text({meta["id"]: loose[meta["id"]]} if meta["id"] in loose else {})
             if " ".join(meta["test"].split()) in suite:
