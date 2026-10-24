@@ -1,3 +1,4 @@
+import shlex
 import fc_core, fc_tasks, fc_worktree, fc_layers
 
 
@@ -14,9 +15,20 @@ def missing(repo, ref, base):
     tip = fc_core.sh(["git", "log", "-1", "--format=%h %s", ref], repo, check=False).stdout.strip()
     return f"{ref} is not in {base}" + (f" (missing {tip})" if tip else "")
 
+def landed_as(repo, ref, base):
+    """The commit of `base` that carries the same patch as the tip of `ref` (same `git patch-id --stable`), or "": the tip rebased
+    into the base under another hash, as a project stacked with `init --after` holds its parent's tasks. Only what base added since
+    it diverged from `ref` is searched."""
+    fork = fc_core.sh(["git", "merge-base", ref, base], repo, check=False).stdout.strip()
+    tip = fc_core.sh(f"git show {shlex.quote(ref)} | git patch-id --stable", repo, check=False).stdout.split()
+    if not fork or not tip:
+        return ""
+    seen = fc_core.sh(f"git log -p --no-merges --format=%H {fork}..{shlex.quote(base)} | git patch-id --stable", repo, check=False).stdout
+    return next((line.split()[1] for line in seen.splitlines() if line.split()[0] == tip[0]), "")
+
 def judge(repo, base, blocker, owners):
     """(proof, None) when git shows the code of `blocker` is in `base`, else (None, why). `owners` is {project name: project dir}.
-    A task blocker counts when its passed task branch is an ancestor of base. Else, or for a blocker that is no task (a story), when
+    A task blocker counts when its passed task branch is an ancestor of base, or its tip is in base under another hash (same patch-id). Else, or for a blocker that is no task (a story), when
     every task of its project passed and the top layer of that project's stack is an ancestor of base: the layers are rebuilt
     commits, so a task whose branch was rebased into them is found there."""
     why = []
@@ -30,6 +42,8 @@ def judge(repo, base, blocker, owners):
             branch = fc_worktree.task_branch(repo, owner, task["id"])
             if in_base(repo, branch, base):
                 return f"{slug} task {task['id']}: {branch} is in {base}", None
+            if twin := landed_as(repo, branch, base):
+                return f"{slug} task {task['id']}: {branch} is in {base} as {twin[:7]}", None
             why += [f"{slug} task {task['id']}: {missing(repo, branch, base)}"]
         open_ = [m["id"] for m in tasks if not fc_tasks.task_finished(owner, m)]
         layers = fc_layers.layer_branches(repo, owner)
