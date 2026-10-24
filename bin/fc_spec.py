@@ -29,11 +29,16 @@ def file_clashes(tasks):
     return clashes
 
 def uses(text, path):
-    """Whether a brief's `text` names the code at `path`: the path itself, with or without its extension, or its module called, imported or required by name."""
+    """Whether a brief's `text` names the code at `path`: the path itself, with or without its extension, or its module called, imported or required by name.
+    A bare stem is a module name only where the file name is one: `stem.name` and `import stem` for Python, `require('./stem')` for JS and TS.
+    Elsewhere (a Go package, a JSON file) the stem is a word that other code or prose shares, so only the path counts."""
     stem = Path(path).stem
     bare = str(Path(path).with_suffix(""))
-    return bool(re.search(rf"(?<![\w./-]){re.escape(path)}(?![\w])|(?<![\w./-]){re.escape(bare)}(?![\w/])"
-                          rf"|(?<![\w./-]){re.escape(stem)}\.[A-Za-z_]|\b(?:import|from|require\(['\"]\./?)\s*{re.escape(stem)}\b", text))
+    by_path = rf"(?<![\w./-]){re.escape(path)}(?![\w])|(?<![\w./-]){re.escape(bare)}(?![\w/])"
+    by_module = {".py": rf"(?<![\w./-]){re.escape(stem)}\.[A-Za-z_]|\b(?:import|from)\s*{re.escape(stem)}\b"}
+    for ext in (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"):
+        by_module[ext] = rf"\brequire\(['\"]\./?{re.escape(stem)}\b"
+    return bool(re.search("|".join(filter(None, (by_path, by_module.get(Path(path).suffix)))), text))
 
 def missing_after(tasks):
     """Code a task's brief or test command names that other tasks own, when the task has no `after:` path to or from any of them:
