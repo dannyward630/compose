@@ -199,6 +199,27 @@ class SessionDiskCache(unittest.TestCase):
         self.saved.write_text('{"offset": 99, "seen": [')
         self.assertEqual(self.read(), (want, 1, 2))
 
+    def test_short_or_misshapen_cache_entry_falls_back_to_a_fresh_read(self):
+        self.two()
+        want = self.read()[0]
+        good = json.loads(self.saved.read_text())
+        for bad in ({}, {k: v for k, v in good.items() if k != "result"}, dict(good, stat=5), dict(good, seen=3), [1]):
+            self.saved.write_text(json.dumps(bad))
+            self.assertEqual(self.read(), (want, 1, 2))
+
+    def test_the_save_goes_through_a_temp_name_of_its_own_and_a_failed_save_costs_only_the_cache(self):
+        self.two()
+        real, seen = os.replace, []
+        def replace(src, dst):
+            seen.append(Path(src).name)
+            real(src, dst)
+        with mock.patch("os.replace", replace):
+            want = self.read()[0]
+        self.assertEqual((len(seen), seen[0] != self.saved.name + ".tmp", seen[0].startswith(self.saved.name), [x.name for x in self.saved.parent.iterdir()]), (1, True, True, [self.saved.name]))
+        self.saved.unlink()
+        with mock.patch("os.replace", side_effect=FileNotFoundError):
+            self.assertEqual(self.read()[0], want)
+
 
 def project():
     proj = Path(tempfile.mkdtemp())

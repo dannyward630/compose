@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,9 +30,10 @@ def usage(path):
     if not c:
         try:
             c = json.loads(saved.read_text())
+            c = {k: c[k] for k in ("offset", "seen", "model", "turns", "sums", "result", "stat")}
             c["seen"] = set(c["seen"])
             c["stat"] = tuple(c["stat"])
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError, TypeError):  # missing, torn, short or the wrong shape: read the log afresh
             c = None
     if c and c["stat"] == (st.st_mtime, st.st_size):
         _cache[str(p)] = c
@@ -63,11 +65,14 @@ def usage(path):
     c["result"] = dict(model=c["model"], turns=c["turns"], **c["sums"])
     c["stat"] = (st.st_mtime, st.st_size)
     _cache[str(p)] = c
-    saved.parent.mkdir(parents=True, exist_ok=True)
-    tmp = saved.with_name(saved.name + ".tmp")
-    tmp.write_text(json.dumps({"offset": c["offset"], "seen": sorted(c["seen"]), "model": c["model"],
-                               "turns": c["turns"], "sums": c["sums"], "result": c["result"], "stat": c["stat"]}))
-    tmp.rename(saved)
+    tmp = saved.with_name(f"{saved.name}.{os.getpid()}.{threading.get_ident()}.tmp")  # a name of its own: two processes saving at once never meet
+    try:
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps({"offset": c["offset"], "seen": sorted(c["seen"]), "model": c["model"],
+                                   "turns": c["turns"], "sums": c["sums"], "result": c["result"], "stat": c["stat"]}))
+        os.replace(tmp, saved)
+    except OSError:  # the cache is only a shortcut: a save that fails costs the next process one full read
+        pass
     return c["result"]
 
 
