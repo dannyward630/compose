@@ -68,7 +68,7 @@ def usage(path):
     tmp = saved.with_name(f"{saved.name}.{os.getpid()}.{threading.get_ident()}.tmp")  # a name of its own: two processes saving at once never meet
     try:
         saved.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps({"offset": c["offset"], "seen": sorted(c["seen"]), "model": c["model"],
+        tmp.write_text(json.dumps({"offset": c["offset"], "seen": sorted(c["seen"], key=lambda i: (i is None, i or "")), "model": c["model"],
                                    "turns": c["turns"], "sums": c["sums"], "result": c["result"], "stat": c["stat"]}))
         os.replace(tmp, saved)
     except OSError:  # the cache is only a shortcut: a save that fails costs the next process one full read

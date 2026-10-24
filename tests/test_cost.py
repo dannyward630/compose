@@ -185,6 +185,13 @@ class SessionDiskCache(unittest.TestCase):
         self.saved.unlink()
         self.assertEqual(self.read()[0], result)
 
+    def test_a_message_without_an_id_is_saved_beside_the_ones_with_one(self):
+        write(self.log, [asst(None, input_tokens=1, output_tokens=2), asst("m1", input_tokens=3, output_tokens=4)], 1_000_000)
+        want, opens, _ = self.read()
+        self.assertEqual((want["turns"], opens), (2, 1))
+        self.assertEqual(sorted(json.loads(self.saved.read_text())["seen"], key=str), [None, "m1"])  # the save did not raise on None beside a str
+        self.assertEqual(self.read(), (want, 0, 0))
+
     def test_log_rewritten_shorter_is_read_from_the_start(self):
         self.two()
         self.read()
