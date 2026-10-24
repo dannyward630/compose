@@ -975,15 +975,15 @@ class ToolsmithBrief(unittest.TestCase):
     def test_the_maintainers_toolsmith_runs_only_the_test_files_of_what_it_changed(self):
         self.entry("shop", "report crashed")
         out = self.brief("maintainer")
-        self.assertIn("   the compose repo, with a test that fails without the fix and passes with it, and run only the test files of what you changed, never the whole suite.\n", out)
-        for s in ("on your own branch in your own worktree of", "Never commit on main of any checkout, in ~/.compose/src, or in the project worktree: the tool refuses there."):
+        self.assertIn("   with test failing without fix, passing with it; run only test files of what you changed, never whole suite.\n", out)
+        for s in ("on own branch in your own worktree of compose repo", "Never commit on main of any checkout, in ~/.compose/src, or in project worktree: tool refuses."):
             self.assertIn(s, out)
         for state in ("maintainer", "reporter", "no-gh"):
             self.assertNotIn("run the full suite", self.brief(state), state)
         for state in ("reporter", "no-gh"):
             out = self.brief(state)
-            self.assertIn("you reproduce, diagnose, and file only", out, state)
-            self.assertNotIn("run only the test files", out, state)
+            self.assertIn("reproduce, diagnose, file only", out, state)
+            self.assertNotIn("run only test files", out, state)
 
     def test_no_entry_for_the_project_exits_naming_it(self):
         for setup in (lambda: None, lambda: self.entry("other", "not ours")):

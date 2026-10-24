@@ -491,7 +491,7 @@ class Crew(unittest.TestCase):
         with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "3"}):
             self.assertIn("at most 3 suites run at once on this machine", fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests"))
         self.assertIn("two quick runs", pre)
-        self.assertIn("Run only the test files of what you changed, never the whole suite: `compose verify` runs it.", pre)
+        self.assertIn("Run only test files of what you changed, never the whole suite: `compose verify` runs it.", pre)
         self.assertNotIn("run the whole suite once", pre)
         self.assertNotIn("before you report `done`", pre)
         self.assertNotIn("While you work run only the tests of what you changed", pre)
