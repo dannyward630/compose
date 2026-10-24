@@ -190,13 +190,16 @@ def drop_get_cache(a):
 def verb_get(a):
     if not a.target:
         sys.exit("get needs an issue id")
-    issue = read_issue(a, lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } } }",
+    issue = read_issue(a, lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } inverseRelations(first: 50) { nodes { type issue { identifier state { name } } } } comments { nodes { body createdAt user { name } } } } }",
                                                       {"id": a.target[0]})["issue"])
     in_scope(issue, a)
     if a.json:
         print(json.dumps(issue, indent=1))
         return
     print(issue_line(issue))
+    blockers = [f"{r['issue']['identifier']} ({r['issue']['state']['name']})" for r in issue.get("inverseRelations", {}).get("nodes", []) if r["type"] == "blocks"]
+    if blockers:  # --blocked-by sets the whole list, so a caller needs these before changing one
+        print("blocked by: " + ", ".join(blockers))
     if a.body:
         print_body(issue["description"])
     if a.comments:
