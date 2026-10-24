@@ -779,7 +779,7 @@ class DesignCrews(unittest.TestCase):
             issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
             issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
 
-    def run_crews(self, only=None, print_=False, busy=(), max=None, live=()):
+    def run_crews(self, only=None, print_=False, busy=(), max=None, live=(), redo=False):
         started, out = [], io.StringIO()
         def crew(ns):
             started.append(ns)
@@ -787,8 +787,8 @@ class DesignCrews(unittest.TestCase):
         agents = [{"name": fc.fc_herdr.agent_name("p", role), "workspace_id": "w1"} for role in live]
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space") as space, \
                 mock.patch.object(fc.fc_herdr, "live_agents", return_value=agents), mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value="w1"), \
-                mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
-            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
+                mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=crew), mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", out):
+            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max, redo=redo))
         return started, out.getvalue(), space
 
     def test_print_shows_one_brief_per_open_design_task(self):
@@ -846,6 +846,32 @@ class DesignCrews(unittest.TestCase):
         (self.proj / "results" / "005.json").write_text(json.dumps({"id": "005", "status": "failed"}))
         self.assertEqual([ns.role for ns in self.run_crews()[0]], ["design-005"])
 
+    def test_redo_reopens_a_hand_accepted_task_for_a_new_builder_and_sets_its_result_aside(self):
+        hand = json.dumps({"id": "004", "status": "hand_done"})
+        res = self.proj / "results" / "004.json"
+        res.write_text(hand)
+        self.assertEqual(self.run_crews(only="004")[0], [])  # without --redo it stays refused
+        started, out, _ = self.run_crews(only="004", redo=True)
+        self.assertEqual([ns.role for ns in started], ["design-004"])
+        self.assertFalse(res.exists())
+        self.assertEqual((self.proj / "results" / "004.json.before-redo").read_text(), hand)
+        self.assertEqual([(c.args[1]["id"], c.args[2]) for c in self.ev.call_args_list], [("004", "dispatched")])
+        self.assertIn("004 reopened", out)
+
+    def test_redo_needs_only_leaves_done_tasks_closed_and_touches_nothing_when_the_builder_does_not_start(self):
+        with self.assertRaises(SystemExit) as e:
+            self.run_crews(redo=True)
+        self.assertIn("--redo needs --only", str(e.exception))
+        self.assertIn("003 skipped: its state is Done", self.run_crews(only="003", redo=True)[1])
+        res = self.proj / "results" / "004.json"
+        res.write_text(json.dumps({"id": "004", "status": "hand_done"}))
+        started, out, _ = self.run_crews(only="004", redo=True, busy={"design-004"})
+        self.assertIn("design-004 not started: busy", out)
+        self.assertEqual(json.loads(res.read_text())["status"], "hand_done")
+        self.assertEqual((self.ev.called, (self.proj / "results" / "004.json.before-redo").exists()), (False, False))
+        started, out, _ = self.run_crews(only="004", redo=True, live=("design-004",))
+        self.assertEqual((started, res.exists(), self.ev.called), ([], True, False))
+
     def test_a_builder_already_running_is_skipped_with_its_reason_not_reported_as_a_failure(self):
         started, out, _ = self.run_crews(live=("design-001",))
         self.assertEqual([ns.role for ns in started], ["design-005"])
@@ -893,7 +919,7 @@ class DesignCrewsWait(unittest.TestCase):
         started, out = [], io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space"), \
                 mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=started.append), mock.patch("sys.stdout", out):
-            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
+            fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max, redo=False))
         return sorted(ns.role for ns in started), out.getvalue()
 
     def assert_waits_once(self, out):

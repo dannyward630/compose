@@ -121,8 +121,13 @@ def cmd_designcrews(a):
     """Start one design-NNN builder per open design task. `--print` shows the briefs instead."""
     proj = fc_core.project_dir(a)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
+    redo = getattr(a, "redo", False)
+    if redo and not only:
+        sys.exit("--redo needs --only <ids>: it reopens the named tasks, not every finished one")
     tasks = fc_tasks.load_tasks(proj, required=True)
     def finished(m):  # why a task needs no builder: Linear as of the last sync, else its own result (done by hand or passed before the next sync)
+        if redo:  # a reopened task is In Review or has a result; only Done or Canceled on Linear stays closed
+            return fc_tasks.task_finished(proj, m, redo=True)
         return "its state is In Review" if m.get("linear_state") == "In Review" else fc_tasks.task_finished(proj, m)
     metas = [m for m in tasks if m.get("kind") == "design" and not finished(m) and (not only or m["id"] in only)]
     for tid in sorted(only or ()):  # a named id that is skipped says why
@@ -162,12 +167,22 @@ def cmd_designcrews(a):
     metas, queued = metas[:cap], metas[cap:]
     fc_herdr.herdr_space(proj)  # once, before the parallel starts
     def start(m):
+        old = proj / "results" / f"{m['id']}.json"
+        aside = old.with_name(old.name + ".before-redo")
+        if redo and old.exists():  # the old result is set aside while the builder starts, and comes back if it does not
+            old.rename(aside)
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
                                         brief=design_brief(m, figma, proj / "results"), force=False, cwd=None, model=None))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one builder's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"design-{m['id']} not started: {e}")
+            if aside.exists() and not old.exists():
+                aside.rename(old)
+            return
+        if redo and (aside.exists() or m.get("linear_state") == "In Review"):
+            print(f"{m['id']} reopened: its issue moves back to In Progress" + (f", its old result is {aside.name}" if aside.exists() else ""))
+            fc_linear.linear_event(proj, m, "dispatched")
     failed = []
     with ThreadPoolExecutor(max_workers=len(metas) or 1) as ex:
         list(ex.map(start, metas))
