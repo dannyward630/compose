@@ -89,7 +89,7 @@ class ProveCase(unittest.TestCase):
     def test_a_case_whose_assert_says_the_feature_is_absent_is_missing_without_asking_a_model(self):
         # The same assert output was environment (path) in one prove and feature missing in the next, because jev wandered differently.
         for history in ([], [{"step": 1, "kind": "scroll", "label": "Scroll down", "page_changed": True}] * 4):
-            r = {"exit": 1, "assert_exit": 1, "assert_failed": True, "stdout": "ASSERT FAILED (c):\n- expected a new investigation at /, tab is at /chat\n",
+            r = {"exit": 1, "assert_exit": 1, "assert_failed": True, "stdout": "- no ask call reached the model\n- the planner should still run on a crisis message\n",  # the header is cut off
                  "run": {"status": "blocked", "stop_reason": "no change", "url": "http://a/features/x", "steps": len(history), "history": history}}
             with mock.patch.object(fc.fc_models, "fast_object", return_value={"verdict": "environment", "kind": "path", "why": "seed"}) as m:
                 row = fc.fc_prove.prove_case({}, {"name": "c", "url": "http://a/"}, r)
