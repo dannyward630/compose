@@ -91,7 +91,7 @@ _board = {}
 
 def board(repo, proj):
     """The project's board: every task's row, the trunk, and the stack layers. Computed with git only when its stamp changed
-    since this process last read it: `status --watch` and every parked `watch` read it every two seconds, from many loops at
+    since this process last read it: every parked `watch` reads it every two seconds, from many loops at
     once, and while nothing changed that must cost no process."""
     repo, proj = Path(repo).resolve(), Path(proj)
     stamp = board_stamp(repo, proj)

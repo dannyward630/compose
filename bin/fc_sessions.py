@@ -96,7 +96,7 @@ _found = {}
 
 def find_session(cwd, started_at, brief_file):
     """The session log of the teammate started at started_at with brief_file, or None. The directory is read again only when
-    a log was added since (its mtime): `status --watch` asks for every teammate every two seconds."""
+    a log was added since (its mtime): a parked `watch` and the status board ask for every teammate every two seconds."""
     d = log_dir(cwd)
     if not d.is_dir():
         return None

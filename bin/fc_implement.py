@@ -327,7 +327,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     original_prompt = prompt
     # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
     spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
-    def progress(state):  # `compose status --watch` reads this while the task runs
+    def progress(state):  # a parked `watch` and the status board read this while the task runs
         (proj / "results").mkdir(exist_ok=True)
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
