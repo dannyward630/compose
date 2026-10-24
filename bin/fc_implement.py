@@ -248,7 +248,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     red = run_test(meta, wt)
     if fast and red.returncode:
         return fc_fast.broken_base(proj, meta, red, base_name, branch, wt)
-    if red.returncode == 0 and not fast:
+    if red.returncode == 0 and not fast and not delete:  # a deleting task has its change to make whatever the test says
         fc_core.say(f"{tid} skip    test already passes on {base_name}; fix the test or drop the task")
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
                   "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}

@@ -1479,6 +1479,15 @@ class DeleteTasks(unittest.TestCase):
         self.assertEqual((result["status"], seen), ("passed", [["a.txt", "keep.txt"]]))
         self.assertEqual(self.tree(repo), ["a.txt", "keep.txt"])
 
+    def test_a_delete_task_whose_test_already_passes_still_deletes_and_a_task_without_delete_ends_already_green(self):
+        files = {"a.txt": "no\n", "old_test.txt": "x\n"}
+        impl = mock.Mock(side_effect=AssertionError("no turn"))
+        result, repo, _ = self.run_one(impl, {"files": [], "delete": ["old_test.txt"], "test": "test -e a.txt"}, files=files)
+        impl.assert_not_called()
+        self.assertEqual((result["status"], self.tree(repo)), ("passed", ["a.txt"]))
+        result, _, _ = self.run_one(impl, {"files": [], "test": "test -e a.txt"}, files=files)
+        self.assertEqual(result["status"], "already_green")
+
     def test_a_turn_deleting_a_file_outside_files_and_delete_is_rejected_for_scope(self):
         impl = self.edit([], lambda cwd: (cwd / "keep.txt").unlink())
         result, _, _ = self.run_one(impl, {"delete": ["gone.txt"]}, attempts=1, files={"a.txt": "no\n", "gone.txt": "z\n", "keep.txt": "k\n"})

@@ -337,10 +337,19 @@ class DeleteLine(unittest.TestCase):
             self.assertFalse(got[i][0])
             self.assertTrue(has(got[i][2], "empty `files:`"), got[i])
 
+    def test_a_task_with_no_test_to_protect_passes_when_it_is_check_only_or_deletes_and_any_other_still_fails(self):
+        got = check([task("ENG-3", "001", protected="", route="check-only"), task("ENG-4", "002", files="", protected="", delete="old.go"),
+                     task("ENG-5", "003", files="new_test.go", protected="", delete="old_test.go"), task("ENG-6", "004", protected="")])
+        for i in ("ENG-3", "ENG-4", "ENG-5"):
+            self.assertEqual(got[i], (True, "task", []), i)
+        self.assertFalse(got["ENG-6"][0])
+        self.assertTrue(has(got["ENG-6"][2], "empty `protected:`"), got["ENG-6"])
+
     def test_a_delete_only_task_still_reports_its_other_gaps(self):
-        ok, _, gaps = check([task("ENG-3", "001", files="", protected="", delete="old.go")])["ENG-3"]
+        ok, _, gaps = check([task("ENG-3", "001", crit="\n".join(f"- c{n}" for n in range(6)), files="", protected="", delete="old.go")])["ENG-3"]
         self.assertFalse(ok)
-        self.assertTrue(has(gaps, "empty `protected:`"), gaps)
+        self.assertTrue(has(gaps, "6 bullets"), gaps)
+        self.assertFalse(has(gaps, "empty `protected:`"), gaps)
         self.assertFalse(has(gaps, "empty `files:`"), gaps)
 
     def test_delete_paths_never_count_toward_the_file_cap(self):
