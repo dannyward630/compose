@@ -230,6 +230,28 @@ class ReadyCheckout(unittest.TestCase):
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
 
+    def test_clone_borrows_ignored_env_files_only(self):
+        root = Path(tempfile.mkdtemp())
+        repo, wt = root / "repo", root / "wt"
+        (repo / "app").mkdir(parents=True)
+        (repo / "app" / ".env").write_text("A=1\n")
+        (repo / "app" / ".env.local").write_text("B=2\n")
+        (repo / "app" / ".env.example").write_text("A=\n")  # tracked: the clone has its own
+        (repo / "app" / "env.ts").write_text("x\n")
+        (repo / ".gitignore").write_text(".env\n.env.*\n!.env.example\n")
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True)
+        git(repo, "init", "-q")
+        git(repo, "add", "-A")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        git(root, "clone", "-q", "--shared", str(repo), str(wt))
+        fc.fc_worktree.ready_checkout(repo, wt)
+        fc.fc_worktree.ready_checkout(repo, wt)
+        for name in (".env", ".env.local"):
+            self.assertTrue((wt / "app" / name).is_symlink())
+            self.assertEqual((wt / "app" / name).read_text(), (repo / "app" / name).read_text())
+        self.assertFalse((wt / "app" / ".env.example").is_symlink())
+        self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
+
     def test_install_command_replaces_borrowing(self):
         root = Path(tempfile.mkdtemp())
         repo, wt = root / "repo", root / "wt"

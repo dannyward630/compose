@@ -178,7 +178,7 @@ Each task runs in its own shared-object clone.
 The prompt states the clone's absolute root and lists every editable file as an absolute path.
 The absolute paths are there because project docs often name the original checkout, and models edit those instead.
 The dispatcher reverts and flags any write into the main checkout.
-Clones borrow the main checkout's git-ignored installs as symlinks, so `node_modules`, `vendor`, and `.venv` come along without a fresh install.
+Clones borrow the main checkout's git-ignored installs as symlinks, so `node_modules`, `vendor`, and `.venv` come along without a fresh install, and so do its git-ignored `.env` and `.env.*` files.
 A project whose build output depends on where `node_modules` lives sets `install` in verify.json, and each clone runs that command instead.
 
 ## Model choices
