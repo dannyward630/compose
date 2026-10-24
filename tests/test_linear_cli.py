@@ -177,15 +177,17 @@ class SyncFromLinear(unittest.TestCase):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
     def node(self, i, parent, blocked=()):
-        desc = f"brief {i}\n\n```compose\nid: 00{i[-1]}\ntest: t\n```" if parent == "ENG-2" else f"text {i}"
+        task = parent in ("ENG-2", "ENG-22")
+        desc = f"brief {i}\n\n```compose\nid: 00{i[-1]}\ntest: t\n```" if task else f"text {i}"
         return {"identifier": i, "title": f"T{i}", "description": desc, "state": {"name": "Todo"}, "parent": {"identifier": parent} if parent else None,
-                "labels": {"nodes": [{"name": "Task" if parent == "ENG-2" else "Story"}] if parent else []},
+                "labels": {"nodes": [{"name": "Task" if task else "Story"}] if parent else []},
                 "inverseRelations": {"nodes": [{"type": "blocks", "issue": {"identifier": b, "state": {"name": state}, "labels": {"nodes": [{"name": l} for l in labels]}}}
                                                for b, state, labels in blocked] + [{"type": "related", "issue": {"identifier": "ENG-99"}}]}}
 
     def gql(self, query, variables):
         self.queries.append(query)
-        kids = {"ENG-1": ["ENG-2", "ENG-3"], "ENG-2": ["ENG-4", "ENG-5", "ENG-6"], "ENG-3": []}
+        kids = {"ENG-1": ["ENG-2", "ENG-3"], "ENG-2": ["ENG-4", "ENG-5", "ENG-6"], "ENG-3": [],
+                "ENG-20": ["ENG-21"], "ENG-21": ["ENG-22"], "ENG-22": ["ENG-23"]}  # ENG-20: a design-system epic > feature > story > task
         if "children" not in query:
             return {"issue": self.node("ENG-1", None)}
         ids, after = kids[variables["id"]], variables["after"]
@@ -232,6 +234,18 @@ class SyncFromLinear(unittest.TestCase):
     def test_stories_scope_skips_other_stories_children(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-3"]}))
         self.assertEqual([i["id"] for i in fc.fc_linear.linear_sync_payload(self.proj)["issues"]], ["ENG-3"])
+
+    def test_design_epic_tasks_are_read_with_the_features_tasks(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "design_epic": "ENG-20"}))
+        data = fc.fc_linear.linear_sync_payload(self.proj)
+        self.assertEqual([i["id"] for i in data["issues"]], ["ENG-2", "ENG-4", "ENG-5", "ENG-6", "ENG-3", "ENG-21", "ENG-22", "ENG-23"])
+        self.assertIn("4 task(s) synced", self.sync())
+        self.assertEqual([t["linear"] for t in json.loads((self.proj / "results" / "tasks.json").read_text())["tasks"]],
+                         ["ENG-23", "ENG-4", "ENG-5", "ENG-6"])
+
+    def test_design_epic_tasks_survive_a_stories_scope(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "stories": ["ENG-2"], "design_epic": "ENG-20"}))
+        self.assertIn("4 task(s) synced", self.sync())
 
     def test_no_key_names_the_workspace_and_the_stdin_form(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "WORKSPACE", "work"):

@@ -23,7 +23,8 @@ def linear_children(ident):
 
 def linear_sync_payload(proj):
     """The payload `sync` takes on stdin, read from Linear (read-only) for the feature in linear.json: the feature, its
-    children, and theirs. A project scoped to stories fetches only those stories' children."""
+    children, and theirs. A project scoped to stories fetches only those stories' children. A `design_epic` in linear.json adds
+    that epic's features, their stories, and the stories' tasks."""
     link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
     if not link.get("feature"):
         sys.exit(f'{proj / "linear.json"}: needs {{"feature": "<issue id, e.g. ENG-123>"}}, the Linear feature this project builds')
@@ -40,6 +41,10 @@ def linear_sync_payload(proj):
             if stories and child["identifier"] not in stories:
                 continue
             issues += [child, *linear_children(child["identifier"])]
+        for feature_issue in linear_children(link["design_epic"]) if link.get("design_epic") else []:
+            issues.append(feature_issue)
+            for story in linear_children(feature_issue["identifier"]):
+                issues += [story, *linear_children(story["identifier"])]
     except (RuntimeError, OSError) as e:  # urllib errors name the status, never the key
         sys.exit(f"sync: Linear failed ({str(e)[:200]}); compose sync --stdin still works ({fc_tasks.SYNC_SHAPE})")
     return {"feature": {"id": feature["identifier"], "title": feature["title"], "description": feature["description"] or ""},

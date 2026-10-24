@@ -36,6 +36,15 @@ def framelink_fetch(key, node=None, depth=None, env_file=None):
         raise RuntimeError(f"framelink fetch failed (exit {r.returncode}): {err}")
     return r.stdout
 
+def empty_file(key):
+    """True when the Figma REST API reads the file and no page has a frame yet, which Framelink's whole-file fetch cannot parse
+    ("Cannot read properties of undefined (reading 'children')"); false when the file has content or REST cannot read it either."""
+    try:
+        pages = fc_figmaplan.figma_api(f"/files/{key}?depth=2", setup=FRAMELINK_SETUP)["document"]["children"]
+    except (RuntimeError, KeyError, TypeError):
+        return False
+    return not any(p.get("children") for p in pages)
+
 def figma_publish(a, proj):
     """`figma publish`, run right before asking the product owner to publish a library; stores the library and the one open ask in linear.json; `--withdraw` closes that ask."""
     path = proj / "linear.json"
@@ -488,7 +497,7 @@ def figma_capabilities(a, proj, pages_now):
     path = proj / "linear.json"
     data = json.loads(path.read_text()) if path.exists() else {}
     lines, blocked = fc_figmaplan.capabilities_report(data, getattr(a, "plan", None), getattr(a, "pages", None), getattr(a, "modes", None),
-                                                      pages_now, getattr(a, "need_pages", None))
+                                                      pages_now, getattr(a, "need_pages", None), getattr(a, "need_modes", None))
     fc_core.atomic_write(path, json.dumps(data))
     print("\n".join(lines))
     if blocked:
@@ -516,11 +525,14 @@ def cmd_figma(a):
                 sys.exit("no Figma file: compose figma check --figma <url or key>")
         print(f"figma file {key} stored in {proj / 'linear.json'}; confirm the write connector with whoami through the Figma MCP")
         try:
-            top = framelink_fetch(key, depth=1)
+            pages_now = fc_figmaplan.count_pages(framelink_fetch(key, depth=1))
+            print(f"framelink reads figma file {key}")
         except RuntimeError as e:
-            sys.exit(f"framelink cannot read figma file {key}: {e}")
-        print(f"framelink reads figma file {key}")
-        return figma_capabilities(a, proj, fc_figmaplan.count_pages(top))
+            if "reading 'children'" not in str(e) or not empty_file(key):
+                sys.exit(f"framelink cannot read figma file {key}: {e}")
+            pages_now = None
+            print(f"framelink reads figma file {key} (empty: no frame on any page yet)")
+        return figma_capabilities(a, proj, pages_now)
     if not a.only:
         sys.exit("figma judge needs --only <ids>")
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
