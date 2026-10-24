@@ -173,7 +173,7 @@ class LinkedWorktrees(unittest.TestCase):
 
 
 class LinearGet(unittest.TestCase):
-    QUERY = "issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } comments { nodes { body createdAt user { name } } } }"
+    QUERY = "issue(id: $id) { identifier title description state { name } labels { nodes { name } } project { id name } parent { identifier } inverseRelations(first: 50) { nodes { type issue { identifier state { name } } } } comments { nodes { body createdAt user { name } } } }"
     args, fails = LinearProject.args, LinearProject.fails
 
     def setUp(self):
@@ -183,6 +183,7 @@ class LinearGet(unittest.TestCase):
         self.calls = []
         self.issue = {"identifier": "ENG-7", "title": "Fix the cart", "description": "Steps here.", "state": {"name": "In Progress"},
                       "labels": {"nodes": [{"name": "bug"}, {"name": "ui"}]}, "project": {"id": "p1", "name": "Shop"}, "parent": None,
+                      "inverseRelations": {"nodes": []},
                       "comments": {"nodes": [{"body": "second", "createdAt": "2026-03-04T09:00:00.000Z", "user": {"name": "Bob"}},
                                              {"body": "first", "createdAt": "2026-01-02T23:30:00.000Z", "user": {"name": "Ann"}}]}}
         for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql)):
@@ -238,6 +239,13 @@ class LinearGet(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             fc.fc_linear_cmd.verb_get(self.args("get", "ENG-7", repo=str(other)))
         self.assertIn("Changed in Linear", out.getvalue())
+
+    def test_blockers_follow_the_line_and_only_blocks_relations_count(self):
+        line = "ENG-7 In Progress bug Fix the cart"
+        rel = lambda kind, ident, state: {"type": kind, "issue": {"identifier": ident, "state": {"name": state}}}
+        self.issue["inverseRelations"]["nodes"] = [rel("blocks", "ENG-2", "Todo"), rel("related", "ENG-4", "Done"), rel("blocks", "ENG-3", "Done")]
+        self.assertEqual(self.get("ENG-7"), [line, "blocked by: ENG-2 (Todo), ENG-3 (Done)"])
+        self.assertEqual(self.get("ENG-7", body=True), [line, "blocked by: ENG-2 (Todo), ENG-3 (Done)", "Steps here."])
 
     def test_body_then_comments_oldest_first(self):
         line, ann, bob = "ENG-7 In Progress bug Fix the cart", ["--- Ann 2026-01-02", "first"], ["--- Bob 2026-03-04", "second"]
