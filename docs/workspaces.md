@@ -162,7 +162,7 @@ A Linear error never stops a run.
   When none answers, it stops before opening a tab and names each model with the error its probe got.
 - The team lead's model is the `orchestrator` entry, else `default`.
   It delegates, so it never uses `planner`.
-  The wayfinder uses `planner` when it has no entry.
+  The architect uses `planner` when it has no entry.
   Groundwork and test-writing teammates use `groundwork`.
   The designer uses `designer`, Opus 5.5 at high effort when the entry is missing.
   Builders and `design-review` use `design`, else `default`.

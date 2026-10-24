@@ -112,7 +112,7 @@ def main():
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
-                            ("wayfinder", fc_briefs.cmd_wayfinder, "print the wayfinder teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("architect", fc_briefs.cmd_architect, "print the architect teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
                             ("planner", fc_briefs.cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("designer", fc_figma.cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
@@ -125,7 +125,7 @@ def main():
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("decisions", fc_decide.cmd_decisions, "print the project's pending-decisions page: every open card in full, when it was asked, and the decisions so far; --issue picks another map"),
                             ("decide", fc_decide.cmd_decide, "record the product owner's answers on the map (`\"Q1: A\" ...` or --accept-all) with their words attached: --quote \"<what they said>\"; without it, only under away or yolo, as unconfirmed"),
-                            ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
+                            ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the architect, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
                             ("toolsmith", fc_briefs.cmd_toolsmith, "print the toolsmith teammate's brief for the project's newest tool-bug entry"),
@@ -238,7 +238,7 @@ def main():
             s.add_argument("--parallel", type=int, default=4)
             s.add_argument("--tests", action="store_true", help="measure test writers instead: each model writes each task's protected test")
             s.add_argument("--base", help="with --tests: the revision the protected tests are reset to and scored against")
-        if name in ("groundwork", "wayfinder", "explore", "planner", "designer"):
+        if name in ("groundwork", "architect", "explore", "planner", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
         if name == "planner":
             s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
@@ -249,7 +249,7 @@ def main():
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
             s.add_argument("--redo", action="store_true", help="with --only: reopen tasks finished by hand or passed, even In Review, for a new builder; their old result is kept as <id>.json.before-redo")
             s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
-        if name == "wayfinder":
+        if name == "architect":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .compose/<project>/results/contract.md")
@@ -287,7 +287,7 @@ def main():
             s.add_argument("--why", help="start: one line, the reason for the change")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
-            s.add_argument("--role", help="orchestrator (the team lead), wayfinder, or a helper's job; the agent is named <slug>-<role>")
+            s.add_argument("--role", help="orchestrator (the team lead), architect, or a helper's job; the agent is named <slug>-<role>")
             s.add_argument("--title", help="tab label, e.g. the ticket's title")
             s.add_argument("--brief", help="what to do; `-` reads it from stdin")
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done; start: start although the Mac runs on its battery")
@@ -364,6 +364,7 @@ def main():
         fc_herdr.herdr_attach()
         ap.print_help(sys.stderr)
         sys.exit(2)
+    sys.argv[1] = next((new for new, olds in fc_config.OLD_NAMES.items() if sys.argv[1] in olds), sys.argv[1])  # `compose wayfinder` is `compose architect`
     a, extra = ap.parse_known_args()
     if a.cmd == "verify" and (a.prove or a.prototype):  # their own flows, with their own reports
         a.fn = fc_prove.cmd_prove if a.prove else fc_prove.cmd_prototype

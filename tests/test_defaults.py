@@ -13,7 +13,7 @@ OPUS = {"model": "claude:claude-opus-5-5", "effort": "high"}
 ASTRA = {"model": "pi:openai/gpt-6-astra", "effort": "high"}
 CREW = {"groundwork": "claude:claude-opus-5-5", "default": "claude:claude-sonnet-5-5", "small": "claude:claude-haiku-5-5",
         "planner": {**OPUS, "fallback": ASTRA},
-        "wayfinder": {"model": "claude:claude-fable-5-1", "effort": "high", "fallback": [ASTRA, OPUS]},
+        "architect": {"model": "claude:claude-fable-5-1", "effort": "high", "fallback": [ASTRA, OPUS]},
         **{r: OPUS for r in ("orchestrator", "designer", "designer-plan", "explore", "research", "perf", "toolsmith")}}
 MODELS = {"implementer": "pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast", "fallback": None, "crew": CREW, "tiers": fc_config.DEFAULT_TIERS}
 

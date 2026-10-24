@@ -908,7 +908,7 @@ class PiKeyFromEnv(unittest.TestCase):
             replies = {("agent", "list"): {"agents": []}, ("tab", "create"): {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}},
                        ("agent", "get"): {"agent": {"agent_status": "working"}}}
             herdr = lambda *args, **kw: calls.append(args) or replies.get(args[:2], {})
-            a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": model})
+            a = type("A", (), {"action": "start", "role": "architect", "title": "t", "brief": "b", "model": model})
             with self.subTest(model=model), mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(time, "sleep"), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                     mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \

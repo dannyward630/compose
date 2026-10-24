@@ -5,7 +5,7 @@ import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_mod
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
 # The product owner talks to the engineering manager (the session they started), which stays where it was launched. Each project gets a
-# team lead in its own space (`crew start --role orchestrator`), and the team lead starts teammates of its own (a wayfinder
+# team lead in its own space (`crew start --role orchestrator`), and the team lead starts teammates of its own (a architect
 # question, a researcher). Every teammate session reports with `compose report`; `watch` turns new reports into wake events.
 CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradiction", "fallback")
 CLI_REPO = Path(__file__).resolve().parent.parent  # the compose repo itself: where a toolsmith fixes the tool
@@ -121,7 +121,7 @@ def crew_chain(role, explicit=None, pin=None):
 
 def crew_pick_full(role, explicit=None, pin=None):
     """(model, effort, note, skipped) where skipped lists why each earlier choice was passed over. (model, effort, note) for a teammate session. `--model` (a `claude:<id>` or `pi:<provider/model>`, or a name under models.crew such as `small`) wins,
-    then models.crew[<role>], then `planner` for the planning role (the wayfinder teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
+    then models.crew[<role>], then `planner` for the planning role (the architect teammate; never the team lead, which delegates), then `default`, then bare `claude`. An entry with a `fallback` (one entry or an ordered list)
     probes its model first and then each fallback in order, taking the first one its harness can run; when none can, it exits naming each model and the error its probe got, rather than starting a session that never comes up. Teammate sessions run in pi or Claude Code."""
     key, chain = crew_chain(role, explicit, pin)
     if key is None:
@@ -197,6 +197,7 @@ def cmd_crew(a):
         fc_load.wait(fc_core.say, getattr(a, "force", False))
     if a.action in ("start", "stop"):
         fc_herdr.herdr_manager_claim(proj, getattr(a, "takeover", False))
+    a.role = next((new for new, olds in fc_config.OLD_NAMES.items() if a.role in olds), a.role)  # `--role wayfinder` starts the architect
     name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":

@@ -27,7 +27,7 @@ clean
 groundwork
 explore
 trail
-wayfinder
+architect
 planner
 testcrews
 designer

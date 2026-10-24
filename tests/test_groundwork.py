@@ -65,16 +65,17 @@ class Groundwork(unittest.TestCase):
         self.assertIn("`compose verify --project p --prove`: each must fail only because the feature is missing, and `run` refuses", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
-    def test_wayfinder_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
+    def test_architect_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         out = io.StringIO()
         with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
-            fc.fc_briefs.cmd_wayfinder(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
+            fc.fc_briefs.cmd_architect(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
         brief = out.getvalue()
-        page = str(self.proj / "lavish" / "wayfinder.html")
+        page = str(self.proj / "lavish" / "architect.html")
         self.assertIn("NEB-9", brief)
         self.assertIn("Words are text (the default)", brief)
-        self.assertIn("A visual card is never asked as text, and a text card is never put on the page", brief)
+        self.assertIn("A visual card is never asked as text", brief)
+        self.assertIn("Visual cards go on the map like every card, and on one page as well", brief)
         self.assertIn("needs-user", brief)
         self.assertIn("before any poll", brief)
         self.assertIn('data-lavish-annotate="off"', brief)
@@ -102,7 +103,7 @@ class Groundwork(unittest.TestCase):
         brief = self.planner()
         for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
                   "compose sync", "spec-check --project p", "compose tasks", "change start --why", "change done",
-                  "crew start --role", "explore", "groundwork", "wayfinder", "Design", "designer"):
+                  "crew start --role", "explore", "groundwork", "architect", "Design", "designer"):
             self.assertIn(s, brief)
         runs = [m.start() for m in re.finditer(r"compose run\b", brief)]
         self.assertTrue(runs, "the brief must say the planner never runs `compose run`")
@@ -122,21 +123,22 @@ class Groundwork(unittest.TestCase):
 
     def test_briefs_name_compose_linear_verbs_and_no_linear_mcp_tool(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_wayfinder, {}), (b.cmd_planner, {"issue": None}),
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}),
                                                          (b.cmd_explore, {}))]
-        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
+        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
         for brief in printed + consts:
             self.assertEqual([t for t in self.MCP_TOOLS if t in brief], [], brief[:60])
-        _, wayfinder, planner, explore = printed
-        self.assertIn('compose linear list --search', wayfinder)
-        self.assertRegex(wayfinder, r'compose linear update[^`]*--section "## Decisions so far"')
+        _, architect, planner, explore = printed
+        self.assertIn('compose linear list --search', architect)
+        self.assertNotRegex(architect, r'compose linear update[^`]*--section "## Decisions so far"')  # answers land through `compose decide`
+        self.assertIn("compose decide", architect)
         self.assertRegex(planner, r'compose linear update[^`]*--section "## Plan"')
         self.assertIn("compose linear create", planner)
         self.assertIn("`compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says", planner)
         self.assertRegex(explore, r'compose linear update[^`]*--section "## Notes"')
         for s in ("### Codebase brief", "NEB-9"):
             self.assertIn(s, explore)
-        self.assertRegex(" ".join(b.CHANGE_BRIEF.split()), r"compose linear update[^`]*--section")
+        self.assertIn("`compose decide --change {cid}`", " ".join(b.CHANGE_BRIEF.split()))  # the change architect writes no section itself
 
     def test_planner_issue_overrides_the_feature_and_dash_reads_notes_from_stdin(self):
         brief = self.planner(issue="NEB-12", extra="-", stdin="Story NEB-12 only.\n")
@@ -306,9 +308,9 @@ class Explore(unittest.TestCase):
     def test_no_brief_names_a_graft_command(self):
         b = fc.fc_briefs
         self.assertIn('trail ask "<question>" --source', b.GROUNDWORK_BRIEF)
-        self.assertIn('trail ask "<question>" --source', b.WAYFINDER_BRIEF)
+        self.assertIn('trail ask "<question>" --source', b.ARCHITECT_BRIEF)
         self.assertIn('trail ask "<question>" --source', b.CHANGE_BRIEF)
-        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
             self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
             self.assertNotRegex(getattr(b, name), r"`graft\b", name)
 
@@ -333,18 +335,18 @@ class SectionRewrite(unittest.TestCase):
             cmd(SimpleNamespace(repo=str(self.repo), project="p", extra=None, **kw))
         return " ".join(out.getvalue().split())
 
-    def test_wayfinder_and_change_briefs_read_then_rewrite_decisions_so_far_in_step_5(self):
-        update = 'compose linear update <id> --section "## Decisions so far" --file <path>'
-        for brief in (self.printed(fc.fc_briefs.cmd_wayfinder), " ".join(fc.fc_briefs.CHANGE_BRIEF.split())):
+    def test_architect_and_change_briefs_never_write_decisions_so_far_in_step_5(self):
+        for brief in (self.printed(fc.fc_briefs.cmd_architect), " ".join(fc.fc_briefs.CHANGE_BRIEF.split())):
             step = brief[brief.index(" 5. "):brief.index(" 6. ")]
-            for s in (self.GET, self.WHOLE, update):
+            self.assertTrue(step.startswith(" 5. You never write a Decisions so far line."), step[:80])
+            for s in ("`compose decide", self.GET, "run by the engineering manager with the product owner's words attached"):
                 self.assertIn(s, step)
-            self.assertLess(step.index(self.GET), step.index(update))  # read, then write back
-            self.assertIn(self.NEVER, brief)
+            self.assertNotIn('--section "## Decisions so far"', brief)
 
     def test_change_brief_keeps_its_strike_through_format(self):
         change = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
-        for s in ("- ~~<old line>~~ ({cid}) - <new line> ({cid}: <why, naming the evidence's source>)", '"keep it as is" changes nothing in the map.'):
+        for s in ("`compose decide --change {cid}`", "`<card id>: <answer> ({cid}; product owner, <date>; said: \"<their words>\")`",
+                  "struck through, `~~<old line>~~ ({cid})`", '"keep it as is" strikes nothing'):
             self.assertIn(s, change)
 
     def test_explore_brief_reads_then_rewrites_notes_with_the_codebase_brief(self):
@@ -355,7 +357,7 @@ class SectionRewrite(unittest.TestCase):
 
     def test_no_brief_says_patch_append(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_wayfinder, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
         consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split())]
         self.assertEqual(len(consts), 7)
         self.assertEqual([brief[:60] for brief in printed + consts if "patch append" in brief], [])
@@ -649,7 +651,7 @@ class TersePlannerBrief(unittest.TestCase):
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
-        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 7142)
+        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 7250)
         self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 585)
 
     def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
@@ -1165,14 +1167,14 @@ class ContractSlice(unittest.TestCase):
 class TerseTemplatesB(unittest.TestCase):
     B = fc.fc_briefs
     META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
-    SIZES = {"GROUNDWORK_BRIEF": 3000, "WAYFINDER_BRIEF": 4888, "CHANGE_BRIEF": 3782}
-    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "WAYFINDER_BRIEF": "feature name page slug wt",
+    SIZES = {"GROUNDWORK_BRIEF": 3000, "ARCHITECT_BRIEF": 5300, "CHANGE_BRIEF": 3900}
+    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "ARCHITECT_BRIEF": "feature name page slug wt",
                     "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
     LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
               "npx -y lavish-axi {page}", "--reopen", "`yolo:`", "reminder:", "(yolo recommendation, unconfirmed, <date>)", "`away:`"]
     KEPT = {"GROUNDWORK_BRIEF": ["`compose verify --project {slug} --prove`", '`working "stubs ready: <commit>; contract at {contract}"`',
                                  '`blocked "<task>: brief lacks <what>"`', "`compose timed`", "`protected:`", "`test:`"],
-            "WAYFINDER_BRIEF": LAVISH + ["`compose linear update <id> --section \"## Decisions so far\" --file <path> --expect <hash>`"],
+            "ARCHITECT_BRIEF": LAVISH + ["`compose decide`", "`compose decisions --project {slug}`", "`compose linear get <id> --body`"],
             "CHANGE_BRIEF": LAVISH + ["`evidence`", "`compose linear get <id> --body`", "change {cid}: "]}
 
     def text(self, name):

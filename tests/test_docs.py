@@ -356,8 +356,8 @@ class PlannerReadsWritingPlans(unittest.TestCase):
 
 
 class Frame0OptIn(unittest.TestCase):
-    FIRST = "The wayfinder reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
-    OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `compose crew start --frame0` (the wayfinder restarted that way, or a helper), and only that session has the `frame0` tools."
+    FIRST = "The architect (a solutions architect: it scopes the feature with the product owner and frames the product and technical choices, each with a recommendation) reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
+    OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `compose crew start --frame0` (the architect restarted that way, or a helper), and only that session has the `frame0` tools."
     ONLY = "Only a session started with `crew start --frame0` has the `frame0` tools, pointed at that app; draw from such a session, never from an older one."
 
     def setUp(self):
@@ -365,11 +365,11 @@ class Frame0OptIn(unittest.TestCase):
         self.lines = self.text.splitlines()
 
     def test_first_sentence_after_heading(self):
-        self.assertEqual(self.lines[0], "### 0b. Find the way first, always")
+        self.assertEqual(self.lines[0], "### 0b. Shape first, always")
         self.assertEqual(self.lines[1], self.FIRST)
 
     def test_opt_in_sits_right_after_the_prototype_line(self):
-        self.assertEqual(self.text.count("--frame0` (the wayfinder"), 1)
+        self.assertEqual(self.text.count("--frame0` (the architect"), 1)
         self.assertEqual(self.lines.count(self.OPT_IN), 1)
         proto = [i for i, l in enumerate(self.lines) if l.startswith("A **prototype** question about how a screen or flow should look")]
         self.assertEqual(len(proto), 1)
@@ -491,7 +491,7 @@ class LeadRelaysOnce(unittest.TestCase):
     def test_lead_forwards_the_one_line_unchanged(self):
         line = next((l for l in self.relay if self.ONE_LINE in l), None)
         self.assertIsNotNone(line, "the relay names the one-line needs-user")
-        self.assertIn("wayfinder", line)
+        self.assertIn("architect", line)
         self.assertIn("planner", line)
         self.assertIn("unchanged", line)
         self.assertRegex(line.lower(), r"never re-?sen")
@@ -503,7 +503,7 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("`compose decisions --project <slug>`", relay)
         self.assertIn('`compose decide --project <slug> --quote "<their words>" "<card id>: <answer>"`', relay)
         self.assertIn("by card id", relay)
-        self.assertNotIn('herdr agent prompt <slug>-wayfinder "<card id>: <answer>', relay)
+        self.assertNotIn('herdr agent prompt <slug>-architect "<card id>: <answer>', relay)
 
     def test_manager_refuses_a_paraphrase_and_answers_on_a_rhythm(self):
         relay = "\n".join(self.relay)
@@ -514,7 +514,7 @@ class LeadRelaysOnce(unittest.TestCase):
 
     def test_lead_report_carries_the_line_not_the_cards(self):
         line = self.lines[self.report]
-        self.assertNotIn("carrying the wayfinder's open cards", line)
+        self.assertNotIn("carrying the architect's open cards", line)
         self.assertIn("needs-user", line)
         self.assertIn("not the cards", line)
 
@@ -570,7 +570,7 @@ class CardsOnTheMap(unittest.TestCase):
 
     def test_step_5_records_through_compose_decide_only(self):
         step = " ".join(self.step(5))
-        self.assertIn("The wayfinder never writes a Decisions so far line", step)
+        self.assertIn("The architect never writes a Decisions so far line", step)
         self.assertIn("`compose decide`", step)
         self.assertIn("(product owner, <date>; said: \"<their words>\")", step)
         self.assertIn("`compose decide --change <cid>`", step)
@@ -1301,7 +1301,7 @@ class LinkFeatures(unittest.TestCase):
         self.assertEqual(len(epic), 1)
         line = lines[epic[0]]
         self.assertTrue(line.endswith(" " + self.LINK), line)
-        self.assertIn("Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop.", line)
+        self.assertIn("Fog (its features cannot be named yet) is architect's: hand it to 0b and stop.", line)
         self.assertEqual(brief.count(self.LINK), 1)
         self.assertTrue(lines[epic[0] + 1].startswith("- Feature: "))
 
@@ -1557,7 +1557,7 @@ class DryRunDocs(unittest.TestCase):
         self.assertEqual(sum(l.count("--dry-run") for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")), 1)  # `clean --abandon` has its own
 
 
-FEATURE_HEAD = "- **feature**: if its map is not clear, wayfinder it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
+FEATURE_HEAD = "- **feature**: if its map is not clear, architect it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
 FEATURE_TAIL = " and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story."
 LEAN_PAREN = "(one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship)"
 PLANNING_MISS = "A second wave for polish or a toolchain fix the first wave could have seen is a planning miss."

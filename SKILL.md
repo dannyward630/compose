@@ -1,6 +1,6 @@
 ---
 name: compose
-description: Full fast loop for a feature, from first question to verified stacked branches. Find the way with wayfinder until decisions are settled (asked once, as text or on a Lavish page when visual, recorded on the feature in the repo's Linear project), plan, split into tiny numbered tasks with tests, fan tasks out to parallel implementers (pi running GLM 5.3 Flash through an OpenRouter preset; OpenCode and Claude per task), verify locally with jev browser runs and a Mercury review, register each chain as a gh stack, keep every task's Linear issue in step, and inside herdr run implementers as named agents in the project's herdr worktree space, steered by the team lead. Use when the user says "compose", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
+description: Full fast loop for a feature, from first question to verified stacked branches. Shape the feature with the architect until decisions are settled (asked once, as text or on a Lavish page when visual, recorded on the feature in the repo's Linear project), plan, split into tiny numbered tasks with tests, fan tasks out to parallel implementers (pi running GLM 5.3 Flash through an OpenRouter preset; OpenCode and Claude per task), verify locally with jev browser runs and a Mercury review, register each chain as a gh stack, keep every task's Linear issue in step, and inside herdr run implementers as named agents in the project's herdr worktree space, steered by the team lead. Use when the user says "compose", "fast loop", "fan out", or asks to build a feature or prototype fast. Works in any repo.
 ---
 
 # compose
@@ -12,8 +12,8 @@ This skill is the whole flow: when the user invokes it with a task, start at ste
 
 | Who | Does | Never does |
 |---|---|---|
-| You (team lead; the engineering manager likewise) | Find the way with the user (wayfinder), write the spec, start the planner teammate once wayfinder reports done and review its cut at 3b (never write the plan or every task yourself), move issues through Linear states, brief teammates for acceptance tests and any other code, dispatch, review diffs, run verify, re-split escalated tasks, submit the stack when told | Write or edit any code, test, config, or repo doc, not one line (teammates do, Rules); merge anything: a human reviewer merges the PRs on GitHub, or `compose land --yes` on the user's word (7) |
-| Teammates (Claude sessions in the project's space, 0h) | Acceptance tests with the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, wayfinder questions, research; a toolsmith (briefed by `compose toolsmith`) files compose's bugs on GitHub and, on the maintainer's machine, fixes them on a branch | Plan, re-scope their brief, address the product owner except through `report` and their own pane |
+| You (team lead; the engineering manager likewise) | Shape the feature with the user (architect), write the spec, start the planner teammate once architect reports done and review its cut at 3b (never write the plan or every task yourself), move issues through Linear states, brief teammates for acceptance tests and any other code, dispatch, review diffs, run verify, re-split escalated tasks, submit the stack when told | Write or edit any code, test, config, or repo doc, not one line (teammates do, Rules); merge anything: a human reviewer merges the PRs on GitHub, or `compose land --yes` on the user's word (7) |
+| Teammates (Claude sessions in the project's space, 0h) | Acceptance tests with the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, architect questions, research; a toolsmith (briefed by `compose toolsmith`) files compose's bugs on GitHub and, on the maintainer's machine, fixes them on a branch | Plan, re-scope their brief, address the product owner except through `report` and their own pane |
 | Designer (a Claude teammate in its own pane, 0d) | Continue design work in Figma from the ticket's level: read inputs, write the design-system epic, design stories, and design tasks on Linear, start `design-NNN` builders and a `design-review` reviewer in own panes, run the gate, hand off to code | Build in Figma (builders do), write any file in the repo (Linear only), decide a product question |
 | Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in own pane of the `implementers` tab) | One task issue's brief, named files, until its test passes, at most 350 changed lines, no documents added | Edit protected files, plan, touch other tasks, address the product owner |
 | `compose verify` | Checks, jev browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
@@ -48,14 +48,14 @@ Labels `Epic`, `Feature`, `Story`, `Task`, and `Ready` live on the Engineering t
 | level | in Linear | in compose | holds |
 |---|---|---|---|
 | **project** | the Linear project from `.compose/linear.json` | the repo | epics and features; set once, never created by you |
-| **epic** | top-level issue, label `Epic`; description is the wayfinder map | wayfinder map while in fog; once features are known, a set of projects (one per feature) the engineering manager runs together | features, as sub-issues; decisions live in its description |
+| **epic** | top-level issue, label `Epic`; description is the architect's map | the architect's map while in fog; once features are known, a set of projects (one per feature) the engineering manager runs together | features, as sub-issues; decisions live in its description |
 | **feature** | label `Feature`; sub-issue of its epic, or top-level with no epic | one compose project: worktree, plan, one stack | stories; its description is the settled spec (or the map, for a feature small enough to be its own map) |
 | **story** | label `Story`; sub-issue of its feature | a contiguous group of layers in the feature's stack | tasks; its description is one user-visible slice with acceptance criteria |
 | **task** | label `Task`; sub-issue of its story | one task issue (with its `compose` block), one stack layer | goal, acceptance criteria, test plan |
 
 A feature with one obvious slice still gets one story, so tasks always have the same parent shape.
 A bug or improvement is a feature with one story.
-Fewer levels is right for small work: an epic exists only when wayfinder finds fog (more than one feature's worth of open decisions).
+Fewer levels is right for small work: an epic exists only when architect finds fog (more than one feature's worth of open decisions).
 
 ### 0j. What you were given decides where you start
 Input is a Linear project link, an issue (epic, feature, story, or task, by URL or id such as `ENG-123`), a loose idea, or a loose idea plus a level the user names ("this is a story").
@@ -64,16 +64,16 @@ Then:
 - **project link, nothing else**: list its open epics and features; ask which one, or whether this is new work.
 - **epic**: the epic is taken through to done as a unit, but it is never one project: each feature is its own project (0a), with its own worktree, team lead, and stack.
   Path depends on whether its features are known:
-  - **Fog** (features not yet nameable): work the map with wayfinder (0b: one card set for the epic's open decisions), graduating features out of the fog.
+  - **Fog** (features not yet nameable): work the map with architect (0b: one card set for the epic's open decisions), graduating features out of the fog.
     Once every feature can be named, take the settled path.
   - **Settled** (features exist as sub-issues, or can be named from the map): create one project per feature and start a team lead for each (0h), all at once.
-    Each team lead runs its own wayfinder (0b) with groundwork (0g) feeding it; the engineering manager relays every open card set across the epic to the product owner at once (Rules: ask once).
+    Each team lead runs its own architect (0b) with groundwork (0g) feeding it; the engineering manager relays every open card set across the epic to the product owner at once (Rules: ask once).
     A feature starts from trunk unless it truly needs another feature's code (it calls, imports, or edits what that feature builds), the same rule as a task's `after:`: then `compose init --project <slug> --after <other-slug>` starts its branch from that feature's top layer (its project branch while it has none), so its stack sits on top.
-- **feature**: if its map is not clear, wayfinder it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list (one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship) and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story.
+- **feature**: if its map is not clear, architect it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list (one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship) and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story.
 - **story**: its feature is the parent; use or create that project.
   The planner teammate writes this story's tasks only.
 - **task**: planner teammate lints and re-splits it, then dispatch it alone (`run --only NNN`) through the 3b gate.
-- **loose idea**: wayfinder names the destination.
+- **loose idea**: architect names the destination.
   No fog: it is a feature; create the top-level feature issue and continue.
   Fog: it is an epic; create the epic, chart it, stop.
 - **user names the level**: create the issue at that level with the user's words as title.
@@ -87,7 +87,7 @@ A parent's state rolls up from its children; set it in the same step as the chil
 |---|---|---|---|
 | task | dispatched (`run` starts it) | its layer passed | its layer merged |
 | story | its first task is dispatched | every task is In Review or Done | every task is Done |
-| feature | the session starts work on it: wayfinder, a recorded decision, the project, or the plan | every story is In Review or Done and `verify` passed | every story is Done and the project branch merged |
+| feature | the session starts work on it: architect, a recorded decision, the project, or the plan | every story is In Review or Done and `verify` passed | every story is Done and the project branch merged |
 | epic | its first feature is In Progress | every feature is In Review or Done | every feature is Done |
 A Backlog or Todo parent with an In Progress child is a bug: fix it at once.
 Canceled children do not count.
@@ -102,7 +102,7 @@ The CLI also refreshes the `Ready` marks after every roll-up, `sync`, the end of
 
 ### 0e. Explore an existing repo first: read sections/0e.md
 
-### 0b. Find the way first, always: read sections/0b.md
+### 0b. Shape first, always: read sections/0b.md
 
 ### 0g. Groundwork and the smoke check run while the product owner answers: read sections/0g.md
 
@@ -124,10 +124,10 @@ Then:
 - Inside herdr, as the engineering manager: `compose crew list --project <slug>`.
   A live `<slug>-orchestrator` owns the project: resume the relay loop (0h), nothing else.
   None, or its tab closed: start it again with `crew start --role orchestrator`, briefed to continue from 0r.
-- As the team lead: `crew list` too; a live wayfinder teammate and helpers keep their work, so watch them, never duplicate.
-  Unanswered wayfinder cards and no live wayfinder teammate: start one again, briefed to ask them again and, when a visual page is open, to run `npx -y lavish-axi poll` on the same file (queued answers still wait there).
+- As the team lead: `crew list` too; a live architect teammate and helpers keep their work, so watch them, never duplicate.
+  Unanswered architect cards and no live architect teammate: start one again, briefed to ask them again and, when a visual page is open, to run `npx -y lavish-axi poll` on the same file (queued answers still wait there).
 - `status` shows `CHANGE <id> open`: a change of course was under way.
-  Questions unanswered and no live wayfinder teammate: start one again with `compose wayfinder --change <id>`, briefed to poll the same page.
+  Questions unanswered and no live architect teammate: start one again with `compose architect --change <id>`, briefed to poll the same page.
   Answers in: continue step 8 from the re-plan.
 - Herdr agents of a dead run are closed by the next run of their task; never close them by hand.
 
@@ -158,7 +158,7 @@ A Claude model always carries its `claude` prefix, never a bare id, so pi or Ope
 Omit it for the CLI default, `pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast` (GLM 5.3 Flash).
 Leave `model:` unset.
 A task that seems to need a stronger model is a task to split, or a decision card.
-`model: claude` (or any non-default model) on a planned task is the product owner's decision: a wayfinder card with the reason (0b), never only a later report.
+`model: claude` (or any non-default model) on a planned task is the product owner's decision: a architect card with the reason (0b), never only a later report.
 No fallback by default.
 With `models.fallback` set, a task stays on its model for `models.fallback_after` failed attempts (default 2: misses, errors, timeouts count), then moves to the fallback in a fresh session carrying the failure; a rate limit, or a provider too busy to start the turn (429 or 5xx before any token), moves it at once, and with no fallback it gets a fresh session after a wait, no attempt spent; verify's fix rounds after the first use it too.
 `bench` never falls back.
@@ -223,7 +223,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - Diagnose a bug from an end-to-end reproduction of what the user sees, not an internal error string or a hunch: name trigger and symptom, test the leading explanation with the smallest change that should flip the outcome, look for the observation that would prove it wrong.
   When a faithful reproduction is impossible, say so; never present a stand-in as equivalent.
 - Nothing is implemented beyond what the product owner settled.
-  Intake, wayfinder, stories, plan, task issues, and tests are preparation; `compose run` is the first implementing action.
+  Intake, architect, stories, plan, task issues, and tests are preparation; `compose run` is the first implementing action.
   It starts without a further go when the task list matches the settled spec, and waits for an explicit go whenever it departs from it (step 3b), every wave.
 - Tests are the contract.
   The implementer never edits them.
@@ -241,7 +241,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - You steer, you do not type.
   Talk to the product owner in outcomes, not mechanics; empty polls and no-change updates are not progress.
   Your final message stands alone: what finished, the stack, the cost, the decision needed.
-- Every round-trip to the product owner stalls the project, so ask once, through wayfinder (0b): start groundwork and the smoke check (0g) at once so toolchain findings join the map, put every decision you can see coming (scoring, toolchain, dependency bumps, an unclear quality bar) in the wayfinder's card set, every card with a recommendation.
+- Every round-trip to the product owner stalls the project, so ask once, through architect (0b): start groundwork and the smoke check (0g) at once so toolchain findings join the map, put every decision you can see coming (scoring, toolchain, dependency bumps, an unclear quality bar) in the architect's card set, every card with a recommendation.
   Keep groundwork running while the product owner answers.
   Ask mid-run only when the run cannot continue without the answer.
 - The CLI's own config is yours to fix without asking: a wrong model id, preset slug, or typo in `~/.compose/config.json` `models`, `verify.json`, or `linear.json`.
@@ -249,7 +249,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
   Switching model or provider, keys, and anything that costs money are still the product owner's.
 - Linear is the source of truth.
   What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it.
-  Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.compose/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the layers' PR text under `pr/` (step 4), the wayfinder's Lavish page under `lavish/`, and the Frame0 wireframes in `design.f0` (app data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, its state kept true at every step and level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
+  Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.compose/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the layers' PR text under `pr/` (step 4), the architect's Lavish page under `lavish/`, and the Frame0 wireframes in `design.f0` (app data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, its state kept true at every step and level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
 - After the first dispatch, a change to the map, plan, or a task brief is a change of course (step 8): opened with `change start`, closed with `change done`, never an untracked edit, so it can be undone.
   That includes step 7's re-split of an exhausted task and the product owner's edits to the task list in 3b.
 - A `PAYMENT REQUIRED` stop is the user's, not yours.

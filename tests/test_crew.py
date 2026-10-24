@@ -360,7 +360,7 @@ class Crew(unittest.TestCase):
         self.assertTrue((self.proj / "results" / "crew" / "shop-eol.json").exists())
 
     def test_guarded_roles_mark_their_own_tab_and_every_other_role_is_crew(self):
-        for role, env in (("planner", "planner"), ("planner-neb-7", "planner"), ("orchestrator", "orchestrator"), ("wayfinder", "crew"), ("q-planner", "crew")):
+        for role, env in (("planner", "planner"), ("planner-neb-7", "planner"), ("orchestrator", "orchestrator"), ("architect", "crew"), ("q-planner", "crew")):
             calls = []
             def herdr(*args, **kw):
                 calls.append(args)
@@ -625,7 +625,7 @@ class Attention(unittest.TestCase):
         self.assertEqual(runs, [["notify-send", "--", "t", body]])
 
     def test_done_prompts_no_other_crew(self):
-        """Decisions live on the map in Linear, recorded by the one wayfinder teammate; nothing is broadcast between teammates."""
+        """Decisions live on the map in Linear, recorded by the one architect teammate; nothing is broadcast between teammates."""
         self.report("shop-q-neb-1", "done", "Provider: Stripe (NEB-1)")
         self.assertEqual([c for c in self.calls if c[:2] == ("agent", "prompt")], [])
 
@@ -663,7 +663,7 @@ class Guard(unittest.TestCase):
 
     def test_planner_is_guarded_like_the_team_lead(self):
         self.assertEqual(fc.fc_hooks.GUARDED_ROLES, ("orchestrator", "planner"))
-        self.assertEqual(fc.fc_config.PLANNING_ROLES, ("wayfinder",))  # the guard change does not touch who gets `planner`
+        self.assertEqual(fc.fc_config.PLANNING_ROLES, ("architect",))  # the guard change does not touch who gets `planner`
         for tool in fc.fc_hooks.GUARDED_TOOLS:
             for role in fc.fc_hooks.GUARDED_ROLES:
                 why = fc.fc_hooks.guard_decision(tool, str(self.repo / "src/app.go"), role) or ""
@@ -673,7 +673,7 @@ class Guard(unittest.TestCase):
             self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(self.repo / f), "planner"), f)
         self.assertIsNone(fc.fc_hooks.guard_decision("Read", str(self.repo / "src/app.go"), "planner"))
         self.assertIsNone(fc.fc_hooks.guard_decision("Write", str(Path(tempfile.mkdtemp()) / "plan.md"), "planner"))  # scratch outside a repo
-        for role in ("wayfinder", "q-planner", "planners"):  # only the exact guarded roles
+        for role in ("architect", "q-planner", "planners"):  # only the exact guarded roles
             self.assertIsNone(fc.fc_hooks.guard_decision("Edit", str(self.repo / "src/app.go"), role), role)
 
     def test_a_crew_session_cannot_switch_branches_in_the_shared_project_worktree(self):
@@ -694,7 +694,7 @@ class Guard(unittest.TestCase):
 
     def test_hook_output_denies(self):
         ev = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "x.go")}})
-        for role, denied in (("orchestrator", True), ("planner", True), ("wayfinder", False)):
+        for role, denied in (("orchestrator", True), ("planner", True), ("architect", False)):
             out = io.StringIO()
             with mock.patch.dict(os.environ, {"COMPOSE_ROLE": role}), mock.patch.object(sys, "stdin", io.StringIO(ev)), \
                     mock.patch.object(sys, "stdout", out):
@@ -1089,13 +1089,13 @@ class RestrictedStart(unittest.TestCase):
                 self.assertNotIn("--mcp-config", args)  # a design builder starts no Frame0 server at all
 
     def test_no_role_keeps_the_linear_server(self):
-        for role, kw in [("orchestrator", {}), ("wayfinder", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
+        for role, kw in [("orchestrator", {}), ("architect", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
                          ("design-003", {}), ("design-review", {})]:
             with self.subTest(role=role, **kw):
                 self.assertIn("mcp__claude_ai_Linear__*", self.patterns(self.start(role, **kw)))
 
     def test_only_design_roles_keep_skills(self):
-        for role, off in [("orchestrator", True), ("planner", True), ("wayfinder", True), ("explore", True), ("toolsmith", True),
+        for role, off in [("orchestrator", True), ("planner", True), ("architect", True), ("explore", True), ("toolsmith", True),
                           ("designer", False), ("design-003", False), ("design-review", False)]:
             with self.subTest(role=role):
                 self.assertEqual("--disable-slash-commands" in self.start(role), off)
@@ -1137,12 +1137,12 @@ class RestrictedStart(unittest.TestCase):
 
     def test_no_chrome_and_trust_framing_follow_model_and_effort(self):
         trust = ["--no-chrome", "--append-system-prompt", fc.fc_crew.TRUST_PROMPT]
-        self.assertEqual(self.start("wayfinder", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
+        self.assertEqual(self.start("architect", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
         self.assertEqual(self.start("planner", effort="high")[:8], ["--model", "claude-opus-5-5", "--effort", "high", *trust, "--settings"])
         self.assertEqual(self.start("designer")[:6], ["--model", "claude-opus-5-5", *trust, "--settings"])
 
     def test_pi_start_reads_skill_md_and_keeps_its_tools(self):
-        args = self.start("wayfinder", model="pi:x/y")
+        args = self.start("architect", model="pi:x/y")
         self.assertFalse({"--no-chrome", "--settings"} & set(args))
         self.assertEqual(args[args.index("--skill") + 1], str(fc.fc_crew.CLI_REPO / "SKILL.md"))
         self.assertNotIn("--disallowedTools", args)
@@ -1171,7 +1171,7 @@ class RestrictedStart(unittest.TestCase):
         self.assertEqual(tail[5:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
 
     def test_every_claude_teammate_compacts_at_150k_through_its_settings_env(self):
-        for role in ("orchestrator", "planner", "wayfinder", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):
+        for role in ("orchestrator", "planner", "architect", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):
             with self.subTest(role=role):
                 args = self.start(role)
                 env = json.loads(args[args.index("--settings") + 1])["env"]
@@ -1185,7 +1185,7 @@ class RestrictedStart(unittest.TestCase):
                 self.assertFalse(any("AUTO_COMPACT" in x or x.startswith("--autocompact") for x in args))
 
     def test_briefs_name_skill_md_and_their_sections(self):
-        p, d, w = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.fc_briefs.WAYFINDER_BRIEF
+        p, d, w = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.fc_briefs.ARCHITECT_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
@@ -1198,7 +1198,7 @@ LINEAR_LINE = ("Linear is the record: read and write it with `compose linear` (g
 
 class PiStart(unittest.TestCase):
     def start(self, ext):
-        """(argv after `--` of the pi wayfinder's `agent start`, its project dir, its brief); `ext` names an existing herdr extension."""
+        """(argv after `--` of the pi architect's `agent start`, its project dir, its brief); `ext` names an existing herdr extension."""
         proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; proj.mkdir(parents=True)
         calls = []
         def herdr(*args, **kw):
@@ -1212,7 +1212,7 @@ class PiStart(unittest.TestCase):
             return {}
         if ext:
             (proj / ext).write_text("")
-        a = type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": "pi:x/y"})
+        a = type("A", (), {"action": "start", "role": "architect", "title": "t", "brief": "b", "model": "pi:x/y"})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
@@ -1221,7 +1221,7 @@ class PiStart(unittest.TestCase):
                 mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         start = next(c for c in calls if c[:2] == ("agent", "start"))
-        return list(start[start.index("--") + 1:]), proj, (fc.fc_crew.crew_dir(proj) / "shop-wayfinder.brief.md").read_text()
+        return list(start[start.index("--") + 1:]), proj, (fc.fc_crew.crew_dir(proj) / "shop-architect.brief.md").read_text()
 
     def test_pi_teammate_starts_with_no_mcp_and_no_extension_packages(self):
         for ext in (None, "herdr-agent-state.ts"):
@@ -1249,12 +1249,12 @@ class CardsById(unittest.TestCase):
         self.assertTrue(lines, text)
         return lines
 
-    def test_wayfinder_and_change_wait_without_polling_linear(self):
-        for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
+    def test_architect_and_change_wait_without_polling_linear(self):
+        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             self.assertIn("Never loop or poll `compose linear` while you wait", self.flat(brief, " 4. ", " 5. "))
 
-    def test_wayfinder_and_change_step_3_write_cards_then_report_one_line(self):
-        for name, brief in (("wayfinder", fc.fc_briefs.WAYFINDER_BRIEF), ("change", fc.fc_briefs.CHANGE_BRIEF)):
+    def test_architect_and_change_step_3_write_cards_then_report_one_line(self):
+        for name, brief in (("architect", fc.fc_briefs.ARCHITECT_BRIEF), ("change", fc.fc_briefs.CHANGE_BRIEF)):
             with self.subTest(name):
                 step = self.flat(brief, " 3. ", " 4. ")
                 self.assertNotIn("the text cards in full", step)
@@ -1286,7 +1286,7 @@ class CardsById(unittest.TestCase):
         self.assertIn("pins a line width or exact text, the brief holds that text verbatim", (Path(__file__).resolve().parents[1] / "sections" / "2.md").read_text())
 
     def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
-        for name in ("WAYFINDER_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):
+        for name in ("ARCHITECT_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):
             with self.subTest(name):
                 text = " ".join(getattr(fc.fc_briefs, name).split())
                 self.assertIn("card id", text)
@@ -1294,13 +1294,13 @@ class CardsById(unittest.TestCase):
 
     def test_placeholders_and_the_rest_of_the_template_stay(self):
         import string
-        fields = {"WAYFINDER_BRIEF": {"feature", "name", "page", "slug", "wt"}, "PLANNER_BRIEF": {"issue", "name", "slug", "wt"},
+        fields = {"ARCHITECT_BRIEF": {"feature", "name", "page", "slug", "wt"}, "PLANNER_BRIEF": {"issue", "name", "slug", "wt"},
                   "CHANGE_BRIEF": {"cid", "feature", "name", "page", "reflect", "slug", "why", "wt"}}
         for name, want in fields.items():
             with self.subTest(name):
                 text = getattr(fc.fc_briefs, name)
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
-        for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
+        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
 
 

@@ -40,14 +40,14 @@ class Ask(unittest.TestCase):
         self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"
         (self.proj / "results" / "crew").mkdir(parents=True)
 
-    def report(self, msg, state="needs-user", who="shop-wayfinder"):
+    def report(self, msg, state="needs-user", who="shop-architect"):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), contextlib.redirect_stdout(out):
             fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
         return out.getvalue()
 
     def sent(self):
-        return [r["message"] for r in fc.fc_crew.crew_reports(self.proj, "shop-wayfinder")]
+        return [r["message"] for r in fc.fc_crew.crew_reports(self.proj, "shop-architect")]
 
     def test_card_ids_expand_ranges_and_lists(self):
         ids = fc.fc_ask.card_ids
@@ -79,7 +79,7 @@ class Ask(unittest.TestCase):
 
     def test_a_visual_page_without_its_link_is_refused(self):
         with self.assertRaises(SystemExit) as e:
-            self.report("NEB-1: 1 cards V1; recommendation a; visual cards open in Lavish: /tmp/x/lavish/wayfinder.html")
+            self.report("NEB-1: 1 cards V1; recommendation a; visual cards open in Lavish: /tmp/x/lavish/architect.html")
         self.assertIn("lavish-axi <file>", str(e.exception))
         self.assertEqual(self.sent(), [])
 
@@ -151,7 +151,7 @@ class Ask(unittest.TestCase):
     def test_a_card_in_the_card_format_goes_out(self):
         self.ask_on_map("## Not yet specified\n" + CARD)
         self.assertEqual(len(self.sent()), 1)
-        self.assertFalse((self.proj / "results" / "crew" / "shop-wayfinder.refused").exists())
+        self.assertFalse((self.proj / "results" / "crew" / "shop-architect.refused").exists())
 
     def test_a_card_not_written_on_the_map_is_refused(self):
         out = self.ask_on_map("## Not yet specified\n- Q9: something else\n")
@@ -159,7 +159,7 @@ class Ask(unittest.TestCase):
         self.assertIn("`Q1. <question>`", out)
         self.assertIn("compose decisions", out)
         self.assertEqual(self.sent(), [])
-        self.assertTrue((self.proj / "results" / "crew" / "shop-wayfinder.refused").exists())
+        self.assertTrue((self.proj / "results" / "crew" / "shop-architect.refused").exists())
 
     def test_a_card_short_of_options_affects_or_a_recommendation_is_refused(self):
         out = self.ask_on_map("## Not yet specified\nQ2. Which auth?\nA. Clerk - affects: billing\n")
@@ -171,7 +171,7 @@ class Ask(unittest.TestCase):
         self.assertEqual(self.sent(), [])
         self.assertFalse((self.proj / "results" / "asked.json").exists(), "a refused card is not marked asked")
 
-    def test_the_format_check_reads_every_card_shape_the_wayfinder_may_write(self):
+    def test_the_format_check_reads_every_card_shape_the_architect_may_write(self):
         cards = fc.fc_ask.cards_in("1. **Q1**: Which db?\n   - Why: hosting hangs on it\n   - **A.** Postgres (affects: schema)\n   - B) SQLite - affects deploy only\n"
                                    "   - Recommended: B, the smaller one\n- Q2. Colors?\n  A. warm, affects: tokens\n  B. cool, affects: tokens\n  Recommendation: A\n")
         self.assertEqual(sorted(cards), ["Q1", "Q2"])
@@ -186,8 +186,8 @@ class Ask(unittest.TestCase):
 
 
 class Briefs(unittest.TestCase):
-    def test_wayfinder_and_change_briefs_carry_the_ask_rules(self):
-        for brief in (fc.fc_briefs.WAYFINDER_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
+    def test_architect_and_change_briefs_carry_the_ask_rules(self):
+        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
             flat = " ".join(brief.split())
             for want in ("visual cards open in Lavish: <url>", "`url:`", "--takeover", "180000 ms", "lavish-axi reply {page} --agent-reply",
                          "`browser_disconnected`", "reminder:", "`yolo:`", "(yolo recommendation, unconfirmed, <date>)"):
@@ -197,7 +197,7 @@ class Briefs(unittest.TestCase):
 
 class BriefsNameBothPostures(unittest.TestCase):
     AWAY, YOLO = "(away recommendation, unconfirmed, <date>)", "(yolo recommendation, unconfirmed, <date>)"
-    WAYFINDER = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer: "
+    ARCHITECT = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer: "
                  f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names, and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it.")
     PLANNER = f"A Decisions line ending `{AWAY}` or `{YOLO}` is a recommendation the product owner has not confirmed:"
     CHANGE = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's: "
@@ -207,7 +207,7 @@ class BriefsNameBothPostures(unittest.TestCase):
         return " ".join(getattr(fc.fc_briefs, name).split())
 
     def test_each_brief_carries_its_sentence(self):
-        for name, want in (("WAYFINDER_BRIEF", self.WAYFINDER), ("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):
+        for name, want in (("ARCHITECT_BRIEF", self.ARCHITECT), ("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):
             self.assertIn(want, self.flat(name), name)
 
     def test_planner_sentence_still_leads_into_the_built_on_rule(self):
@@ -215,18 +215,18 @@ class BriefsNameBothPostures(unittest.TestCase):
         self.assertLess(flat.index(self.PLANNER), flat.index("Built on unconfirmed: <card ids>"))
 
     def test_no_brief_writes_decisions_by_hand(self):
-        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
             flat = self.flat(name)
             self.assertNotIn('--section "## Decisions so far"', flat, name)
             self.assertIn("never write a Decisions so far line" if name == "PLANNER_BRIEF" else "You never write a Decisions so far line", flat, name)
             self.assertIn("compose decisions", flat, name)
         self.assertIn("`compose decide --change {cid}`", self.flat("CHANGE_BRIEF"))
         self.assertIn("`Supersedes: <the line as recorded>`", self.flat("CHANGE_BRIEF"))
-        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF"):
+        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF"):
             self.assertIn("`compose report` refuses", self.flat(name), name)
 
     def test_no_brief_keeps_a_yolo_only_rule_or_an_em_dash(self):
-        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
             flat = self.flat(name)
             self.assertNotIn("\u2014", flat, name)
             self.assertNotIn("starts `yolo:` is", flat, name)

@@ -157,5 +157,5 @@ The CLI writes to Linear only to keep states true, and only when the active work
 The team lead writes everything else on Linear with `compose linear`.
 
 `.compose/<project>/` holds only the CLI's files.
-Those are `linear.json`, `verify.json`, `results/`, the wayfinder's Lavish page, and the Frame0 design file.
+Those are `linear.json`, `verify.json`, `results/`, the architect's Lavish page, and the Frame0 design file.
 Nothing about the work is written to a file in the repo.

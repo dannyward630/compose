@@ -32,7 +32,7 @@ class RoleMcp(unittest.TestCase):
         d = ("figma", "framelink-figma")
         for role, servers, skills in [("toolsmith", (), False), ("implementer", (), False),
                                       ("designer", d, True), ("design-003", d, True), ("design-review", d, True),
-                                      ("planner", (), False), ("wayfinder", (), False), ("orchestrator", (), False),
+                                      ("planner", (), False), ("architect", (), False), ("orchestrator", (), False),
                                       ("no-such-role", (), False), ("design-x", (), False), ("explore", (), False)]:
             self.assertEqual((tuple(fc_mcp.servers_for(role)), fc_mcp.keeps_skills(role)), (servers, skills), role)
 
@@ -55,11 +55,11 @@ class RoleMcp(unittest.TestCase):
             self.assertEqual(set(fc_mcp.disallowed(r, s)), pat(*P) - pat("framelink-figma"))
         for r in ("designer", "design-review", "design-003"):  # the Figma plugin's connector counts as the Figma connector; another plugin's Figma server does not
             self.assertEqual(set(fc_mcp.disallowed(r, P + ["plugin_figma_figma"])), pat(*P) - pat("framelink-figma"))
-        for r in ("toolsmith", "implementer", "no-such-role", "orchestrator", "wayfinder", "designer", "design-003"):  # graft, trail, and Linear are denied for every role
+        for r in ("toolsmith", "implementer", "no-such-role", "orchestrator", "architect", "designer", "design-003"):  # graft, trail, and Linear are denied for every role
             self.assertLessEqual(pat("graft", "trail", "claude_ai_Linear"), set(fc_mcp.disallowed(r, P)), r)
             self.assertLessEqual(pat("claude_ai_Linear"), set(fc_mcp.disallowed(r, P, frame0=True)), r)
         self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P))
-        self.assertEqual(set(fc_mcp.disallowed("wayfinder", P, frame0=True)), pat(*P) - pat("frame0"))
+        self.assertEqual(set(fc_mcp.disallowed("architect", P, frame0=True)), pat(*P) - pat("frame0"))
         self.assertEqual(fc_mcp.disallowed("planner", ["graft"]), ["mcp__graft__*"])  # nothing is denied that is not installed
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), pat("LINEAR_x", "Graft2"))
 

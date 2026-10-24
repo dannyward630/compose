@@ -15,7 +15,7 @@ Whenever the team learns something new, the plan changes with it.
 you, the product owner
  └── engineering manager         the one agent you talk to
       ├── team lead              feature A: specs, steers, reviews
-      │    ├── wayfinder         turns open decisions into cards for you
+      │    ├── architect         turns open decisions into cards for you
       │    ├── planner           writes the plan and cuts the task tickets
       │    ├── designer          carries the design into Figma
       │    │    ├── builders     one per design task
@@ -30,7 +30,7 @@ you, the product owner
 
 The engineering manager takes your request and hands each feature to its own team lead, so the features of one epic move forward at the same time.
 Each team lead takes its own teammates through the full software development life cycle, from discovery to pull requests you can review in minutes.
-Inside each team, a wayfinder brings you every open decision, a planner writes the plan and cuts the tickets, and a designer carries the design into Figma with its own builders and reviewer.
+Inside each team, a architect brings you every open decision, a planner writes the plan and cuts the tickets, and a designer carries the design into Figma with its own builders and reviewer.
 Hand the engineering manager a ticket that already exists, and it starts a planner or a designer for it directly; a designer goes through the feature's team lead when one is running.
 The strongest models do the planning and bring every product decision to you.
 Fast, cheap agents write the code and verify it.
@@ -44,7 +44,7 @@ Run `/compose <what you want>` and each feature moves through the same life cycl
    An explore teammate maps your codebase through trail, so no question, ticket, or plan rests on a guess about the code.
 2. **Product decisions.**
    You are the product owner.
-   A wayfinder teammate writes every open decision as a card with options and a recommendation.
+   A architect teammate writes every open decision as a card with options and a recommendation.
    Text cards reach you in one message; visual ones (a wireframe, a layout comparison, a diagram) go on one Lavish page.
    You settle them in one pass or accept every recommendation with one word.
 3. **Design.**

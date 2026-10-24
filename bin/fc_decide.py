@@ -182,7 +182,7 @@ def cmd_decide(a):
     left = len(cards) - len(answers)
     print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
     lead = fc_herdr.agent_name(proj.name, "orchestrator")
-    note = f"decided on {ident}: {', '.join(cid for cid, _ in answers)}; read the map's Decisions so far and continue (tell the wayfinder, if one is live)"
+    note = f"decided on {ident}: {', '.join(cid for cid, _ in answers)}; read the map's Decisions so far and continue (tell the architect, if one is live)"
     if fc_herdr.herdr_env() and fc_herdr.herdr("agent", "prompt", lead, note) is not None:
         print(f"told {lead}")
     else:

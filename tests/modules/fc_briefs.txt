@@ -1,13 +1,13 @@
 detect_stacks
 GROUNDWORK_BRIEF
 cmd_groundwork
-WAYFINDER_BRIEF
+ARCHITECT_BRIEF
 PLANNER_BRIEF
 TOOLSMITH_BRIEF
 CHANGE_BRIEF
 EXPLORE_BRIEF
 cmd_explore
-cmd_wayfinder
+cmd_architect
 cmd_planner
 cmd_toolsmith
 TEST_BUDGET

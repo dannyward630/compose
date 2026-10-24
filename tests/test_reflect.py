@@ -847,10 +847,10 @@ class ChangeBrief(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", lambda p: self.repo), \
                 redirect_stdout(out):
-            fc.fc_briefs.cmd_wayfinder(SimpleNamespace(extra=extra, change=cid))
+            fc.fc_briefs.cmd_architect(SimpleNamespace(extra=extra, change=cid))
         return out.getvalue()
 
-    def test_the_change_wayfinder_asks_on_its_own_page(self):
+    def test_the_change_architect_asks_on_its_own_page(self):
         change(self.proj, self.repo, "start", why="localStorage is wiped by the sandbox")
         brief = self.brief("C1", extra="held: 003, 004")
         page = str(self.proj / "lavish" / "change-C1.html")
@@ -858,8 +858,9 @@ class ChangeBrief(unittest.TestCase):
         self.assertIn(f"npx -y lavish-axi poll {page}", brief)
         self.assertIn("localStorage is wiped by the sandbox", brief)
         self.assertIn("its `evidence` field", brief)
-        self.assertIn("- ~~<old line>~~ (C1)", brief)
-        self.assertIn('"keep it as is"', brief)
+        self.assertIn("`compose decide --change C1`", brief)
+        self.assertIn("struck through, `~~<old line>~~ (C1)`", brief)
+        self.assertIn('"keep it as is" strikes nothing', brief)
         self.assertIn("Do not touch tasks, stories, or the plan", brief)
         self.assertTrue(brief.rstrip().endswith("held: 003, 004"))
 

@@ -65,7 +65,7 @@ They format a task's files.
 When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
 `npx` fetches three tools on every use, with no pinned version.
-They are `lavish-axi` (the wayfinder page), `frame0-mcp-server`, and `figma-developer-mcp` (Framelink).
+They are `lavish-axi` (the architect page), `frame0-mcp-server`, and `figma-developer-mcp` (Framelink).
 
 ## Keys
 

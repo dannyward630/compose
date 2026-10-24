@@ -143,12 +143,12 @@ class PrTitle(LayersBase):
         self.assertEqual(self.title(["groundwork"], ["Add the stubs"], 3), "Groundwork for Stacked [PRs] (1/3)")
 
     def test_a_title_past_the_cap_is_cut_at_a_word_and_keeps_its_prefix_and_count(self):
-        long = "Test that the wayfinder, change, and explore briefs read the section with linear get, then write the whole section back"
-        self.assertEqual(self.title(["groundwork"], [long]), "Test that the wayfinder, change, and explore briefs read the section... (1/2)")
+        long = "Test that the architect, change, and explore briefs read the section with linear get, then write the whole section back"
+        self.assertEqual(self.title(["groundwork"], [long]), "Test that the architect, change, and explore briefs read the section... (1/2)")
         self.METAS = [{"id": "001", "title": long}, *PrTitle.METAS[1:]]
-        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"]), "Test that the wayfinder, change, and explore briefs... and 1 more task (1/2)")
+        self.assertEqual(self.title(["001", "002"], ["toggle work", "panel work"]), "Test that the architect, change, and explore briefs... and 1 more task (1/2)")
         (self.proj / "verify.json").write_text(json.dumps({"branch": "js-2888-react-beside-vue"}))
-        self.assertEqual(self.title(["groundwork"], [long]), "JS-2888: Test that the wayfinder, change, and explore briefs read the... (1/2)")
+        self.assertEqual(self.title(["groundwork"], [long]), "JS-2888: Test that the architect, change, and explore briefs read the... (1/2)")
         self.assertEqual(self.title(["groundwork"], ["x" * 100]), "JS-2888: " + "x" * 60 + "... (1/2)")
         self.linear()
         self.assertEqual(self.title(["001"], ["test 001", "toggle work"], 1), "JS-2888: Stacked [PRs]")

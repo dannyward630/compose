@@ -96,7 +96,7 @@ PLANNER = {"planner": {"model": "claude:claude-fable-5-1", "fallback": {"model":
 
 
 class PlannerChain(unittest.TestCase):
-    """Planning (the wayfinder teammate, never the team lead) runs on `planner`: its model when Claude Code can run it, else its fallback."""
+    """Planning (the architect teammate, never the team lead) runs on `planner`: its model when Claude Code can run it, else its fallback."""
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
@@ -120,7 +120,7 @@ class PlannerChain(unittest.TestCase):
 
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
-            self.assertEqual(fc.fc_crew.crew_pick("wayfinder")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.fc_crew.crew_pick("architect")[:2], ("claude:claude-fable-5-1", None))
             self.assertEqual(fc.fc_crew.crew_pick("orchestrator")[:2], ("claude:claude-sonnet-5-5", None))  # the team lead delegates, it does not plan
             self.assertEqual(fc.fc_crew.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
             self.assertEqual(fc.fc_crew.crew_pick("groundwork")[:2], ("claude:claude-sonnet-5-5", None))
@@ -128,7 +128,7 @@ class PlannerChain(unittest.TestCase):
 
     def test_fallback_when_the_planner_model_is_unavailable(self):
         with self.probe(False):
-            model, effort, note = fc.fc_crew.crew_pick("wayfinder")
+            model, effort, note = fc.fc_crew.crew_pick("architect")
         self.assertEqual((model, effort), ("claude:claude-opus-5-5", "high"))
         self.assertIn("unavailable", note); self.assertIn("model not found", note)
 
@@ -141,11 +141,11 @@ class PlannerChain(unittest.TestCase):
         for up, want in (({fable, astra}, astra), ({fable}, fable), ({opus}, opus)):  # a pi session has the Linear MCP too, so astra is probed first
             fc.fc_models._PROBED.clear()
             with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (m in up, "down")):
-                model, effort, note = fc.fc_crew.crew_pick("wayfinder")
+                model, effort, note = fc.fc_crew.crew_pick("architect")
             self.assertEqual(model, want)
         self.assertEqual(effort, "high")
         with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (False, "down")), self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_pick("wayfinder")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
+            fc.fc_crew.crew_pick("architect")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
         self.assertIn(f"{fable} unavailable (down)", str(e.exception)); self.assertIn(f"{opus} unavailable (down)", str(e.exception))
         self.assertIn("models.crew.planner", str(e.exception))
         self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
@@ -218,11 +218,11 @@ class PlannerChain(unittest.TestCase):
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
-            fc.fc_crew.crew_pick("wayfinder"); fc.fc_crew.crew_pick("wayfinder")
+            fc.fc_crew.crew_pick("architect"); fc.fc_crew.crew_pick("architect")
             self.assertEqual(run.call_count, 1)
         fc.fc_models._PROBED.clear()  # a new CLI process the same day reads the cache file
         with self.probe(False) as run:
-            self.assertEqual(fc.fc_crew.crew_pick("wayfinder")[0], "claude:claude-fable-5-1")
+            self.assertEqual(fc.fc_crew.crew_pick("architect")[0], "claude:claude-fable-5-1")
             run.assert_not_called()
         self.assertIn("claude-fable-5-1", json.loads(self.probe_cache.read_text()))
 
@@ -234,7 +234,7 @@ class PlannerChain(unittest.TestCase):
                 return {"tab": {"tab_id": "w9:t9"}, "root_pane": {"pane_id": "w9:p1"}}
             return {}
         proj = Path(tempfile.mkdtemp()) / "p"; (proj / "results").mkdir(parents=True)
-        a = SimpleNamespace(action="start", role="wayfinder", repo=str(proj), project="p", model=None, title=None,
+        a = SimpleNamespace(action="start", role="architect", repo=str(proj), project="p", model=None, title=None,
                             brief="plan it", cwd=None, force=False)
         with self.probe(False), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=proj), \
@@ -242,8 +242,8 @@ class PlannerChain(unittest.TestCase):
                 mock.patch.object(fc.fc_crew, "write_report"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_await_start"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             fc.fc_crew.cmd_crew(a)
-        self.assertIn("WARNING: wayfinder wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())
-        self.assertIn("teammate p-wayfinder started in tab 'wayfinder' of space p on claude:claude-opus-5-5 (high effort)", out.getvalue())
+        self.assertIn("WARNING: architect wanted its first-choice model but claude:claude-fable-5-1 unavailable", out.getvalue())
+        self.assertIn("teammate p-architect started in tab 'architect' of space p on claude:claude-opus-5-5 (high effort)", out.getvalue())
         start = next(c for c in calls if c[:2] == ("agent", "start"))
         self.assertIn("claude-opus-5-5", start); self.assertIn("--effort", start); self.assertIn("high", start)
         rec = json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())
@@ -290,7 +290,7 @@ class PiKeepsLinear(unittest.TestCase):
 
     def test_linear_roles_take_the_pi_model(self):
         self.assertFalse(hasattr(fc, "LINEAR_ROLES"))
-        for role in ("wayfinder", "planner", "designer", "planner-2"):
+        for role in ("architect", "planner", "designer", "planner-2"):
             self.chain(role.split("-")[0])
             with mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")) as probe:
                 model, _, note, skipped = fc.fc_crew.crew_pick_full(role)
@@ -299,7 +299,7 @@ class PiKeepsLinear(unittest.TestCase):
             self.assertEqual(probe.call_args_list[0].args, (self.astra,))  # probed, not filtered out
 
     def test_a_failed_pi_probe_reports_its_error(self):
-        for role in ("wayfinder", "planner", "designer"):
+        for role in ("architect", "planner", "designer"):
             self.chain(role)
             with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (m != self.astra, "model not found")):
                 model, _, note, skipped = fc.fc_crew.crew_pick_full(role)
@@ -463,9 +463,9 @@ class TestCrewTiers(unittest.TestCase):
         return json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())["model"]
 
     def test_each_role_starts_on_its_tier(self):
-        got = {r: fc.fc_crew.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "wayfinder")}
+        got = {r: fc.fc_crew.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "architect")}
         sonnet, haiku, opus, fable = (f"claude:claude-{m}" for m in ("sonnet-5-5", "haiku-5-5", "opus-5-5", "fable-5-1"))
-        self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": sonnet, "planner": opus, "wayfinder": fable})
+        self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": sonnet, "planner": opus, "architect": fable})
 
     def test_a_raw_model_starts_unchanged_for_any_role(self):
         for role in ("tests", "orchestrator", "explore"):

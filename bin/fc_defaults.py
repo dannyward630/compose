@@ -14,7 +14,7 @@ DEFAULT_MODELS = {
         "small": "claude:claude-haiku-5-5",
         "planner": {"model": "claude:claude-opus-5-5", "effort": "high",
                     "fallback": {"model": "pi:openai/gpt-6-astra", "effort": "high"}},
-        "wayfinder": {"model": "claude:claude-fable-5-1", "effort": "high",
+        "architect": {"model": "claude:claude-fable-5-1", "effort": "high",
                       "fallback": [{"model": "pi:openai/gpt-6-astra", "effort": "high"},
                                    {"model": "claude:claude-opus-5-5", "effort": "high"}]},
         **{role: {"model": "claude:claude-opus-5-5", "effort": "high"}

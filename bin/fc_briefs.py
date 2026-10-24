@@ -34,7 +34,7 @@ Phase A, toolchain (probe and report; never change dependencies):
 3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for team lead's go in this pane.
 
 Phase B, after the go:
-1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a wayfinder card for the product owner.
+1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a architect card for the product owner.
 2. Write schema, codegen, wiring, and stubs the task briefs need, with the exact signatures briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
 3. verify.json ({verify}):`checks` = every smoke command that passed. For UI or server: `e2e_setup` starting server on $E2E_PORT and client on $E2E_CLIENT_PORT (CLI hands out free ports and stops what setup starts; never hardcode unpinned ports, never free ports with lsof or kill), `e2e_setup_wait`, one `e2e` case per user flow with a goal and an `assert` script checking real log or DOM. Scripts go in {e2e_dir}, never ~/.compose or /tmp. Run checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0`, then prove e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds; fix what it names. Run both directly: under `compose timed` jev has no TypeSafe key.
 4. Commit.
@@ -59,7 +59,7 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-WAYFINDER_BRIEF = """You are wayfinder teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
+ARCHITECT_BRIEF = """You are architect teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
 Map is feature issue {feature} on Linear: description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
 1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking, look in
    Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
@@ -112,7 +112,7 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
 
 1. Level sets the job (ticket label, else parent chain):
    - Project link: list epics and features with counts; ask which to continue (needs-user).
-   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
+   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is architect's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.
@@ -204,7 +204,7 @@ Read that repo's SKILL.md first; no other skill file.
    `--comment <n>` if same bug, `--new` if not.
 {variant}"""
 
-CHANGE_BRIEF = """You are wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. Map is feature issue
+CHANGE_BRIEF = """You are architect teammate for change of course {cid} on project {slug}. Worktree: {wt}. Map is feature issue
 {feature} on Linear; its Decisions so far is the one decision record. {cid} is open because: {why}
 Screen that raised it: {reflect}
 1. Read the map, the evidence (screen file above, its `evidence` field, team lead's notes below),
@@ -212,8 +212,8 @@ Screen that raised it: {reflect}
 2. Write one card per decision line the evidence questions, in the card format: `W1. <question>` / `Supersedes: <the line as recorded>` /
    `Why: <the evidence, quoted verbatim, with its source>` / `A. keep it as is - affects: nothing` (always among them) / `B. <option> - affects: <what>`
    (two to four options) / `Recommendation: <letter> - <why>`. `compose report` refuses a card short of any of these. Never
-   choose for the product owner. Text by default; visual only when options are pictures, and then never asked as text. Visual cards go on one Lavish page, never the wayfinder's earlier page: {page}
-   Build it as the wayfinder does: same reads, card forms, accept-all button, and prompts.
+   choose for the product owner. Text by default; visual only when options are pictures, and then never asked as text. Visual cards go on one Lavish page, never the architect's earlier page: {page}
+   Build it as the architect does: same reads, card forms, accept-all button, and prompts.
 3. Write every card in full under Not yet specified on the map first, visual ones too, with a card id per card, never reusing an id;
    visual cards go on the page as well. Then ask once, all open cards in one line: open the page if any
    (`npx -y lavish-axi {page}`), and report, before any poll, one line:
@@ -221,7 +221,7 @@ Screen that raised it: {reflect}
    line>; 'visual cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed,
    copied, never retyped. The team lead forwards the line unchanged; the engineering manager opens the project's page
    (`compose decisions --project {slug}`) for the product owner, never the cards pasted in full; answers travel by card id.
-4. Wait as the wayfinder does: poll in rounds (`npx -y lavish-axi poll {page} --owner {name} --takeover`, Bash timeout
+4. Wait as the architect does: poll in rounds (`npx -y lavish-axi poll {page} --owner {name} --takeover`, Bash timeout
    180000 ms, run again at once when a round ends with nothing); acknowledge answers on the page with
    `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`; on `browser_disconnected` run
    `npx -y lavish-axi {page}` once for its `url:` and report once `needs-user "reminder: change {cid}: ..."` with it, then poll again.
@@ -260,13 +260,13 @@ def cmd_explore(a):
     print(EXPLORE_BRIEF.format(slug=proj.name, wt=wt, feature=feature)
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-def cmd_wayfinder(a):
-    """Print the wayfinder teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
+def cmd_architect(a):
+    """Print the architect teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
     --change, the brief for an open change of course: its own page, only what the evidence questions."""
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    cid, name = getattr(a, "change", None), fc_herdr.agent_name(proj.name, "wayfinder")
+    cid, name = getattr(a, "change", None), fc_herdr.agent_name(proj.name, "architect")
     if cid:
         rec = fc_change.load_change(proj, cid)
         if not rec or rec.get("done_at"):
@@ -275,7 +275,7 @@ def cmd_wayfinder(a):
                                     reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
                                     page=proj / "lavish" / f"change-{cid}.html")
     else:
-        brief = WAYFINDER_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "wayfinder.html", name=name)
+        brief = ARCHITECT_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "architect.html", name=name)
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_planner(a):

@@ -132,14 +132,14 @@ A model id names the harness that runs it.
   `crew start` probes the model, then each fallback in turn, and takes the first that answers.
   When none answers it stops before opening a tab and names each model with its error.
 - Two names are not roles: `default` is used by any role with no entry, and `small` is a name to pass to `crew start --model small`.
-- A role is looked up in this order: its own entry, then the entry named by its first word (`design-003` finds `design`), then a built-in default (the designer is Opus 5.5 at high effort), then `planner` for the wayfinder, then `default`, then bare `claude`.
+- A role is looked up in this order: its own entry, then the entry named by its first word (`design-003` finds `design`), then a built-in default (the designer is Opus 5.5 at high effort), then `planner` for the architect, then `default`, then bare `claude`.
 - The team lead is `orchestrator`, else `default`.
   It delegates, so it never uses `planner`.
 
 ## Model tiers, prices and the frontier budget
 
 Every model belongs to one of three tiers: `cheap`, `standard` and `frontier`.
-Each role starts on the highest tier it may use: `small` and `test_reader` on cheap, `explore`, `research`, `perf`, `toolsmith`, `groundwork`, `orchestrator`, the implementer and the code-writing `tests` and `fix` roles on standard, and `planner`, `wayfinder`, `designer` and `designer-plan` on frontier.
+Each role starts on the highest tier it may use: `small` and `test_reader` on cheap, `explore`, `research`, `perf`, `toolsmith`, `groundwork`, `orchestrator`, the implementer and the code-writing `tests` and `fix` roles on standard, and `planner`, `architect`, `designer` and `designer-plan` on frontier.
 An implementer with no `model:` of its own starts on cheap, or on standard when its route's depth is `DEEP`.
 A cheap model that fails `fallback_after` attempts moves to the first standard model.
 `compose tier` pins a tier for a story or the whole project, and a task's `tier:` key pins one task ([cli.md](cli.md), [tasks.md](tasks.md#model-tier)).

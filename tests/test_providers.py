@@ -193,7 +193,7 @@ class CrewPiLocal(unittest.TestCase):
             p.start(); self.addCleanup(p.stop)
         (self.d / ".compose" / "shop").mkdir(parents=True); os.environ.pop("COMPOSE_PI_MODEL", None)
     def start(self, model):
-        fc.fc_crew.cmd_crew(type("A", (), {"action": "start", "role": "wayfinder", "title": "t", "brief": "b", "model": model}))
+        fc.fc_crew.cmd_crew(type("A", (), {"action": "start", "role": "architect", "title": "t", "brief": "b", "model": model}))
         tab, start = (next(c for c in self.calls if c[:2] == pair) for pair in (("tab", "create"), ("agent", "start")))
         return list(tab), list(start)
     def test_local_pi_teammate_gets_tab_env_and_pi_args(self):

@@ -374,13 +374,13 @@ class ClaudeTopLevel(unittest.TestCase):
 class CodexDefaultBlock(unittest.TestCase):
     CFG = {"models": {"implementer": "claude:sonnet", "fallback": "claude:opus", "fix": "claude:opus",
                       "crew": {"orchestrator": {"model": "claude:opus", "effort": "high", "fallback": ["claude:opus", "pi:x/y"]},
-                               "wayfinder": "claude:opus", "planner": "pi:openai/gpt-6-astra", "tests": "claude:haiku"}}}
+                               "architect": "claude:opus", "planner": "pi:openai/gpt-6-astra", "tests": "claude:haiku"}}}
     setUp = HarnessBlock.setUp
 
     def test_every_claude_crew_role_becomes_codex_and_a_pi_role_keeps_its_value(self):
         crew = fc_config.settings(self.CFG, "codex")[1]["models"]["crew"]
         self.assertEqual({k: (v["model"] if isinstance(v, dict) else v) for k, v in crew.items()},
-                         {"orchestrator": "codex", "wayfinder": "codex", "tests": "codex", "planner": "pi:openai/gpt-6-astra", "default": "codex", "designer": "codex"})
+                         {"orchestrator": "codex", "architect": "codex", "tests": "codex", "planner": "pi:openai/gpt-6-astra", "default": "codex", "designer": "codex"})
         self.assertEqual((crew["orchestrator"]["effort"], crew["orchestrator"]["fallback"]), ("high", ["pi:x/y"]))  # the Claude fallback equals its own model, so it is dropped
 
     def test_claude_implementer_fallback_fix_and_test_reader_become_codex_and_none_stays(self):

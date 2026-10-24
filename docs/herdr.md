@@ -15,11 +15,11 @@ The roles are adapted from [firstmate](https://github.com/kunchenguid/firstmate)
 | Role | Who | Where |
 |---|---|---|
 | engineering manager | the session you started; creates the project, then only relays | the pane you started it in |
-| team lead | runs the project from wayfinder to a verified stack | tab `orchestrator`, agent `<slug>-orchestrator` |
+| team lead | runs the project from architect to a verified stack | tab `orchestrator`, agent `<slug>-orchestrator` |
 | designer | continues design work in Figma from where it stopped | tab `designer`, agent `<slug>-designer` |
 | design-NNN | one builder per design task, Claude only | tab `design NNN` |
 | design-review | one screenshot per story, findings confirmed by quoting nodes | tab `design-review` |
-| teammates | explore, wayfinder, groundwork, test writers, helpers, implementers | one tab each in the project's space |
+| teammates | explore, architect, groundwork, test writers, helpers, implementers | one tab each in the project's space |
 | planner | continues specing a ticket at step 1, 2, or 8 and cuts the task issues | tab `planner`, agent `<slug>-planner` |
 
 herdr agent names stop at 32 characters, so a longer `<slug>-<role>` keeps its role and cuts the slug.
@@ -30,14 +30,14 @@ New panes get `PATH` and each harness row's `home_env` (`CODEX_HOME` for Codex) 
 A pane on a sign-in screen gets no key: compose stops and names the pane and the screen.
 
 The engineering manager is the session you started, so compose sets neither its model nor its compaction.
-It relays and supervises while planning goes to the wayfinder on the strongest model, so Sonnet serves it well.
+It relays and supervises while planning goes to the architect on the strongest model, so Sonnet serves it well.
 Cap its context with `"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"` in the `env` of `~/.claude/settings.json`, as compose caps every teammate at 150k.
 That variable outranks `modelSettings.<model>.autoCompactWindow` and the `--autocompact` flag, and a session reads it only when it starts.
 
 The engineering manager and the team lead write no code.
 For the team lead the plugin enforces this.
 The team lead's and the planner's tabs are both marked (`COMPOSE_ROLE=orchestrator` or `planner`) and denied edits by the plugin's PreToolUse hook (`compose guard`), except the CLI's JSON under `.compose/`.
-The team lead starts the planner after wayfinder, or you start it with `/compose:planner <ticket>` from the engineering manager.
+The team lead starts the planner after architect, or you start it with `/compose:planner <ticket>` from the engineering manager.
 
 ## Talking to the fleet
 
@@ -63,9 +63,9 @@ These commands start, list, and stop teammates.
 ```bash
 compose crew start --project <slug> --role orchestrator --title orchestrator --brief - < brief.txt
 compose explore --project <slug> | compose crew start --project <slug> --role explore --title explore --brief -
-compose wayfinder --project <slug> --extra - < notes.md | compose crew start --project <slug> --role wayfinder --title wayfinder --brief -
+compose architect --project <slug> --extra - < notes.md | compose crew start --project <slug> --role architect --title architect --brief -
 compose crew list --project <slug>
-compose crew stop --project <slug> --role wayfinder   # refused until it reported done; --force overrides
+compose crew stop --project <slug> --role architect   # refused until it reported done; --force overrides
 compose testcrews --project <slug>                    # one test-writing teammate per task
 compose figma check --project <slug> --figma <url or key>
 compose designer --project <slug> | compose crew start --project <slug> --role designer --title designer --brief -

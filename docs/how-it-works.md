@@ -7,7 +7,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
 
 ```
   TEAM LEAD (Claude, frontier)
-  explore the code ─▶ wayfinder page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
+  explore the code ─▶ architect page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
                                                                                         │
                                                                              compose run│
   ┌─────────────────────────────────────────────────────────────────────────────────────▼───┐
@@ -56,7 +56,7 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 In a repo that already has code, an explore teammate maps it through trail first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, one wayfinder teammate writes every open decision as a card on the feature issue: the question, why it matters, the options with what each affects, and a recommendation.
+Next, one architect teammate writes every open decision as a card on the feature issue: the question, why it matters, the options with what each affects, and a recommendation.
 The engineering manager names the open cards in one line, and you read them on one page per project with `compose decisions`.
 A card you would understand better by seeing it (a wireframe, a layout comparison, a diagram) goes on a Lavish page as well.
 You answer them all at once, or accept every recommendation with one word.
@@ -87,7 +87,7 @@ If Frame0 does not answer `frame0 save` or `down`, a dialog is open in its windo
 
 ## Planning
 
-Once wayfinder reports done, the team lead starts a planner teammate in its own tab instead of writing the plan itself.
+Once architect reports done, the team lead starts a planner teammate in its own tab instead of writing the plan itself.
 The planner reads the feature's map and its Decisions so far, plus `DESIGN.md`, a PRD, or whatever the repo already had.
 It writes the plan as a `## Plan` section in the feature issue's description, never as a file, and does not reopen a settled decision.
 When the feature has no stories, it first proposes them as one list for you, one per user-visible slice with acceptance criteria, and creates them on your go.
@@ -114,7 +114,7 @@ The team lead starts it for a feature or story whose project it runs, and the en
 4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `compose figma tree` and `compose figma judge`.
 5. A `design-review` teammate then checks one image per story, and the result is handed to the code tasks as Framelink data.
 
-Every open design decision reaches you as a card with a recommendation, the same way wayfinder's do.
+Every open design decision reaches you as a card with a recommendation, the same way architect's do.
 The designer and its crew are Claude sessions, because Figma serves writes only to its allowlisted clients.
 Writes go through the official Figma connector, and every read goes through Framelink, which keeps reads off the connector's daily cap.
 The designer requires Framelink; [requirements.md](requirements.md#for-the-designer) shows how to set it up, and the designer's start stops with the install steps when it is missing.
@@ -132,7 +132,7 @@ Work lives at five levels in Linear:
 | Level | Is |
 |---|---|
 | project | the repo |
-| epic | a wayfinder map, when the work is bigger than one feature |
+| epic | a architect map, when the work is bigger than one feature |
 | feature | one `compose` project and one stack; its description is the plan |
 | story | one user-visible slice of the feature |
 | task | one stack layer; see [tasks.md](tasks.md) |
