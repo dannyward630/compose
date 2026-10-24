@@ -201,7 +201,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - `id` is the stack order a reviewer reads in, except a task always sits above its `after` tasks; ids are unique within the feature.
 - `after` is not in the block: it is the issue's "blocked by" links to other tasks of the feature.
   Each becomes the layer this task stacks on and makes it wait, so link only a task whose code this one needs.
-  Any other blocker (design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`, unless its task branch or project top layer is an ancestor of the trunk.
+  Any other blocker (design story, another feature's issue) never stacks: `run` holds the task until it is Done or Canceled, or In Review with the Design label, as of the last `sync`, unless its task branch or project top layer is an ancestor of the trunk, or its task branch tip is in the trunk under another hash (same patch-id).
   `run` prints each release proof or hold reason.
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
   One labelled `Task` is a hand task (a lowfi flow in Frame0): `run` never dispatches it, and spec-check counts it as one of its story's tasks.

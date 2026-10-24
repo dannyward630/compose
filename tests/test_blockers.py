@@ -78,6 +78,21 @@ class OutsideBlockers(unittest.TestCase):
         self.assertEqual((list(out), still), (["NEB-10"], {}))
         self.assertIn("found-layer-01", out["NEB-10"])
 
+    def test_a_task_commit_rebased_into_the_trunk_under_another_hash_counts_by_its_patch(self):
+        self.git("checkout", "-q", "-b", "found-001"); self.commit("one"); self.git("checkout", "-q", "main")
+        (self.found / "results" / "002.json").unlink()  # the stack top proves nothing: task 002 is open
+        self.commit("other"); self.git("cherry-pick", "found-001")
+        out, still = self.released()
+        self.assertEqual((list(out), still), (["NEB-10"], {}))
+        self.assertIn("found-001 is in main as " + self.git("rev-parse", "--short=7", "HEAD"), out["NEB-10"])
+
+    def test_a_task_commit_whose_patch_is_not_in_the_trunk_stays_held(self):
+        self.git("checkout", "-q", "-b", "found-001"); self.commit("one"); self.git("checkout", "-q", "main")
+        self.commit("other")
+        out, still = self.released()
+        self.assertEqual(out, {})
+        self.assertIn("found-001 is not in main", still["NEB-10"])
+
     def test_a_stack_whose_tasks_have_not_all_passed_proves_nothing(self):
         (self.found / "results" / "002.json").unlink()
         self.git("checkout", "-q", "-b", "found-layer-01"); self.commit("one"); self.git("checkout", "-q", "main")
