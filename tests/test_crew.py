@@ -1466,6 +1466,17 @@ class TerseTemplatesA(unittest.TestCase):
         for n in (1, 2, 3):
             self.assertRegex(fc.fc_briefs.TOOLSMITH_BRIEF, rf"(?m)^{n}\. ")
 
+    def test_toolsmith_brief_numbers_the_entry_when_the_project_logged_several_at_one_time(self):
+        from types import SimpleNamespace
+        log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
+        entry = {"at": "2026-10-17 15:30:00", "project": "shop", "reporter": "shop-tests", "message": "m", "cli_commit": "abc1234", "cli_repo": "/r"}
+        log.write_text("".join(json.dumps({**entry, "message": m}) + "\n" for m in ("first", "second")))
+        with mock.patch.object(fc.fc_crew, "TOOL_BUGS", log), mock.patch.object(fc.fc_core, "project_dir", return_value=Path("/x/shop")), \
+                mock.patch.object(fc.fc_toolbug, "gh_status", return_value=("maintainer", "alice9")), mock.patch("sys.stdout", io.StringIO()) as out:
+            fc.fc_briefs.cmd_toolsmith(SimpleNamespace(repo=".", project="shop"))
+        self.assertEqual(out.getvalue().count('--entry "2026-10-17 15:30:00#2"'), 2)
+        self.assertIn("second", out.getvalue())
+
     def test_toolsmith_variants_keep_their_flags_phrases_and_steps(self):
         from types import SimpleNamespace
         log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"

@@ -129,6 +129,16 @@ sys.exit(code)
                 self.assertEqual(fc.fc_toolbug.record_issue(project, "https://other/9", at), want)
                 self.assertEqual(self.log.read_text(), recorded)
 
+    def test_record_issue_marks_the_numbered_entry_among_several_with_the_same_at(self):
+        at = "2026-10-17 15:30:00"
+        self.log.parent.mkdir(parents=True)
+        self.log.write_text("".join(json.dumps({"at": at, "project": "shop", "message": m}) + "\n" for m in "ab"))
+        for n, url in ((2, "https://x/2"), (1, "https://x/1")):
+            self.assertEqual(fc.fc_toolbug.record_issue("shop", url, f"{at}#{n}"), url)
+        self.assertEqual([(e["message"], e["issue"]) for e in map(json.loads, self.log.read_text().splitlines())], [("a", "https://x/1"), ("b", "https://x/2")])
+        self.assertEqual(fc.fc_toolbug.record_issue("shop", "https://x/9", f"{at}#2"), "https://x/2")
+        self.assertIsNone(fc.fc_toolbug.record_issue("shop", "https://x/9", f"{at}#3"))
+
     def test_record_issue_skips_lines_that_are_not_json_objects(self):
         url, at = "https://github.com/prodoxx/compose/issues/2", "2026-10-17 15:30:00"
         bad = ['{"at": "2026-10-17 15:30:00", "project": "shop"\n', "\n", "   \n", '[{"at":"2026-10-17 15:30:00","project":"shop"}]\n',
@@ -169,7 +179,13 @@ sys.exit(code)
             self.assertIn("blog at 2026-10-21 19:40:00", str(cm.exception)); self.assertIn("cafe at 2026-10-21 19:40:00", str(cm.exception))
         self.log.write_text(entry("a", "2026-10-21 19:50:00") + entry("a", "2026-10-21 19:50:00") + entry("b", "2026-10-21 19:50:02"))
         with self.assertRaises(ValueError): find("c", "2026-10-21 19:50:01")
-        self.assertEqual(find("a", "2026-10-21 19:50:00")[:2], ("a", "2026-10-21 19:50:00"))
+        with self.assertRaises(ValueError) as cm: find("a", "2026-10-21 19:50:00")  # two entries of one project at one time: name neither
+        self.assertIn("2026-10-21 19:50:00#1", str(cm.exception)); self.assertIn("2026-10-21 19:50:00#2", str(cm.exception))
+        self.assertEqual(find("a", "2026-10-21 19:50:00#2"), ("a", "2026-10-21 19:50:00#2", None))
+        self.assertEqual(find("b", "2026-10-21 19:50:02#1"), ("b", "2026-10-21 19:50:02#1", None))  # a lone entry may be numbered too
+        for shown in ("2026-10-21 19:50:00#3", "2026-10-21 19:50:00#0"):
+            with self.assertRaises(ValueError) as cm: find("a", shown)
+            self.assertIn("2 entries", str(cm.exception))
         self.assertEqual(find("c", "not a time"), ("c", "not a time", None))
 
 
@@ -378,6 +394,19 @@ class OwnWorktree(unittest.TestCase):
         self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.remote, "rev-parse", "main"))  # main moved nowhere
         status, out = self.pr(title="Better title"); self.assertEqual(status, 0)
         self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR); self.assertEqual(self.gh_calls[-1][self.gh_calls[-1].index("--title") + 1], "Better title")
+
+    def test_pr_fixes_the_numbered_entrys_issue_when_several_share_one_time(self):
+        self.commit(self.wt, "fix.py"); self.gh()
+        other = {"at": self.AT, "project": "shop", "message": "second", "issue": "https://github.com/prodoxx/compose/issues/7"}
+        self.log.write_text(self.log.read_text() + json.dumps(other) + "\n")
+        status, out = self.pr(entry=self.AT); self.assertEqual(status, 1); self.assertIn(f"{self.AT}#1", out); self.assertEqual(self.gh_calls, [])
+        status, out = self.pr(entry=f"{self.AT}#1"); self.assertEqual(status, 0)
+        self.assertIn("Fixes #2", self.gh_calls[-1][self.gh_calls[-1].index("--body") + 1])
+        first, second = map(json.loads, self.log.read_text().splitlines())
+        self.assertEqual((first.get("pr"), second.get("pr")), (self.PR, None))
+        status, out = self.pr(entry=f"{self.AT}#2"); self.assertEqual(status, 0)
+        self.assertIn("Fixes #7", self.gh_calls[-1][self.gh_calls[-1].index("--body") + 1])
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[1])["pr"], self.PR)
 
     def test_pr_records_on_another_projects_entry_a_second_off_and_refuses_several_before_pushing(self):
         self.commit(self.wt, "fix.py"); self.gh()
