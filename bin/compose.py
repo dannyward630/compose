@@ -79,8 +79,6 @@ def main():
     fc_proc.on_termination(fc_core.remove_scratch)  # a SIGTERM or SIGHUP still removes the scratch configs and ends what timed started
     if len(sys.argv) > 1 and sys.argv[1] == "timed":
         return fc_implement.cmd_timed(sys.argv[2:])
-    if sys.argv[1:3] == ["frame0", "mcp"]:  # a session's MCP server: stdout is its protocol, so no config and no scrubbing
-        return fc_frame0.frame0_mcp(sys.argv[3:])
     ap = argparse.ArgumentParser(prog="compose", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
     for name, fn, help_ in (("doctor", fc_init.cmd_doctor, "check every tool and skill file compose depends on; one MISSING line each, exit 1 when a required one is absent"),
@@ -132,7 +130,7 @@ def main():
                             ("tier", fc_tierpin.cmd_tier, "pin a story's or the project's tier: compose tier --project <slug> [--story <id>] cheap|standard|frontier|no-frontier|clear"),
                             ("budget", fc_budget.cmd_budget, "set a project's frontier spend limit: compose budget --project <slug> frontier <dollars>"),
                             ("models", fc_models.cmd_models, "--probe: clear the day's cached model probes and probe the crew models again"),
-                            ("frame0", fc_f0pages.cmd_frame0_pages, "up | draw | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0); draw runs a JSON list of frame0 tool calls in one go; pages | move | delete | links | lint list, reorder, remove, and check its pages"),
+                            ("frame0", fc_f0pages.cmd_frame0_pages, "up | draw | export | save | down the project's own Frame0 (wireframes in .compose/<project>/design.f0): nothing of Frame0 runs until up; draw runs a JSON list of frame0 tool calls in one go; export writes pages as PNG files; pages | move | delete | links | lint list, reorder, remove, and check its pages"),
                             ("figma", fc_figma.cmd_figma, "check | tree | judge | publish: store the target Figma file key, prove Framelink reads it, record the plan's limits; save a task's node tree; judge it with Jev; say whether a library publish is pending"),
                             ("teardown", fc_crew.cmd_teardown, "close the project's implementer, verify, and finished teammate tabs (the team lead's done does this)"),
                             ("guard", fc_hooks.cmd_guard, "Claude Code PreToolUse hook: the team lead writes no code (reads the hook event on stdin)"),
@@ -293,16 +291,16 @@ def main():
             s.add_argument("--force", action="store_true", help="stop: close it even though it has not reported done; start: start although the Mac runs on its battery")
             s.add_argument("--cwd", help="start: run the session in its own new worktree of this repo (a plain folder: in it) instead of the project worktree")
             s.add_argument("--work-repo", help="start: work on its own new worktree of this repo from a session in the project worktree, so a repo Claude Code never trusted (the CLI's own checkout) never shows the trust prompt")
-            s.add_argument("--frame0", action="store_true", help="start: give the session the project's Frame0 tools")
             s.add_argument("--model", help="start: claude:<model-id>, or a name under models.crew (e.g. small); default models.crew[<role>], then models.crew.default")
             s.add_argument("--harness", help="start: the harness whose `harnesses` block picks the crew's models, when this session's own is not detected, as in Codex")
             s.add_argument("--takeover", action="store_true", help="start, stop: drive the project from this session although another live engineering manager session does (its teammates then report here)")
         if name == "models":
             s.add_argument("--probe", action="store_true")
         if name == "frame0":
-            s.add_argument("action", choices=("up", "draw", "save", "down", "pages", "move", "delete", "links", "lint"))
+            s.add_argument("action", choices=("up", "draw", "export", "save", "down", "pages", "move", "delete", "links", "lint"))
             s.add_argument("--file", help="draw: the JSON list of frame0 tool calls (default: stdin)")
-            s.add_argument("--page", action="append", help="move | delete: a page by id, name, or the start of its name (repeatable; move keeps the order given)")
+            s.add_argument("--page", action="append", help="export | move | delete: a page by id, name, or the start of its name (repeatable; move keeps the order given)")
+            s.add_argument("--out", help="export: the directory the PNG files go to (default .compose/<project>/exports)")
             s.add_argument("--after", help="move: put the pages right behind this page")
             s.add_argument("--first", action="store_true", help="move: put the pages first")
             s.add_argument("--empty", action="store_true", help="delete: every page without a shape; pages: only those")

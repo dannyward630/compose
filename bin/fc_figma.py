@@ -55,7 +55,8 @@ DESIGNER_BRIEF = """You are the designer teammate for project {slug}. Worktree: 
 target Figma file is {figma}.
 1. Read SKILL.md and sections/0d.md, then follow 0d.
 2. Read, before any Figma write: the feature's Linear tree; a `compose linear list --search` search for "design system", "tokens",
-   "Figma"; the Frame0 pages (`compose frame0 up --project {slug}`, `compose frame0 pages`, then `export_page_as_image` once per page); the repo's tokens through trail
+   "Figma"; the Frame0 pages when `.compose/{slug}/design.f0` exists (`compose frame0 pages --project {slug}` reads the file; to see a page,
+   `compose frame0 up --project {slug}` right before, `compose frame0 export --project {slug} --page <page>`, read the PNG, then `down`); the repo's tokens through trail
    (`trail ask "<question>" --source`); DESIGN.md. Then in the Figma file: `whoami`, `get_libraries`, and `search_design_system`
    (the only reads that stay on the official connector, one call each); every other read is a Framelink fetch.
 3. """ + fc_figmaplan.PROBE_STEPS + """

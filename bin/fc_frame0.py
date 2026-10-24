@@ -1,4 +1,4 @@
-import argparse, hashlib, http.server, json, os, signal, subprocess, sys, threading, time, urllib.error, urllib.request
+import hashlib, json, os, sys, time, urllib.error, urllib.request
 from pathlib import Path
 import fc_core
 
@@ -6,17 +6,14 @@ import fc_core
 # ---------- frame0: one wireframing app per project ----------
 
 # Frame0 sends every API command to its newest window, so sessions sharing one app draw over each other. Each project gets
-# its own app process instead: its own user-data dir (which holds the API port), one window on .compose/<project>/design.f0,
-# and a `frame0` MCP server pointed at that port, given only to the sessions that wireframe (`crew start --frame0`, the designer)
-# through `--mcp-config`. Never in ~/.claude.json: a server registered there starts with every session in the directory, tools
-# allowed or not, so each teammate of a project ran its own idle copy. The server is
-# `compose frame0 mcp`, which runs it behind a proxy that renews its API token: Frame0 keeps tokens in memory, one set per app
-# process, and frame0-mcp-server asks for its token once and keeps it for good, so after the app restarts every call it makes
-# is refused (403 "Invalid API token", shown as "Failed to execute command(...)") and no Allow prompt ever comes.
+# its own app process instead: its own user-data dir (which holds the API port) and one window on .compose/<project>/design.f0.
+# No session gets a `frame0` MCP server: a server on a session's argv (or in ~/.claude.json) starts with the session and idles
+# for its whole life, so every architect and designer ran its own frame0-mcp-server whether a wireframe was ever drawn or not.
+# Sessions reach the app through `compose frame0` commands (up, draw, export, pages, ...), each of which asks the app for a token
+# under FRAME0_CLIENT and runs its calls on it, so nothing of Frame0 runs until `frame0 up` starts the app for the first drawing.
 FRAME0_APP = Path("/Applications/Frame0.app")
 FRAME0_PORTS = range(58400, 59000)
-FRAME0_CLIENT = "Frame0 MCP Server"  # the app name frame0-mcp-server asks with; once allowed, Frame0 gives it the token again without asking
-FRAME0_WAIT = 300  # seconds the proxy waits on the app: a token request stays open until someone answers the Allow prompt
+FRAME0_CLIENT = "Frame0 MCP Server"  # the app name compose asks for its token with (frame0-mcp-server's); once allowed, Frame0 gives it again without asking
 
 def frame0_port(proj):
     """The project's API port: stable, so registering the MCP server never waits for the app."""
@@ -31,10 +28,6 @@ def frame0_pid(proj):
         if command.startswith(str(FRAME0_APP / "Contents" / "MacOS" / "Frame0") + " ") and command.endswith(flag):
             return int(pid)
     return None
-
-def frame0_mcp_config(port):
-    """The `--mcp-config` value that gives one session the `frame0` MCP server, pointed at `port`."""
-    return json.dumps({"mcpServers": {"frame0": {"type": "stdio", "command": "compose", "args": ["frame0", "mcp", f"--api-port={port}"]}}})
 
 def frame0_post(port, path, body, token=None, timeout=60):
     """POST a JSON body to the app's API: (http status, reply). An app that refuses or stays silent raises RuntimeError saying what to check."""
@@ -53,7 +46,7 @@ def frame0_post(port, path, body, token=None, timeout=60):
                            "or Save Changes) and blocks the app until someone answers it") from e
 
 def frame0_client(port):
-    """A function that runs Frame0 commands over its API, as the MCP server does, on one token asked for once."""
+    """A function that runs Frame0 commands over its API, as frame0-mcp-server does, on one token asked for once."""
     def post(path, body, token=None):
         out = frame0_post(port, path, body, token)[1]
         if not out.get("success"):
@@ -65,58 +58,6 @@ def frame0_client(port):
 def frame0_command(port, command, args=None):
     """Run one Frame0 command over its API."""
     return frame0_client(port)(command, args)
-
-def frame0_proxy(port):
-    """A local server in front of the app's API on `port`, for frame0-mcp-server. When the app refuses the server's token (the app
-    restarted and lost it), the proxy asks for a new one under the same app name (the Allow prompt, once per app process), keeps it,
-    and repeats the call, so the server's own stale token stops mattering. Not started: the caller runs serve_forever()."""
-    lock, state = threading.Lock(), {"token": None}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-            auth = self.headers.get("Authorization") or ""
-            sent = auth[len("Bearer "):] if auth.startswith("Bearer ") else None
-            try:
-                used = state["token"] or sent
-                status, out = frame0_post(port, self.path, body, used, FRAME0_WAIT)
-                if status == 403 and self.path == "/execute_command":
-                    with lock:  # one Allow prompt for the calls that were refused together
-                        if (state["token"] or sent) == used:
-                            status, out = frame0_post(port, "/request_api_token", {"appName": FRAME0_CLIENT}, None, FRAME0_WAIT)
-                            if out.get("success"):
-                                state["token"] = out["data"]
-                        if state["token"]:
-                            status, out = frame0_post(port, self.path, body, state["token"], FRAME0_WAIT)
-            except RuntimeError as e:
-                status, out = 502, {"success": False, "error": str(e)}
-            data = json.dumps(out).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *args):
-            pass  # stdout and stderr belong to the MCP session
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.daemon_threads = True
-    return server
-
-def frame0_mcp(argv):
-    """`compose frame0 mcp --api-port=<port>`: the `frame0` MCP server of a session. Runs frame0-mcp-server behind frame0_proxy and
-    hands it this process's stdin and stdout, so the session talks to it directly. Ends with it."""
-    ap = argparse.ArgumentParser(prog="compose frame0 mcp")
-    ap.add_argument("--api-port", type=int, required=True, help="the project's Frame0 API port")
-    proxy = frame0_proxy(ap.parse_args(argv).api_port)
-    threading.Thread(target=proxy.serve_forever, daemon=True).start()
-    child = subprocess.Popen(["npx", "-y", "frame0-mcp-server", f"--api-port={proxy.server_address[1]}"], start_new_session=True)
-    def stop(sig, _frame):
-        os.killpg(child.pid, signal.SIGTERM)
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, stop)
-    sys.exit(child.wait())
 
 def frame0_empty_doc():
     doc, page = os.urandom(8).hex(), os.urandom(8).hex()
@@ -341,7 +282,7 @@ def frame0_draw(proj, ops):
 
 def cmd_frame0(a):
     """`frame0 up` starts the project's own Frame0 on design.f0, `draw` runs a JSON list of frame0 tool calls in one go and saves,
-    `save` writes the drawing to it, `down` saves and quits. (`frame0 pages|move|delete|links|lint` are fc_f0pages'; `frame0 mcp` is the session's MCP server, run by Claude Code through main.)"""
+    `save` writes the drawing to it, `down` saves and quits. (`frame0 export|pages|move|delete|links|lint` are fc_f0pages'.)"""
     proj = fc_core.project_dir(a)
     design = proj / "design.f0"
     try:
@@ -349,7 +290,7 @@ def cmd_frame0(a):
             port, started = frame0_up(proj)
             print(f"frame0 for {proj.name} {'started' if started else 'already running'} on port {port}, file {design}")
             if started:
-                print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first tool call reaches it: the product owner clicks Allow")
+                print(f"Frame0 asks once to allow \"{FRAME0_CLIENT}\" when the first command reaches it: the product owner clicks Allow")
         elif a.action == "draw":
             src = sys.stdin.read() if a.file in (None, "-") else Path(a.file).read_text()
             try:

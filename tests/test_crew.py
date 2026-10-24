@@ -150,11 +150,10 @@ class Crew(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "q-NEB-12", "title": "Payment provider", "brief": "Resolve NEB-12 with the product owner."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc.fc_frame0, "frame0_mcp_config", wraps=fc.fc_frame0.frame0_mcp_config) as frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc.fc_proc, "keep_awake") as awake, mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
         awake.assert_called_once_with(4242)  # the Mac stays awake for as long as the teammate's session lives
-        frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
         self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("pane", "rename"), ("agent", "start"),
                                  ("pane", "process-info"), ("pane", "process-info"), ("agent", "get"),  # the start's renice and the record read the pane's processes; the brief waits for Claude's input box
@@ -1013,7 +1012,7 @@ class AtomicState(unittest.TestCase):
 
 
 class RestrictedStart(unittest.TestCase):
-    """A Claude teammate starts with only its role's MCP servers and skills, Frame0 is opt-in, and the briefs name their files."""
+    """A Claude teammate starts with only its role's MCP servers and skills, never a Frame0 server, and the briefs name their files."""
     SETTINGS = {"model": "opus", "enabledPlugins": {"compose@fc": True, "figma@claude-plugins-official": True, "superpowers@sp": True, "ponytail@p": False,
                                                     "compose-extra@x": True, "my-compose@x": True, "figmatic@x": True}}
     P = ["claude_ai_Claude_Docs", "claude_ai_Figma", "claude_ai_Google_Calendar", "claude_ai_Linear", "claude_ai_Notion", "frame0", "framelink-figma", "graft", "plugin_product-management_figma", "trail"]
@@ -1032,10 +1031,10 @@ class RestrictedStart(unittest.TestCase):
             calls.append(args)
             return {"agents": []} if args[:2] == ("agent", "list") else {"agent": {"agent_status": "working"}} if args[:2] == ("agent", "get") else \
                 {"tab": {"tab_id": "w9:t3"}, "root_pane": {"pane_id": "w9:p7"}} if args[:2] == ("tab", "create") else {}
-        a = type("A", (), dict(action="start", role=role, title="t", brief="b", **kw))  # no `frame0` unless given: internal callers build it so
+        a = type("A", (), dict(action="start", role=role, title="t", brief="b", **kw))
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc.fc_frame0, "frame0_mcp_config", wraps=fc.fc_frame0.frame0_mcp_config) as self.frame0, mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
                 mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc.fc_crew, "crew_workdir", return_value=(str(proj), None)), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
                 mock.patch("pathlib.Path.home", return_value=home):
@@ -1060,8 +1059,7 @@ class RestrictedStart(unittest.TestCase):
         self.assertFalse({"--strict-mcp-config", "--mcp-config"} & set(args))
         self.assertEqual(self.patterns(args), {f"mcp__{p}__*" for p in self.P})
         self.assertLess(args.index("--disallowedTools"), args.index("--allowedTools"))
-        self.assertEqual(args[-2:-1], ["--allowedTools"])  # it swallows what follows, so it stays last
-        self.frame0.assert_not_called()  # `a` without `frame0` means no Frame0
+        self.assertEqual(args[-3:-2], ["--allowedTools"])  # it swallows what follows, so it stays last
 
     def test_a_session_approves_no_mcpjson_server_whatever_the_repo_wires(self):
         settings = lambda args: json.loads(args[args.index("--settings") + 1])
@@ -1078,18 +1076,18 @@ class RestrictedStart(unittest.TestCase):
             self.assertNotIn(f"mcp__{p}__*", dropped)
         self.assertLessEqual({"mcp__claude_ai_Linear__*", "mcp__graft__*", "mcp__trail__*", "mcp__claude_ai_Notion__*", "mcp__plugin_product-management_figma__*"}, dropped)  # only the Figma plugin's own server is kept
 
-    def test_designer_gets_the_frame0_tools_without_the_flag_and_design_builders_do_not(self):
-        args = self.start("designer")
-        self.assertNotIn("mcp__frame0__*", self.patterns(args))
-        self.assertIn("--mcp-config", args)
-        for role in ("design-003", "design-review"):
+    def test_no_session_starts_a_frame0_server(self):
+        """A server on the argv starts with the session and idles for its whole life (every architect and designer ran one, drawn or not);
+        `compose frame0` reaches the app without one, so the app runs only from `frame0 up` to `down`."""
+        for role in ("designer", "architect", "planner", "orchestrator", "design-003", "design-review", "f0-helper"):
             with self.subTest(role=role):
                 args = self.start(role)
-                self.assertIn("mcp__frame0__*", self.patterns(args))
-                self.assertNotIn("--mcp-config", args)  # a design builder starts no Frame0 server at all
+                self.assertNotIn("--mcp-config", args)
+                self.assertIn("mcp__frame0__*", self.patterns(args))  # a `frame0` server someone registered is denied like any other
+                self.assertEqual(args[-3:], ["--allowedTools", "Bash(npx -y lavish-axi:*)", "Bash(compose frame0:*)"])  # the commands run with no prompt
 
     def test_no_role_keeps_the_linear_server(self):
-        for role, kw in [("orchestrator", {}), ("architect", {}), ("explore", {}), ("implementer", {}), ("planner", {"frame0": True}),
+        for role, kw in [("orchestrator", {}), ("architect", {}), ("explore", {}), ("implementer", {}), ("planner", {}),
                          ("design-003", {}), ("design-review", {})]:
             with self.subTest(role=role, **kw):
                 self.assertIn("mcp__claude_ai_Linear__*", self.patterns(self.start(role, **kw)))
@@ -1107,18 +1105,6 @@ class RestrictedStart(unittest.TestCase):
                 args = self.start("planner", model=model)
                 self.assertEqual(args[args.index("--append-system-prompt") + 1], fc.fc_crew.TRUST_PROMPT)
                 self.assertEqual(args.count("--append-system-prompt"), 1)
-
-    def test_frame0_is_opt_in(self):
-        args = self.start("planner", frame0=True)
-        self.assertNotIn("mcp__frame0__*", self.patterns(args))
-        self.frame0.assert_called_once()
-        config = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["frame0"]  # the server rides on this session's argv, not ~/.claude.json
-        self.assertEqual((config["command"], config["args"][:2]), ("compose", ["frame0", "mcp"]))
-        self.assertTrue(args[args.index("--mcp-config") + 2].startswith("--"))  # --mcp-config takes several values: a flag ends them
-        args = self.start("planner", frame0=False)
-        self.assertIn("mcp__frame0__*", self.patterns(args))
-        self.assertNotIn("--mcp-config", args)
-        self.frame0.assert_not_called()
 
     def test_every_plugin_but_compose_is_off(self):
         rest = {"superpowers@sp", "ponytail@p", "compose-extra@x", "my-compose@x", "figmatic@x"}
@@ -1148,27 +1134,23 @@ class RestrictedStart(unittest.TestCase):
         self.assertNotIn("--disallowedTools", args)
 
     def tail(self, args):
-        """What follows the --settings value: the frame0 server when drawn, the patterns when any, the skills switch, then auto mode and the allow list."""
+        """What follows the --settings value: the patterns when any, the skills switch, then auto mode and the allow list."""
         return args[args.index("--settings") + 2:]
 
     def test_no_patterns_means_no_bare_disallowed_tools(self):
-        allow = ["--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"]
-        for servers, role, kw in [([], "planner", {}), (["frame0"], "planner", {"frame0": True}),
-                                  ([], "designer", {}), (["claude_ai_Figma", "framelink-figma"], "designer", {})]:
-            with self.subTest(servers=servers, role=role, **kw):
+        allow = ["--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)", "Bash(compose frame0:*)"]
+        for servers, role in [([], "planner"), ([], "designer"), (["claude_ai_Figma", "framelink-figma"], "designer")]:
+            with self.subTest(servers=servers, role=role):
                 self.P = servers
                 skills = [] if role == "designer" else ["--disable-slash-commands"]
-                drawn = role == "designer" or kw.get("frame0")
-                wireframes = ["Bash(compose frame0:*)"] if drawn else []  # `compose frame0 draw|pages|lint` needs no prompt where Frame0 is drawn
-                mcp = ["--mcp-config", mock.ANY] if drawn else []
-                self.assertEqual(self.tail(self.start(role, **kw)), mcp + skills + allow + wireframes)  # a bare flag would swallow what follows
+                self.assertEqual(self.tail(self.start(role)), skills + allow)  # a bare flag would swallow what follows
 
     def test_patterns_sit_between_settings_and_the_allow_list(self):
         self.P = ["claude_ai_Linear", "claude_ai_Notion", "trail", "frame0"]
         tail = self.tail(self.start("planner"))
         self.assertEqual(tail[0], "--disallowedTools")
         self.assertEqual(set(tail[1:5]), {"mcp__claude_ai_Linear__*", "mcp__claude_ai_Notion__*", "mcp__trail__*", "mcp__frame0__*"})
-        self.assertEqual(tail[5:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)"])
+        self.assertEqual(tail[5:], ["--disable-slash-commands", "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)", "Bash(compose frame0:*)"])
 
     def test_every_claude_teammate_compacts_at_150k_through_its_settings_env(self):
         for role in ("orchestrator", "planner", "architect", "explore", "groundwork", "designer", "toolsmith", "design-003", "design-review"):

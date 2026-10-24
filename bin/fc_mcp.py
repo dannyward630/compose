@@ -50,11 +50,8 @@ def installed_servers(cwd):
 
 
 
-def disallowed(role, servers, frame0=False):
+def disallowed(role, servers):
     allowed = set()
     for s in servers_for(role):
         allowed.update(COVERS.get(s, (s,)))
-    patterns = ["mcp__%s__*" % s for s in servers if s not in allowed]
-    if frame0:
-        patterns = [p for p in patterns if "frame0" not in p]
-    return patterns
+    return ["mcp__%s__*" % s for s in servers if s not in allowed]

@@ -12,7 +12,7 @@ Claude Code is optional when another harness is set up: the claude, herdr skill,
 |---|---|---|
 | Python 3.9+ | the CLI core, `bin/compose` (standard library only) | ships with macOS |
 | git 2.30+ | task clones, branches, diffs | `xcode-select --install`; setup only reports it |
-| Node 22.19+ | pi, Lavish, the Frame0 MCP server, `node --test` repos | setup runs `brew install node` |
+| Node 22.19+ | pi, Lavish, `node --test` repos | setup runs `brew install node` |
 | gh CLI and gh-stack | stacks and draft PRs | setup runs `brew install gh` and `gh extension install github/gh-stack`; you run `gh auth login` |
 | herdr | the visible fleet, and the session `compose` opens ([herdr.md](herdr.md)) | setup runs herdr's installer, installs the herdr skill file, and sets the notification lines |
 | pi | the default implementer harness | setup runs `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` and declares its `openrouter-fast` provider |
@@ -53,7 +53,7 @@ Setup does not install these for you by default.
 | Tool | Unlocks | Install |
 |---|---|---|
 | Framelink (`framelink-figma` MCP server) | every Figma read: the designer, its builders and reviewer, `figma check`, `figma tree` | pick the designer rows in `compose setup`; they need Claude Code. By hand: a Figma personal access token in `~/.config/figma-context-mcp/.env` as one line `FIGMA_API_KEY=<token>` (mode 600), then `claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env ~/.config/figma-context-mcp/.env --no-telemetry` |
-| Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); the MCP server comes through `npx` |
+| Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); compose talks to the app's own API, no MCP server |
 | OpenCode | an alternative implementer per task, a `bench` column | `curl -fsSL https://opencode.ai/install \| bash` |
 
 Without Framelink, `doctor` prints one line, `designer extras not set up`, and the designer's start stops.
@@ -64,7 +64,7 @@ They format a task's files.
 When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
 `npx` fetches three tools on every use, with no pinned version.
-They are `lavish-axi` (the architect page), `frame0-mcp-server`, and `figma-developer-mcp` (Framelink).
+They are `lavish-axi` (the architect page) and `figma-developer-mcp` (Framelink).
 
 ## Keys
 
@@ -101,7 +101,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.compose/.env` | verify's `TEXT_MODEL*` and `TYPESAFE_MODEL` lines, no keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
 | `~/.compose/tool-bugs.jsonl`, `~/.compose/history.jsonl` | every project's tool-bug reports with the issue URL once filed, and one line per run start, run end, task result and verify round (time, task, model, attempts, duration, cost, outcome; no prompts or secrets) |
-| `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; compose writes nothing here, and a wireframing session gets its `frame0` MCP server through `--mcp-config` |
+| `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; compose writes nothing here, and no session gets a `frame0` MCP server: `compose frame0` commands reach the app directly |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |
 | `CODEX_HOME` (default `~/.codex`) | Codex's `skills/compose`, `skills/compose-<name>`, `hooks.json` and `config.toml` |

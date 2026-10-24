@@ -1,4 +1,4 @@
-import copy, json, os, re, shutil, sys, time
+import base64, copy, json, os, re, shutil, sys, time
 from pathlib import Path
 import fc_core, fc_frame0
 
@@ -237,6 +237,30 @@ def frame0_edit(proj, plan, dry_run=False):
         os.replace(tmp, design)  # a reader sees the old file or the new one
     return [*lines, f"{len(ops)} changes, saved {design}; the file before is {bak}"]
 
+def frame0_export(proj, refs, out):
+    """Render pages to PNG files under `out`, one per page named: [(page, path)]. The running app renders them (export is its
+    `file:export-image`, what frame0-mcp-server's export_page_as_image sends), so it must be up. Raises RuntimeError."""
+    if not refs:
+        raise RuntimeError("--page <page> (repeatable) names what to export; `frame0 pages` lists the pages")
+    if not fc_frame0.frame0_pid(proj):
+        raise RuntimeError(f"{proj.name}'s Frame0 is not running; `frame0 up` starts it")
+    doc, _ = frame0_load(proj)
+    try:
+        pages = [frame0_page_ref(doc, r) for r in refs]
+    except ValueError as e:
+        raise RuntimeError(str(e)) from e
+    call = fc_frame0.frame0_client(fc_frame0.frame0_port(proj))
+    Path(out).mkdir(parents=True, exist_ok=True)
+    done = []
+    for p in pages:
+        data = call("file:export-image", {"pageId": p["id"], "format": "image/png", "fillBackground": True})
+        if not isinstance(data, str) or not data:
+            raise RuntimeError(f"page {p['name']!r}: the app returned no image ({str(data)[:80]})")
+        path = Path(out) / ((re.sub(r"[^A-Za-z0-9._-]+", "-", p["name"]).strip("-.") or p["id"]) + ".png")
+        path.write_bytes(base64.b64decode(data.rsplit(",", 1)[-1]))  # bare base64, or a data: URI
+        done.append((p, path))
+    return done
+
 def frame0_table(pages, only_empty=False):
     """The `frame0 pages` listing."""
     rows = [f"{p['n']:>4} {p['id']:<21} {'empty' if not p['shapes'] else p['shapes']:>6}  {p['name']}" for p in pages if p["shapes"] == 0 or not only_empty]
@@ -245,12 +269,16 @@ def frame0_table(pages, only_empty=False):
 
 def cmd_frame0_pages(a):
     """`frame0 pages` lists the pages, `move` and `delete` reorder and remove them, `links` checks the links between them and
-    `--retarget`s or `--drop-dangling`s them, `lint` is the check before a review ask. Any other action is fc_frame0's."""
+    `--retarget`s or `--drop-dangling`s them, `lint` is the check before a review ask, `export` writes pages as PNG files. Any other
+    action is fc_frame0's."""
     if a.action in ("up", "draw", "save", "down"):
         return fc_frame0.cmd_frame0(a)
     proj = fc_core.project_dir(a)
     try:
-        if a.action in ("pages", "lint", "links") and not (a.action == "links" and (a.retarget or a.drop_dangling)):
+        if a.action == "export":
+            for p, path in frame0_export(proj, a.page or [], a.out or proj / "exports"):
+                print(f"{path} {path.stat().st_size} bytes  {p['name']}")
+        elif a.action in ("pages", "lint", "links") and not (a.action == "links" and (a.retarget or a.drop_dangling)):
             doc, _ = frame0_load(proj)
             if a.action == "pages":
                 pages = frame0_pages(doc)

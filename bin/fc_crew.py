@@ -249,7 +249,6 @@ def cmd_crew(a):
     cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
     if not (model.startswith("pi:") or h) and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
-    frame0 = getattr(a, "frame0", False) or a.role == "designer"  # the designer's first step reads the wireframes through the frame0 tools
     work = None  # with --work-repo the session starts in the project worktree, which Claude Code trusts; only its work is in the repo
     if repo:
         work, branch = fc_worktree.repo_worktree(repo, name)
@@ -295,11 +294,10 @@ def cmd_crew(a):
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
                   "--no-chrome", "--append-system-prompt", TRUST_PROMPT, "--settings", fc_claude.crew_settings(a.role, cwd),
-                  *(["--mcp-config", fc_frame0.frame0_mcp_config(fc_frame0.frame0_port(proj))] if frame0 else []),  # this session only: a server in ~/.claude.json starts with every session in the directory
-                  *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=frame0)) else []),
+                  *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd))) else []),  # no --mcp-config: a `frame0` server would start with the session and idle; `compose frame0` reaches the app without one
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",
-                  *(["Bash(compose frame0:*)"] if frame0 else []))  # a wireframing session runs `compose frame0 ...` (draw, pages, lint) with no prompt; the flag swallows what follows, so it stays last
+                  "Bash(compose frame0:*)")  # `compose frame0 up|draw|export|pages|lint` runs with no prompt in the session that draws; the flag swallows what follows, so it stays last
     except RuntimeError as e:
         if len(crew_reports(proj, name)) > seen or fc_herdr.pane_launching(agent, pane):  # a short task can report done and close its tab before the start gives up
             print(f"herdr agent start timed out but {name} came up; continuing")

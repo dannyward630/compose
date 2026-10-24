@@ -57,9 +57,8 @@ class RoleMcp(unittest.TestCase):
             self.assertEqual(set(fc_mcp.disallowed(r, P + ["plugin_figma_figma"])), pat(*P) - pat("framelink-figma"))
         for r in ("toolsmith", "implementer", "no-such-role", "orchestrator", "architect", "designer", "design-003"):  # graft, trail, and Linear are denied for every role
             self.assertLessEqual(pat("graft", "trail", "claude_ai_Linear"), set(fc_mcp.disallowed(r, P)), r)
-            self.assertLessEqual(pat("claude_ai_Linear"), set(fc_mcp.disallowed(r, P, frame0=True)), r)
         self.assertEqual(set(fc_mcp.disallowed("toolsmith", P)), pat(*P))
-        self.assertEqual(set(fc_mcp.disallowed("architect", P, frame0=True)), pat(*P) - pat("frame0"))
+        self.assertIn("mcp__frame0__*", fc_mcp.disallowed("architect", P))  # a `frame0` server someone registered is denied like any other: compose frame0 is the way in
         self.assertEqual(fc_mcp.disallowed("planner", ["graft"]), ["mcp__graft__*"])  # nothing is denied that is not installed
         self.assertEqual(set(fc_mcp.disallowed("designer", ["LINEAR_x", "Graft2"])), pat("LINEAR_x", "Graft2"))
 

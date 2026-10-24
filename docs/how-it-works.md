@@ -69,6 +69,7 @@ These commands manage it:
 1. `compose frame0 up --project <name>` starts it.
 2. `compose frame0 save --project <name>` writes the drawing to the file.
    `compose frame0 draw --project <name>` draws a whole page from one list of tool calls and saves it, so a page costs one agent turn rather than one per shape.
+   `compose frame0 export --project <name> --page <page>` writes a page as a PNG, for a card image or a designer's read.
 3. `compose frame0 down --project <name>` saves and quits.
    `teardown` does this too.
 4. `compose frame0 pages --project <name>` lists the pages with their shape counts (`--empty` shows only the empty ones).
@@ -82,7 +83,7 @@ These commands manage it:
 
 On the first drawing after each app start, Frame0 asks you to allow "Frame0 MCP Server".
 Frame0 forgets its permissions when the app stops, so a session whose app was restarted asks again on its next drawing.
-Sessions reach Frame0 through `compose frame0 mcp`, which renews the permission behind the scenes and keeps their `frame0` tools working across a restart.
+Sessions reach Frame0 only through `compose frame0` commands, so nothing of Frame0 runs until `frame0 up`, and no session carries a `frame0` MCP server that would start with it and idle.
 If Frame0 does not answer `frame0 save` or `down`, a dialog is open in its window: answer it and run the command again.
 
 ## Planning

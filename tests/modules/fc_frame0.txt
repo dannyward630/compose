@@ -1,15 +1,11 @@
 FRAME0_APP
 FRAME0_PORTS
 FRAME0_CLIENT
-FRAME0_WAIT
 frame0_port
 frame0_pid
-frame0_mcp_config
 frame0_post
 frame0_client
 frame0_command
-frame0_proxy
-frame0_mcp
 frame0_empty_doc
 frame0_up
 frame0_save

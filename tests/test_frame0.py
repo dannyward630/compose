@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import argparse, http.server, importlib.machinery, io, importlib.util, json, os, subprocess, tempfile, threading, unittest, urllib.request
+import argparse, base64, http.server, importlib.machinery, io, importlib.util, json, os, tempfile, threading, unittest
 from pathlib import Path
 from unittest import mock
 import sys
@@ -23,10 +23,6 @@ class Frame0(unittest.TestCase):
         self.assertEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(shop))
         self.assertIn(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.FRAME0_PORTS)
         self.assertNotEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(Path("/compose-test/a/.compose/cart")))
-
-    def test_mcp_config_gives_one_session_the_proxied_server(self):
-        self.assertEqual(json.loads(fc.fc_frame0.frame0_mcp_config(58411)),
-                         {"mcpServers": {"frame0": {"type": "stdio", "command": "compose", "args": ["frame0", "mcp", "--api-port=58411"]}}})
 
     def test_up_launches_the_app_and_registers_no_mcp_server(self):
         app = self.wt / "Frame0.app"
@@ -60,77 +56,6 @@ class Frame0(unittest.TestCase):
         with mock.patch.object(fc.fc_frame0.urllib.request, "urlopen", side_effect=fc.fc_frame0.urllib.error.URLError(ConnectionRefusedError())):
             with self.assertRaisesRegex(RuntimeError, "not listening on port 58411"):
                 fc.fc_frame0.frame0_command(58411, "file:save")
-
-
-class FakeApp(http.server.BaseHTTPRequestHandler):
-    """Frame0's API: tokens live in the class, as they live in the app process, and a new app starts with none."""
-    valid, issued, calls = set(), [], []
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        if self.path == "/request_api_token":
-            token = f"token{len(self.issued)}"
-            self.issued.append(token), self.valid.add(token)
-            status, out = 200, {"success": True, "data": token}
-        elif self.headers["Authorization"] not in {f"Bearer {t}" for t in self.valid}:
-            status, out = 403, {"success": False, "error": "Invalid API token"}
-        else:
-            self.calls.append(body["command"])
-            status, out = 200, {"success": True, "data": body["command"]}
-        data = json.dumps(out).encode()
-        self.send_response(status), self.send_header("Content-Length", str(len(data))), self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *args):
-        pass
-
-
-class Frame0Proxy(unittest.TestCase):
-    def setUp(self):
-        FakeApp.valid, FakeApp.issued, FakeApp.calls = set(), [], []
-        self.app = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeApp)
-        self.proxy = fc.fc_frame0.frame0_proxy(self.app.server_address[1])
-        for server in (self.app, self.proxy):
-            threading.Thread(target=server.serve_forever, daemon=True).start()
-            self.addCleanup(server.shutdown), self.addCleanup(server.server_close)
-
-    def call(self, token):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.proxy.server_address[1]}/execute_command", method="POST", data=b'{"command": "page:get"}',
-                                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read())
-
-    def test_a_token_the_restarted_app_forgot_is_renewed_once_and_the_call_goes_through(self):
-        FakeApp.valid.add("live")
-        self.assertEqual(self.call("live")["data"], "page:get")  # a token the app knows passes untouched
-        self.assertEqual(FakeApp.issued, [])
-        FakeApp.valid.clear()  # the app restarted
-        self.assertEqual(self.call("live")["data"], "page:get")
-        self.assertEqual(self.call("live")["data"], "page:get")  # the server keeps sending its old token
-        self.assertEqual(FakeApp.issued, ["token0"])
-        self.assertEqual(FakeApp.calls, ["page:get"] * 3)
-
-    def test_a_denied_renewal_is_the_answer(self):
-        with mock.patch.object(fc.fc_frame0, "frame0_post", side_effect=[(403, {"success": False, "error": "Invalid API token"}),
-                                                                         (403, {"success": False, "error": "User denied API access"})]):
-            with self.assertRaises(urllib.error.HTTPError) as e:
-                self.call("old")
-        self.addCleanup(e.exception.close)
-        self.assertIn("User denied API access", e.exception.read().decode())
-
-
-class Frame0Mcp(unittest.TestCase):
-    def test_runs_the_server_on_the_proxy_with_this_processs_stdio(self):
-        tmp = Path(tempfile.mkdtemp())
-        (tmp / "npx").write_text(f"#!/bin/sh\necho \"$@\" > {tmp / 'args'}\nexit 7\n")
-        (tmp / "npx").chmod(0o755)
-        r = subprocess.run([str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "frame0", "mcp", "--api-port=58411"], capture_output=True, text=True,
-                           env={**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}"})
-        self.assertEqual((r.returncode, r.stdout), (7, ""))  # its exit code is the server's, and nothing else reaches the protocol's stdout
-        words = (tmp / "args").read_text().split()
-        self.assertEqual(words[:2], ["-y", "frame0-mcp-server"])
-        self.assertRegex(words[2], r"^--api-port=\d+$")
-        self.assertNotEqual(words[2], "--api-port=58411")  # the server talks to the proxy, not the app
 
 
 class DrawApp(http.server.BaseHTTPRequestHandler):
@@ -588,6 +513,79 @@ class Frame0Command(unittest.TestCase):
             for action in ("up", "draw", "save", "down"):
                 fc.fc_f0pages.cmd_frame0_pages(argparse.Namespace(action=action))
         self.assertEqual([c.args[0].action for c in cmd.call_args_list], ["up", "draw", "save", "down"])
+
+
+PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n0123456789").decode()
+
+
+class ExportApp(http.server.BaseHTTPRequestHandler):
+    """Frame0's API for an export: answers `file:export-image` with a PNG (bare base64, or a data URI when `uri`), and fails the page in `fail`."""
+    calls, uri, fail = [], False, None
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        out = {"success": True, "data": "tok"}
+        if self.path != "/request_api_token":
+            ExportApp.calls.append((body["command"], body["args"]))
+            if body["args"].get("pageId") == ExportApp.fail:
+                out = {"success": True, "data": ""}
+            else:
+                out["data"] = ("data:image/png;base64," if ExportApp.uri else "") + PNG
+        data = json.dumps(out).encode()
+        self.send_response(200), self.send_header("Content-Length", str(len(data))), self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+class Frame0Export(unittest.TestCase):
+    """`frame0 export` is the one thing drawing needed the MCP server for: the running app renders a page to a PNG file the session reads or puts on a card."""
+
+    def setUp(self):
+        ExportApp.calls, ExportApp.uri, ExportApp.fail = [], False, None
+        self.proj = f0_project(f0_page("a", "01.1 Cart / empty"), f0_page("b", "01.2 Pay"))
+        self.app = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ExportApp)
+        threading.Thread(target=self.app.serve_forever, daemon=True).start()
+        self.addCleanup(self.app.shutdown), self.addCleanup(self.app.server_close)
+
+    def export(self, refs, out=None, pid=4242):
+        with mock.patch.object(fc.fc_frame0, "frame0_pid", return_value=pid), mock.patch.object(fc.fc_frame0, "frame0_port", return_value=self.app.server_address[1]):
+            return fc.fc_f0pages.frame0_export(self.proj, refs, out or self.proj / "exports")
+
+    def test_each_page_becomes_a_png_named_after_it(self):
+        done = self.export(["01.1", "b"])
+        self.assertEqual([(p["id"], path.name) for p, path in done], [("a", "01.1-Cart-empty.png"), ("b", "01.2-Pay.png")])
+        self.assertEqual([path.read_bytes()[:8] for _, path in done], [b"\x89PNG\r\n\x1a\n"] * 2)
+        self.assertEqual(ExportApp.calls, [("file:save", {"allowSaveAs": False})]  # saved first, so the pages are what is on screen
+                         + [("file:export-image", {"pageId": pid, "format": "image/png", "fillBackground": True}) for pid in ("a", "b")])  # what export_page_as_image sent
+
+    def test_a_data_uri_answer_is_decoded_too(self):
+        ExportApp.uri = True
+        ((_, path),) = self.export(["b"], self.proj / "deep" / "er")
+        self.assertEqual(path.read_bytes()[:4], b"\x89PNG")
+        self.assertEqual(path.parent, self.proj / "deep" / "er")  # the directory is made
+
+    def test_it_says_what_it_needs_and_touches_nothing_without_the_app(self):
+        with self.assertRaisesRegex(RuntimeError, "--page <page> \\(repeatable\\) names what to export"):
+            self.export([])
+        with self.assertRaisesRegex(RuntimeError, "Frame0 is not running; `frame0 up` starts it"):
+            self.export(["a"], pid=None)
+        with self.assertRaisesRegex(RuntimeError, "no page 'zz'"):
+            self.export(["zz"])
+        ExportApp.fail = "a"
+        with self.assertRaisesRegex(RuntimeError, "page '01.1 Cart / empty': the app returned no image"):
+            self.export(["a"])
+        self.assertEqual([c for c in ExportApp.calls if c[0] != "file:save"], [("file:export-image", {"pageId": "a", "format": "image/png", "fillBackground": True})])  # no export before the misses
+        self.assertEqual(list((self.proj / "exports").glob("*.png")), [])
+
+    def test_the_command_prints_the_files(self):
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_frame0, "frame0_pid", return_value=4242), \
+                mock.patch.object(fc.fc_frame0, "frame0_port", return_value=self.app.server_address[1]), mock.patch("sys.stdout", out):
+            fc.fc_f0pages.cmd_frame0_pages(argparse.Namespace(action="export", page=["b"], out=None, file=None, after=None, first=False, empty=False, retarget=None,
+                                                              drop_dangling=False, dry_run=False))
+        self.assertEqual(out.getvalue(), f"{self.proj / 'exports' / '01.2-Pay.png'} 18 bytes  01.2 Pay\n")
 
 
 class Frame0Guidance(unittest.TestCase):

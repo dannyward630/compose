@@ -375,8 +375,8 @@ class PlanWritingRules(unittest.TestCase):
 
 class Frame0OptIn(unittest.TestCase):
     FIRST = "The architect (a solutions architect: it scopes the feature with the product owner and frames the product and technical choices, each with a recommendation) reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
-    OPT_IN = "Frame0 is off by default: a prototype question asks the team lead for a session started with `compose crew start --frame0` (the architect restarted that way, or a helper), and only that session has the `frame0` tools."
-    ONLY = "Only a session started with `crew start --frame0` has the `frame0` tools, pointed at that app; draw from such a session, never from an older one."
+    OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a visual card comes."
+    ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): report `needs-user` saying so and retry once they click Allow; if the command still fails, say so and wait."
 
     def setUp(self):
         self.text = read("sections/0b.md")
@@ -387,7 +387,8 @@ class Frame0OptIn(unittest.TestCase):
         self.assertEqual(self.lines[1], self.FIRST)
 
     def test_opt_in_sits_right_after_the_prototype_line(self):
-        self.assertEqual(self.text.count("--frame0` (the architect"), 1)
+        for gone in ("--frame0", "`frame0` MCP server", "export_page_as_image", "has the `frame0` tools"):  # no session carries the server: nothing of Frame0 runs before `up`
+            self.assertNotIn(gone, self.text, gone)
         self.assertEqual(self.lines.count(self.OPT_IN), 1)
         proto = [i for i, l in enumerate(self.lines) if l.startswith("A **prototype** question about how a screen or flow should look")]
         self.assertEqual(len(proto), 1)
@@ -395,12 +396,13 @@ class Frame0OptIn(unittest.TestCase):
         self.assertTrue(self.lines[proto[0] + 2].startswith("Each project draws in its own Frame0 app"))
 
     def test_old_sentence_replaced_in_place(self):
-        for old in ("points every teammate's `frame0` tools", "started after this change"):
+        for old in ("points every teammate's `frame0` tools", "started after this change", "Only a session started with"):
             self.assertFalse(old in self.text, old)
         self.assertEqual(self.lines.count(self.ONLY), 1)
+        self.assertEqual(self.lines[self.lines.index(self.ONLY) - 1][:36], "Each project draws in its own Frame0")
         i = self.lines.index(self.ONLY)
         self.assertTrue(self.lines[i - 1].startswith("Each project draws in its own Frame0 app"))
-        self.assertTrue(self.lines[i + 1].startswith("The first tool call makes Frame0 ask"))
+        self.assertTrue(self.lines[i + 1].startswith("Draw each page with one `compose frame0 draw"))
 
     def test_plain_text_rules(self):
         self.assertNotIn("\u2014", self.text)
