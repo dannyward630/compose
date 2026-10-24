@@ -211,6 +211,17 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertEqual(snap["closed"], ["p-tests-001", "p-tests-002"])
         self.assertEqual([e for e in fc.fc_watch.watch_stalls(self.proj, snap, 240) if "stall=ended" in e], [])
 
+    def test_a_collected_writer_has_its_tab_closed_once_and_a_writer_not_collected_keeps_it(self):
+        self.crew_commits("001", "a_test.go", "a\n")
+        for n, tab in (("p-tests-001", "w9:t5"), ("p-tests-002", "w9:t6")):
+            (self.proj / "results" / "crew" / f"{n}.json").write_text(json.dumps({"name": n, "space": "w9", "tab": tab}))
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch.object(fc.fc_herdr, "herdr") as herdr:
+            fc.fc_briefs.collect_tests(self.proj)
+            fc.fc_briefs.collect_tests(self.proj)
+        self.assertEqual([c.args for c in herdr.call_args_list if c.args[:2] == ("tab", "close")], [("tab", "close", "w9:t5")])
+        self.assertIn("collected", fc.fc_crew.crew_record(self.proj, "p-tests-001")["closed"]["why"])
+        self.assertNotIn("closed", fc.fc_crew.crew_record(self.proj, "p-tests-002"))
+
     def test_each_crew_has_its_own_branch_and_collect_lands_them_in_order(self):
         self.crew_commits("002", "b_test.go", "b\n")
         self.crew_commits("001", "a_test.go", "a\n")

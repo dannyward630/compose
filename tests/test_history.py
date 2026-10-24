@@ -157,6 +157,12 @@ class VerifyWrites(Repo):
         self.assertEqual(got, [("verify-round", 1, None, "pass"), ("verify-end", None, 1, "pass"), ("verify-round", 1, None, "fail"), ("verify-end", None, 1, "fail")])
         self.assertEqual(self.lines()[1]["cost"], 0.37)
 
+    def test_a_passing_verify_closes_its_tab_and_a_failing_one_keeps_it(self):
+        for passed, closed in ((True, [("w9", "verify")]), (False, [])):
+            with mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_close_tabs") as close:
+                self.verify(passed)
+            self.assertEqual([c.args for c in close.call_args_list], closed, passed)
+
 
 if __name__ == "__main__":
     unittest.main()

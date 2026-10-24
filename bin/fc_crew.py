@@ -529,6 +529,14 @@ def finish_clean_after_turn(proj, name):
                      cwd=main, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print(f"clean  {proj.name}: {wt} and its branch go once this turn ends")
 
+def close_collected(proj, name):
+    """Close the tab of a teammate whose work another command took over, not its own `done`. That command runs in another tab,
+    so the close is direct."""
+    c = crew_record(proj, name)
+    if c and c.get("tab") and not c.get("closed"):
+        fc_herdr.herdr("tab", "close", c["tab"])
+        crew_closed(proj, name, "its work was collected")
+
 def crew_closed(proj, name, why):
     f = crew_dir(proj) / f"{name}.json"
     c = json.loads(f.read_text())

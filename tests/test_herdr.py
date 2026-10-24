@@ -139,6 +139,12 @@ class Tabs(unittest.TestCase):
         closed = [c[2] for c in calls if c[:2] == ("tab", "close")]
         self.assertEqual(sorted(closed), ["w9:t2", "w9:t3"])
 
+    def test_a_passed_task_closes_its_pi_pane_by_the_agents_name(self):
+        calls, h = self.fake({}, [])
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: ({"agent": {"pane_id": "w9:p4"}} if a[:2] == ("agent", "get") else calls.append(a))):
+            fc.fc_herdr.herdr_close_task(Path("/x/.compose/shop"), "003")
+        self.assertEqual(calls, [("pane", "close", "w9:p4")])
+
 
 
 class SharedSpace(unittest.TestCase):

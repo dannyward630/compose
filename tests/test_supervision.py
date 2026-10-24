@@ -1200,6 +1200,35 @@ class NetworkDrop(unittest.TestCase):
         self.assertEqual(fc.fc_watch.watch_filter([line], "hw", ["hw-designer"]), [line])
 
 
+class ClosableIdle(unittest.TestCase):
+    """A teammate that finished its turn, reported only working, and sat idle for the stall window is named closable once, with a nudge that ends in done."""
+    snap, setUp = NetworkDrop.snap, NetworkDrop.setUp
+
+    def closable(self, snap, now, writer=False):
+        if writer:
+            snap = {**snap, "agents": {"hw-tests-001": "idle"}, "crew": {"hw-tests-001": [{"at": at(0), "state": "working", "message": "test ready"}]}}
+        with mock.patch.object(fc.fc_herdr, "herdr_text", return_value="> done for now\n"):
+            return [e for e in fc.fc_watch.watch_stalls(self.proj, snap, 240, now_s=now) if "stall=closable" in e]
+
+    def test_an_idle_working_teammate_is_named_closable_once_after_the_stall_window(self):
+        self.assertEqual(self.closable(self.snap(), NOW), [])
+        self.assertEqual(self.closable(self.snap(), NOW + 239), [])
+        ev = self.closable(self.snap(), NOW + 241)
+        self.assertEqual(len(ev), 1, ev)
+        self.assertIn("agent=hw-designer", ev[0])
+        self.assertIn("herdr agent prompt hw-designer \"If nothing is left for you, report done\"", ev[0])
+        self.assertNotIn("--force", ev[0])
+        self.assertTrue(fc.fc_watch.URGENT.search(ev[0]))
+        self.assertEqual(self.closable(self.snap(), NOW + 600), [])  # once per idle spell
+
+    def test_a_working_done_closed_or_collectable_teammate_is_not_closable(self):
+        self.closable(self.snap(), NOW)
+        for snap, writer in ((self.snap("working"), False), (self.snap(state="done"), False), (self.snap(closed=["hw-designer"]), False), (self.snap(), True)):
+            self.setUp()
+            self.closable(snap, NOW, writer)
+            self.assertEqual(self.closable(snap, NOW + 500, writer), [], snap)
+
+
 class OneManager(unittest.TestCase):
     """One engineering manager session per project: another one's `crew start` or `watch` refuses unless it says --takeover."""
     A, B = "w1:p1", "w1:p2"

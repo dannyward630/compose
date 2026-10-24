@@ -575,8 +575,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     fc_core.say(f"{tid} {status:10} total {fc_core.fmt(total)}  attempts={spent()}  ${cost:.4f}")
     if isinstance(session, dict):
         fc_herdr.herdr_label(session, status, cost, state="idle")
-        if status in ("passed", "unproven"):  # its branch is the record; a missed task's pane stays for the team lead to read and steer
+    if status in ("passed", "unproven"):  # its branch is the record; a missed task's pane stays for the team lead to read and steer
+        if isinstance(session, dict):
             fc_herdr.herdr("pane", "close", session["pane"])
+        else:  # a fallback turn took over: the pi pane of the earlier attempts is still open
+            fc_herdr.herdr_close_task(proj, tid)
     result = {"id": tid, "title": meta.get("title"), "status": status, "model": meta["model"], "attempts": spent(),
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "reference_cost": round(reference_cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}

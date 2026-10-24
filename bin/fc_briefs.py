@@ -550,6 +550,7 @@ def collect_tests(proj, only=None, force=False):
             fc_core.sh(["git", "branch", "-D", branch], wt, check=False)
             if last.get("state") != "done":  # its session ended with its slot: it is finished, not a teammate that went missing
                 fc_crew.write_report(proj, writer, "done", "test collected onto the project branch")
+            fc_crew.close_collected(proj, writer)  # its tab would stay open and idle until a teardown
             fc_core.say(f"tests-{tid} collected  {len(commits)} commit(s)" + (f", {int(ahead) - len(commits)} already on the branch" if int(ahead) > len(commits) else ""))
     fc_core.sh(["git", "worktree", "prune"], wt, check=False)
     groups = {}

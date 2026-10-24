@@ -155,6 +155,11 @@ class LinearStates(unittest.TestCase):
         self.done("004")
         self.assertEqual([self.lin.state[i] for i in ("ENG-4", "ENG-2", "ENG-1")], ["In Review", "In Review", "In Progress"])
 
+    def test_done_by_hand_closes_the_pi_pane_its_earlier_attempts_left(self):
+        with mock.patch.object(fc.fc_herdr, "herdr_close_task") as close:
+            self.done("003,004")
+        self.assertEqual([c.args[1] for c in close.call_args_list], ["003", "004"])
+
     def test_done_by_hand_without_a_key_says_so_once(self):
         said = []
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "say", said.append):
