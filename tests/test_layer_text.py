@@ -290,9 +290,5 @@ class SharedFixture(LayersBase):
         self.leave_leftovers()
 
 
-class SharedFixtureOtherClass(SharedFixture):
-    """A subclass builds its own fixture and does not reuse its parent's."""
-
-
 if __name__ == "__main__":
     unittest.main()

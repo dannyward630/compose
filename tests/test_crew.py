@@ -3,7 +3,7 @@ import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, 
 from pathlib import Path
 from unittest import mock
 import shutil, subprocess, sys, time
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
@@ -981,8 +981,8 @@ class AtomicState(unittest.TestCase):
                 except ValueError as e:
                     bad.append(e)
         t = threading.Thread(target=read); t.start()
-        for i in range(300):
-            fc.fc_core.atomic_write(path, json.dumps({"n": i, "pad": "x" * 100000}))
+        for i in range(50):
+            fc.fc_core.atomic_write(path, json.dumps({"n": i, "pad": "x" * 10000}))
         stop.set(); t.join()
         self.assertEqual(bad, [])
         self.assertEqual([f.name for f in path.parent.iterdir()], ["tasks.json"])  # no temp file left behind

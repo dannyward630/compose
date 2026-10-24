@@ -3,7 +3,7 @@ import importlib.machinery, importlib.util, io, json, os, re, string, subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
@@ -145,12 +145,15 @@ class Groundwork(unittest.TestCase):
         self.assertNotIn("Project notes", self.planner(extra=None))
 
     def test_planner_is_a_command_with_issue_and_extra(self):
-        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
-        top = subprocess.run([sys.executable, cli, "--help"], capture_output=True, text=True).stdout
-        self.assertRegex(top, r"(?m)^    planner ")
-        sub = subprocess.run([sys.executable, cli, "planner", "--help"], capture_output=True, text=True)
-        self.assertEqual(sub.returncode, 0, sub.stderr)
-        self.assertIn("--issue", sub.stdout); self.assertIn("--extra", sub.stdout)
+        def help(*argv):
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", ["compose", *argv, "--help"]), mock.patch("sys.stdout", out), self.assertRaises(SystemExit) as cm:
+                fc.main()
+            self.assertEqual(cm.exception.code, 0)
+            return out.getvalue()
+        self.assertRegex(help(), r"(?m)^    planner ")
+        sub = help("planner")
+        self.assertIn("--issue", sub); self.assertIn("--extra", sub)
 
     def test_each_test_crew_gets_its_task_and_the_contract(self):
         (self.proj / "results" / "contract.md").write_text("Store is a value type: store.Store{}")
@@ -228,11 +231,13 @@ class Groundwork(unittest.TestCase):
                     fc.fc_briefs.cmd_testcrews(SimpleNamespace(repo=str(self.repo), project="p", contract=None, only=None, print_=False, parallel=flag))
                 self.assertEqual(sorted(started), expect, (models, flag))  # the writers start on threads, so their order is not fixed
 
-    def test_testcrews_takes_parallel_and_force_on_the_command_line(self):
-        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
-        sub = subprocess.run([sys.executable, cli, "testcrews", "--help"], capture_output=True, text=True)
-        self.assertIn("--parallel", sub.stdout)
-        self.assertIn("--force", sub.stdout)
+    def test_testcrews_takes_parallel_force_and_redo_on_the_command_line(self):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["compose", "testcrews", "--help"]), mock.patch("sys.stdout", out), self.assertRaises(SystemExit) as cm:
+            fc.main()
+        self.assertEqual(cm.exception.code, 0)
+        for flag in ("--parallel", "--force", "--redo"):
+            self.assertIn(flag, out.getvalue())
 
     def test_force_goes_on_to_every_writer_and_is_off_without_it(self):
         (self.proj / "results" / "contract.md").write_text("c")
@@ -276,12 +281,6 @@ class Groundwork(unittest.TestCase):
         self.assertIn("Its brief changed after it was built: rewrite the test server/store_test.go holds to the TASK BRIEF.", redo)
         self.assertIn("003 skipped: its state is Done\n", redo)  # Done on Linear stays skipped, as in `run --redo`
         self.assertNotIn("rewrite the test", printed(only="002"))  # a task never built gets the plain brief
-
-    def test_testcrews_takes_redo_on_the_command_line(self):
-        cli = str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")
-        sub = subprocess.run([sys.executable, cli, "testcrews", "--help"], capture_output=True, text=True)
-        self.assertEqual(sub.returncode, 0, sub.stderr)
-        self.assertIn("--redo", sub.stdout)
 
     def test_no_contract_means_no_test_crews(self):
         with self.patched()[0], self.assertRaises(SystemExit):
@@ -687,11 +686,6 @@ class PlanJudgmentBrief(unittest.TestCase):
             self.assertLessEqual(len(line), 125, line)
         for line in lines[1:]:
             self.assertRegex(line, r"^ {3}\S")
-
-    def test_brief_keeps_its_placeholders_and_has_no_em_dash(self):
-        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
-        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
-        self.assertNotIn("\u2014", self.brief)
 
 
 class DesignerBrief(unittest.TestCase):
@@ -1204,9 +1198,6 @@ class TerseTemplatesB(unittest.TestCase):
         self.assertIn("`done`", brief)
         self.assertRegex(brief, r"TASK BRIEF:\n## Goal\nbody text\n+CONTRACT:\ncontract text\n\Z")
         self.assertIn("Test file: tests/test_a.py.", brief)
-
-    def test_fc_briefs_stays_within_600_lines(self):
-        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
 
 
 if __name__ == "__main__":

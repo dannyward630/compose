@@ -1,7 +1,7 @@
 import hermetic  # first: no test sees the real home
 import json, os, subprocess, tempfile, unittest
 from pathlib import Path
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
@@ -71,16 +71,6 @@ class InitAfter(unittest.TestCase):
         self.assertEqual({k: json.loads(vfile.read_text())[k] for k in ("review_base", "after")}, {"review_base": "compose/a", "after": "a"})
         self.assertEqual(git(b_wt, "rev-parse", "HEAD"), git(a_wt, "rev-parse", "HEAD"))
         self.fc("init", "--project", "b", "--after", "a")  # the same --after again changes nothing
-        (b_wt / "feature_b.txt").write_text("b\n")
-        git(b_wt, "add", "-A"); git(b_wt, "commit", "-qm", "b")
-        self.fc("init", "--project", "c")
-        c_wt = self.repo.parent / "compose-c"
-        (c_wt / "feature_c.txt").write_text("c\n")
-        git(c_wt, "add", "-A"); git(c_wt, "commit", "-qm", "c")
-        p = self.fc("init", "--project", "c", "--after", "a", check=False)
-        self.assertNotEqual(p.returncode, 0)
-        self.assertIn("1 commit of its own", p.stderr)
-        self.assertEqual(json.loads((c_wt / ".compose" / "c" / "verify.json").read_text())["review_base"], "main")
 
     def test_after_an_unknown_project_refuses(self):
         p = self.fc("init", "--project", "b", "--after", "nope", check=False)
@@ -119,28 +109,22 @@ class InitBase(unittest.TestCase):
         (self.wt(name) / file).write_text(f"{file}\n")
         self.git(self.wt(name), "add", "-A"); self.git(self.wt(name), "commit", "-qm", file)
 
-    def test_a_master_trunk_repo_records_master_and_after_moves_the_project(self):
-        self.fc("init", "--project", "a")
-        self.fc("init", "--project", "b")
-        self.assertEqual(self.cfg("b")["review_base"], "master")
-        self.commit("a", "feature_a.txt")
-        self.fc("init", "--project", "b", "--after", "a")
-        self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
-        self.assertEqual((self.cfg("b")["review_base"], self.cfg("b")["after"]), ("compose/a", "a"))
-
-    def test_a_project_init_recorded_main_for_in_a_master_trunk_repo_reads_the_default_branch(self):
+    def test_a_master_trunk_repo_records_master_and_a_recorded_main_reads_the_default_branch(self):
         self.fc("init", "--project", "a")
         self.fc("init", "--project", "b")
         self.fc("init", "--project", "c")
+        self.assertEqual(self.cfg("b")["review_base"], "master")
         for p in ("b", "c"):
             self.cfg(p, review_base="main")  # as init wrote it for every project not made with --after
         self.commit("a", "feature_a.txt")
         self.fc("init", "--project", "b", "--after", "a")
         self.assertEqual(self.git(self.wt("b"), "rev-parse", "HEAD"), self.git(self.wt("a"), "rev-parse", "HEAD"))
+        self.assertEqual((self.cfg("b")["review_base"], self.cfg("b")["after"]), ("compose/a", "a"))
         self.commit("c", "feature_c.txt")
         p = self.fc("init", "--project", "c", "--after", "a", check=False)
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("1 commit of its own", p.stderr)
+        self.assertEqual(self.cfg("c")["review_base"], "main")
 
     def test_a_project_started_on_a_feature_branch_is_based_on_it(self):
         self.fc("init", "--project", "a")

@@ -169,12 +169,12 @@ class Residue(unittest.TestCase):
         self.assertEqual(hashlib.sha256((BIN / "compose").read_bytes()).hexdigest(), LAUNCHER_SHA)
 
     def test_help_lists_the_same_subcommands(self):
-        out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True).stdout
+        out = subprocess.run([sys.executable, str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True).stdout
         self.assertEqual(re.findall(r"^    ([a-z][\w-]*)(?: |$)", out.split("positional arguments:")[1], re.M), SUBCOMMANDS)
 
     def test_help_names_trail_not_graft(self):
         env = {**os.environ, "COLUMNS": "400"}
-        out = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True, env=env).stdout
+        out = subprocess.run([sys.executable, str(BIN / "compose"), "--help"], capture_output=True, text=True, check=True, env=env).stdout
         lines = [" ".join(line.split()) for line in out.splitlines()]
         self.assertIn("trail set trail up in the project's worktree again: wire it for Claude Code and build the graph", lines)
         self.assertIn("explore print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes", lines)
@@ -183,7 +183,7 @@ class Residue(unittest.TestCase):
 
     def test_old_graft_subcommand_is_rejected(self):
         env = {**os.environ, "COMPOSE_NO_GRAFT": "1", "COMPOSE_NO_TRAIL": "1"}
-        p = subprocess.run(["/usr/bin/python3", str(BIN / "compose"), "graft", "--project", "no-such-project"], capture_output=True, text=True, env=env)
+        p = subprocess.run([sys.executable, str(BIN / "compose"), "graft", "--project", "no-such-project"], capture_output=True, text=True, env=env)
         self.assertEqual(p.returncode, 2)
         self.assertIn("invalid choice: 'graft'", p.stderr)
 

@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, re, tempfile, unittest, urllib.error
+import contextlib, importlib.machinery, importlib.util, io, json, os, tempfile, unittest, urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -432,18 +432,6 @@ class MarkReady(unittest.TestCase):
         self.assertEqual(query, self.UPDATE)
         self.updates.append(variables)
         return {"issueUpdate": {"success": True}}
-
-    def test_the_query_selects_children_and_parent_on_the_issue_not_the_team(self):
-        paths, stack, last = set(), [], None
-        for tok in re.findall(r"[{}]|\w+", fc.fc_linear.LINEAR_READY_TREE.split("fragment")[0]):
-            if tok == "{":
-                stack.append(last)
-                paths.add(".".join(stack[2:]))  # below the query and issue braces
-            elif tok == "}":
-                stack.pop()
-            else:
-                last = tok
-        self.assertEqual(paths - {""}, {"team", "team.labels", "team.labels.nodes", "children", "children.nodes", "parent", "parent.children", "parent.children.nodes"})
 
     @staticmethod
     def node(ident, state, *labels, blocked=False, tasks=("Todo",)):

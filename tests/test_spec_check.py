@@ -77,13 +77,10 @@ class SpecCheck(unittest.TestCase):
         self.assertIn(fc.fc_tasks.SYNC_SHAPE, str(self.run_cli("not json")[1]))
 
     def test_command_line_registers_spec_check(self):
-        def cli(desc):
-            return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "spec-check", "--stdin"],
-                                  input=json.dumps(data([task("ENG-3", "001")], desc)), capture_output=True, text=True, env={**os.environ, "COMPOSE_NO_TREEHOUSE": "1"})
-        ok, bad = cli(SETTLED), cli("## Not yet specified\n\n- which color?")
-        self.assertEqual((ok.returncode, ok.stdout.partition("\n")[0]), (0, "PASS ENG-1 feature"), ok.stderr)
-        self.assertEqual(bad.returncode, 1, bad.stderr)
-        self.assertTrue(bad.stdout.startswith("FAIL ENG-1 feature"), bad.stdout)
+        with mock.patch.object(sys, "argv", ["compose", "spec-check", "--stdin"]), mock.patch.object(fc.fc_spec, "cmd_spec_check") as c:
+            fc.main()
+        c.assert_called_once()
+        self.assertTrue(c.call_args.args[0].stdin)
 
     def test_each_feature_gap_alone(self):
         for desc, kw in ((SETTLED.replace("None", "- which color?"), "Not yet specified"),

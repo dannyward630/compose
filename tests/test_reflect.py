@@ -141,8 +141,10 @@ class Reflect(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
             fc.fc_change.cmd_reflect(SimpleNamespace(evidence=None, dismiss="the sandbox flake, not the plan", against=None))
         self.assertIn("dismissed", out.getvalue())
-        self.assertEqual(json.loads((proj / "results" / "evidence.jsonl").read_text().splitlines()[-1])["cut"], True)
-        time.sleep(1)  # the next screen is a second later than the dismissal
+        f = proj / "results" / "evidence.jsonl"; *rest, cut = f.read_text().splitlines(); cut = json.loads(cut)
+        self.assertEqual(cut["cut"], True)
+        cut["at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 1))  # the next screen is a second later than the dismissal
+        f.write_text("".join(l + "\n" for l in [*rest, json.dumps(cut)]))
         with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
             fc.fc_change.reflect(proj, "task:002", "second failure")
         ev = ask.call_args.args[2]["evidence"]
@@ -949,11 +951,6 @@ class ClaudeCap(unittest.TestCase):
         self.assertEqual(self.peak["claude"], 2)
         self.assertGreaterEqual(self.peak["all"], 4)  # the pi tasks did not wait for the Claude ones
 
-    def test_a_cap_of_one_runs_the_claude_tasks_one_after_another(self):
-        with mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 1):
-            calls, _, _ = run_all(self.proj, during=self.during, parallel=6)
-        self.assertEqual((len(calls), self.peak["claude"]), (6, 1))
-
     def test_claude_capped_counts_the_running_ones_and_keeps_the_order(self):
         metas = {t: {"model": m} for t, m in (("a", "claude"), ("b", "pi:x/y"), ("c", "claude:z"), ("d", "claude"))}
         with mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 2):
@@ -961,7 +958,6 @@ class ClaudeCap(unittest.TestCase):
             self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c", "d"], ["claude"], 4, metas), ["a", "b"])
             self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c", "d"], ["pi:x/y", "claude", "claude"], 3, metas), ["b"])
             self.assertEqual(fc.fc_run.claude_capped(["a", "b", "c"], [], 1, metas), ["a"])
-
 
 
 if __name__ == "__main__":

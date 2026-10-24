@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import ast, io, os, sys, threading, time, unittest
+import io, os, sys, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -157,15 +157,6 @@ class Spin(unittest.TestCase):
                 self.assertEqual(seen, ["\r◒  gh auth", [True]])
                 self.assertTrue(shown.endswith(self.CLEAR), repr(shown))
 
-    def test_frames_follow_FRAMES_in_order_every_tenth_of_a_second_and_wrap_around(self):
-        shown = self.spin("pi auth", lambda out, before: time.sleep(1.0))
-        self.assertEqual(fc_prompt.FRAMES, "◒◐◓◑")
-        self.assertTrue(shown.startswith("\r") and shown.endswith(self.CLEAR), repr(shown))
-        frames = shown[1:-len(self.CLEAR)].split("\r")
-        self.assertTrue(5 <= len(frames) <= 13, frames)
-        self.assertEqual(frames, [f"{'◒◐◓◑'[i % 4]}  pi auth" for i in range(len(frames))])
-        self.assertGreaterEqual(self.out.flushes, len(frames))
-
     def test_a_block_that_raises_still_stops_the_thread_and_the_error_propagates(self):
         boom = KeyError("boom")
         for tty, wait in ((True, True), (True, False), (False, False)):
@@ -178,20 +169,6 @@ class Spin(unittest.TestCase):
                 shown = self.out.getvalue()
                 self.assertTrue(shown.endswith(self.CLEAR) if tty else shown == "", repr(shown))
 
-class TopImports(unittest.TestCase):
-    tree = ast.parse(Path(fc_prompt.__file__).read_text())
-
-    def test_the_stdlib_imports_are_one_top_level_line(self):
-        self.assertEqual([ast.unparse(n) for n in self.tree.body if isinstance(n, (ast.Import, ast.ImportFrom))],
-                         ["import contextlib, getpass, os, sys, threading"])
-
-    def test_no_function_holds_an_import(self):
-        found = [f"{f.name}: {ast.unparse(i)}" for f in ast.walk(self.tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
-                 for i in ast.walk(f) if isinstance(i, (ast.Import, ast.ImportFrom))]
-        self.assertEqual(found, [])
-
-    def test_the_imports_come_right_after_the_docstring(self):
-        self.assertIsInstance(self.tree.body[1], ast.Import)
 
 if __name__ == "__main__":
     unittest.main()

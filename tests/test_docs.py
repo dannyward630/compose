@@ -1920,10 +1920,6 @@ class HarnessPaneAndInstallClaims(unittest.TestCase):
             self.assertNotIn("\u2014", read(rel), rel)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HarnessSafetyPage(unittest.TestCase):
     def setUp(self):
         import sys; sys.path.insert(0, str(ROOT / "bin"))
@@ -2134,3 +2130,7 @@ class HarnessTierDocs(unittest.TestCase):
     def test_neither_page_has_an_em_dash(self):
         for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
             self.assertNotIn("—", text, rel)
+
+
+if __name__ == "__main__":
+    unittest.main()

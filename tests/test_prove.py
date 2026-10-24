@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_e2e import fc, FAKE_AGENT  # the loaded compose and jev's stand-in Agent
+from test_e2e import fc, fake_uv, FAKE_AGENT  # the loaded compose, a uv stand-in and jev's stand-in Agent
 os.environ["HERDR_ENV"] = ""
 
 
@@ -118,6 +118,7 @@ class Repo(unittest.TestCase):
         for p in (mock.patch.object(fc.fc_config, "JEV_DIR", jev), mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}),
                   mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj)):
             p.start(); self.addCleanup(p.stop)
+        fake_uv(self)
 
     def config(self, **cfg):
         (self.proj / "verify.json").write_text(json.dumps({"review": False, "jev_acceptance": False, "e2e_env": {"BU_CDP_URL": "http://127.0.0.1:1"}, **cfg}))
@@ -141,12 +142,14 @@ MISSING = {"statuses": ["ready", "blocked"], "reason": "No Export button on the 
 JUDGE_MISSING = {"verdict": "feature_missing", "kind": "feature", "why": "no Export button"}
 
 
-class ProveCommand(Repo):
+class Proving(Repo):
     def prove(self, judge=JUDGE_MISSING, **cfg):
         self.config(**cfg)
         with mock.patch.object(fc.fc_models, "fast_object", return_value=judge):
             return self.call(fc.fc_prove.cmd_prove)
 
+
+class ProveCommand(Proving):
     def test_every_case_failing_for_the_missing_feature_passes_and_is_recorded(self):
         code, out = self.prove(e2e=[jev_case("export", MISSING), jev_case("export again", MISSING)])
         self.assertEqual(code, 0, out)
@@ -206,7 +209,7 @@ class ProveCommand(Repo):
         cp.assert_called_once()
 
 
-class RunGate(ProveCommand):
+class RunGate(Proving):
     """`run` starts only on e2e cases a passing prove ran: never proven, a failed prove, or cases changed since stop it first."""
     CASES = [jev_case("export", MISSING)]
 

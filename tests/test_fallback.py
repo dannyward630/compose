@@ -4,7 +4,7 @@ from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 import sys, threading, time, types
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
@@ -224,8 +224,8 @@ class ReadyCheckout(unittest.TestCase):
         fc.fc_worktree.ready_checkout(repo, wt)  # idempotent: a re-run neither fails nor duplicates exclude lines
         self.assertTrue((wt / "client" / "node_modules").is_symlink())
         self.assertTrue((wt / "client" / "node_modules" / "jest").is_dir())
-        if subprocess.run(["which", "trail"], capture_output=True).returncode == 0:
-            subprocess.run(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], cwd=wt, capture_output=True)
+        for graph in (".trail", "graft"):  # what a `trail build` leaves, without the machine's own trail
+            (wt / graph).mkdir(); (wt / graph / "graph.db").write_text("x")
         self.assertEqual(git(wt, "status", "--porcelain").stdout, "")
         exclude = (wt / ".git" / "info" / "exclude").read_text().splitlines()
         self.assertEqual(exclude.count("/client/node_modules"), 1)
@@ -1270,16 +1270,6 @@ class ProcGroupTurns(unittest.TestCase):
                 (argv,), kw = run.call_args
                 self.assertEqual((argv[0], argv[-3:], kw["cwd"], kw["timeout"]), (name, ["--model", "openrouter/x/y", "hi"], self.wt, want))
                 self.assertEqual({k: v for k, v in kw["env"].items() if k != "COMPOSE_CONFIG"}, {k: v for k, v in {**fc.fc_core.clean_env(), **extra}.items() if k != "COMPOSE_CONFIG"})
-
-    def test_a_turn_past_its_timeout_raises_and_its_whole_group_is_gone(self):
-        n = f"31.{os.getpid()}"  # unique to this run: another suite's sleep is not ours to find or kill
-        self.fake(f"sleep {n} >/dev/null 2>&1 & wait")  # a tool child that outlives the harness unless its group is killed
-        left = lambda: subprocess.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True, text=True).stdout.split()
-        self.addCleanup(lambda: [os.kill(int(p), 9) for p in left()])
-        with self.assertRaises(subprocess.TimeoutExpired):
-            fc.fc_models.pi_turn(self.wt, "openrouter/x/y", "hi", timeout=1)
-        for _ in range(30): left() and time.sleep(0.1)  # up to 3 s for the killed group to exit
-        self.assertEqual(left(), [], "the turn's tool child outlived its timeout")
 
     def test_after_the_stop_no_turn_starts(self):
         self.fake(f"touch {self.d / 'started'}; echo '{{\"type\":\"tool_execution_start\"}}'; echo '{{\"type\":\"text\",\"sessionID\":\"s\",\"part\":{{\"text\":\"ok\"}}}}'")

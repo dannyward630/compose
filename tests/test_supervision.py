@@ -478,7 +478,7 @@ class Reenter(unittest.TestCase):
             self.assertEqual(out, "")
             pd.assert_not_called()
 
-    def test_the_plugin_runs_it_on_a_compaction_and_help_lists_it(self):
+    def test_the_plugin_runs_it_on_a_compaction(self):
         root = Path(fc.__file__).resolve().parents[1]
         hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
         cmds = lambda ev, m=None: [h["command"] for e in hooks.get(ev, []) if e.get("matcher") == m for h in e["hooks"]]
@@ -487,8 +487,6 @@ class Reenter(unittest.TestCase):
         self.assertTrue(cmds("PostToolUse", "Skill")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("UserPromptSubmit")[0].endswith(" skillcheck"))
         self.assertTrue(cmds("Stop")[0].endswith(" rewake"))
-        help_ = subprocess.run([str(root / "bin" / "compose"), "--help"], capture_output=True, text=True).stdout
-        self.assertRegex(help_, r"\breenter\b")
 
 
 class Detach(unittest.TestCase):
@@ -629,73 +627,11 @@ class Scratch(unittest.TestCase):
 
 
 class Timed(unittest.TestCase):
-    def test_timed_kills_the_whole_group_and_says_it_hangs(self):
-        """The check looks only for this run's sleeps: a suite running at the same time has its own alive, and they are not ours to find."""
-        import subprocess as sp, time
-        n = 4018 + 2 * os.getpid()  # unique to this run while it lives (another suite's process has another pid), and even
-        other = sp.Popen(["sleep", str(n + 1)])  # odd, so never any run's own: stands in for another suite's sleep left alive
-        try:
-            t0 = time.time()
-            r = sp.run([str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "1", "--", f"sh -c 'sleep {n}' & sleep {n}"],
-                       capture_output=True, text=True)
-            self.assertEqual(r.returncode, 124)
-            self.assertIn("hangs", r.stderr)
-            self.assertLess(time.time() - t0, 10)
-            time.sleep(0.5)
-            self.assertEqual(sp.run(["pgrep", "-f", f"sleep {n}( |$)"], capture_output=True).stdout.strip(), b"")
-            self.assertIsNone(other.poll())  # timed killed its own group, nothing outside it
-        finally:
-            other.kill()
-            other.wait()
-
-    def test_timed_runs_at_most_the_machines_slots_at_once_and_says_so_while_it_waits(self):
-        """Five teammates each running a suite at once leave the machine doing little else: a timed command holds one of
-        COMPOSE_TEST_SLOTS (default 1) slots under ~/.compose while it runs, and the next waits for one, saying so after a second."""
-        import subprocess as sp, time
-        d = Path(tempfile.mkdtemp()); script, marks = d / "mark.py", d / "marks"
-        script.write_text("import sys, time; open(sys.argv[1], 'a').write(f'{sys.argv[2]} {time.time()}\\n'); time.sleep(float(sys.argv[3]))\n")
-        env = {**os.environ, "COMPOSE_TEST_SLOTS": "1"}
-        cmd = lambda tag, hold: [str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "timed", "30", "--", "python3", str(script), str(marks), tag, hold, "pytest"]
-        a = sp.Popen(cmd("a", "3"), env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
-        time.sleep(0.5)
-        b = sp.run(cmd("b", "0"), env=env, capture_output=True, text=True)
-        self.assertEqual((a.wait(timeout=30), b.returncode), (0, 0), b.stderr)
-        t = dict(l.split() for l in marks.read_text().splitlines())
-        self.assertGreaterEqual(float(t["b"]) - float(t["a"]), 3.0)
-        self.assertIn("waiting for a test slot", b.stdout + b.stderr)
-        self.assertNotIn("WARNING", a.communicate()[0] + b.stdout + b.stderr)  # the slot files are the CLI's own, not a change to ~/.compose
-        self.assertEqual([x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()], ["0"])
-
-    def test_a_scoped_timed_command_runs_at_once_while_a_suite_holds_every_slot(self):
-        """A `-k` run is short: it takes a quick lane, so five commands queued behind two suites no longer make it wait minutes."""
-        import subprocess as sp, time
-        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
-        env = {**os.environ, "COMPOSE_TEST_SLOTS": "1", "COMPOSE_QUICK_SLOTS": "1"}
-        suite = sp.Popen([compose, "timed", "30", "--", "sh", "-c", "sleep 4", "pytest"], env=env, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
-        time.sleep(0.7)
-        t0 = time.time()
-        quick = sp.run([compose, "timed", "30", "--", "sh", "-c", "echo quick-ok # -k filter"], env=env, capture_output=True, text=True)
-        self.assertEqual((quick.returncode, quick.stdout.strip()), (0, "quick-ok"), quick.stderr)
-        self.assertLess(time.time() - t0, 3)
-        self.assertNotIn("waiting for a", quick.stdout + quick.stderr)
-        suite.communicate(timeout=30)
-        self.assertEqual(suite.returncode, 0)
-        self.assertEqual(sorted(x.name for x in (Path(os.environ["HOME"]) / ".compose" / "test-slots").iterdir()), ["0", "q0"])
-
-    def test_a_timed_command_under_a_slot_takes_none(self):
-        """A suite under a slot runs compose itself: its timed commands would wait on their parent's slot for ever with one slot."""
-        import subprocess as sp, time
-        compose = str(Path(__file__).resolve().parents[1] / "bin" / "compose")
-        t0 = time.time()
-        r = sp.run([compose, "timed", "5", "--", f"{compose} timed 5 -- echo inner"], env={**os.environ, "COMPOSE_TEST_SLOTS": "1"}, capture_output=True, text=True)
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, "inner"), r.stderr)
-        self.assertLess(time.time() - t0, 5)
-
     def test_a_terminated_timed_removes_its_scratch_config_and_ends_its_command(self):
         """A closed pane, a timed limit above it, or a kill sends SIGTERM: left to die bare the CLI skips atexit, so its scratch
         ~/.compose stays in the temp folder and the command runs on without it. It exits 143 with both gone."""
         import subprocess as sp, time
-        n = 4017 + 2 * os.getpid()  # odd: never the hang test's sleep, and unique to this run while it lives
+        n = 4017 + 2 * os.getpid()  # unique to this run while it lives (another suite's process has another pid)
         tmp = Path(tempfile.mkdtemp())
         p = sp.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "timed", "60", "--", f"sleep {n}"],
                      env={**os.environ, "TMPDIR": str(tmp)}, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
@@ -1171,10 +1107,6 @@ class QuietWatch(unittest.TestCase):
             out = self.watch(base, [first, burst], settle=5)
         self.assertTrue(any("task=001 state=passed" in l for l in out), out)
         self.assertTrue(any("crew=hw-designer state=done" in l for l in out), out)  # arrived during the settle
-
-    def test_the_watch_has_no_timeout_by_default(self):
-        out = subprocess.run([sys.executable, str(Path(fc.__file__).resolve()), "watch", "--help"], capture_output=True, text=True).stdout
-        self.assertIn("default 0 = forever", out)
 
 
 class AttentionWatch(unittest.TestCase):

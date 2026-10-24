@@ -92,10 +92,6 @@ class FigmaCheck(unittest.TestCase):
             self.check()
         self.assertEqual(str(e.exception), "no Figma file: compose figma check --figma <url or key>")
 
-    def test_help_lists_check_and_judge(self):
-        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "figma", "--help"], capture_output=True, text=True)
-        self.assertIn("{check,tree,judge,publish}", r.stdout)
-
 
 class FigmaTree(unittest.TestCase):
     def setUp(self):

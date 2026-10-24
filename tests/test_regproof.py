@@ -94,13 +94,11 @@ class Prove(unittest.TestCase):
         self.assertEqual(len(self.git(self.repo, "worktree", "list").splitlines()), 1)
 
     def test_not_proven_leaves_the_task_at_the_fix(self):
-        for command, base, tip_exit in (("true", ("pass", False), 0), ("false", ("fail_expected", True), 1),
-                                        ("printf '%03000d' 0; echo ImportError; exit 1", ("error", None), 1)):
-            with self.subTest(command):
-                self.setUp(); p = self.prove([{"check.sh": ""}], command)
-                self.assertEqual((p["base"], p["tip_exit"]), (base, tip_exit)); self.assertAtFix(p)
-                self.assertEqual(self.git(self.wt, "rev-parse", p["tip_sha"] + "~1"), self.fix)
-                if base[0] == "error": self.assertIn("ImportError", p["base_output"]); self.assertLessEqual(len(p["base_output"]), 2000)
+        # one repo, not one per verdict: Classify covers how each exit is classed
+        p = self.prove([{"check.sh": ""}], "printf '%03000d' 0; echo ImportError; exit 1")
+        self.assertEqual((p["base"], p["tip_exit"]), (("error", None), 1)); self.assertAtFix(p)
+        self.assertEqual(self.git(self.wt, "rev-parse", p["tip_sha"] + "~1"), self.fix)
+        self.assertIn("ImportError", p["base_output"]); self.assertLessEqual(len(p["base_output"]), 2000)
 
     def test_a_test_commit_that_does_not_apply_to_the_base_is_an_error(self):
         p = self.prove([{"val.txt": "good"}, {"val.txt": "better"}], "true")

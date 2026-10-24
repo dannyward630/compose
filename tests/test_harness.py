@@ -1725,8 +1725,10 @@ class SessionMarker(unittest.TestCase):
         self.assertIsNone(self.pick(CLAUDECODE="0", CODEX_THREAD_ID=""))
 
 
-class OldPythonTrust(unittest.TestCase):
+class NoTomllibTrust(unittest.TestCase):
+    """Without tomllib, as on Python 3.9 and 3.10, the codex trust answers and bytes are the ones it gives with it (test_py39 keeps the syntax)."""
     BIN = str(Path(__file__).resolve().parents[1] / "bin")
+    NO_TOMLLIB = "import sys; sys.modules['tomllib'] = None\n"  # `import tomllib` raises ImportError, as before 3.11
     SCENE = r'''
 import json, os, re, sys
 sys.path.insert(0, sys.argv[1])
@@ -1753,41 +1755,35 @@ print(json.dumps(r))
               '[hooks.state."/t/we ird].d#x/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:ab"\n', 'm = 1\n[hooks.state.nokey]\ntrusted_hash = "z"\n', "[unclosed"]
 
     def setUp(self):
-        import shutil
-        found = (p for p in ("/usr/bin/python3", shutil.which("python3.9"), shutil.which("python3.10")) if p and os.access(p, os.X_OK)
-                 and subprocess.run([p, "-c", "import sys; sys.exit(sys.version_info >= (3, 11))"]).returncode == 0)
-        self.old = next(found, None) or self.skipTest("no Python older than 3.11 (/usr/bin/python3, python3.9 or python3.10)")
         tmp = Path(tempfile.mkdtemp()); self.home, self.bin = tmp / "home", tmp / "bin"; self.home.mkdir(); self.bin.mkdir()
         (self.bin / "codex").write_text("#!/bin/sh\n"); (self.bin / "codex").chmod(stat.S_IRWXU)
 
-    def py(self, exe, *args, codex=".codex", stdin=None):
+    def py(self, *args, codex=".codex"):
         env = {"HOME": str(self.home), "CODEX_HOME": str(self.home / codex), "PATH": str(self.bin), "COMPOSE_CONFIG": str(self.home / "c.json"), "HERDR_ENV": "", "PYTHONDONTWRITEBYTECODE": "1"}
-        p = subprocess.run([exe, *args], env=env, input=stdin, capture_output=True, text=True, cwd=self.home)
+        p = subprocess.run([sys.executable, *args], env=env, capture_output=True, text=True, cwd=self.home)
         self.assertEqual(p.returncode, 0, p.stderr); return p.stdout
 
-    def scene(self, exe, pre="", codex=".codex"): return json.loads(self.py(exe, "-c", self.SCENE, self.BIN, pre, codex=codex))
-
-    def test_compose_starts(self): self.assertIn("usage", self.py(self.old, str(Path(self.BIN) / "compose.py"), "--help").lower())
+    def scene(self, old, pre="", codex=".codex"): return json.loads(self.py("-c", (self.NO_TOMLLIB if old else "") + self.SCENE, self.BIN, pre, codex=codex))
 
     def test_the_trust_answers_and_bytes_are_the_same_as_on_3_11(self):
-        r, trust = self.scene(self.old), str(self.home / ".codex/config.toml")
+        r, trust = self.scene(True), str(self.home / ".codex/config.toml")
         want = "~/.codex/config.toml has no trust record for compose's %s hook"
         self.assertEqual((r["first"], r["ok"], r["again"]), ([trust], [True, ""], []))
         self.assertEqual((r["lost"], r["fix"], r["fixed"]), ([False, want % "reenter"], [trust], [True, ""]))
         self.assertEqual((r["bad"], r["fix2"], r["fixed2"]), ([False, want % "guard"], [trust], [True, ""]))
         self.assertNotIn("sha256:bad", r["fixed2_text"])
-        self.assertEqual(r, self.scene(sys.executable))
+        self.assertEqual(r, self.scene(False))
 
     def test_a_path_with_brackets_dots_hash_and_quote_and_other_content_in_the_file(self):
         pre, odd = '# mine\nmodel = "x"\n\n[other]\ntrusted_hash = "keep"\n', 'we ird].d#"e'
-        r = self.scene(self.old, pre, odd)
+        r = self.scene(True, pre, odd)
         self.assertEqual((r["ok"], r["again"], r["fixed2"]), ([True, ""], [], [True, ""]))
         self.assertTrue(r["text"].startswith(pre)); self.assertIn('trusted_hash = "keep"', r["fixed2_text"])
-        self.assertEqual(r, self.scene(sys.executable, pre, odd))
+        self.assertEqual(r, self.scene(False, pre, odd))
 
     def test_trust_state_without_tomllib_reads_the_state_tables_and_never_raises(self):
-        got = json.loads(self.py(self.old, "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import fc_checks\n"
-                                 "print(json.dumps([fc_checks.trust_state(t) for t in json.load(sys.stdin)]))", self.BIN, stdin=json.dumps(self.STATES)))
+        with mock.patch.dict(sys.modules, {"tomllib": None}):
+            got = [fc_checks.trust_state(t) for t in self.STATES]
         self.assertEqual(got[:4], [{"a:b": {"trusted_hash": "h1"}, "c": {}}, {"a": {}, "b": {"trusted_hash": "y"}}, {},
                                    {"/t/we ird].d#x/hooks.json:session_start:0:0": {"trusted_hash": "sha256:ab"}}])
         self.assertTrue(all(isinstance(g, dict) for g in got))

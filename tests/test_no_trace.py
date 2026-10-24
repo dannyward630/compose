@@ -2,7 +2,7 @@ import hermetic  # first: no test sees the real home
 import importlib.machinery, importlib.util, json, os, subprocess, tempfile, unittest
 from pathlib import Path
 import sys
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 
 CLI = str(Path(__file__).resolve().parents[1] / "bin" / "compose")

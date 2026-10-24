@@ -118,10 +118,10 @@ class UnknownBaseline(unittest.TestCase):
         return Path(d), git("rev-parse", "HEAD")
 
     def test_a_baseline_cut_off_by_its_limit_is_unknown_and_not_kept(self):
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(fc.fc_gate, "CHECKS_TIMEOUT", 1):
-            script = "echo 'FAIL: test_a (t.T.test_a)'; python3 -c \"print('x' * 5000)\"; sleep 30"
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(fc.fc_gate, "CHECKS_TIMEOUT", 0.3):
+            script = "echo 'FAIL: test_a (t.T.test_a)'; printf '%05000d' 0; sleep 30"
             repo, head = self.repo(d)
-            got = fc.fc_gate.baseline_state(self.run_of(script), ["suite"], repo, (head, ()), 1)
+            got = fc.fc_gate.baseline_state(self.run_of(script), ["suite"], repo, (head, ()), 0.3)
             self.assertEqual((got["suite"]["exit"], got["suite"]["unknown"]), (124, True))
             self.assertNotIn(((head, ()), ("suite",)), fc.fc_gate.BASELINES)
 

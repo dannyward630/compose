@@ -64,8 +64,10 @@ class Perms(unittest.TestCase):
         self.assertEqual(self.file.read_text(), "{not json")
 
     def test_doctor_warns_while_a_rule_is_missing_and_never_stops_init(self):
+        self.assertEqual([r[5] for r in fc_steps.STEPS if r[0] == fc_perms.NAME], ["perms"])
+        row = [r for r in fc_steps.STEPS if r[0] == fc_perms.NAME]  # only this row: the others would run the machine's real tools
         out = io.StringIO()
-        with redirect_stdout(out):
+        with mock.patch.object(fc_steps, "STEPS", row), redirect_stdout(out):
             bad = fc_init.check_deps()
         line = next(l for l in out.getvalue().splitlines() if "Claude Code permissions" in l)
         self.assertIn("Bash(gh pr view *)", line)
@@ -73,7 +75,6 @@ class Perms(unittest.TestCase):
         self.assertNotIn("Claude Code permissions", bad)
         fc_perms.write()
         out = io.StringIO()
-        with redirect_stdout(out):
+        with mock.patch.object(fc_steps, "STEPS", row), redirect_stdout(out):
             fc_init.check_deps()
         self.assertNotIn("Claude Code permissions", out.getvalue())
-        self.assertEqual([r[5] for r in fc_steps.STEPS if r[0] == fc_perms.NAME], ["perms"])

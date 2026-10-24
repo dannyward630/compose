@@ -21,7 +21,7 @@ class PythonApi(unittest.TestCase):
         root = cls.root = Path(tempfile.mkdtemp()).resolve()
         wt = cls.wt = root / "wt"
         cls.addClassCleanup(shutil.rmtree, root, True)
-        subprocess.run(["python3", "-m", "venv", "--without-pip", str(wt / ".venv")], check=True)
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(wt / ".venv")], check=True)
         cls.py = str(wt / ".venv" / "bin" / "python")
         purelib = "import sysconfig; print(sysconfig.get_paths()['purelib'])"
         site = Path(subprocess.run([cls.py, "-c", purelib], check=True, capture_output=True, text=True).stdout.strip())
@@ -136,7 +136,7 @@ class TopLevelFromRecord(unittest.TestCase):
     def setUpClass(cls):
         wt = cls.wt = Path(tempfile.mkdtemp()).resolve()
         cls.addClassCleanup(shutil.rmtree, wt, True)
-        subprocess.run(["python3", "-m", "venv", "--without-pip", str(wt / ".venv")], check=True)
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(wt / ".venv")], check=True)
         purelib = "import sysconfig; print(sysconfig.get_paths()['purelib'])"
         site = Path(subprocess.run([str(wt / ".venv" / "bin" / "python"), "-c", purelib], check=True, capture_output=True,
                                    text=True).stdout.strip())

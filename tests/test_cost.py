@@ -352,10 +352,6 @@ class CostCommand(unittest.TestCase):
         self.assertEqual([lines[i + 1] for i in heads], ["  cost  11in  22cc  33cr  44out  (4 teammates)", "  cost  11in  22cc  33cr  44out  (6 teammates)"])
         self.assertEqual(sum(line.startswith("  cost  ") for line in lines), 2)
 
-    def test_help_lists_cost(self):
-        out = subprocess.run([sys.executable, str(BIN / "compose.py"), "--help"], capture_output=True, text=True).stdout
-        self.assertRegex(out, r"\bcost\b")
-
 
 if __name__ == "__main__":
     unittest.main()

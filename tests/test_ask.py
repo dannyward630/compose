@@ -153,11 +153,6 @@ class Briefs(unittest.TestCase):
                 self.assertIn(want, flat)
             self.assertNotIn("\u2014", brief)
 
-    def test_planner_brief_names_unconfirmed_yolo_lines(self):
-        flat = " ".join(fc.fc_briefs.PLANNER_BRIEF.split())
-        self.assertIn("(yolo recommendation, unconfirmed, <date>)", flat)
-        self.assertIn("Built on unconfirmed: <card ids>", flat)
-
 
 class BriefsNameBothPostures(unittest.TestCase):
     AWAY, YOLO = "(away recommendation, unconfirmed, <date>)", "(yolo recommendation, unconfirmed, <date>)"

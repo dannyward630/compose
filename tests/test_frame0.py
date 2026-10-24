@@ -593,11 +593,9 @@ class Frame0Command(unittest.TestCase):
 class Frame0Guidance(unittest.TestCase):
     """The designer is told to lint before a review ask, to draw only in-scope flows, and to use compose commands instead of the API."""
 
-    def test_the_designer_is_told_in_its_brief_and_in_0d(self):
-        sections = Path(__file__).resolve().parents[1] / "sections"
-        for text in (fc.fc_figma.DESIGNER_BRIEF, (sections / "0d.md").read_text(encoding="utf-8")):
-            for part in ("compose frame0 lint --project", "compose frame0 move|delete|links", "never a skeleton of every flow", "`after`", "never `curl`"):
-                self.assertIn(part, text)
+    def test_the_designer_is_told_in_its_brief(self):
+        for part in ("compose frame0 lint --project", "compose frame0 move|delete|links", "never a skeleton of every flow", "`after`", "never `curl`"):
+            self.assertIn(part, fc.fc_figma.DESIGNER_BRIEF)
 
 
 if __name__ == "__main__":

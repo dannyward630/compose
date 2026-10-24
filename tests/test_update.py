@@ -181,6 +181,5 @@ class Overlap(unittest.TestCase):
         for kind, pid in (("verify", None), ("run", dead.pid)):
             with self.subTest(kind):
                 self.hold(kind, pid)
-                code, out = self.compose("run")
-                self.assertNotIn("already running", out)
-                self.assertIn("run runs in its own session", out)  # the follower started
+                with mock.patch.object(fc_update, "live_dir", return_value=self.cfg / "live"):
+                    fc_update.refuse_while_running("run", self.repo / ".compose" / "p", self.repo)  # in-process: a started run would outlive the test

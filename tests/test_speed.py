@@ -3,7 +3,7 @@ import importlib.machinery, importlib.util, os, shutil, subprocess, tempfile, ti
 from pathlib import Path
 from unittest import mock
 import sys
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 os.environ["COMPOSE_E2E_HEADLESS"] = "1"  # testing the tool itself never opens a browser window; real projects keep theirs
 
@@ -14,27 +14,6 @@ _spec.loader.exec_module(fc)
 
 
 class FormatOnPass(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("gofmt"), "gofmt not installed")
-    def test_passed_task_is_committed_formatted(self):
-        root = Path(tempfile.mkdtemp())
-        repo, proj = root / "repo", root / "proj"
-        repo.mkdir(); proj.mkdir()
-        git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True)
-        git("init", "-q", "-b", "main")
-        (repo / "a.go").write_text("package a\n")
-        git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-        task = {"id": "001", "title": "f", "files": ["a.go"], "protected": [], "test": "grep -q F a.go",
-                "model": "pi:x/y", "after": "", "linear": "ENG-1", "body": "## Goal\nAdd F."}
-        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
-            (Path(cwd) / "a.go").write_text("package a\nfunc   F( ) int {\nreturn 1}\n")
-            return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
-                mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), \
-                mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
-            r = fc.fc_implement.run_task(repo, proj, task, 1)
-        self.assertEqual(r["status"], "passed")
-        self.assertEqual(git("show", "compose/proj-001:a.go").stdout, "package a\n\nfunc F() int {\n\treturn 1\n}\n")
-
     def test_final_newline_added_without_a_formatter_but_base_and_binary_kept(self):
         wt = Path(tempfile.mkdtemp())
         git = lambda *a: subprocess.run(["git", *a], cwd=wt, check=True, capture_output=True, text=True)
@@ -238,7 +217,7 @@ class PrettierOptIn(unittest.TestCase):
             with self.subTest(files=files):
                 self.assertIs(self.ran(files, "", "x  =  1\n"), False)
 
-    def test_each_opt_in_at_the_files_directory_or_the_root_runs_prettier(self):
+    def test_each_opt_in_at_the_files_directory_or_the_root_opts_in(self):
         names = [".prettierrc"] + [".prettierrc." + e for e in "json yaml yml json5 js cjs mjs ts cts mts toml".split()] \
             + ["prettier.config." + e for e in "js cjs mjs ts cts mts".split()]
         cases = [{d + n: ""} for n in names for d in ("clone/web/", "clone/")]
@@ -248,8 +227,13 @@ class PrettierOptIn(unittest.TestCase):
                   {"clone/package.json": '{"devDependencies": {"prettier": "3"}}'}]
         for files in cases:
             with self.subTest(files=files):
-                self.assertIs(self.ran(files, "--write <wt>/web/a.js\n", "pretty\n"), True)
+                top = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, top, True)
+                for f, t in {**files, "clone/web/a.js": ""}.items():
+                    (top / f).parent.mkdir(parents=True, exist_ok=True); (top / f).write_text(t)
+                self.assertIs(fc.fc_format.prettier_opted_in(top / "clone", top / "clone" / "web" / "a.js"), True)
 
+    def test_an_opt_in_runs_prettier_on_the_file(self):
+        self.assertIs(self.ran({"clone/.prettierrc": ""}, "--write <wt>/web/a.js\n", "pretty\n"), True)
 
 if __name__ == "__main__":
     unittest.main()

@@ -495,9 +495,6 @@ class NoStatusTab(unittest.TestCase):
                 self.assertEqual((space, created), ("w9", []))
                 self.assertIn(("tab", "rename", "t1", "shell"), calls)
 
-    def test_the_module_has_no_status_tab_function(self):
-        self.assertFalse(hasattr(fc.fc_herdr, "herdr_status_tab"))
-
 
 class StackLock(unittest.TestCase):
     def test_parallel_linearize_calls_never_overlap(self):

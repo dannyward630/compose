@@ -175,6 +175,28 @@ class Agent:
             pathlib.Path(self.spec["tab"]).unlink()
 '''
 
+# The jev case's `uv run --quiet [--env-file F] python ...`, run with this interpreter: no real uv, no python of uv's choosing.
+FAKE_UV = f'''#!{sys.executable}
+import os, sys
+args = sys.argv[1:]
+assert args[:2] == ["run", "--quiet"], args
+args = args[2:]
+if args[0] == "--env-file":  # as uv does, the process env wins
+    for line in open(args[1]).read().splitlines():
+        k, eq, v = line.partition("=")
+        if eq and not k.lstrip().startswith("#"):
+            os.environ.setdefault(k.strip(), v.strip().strip("\\"'"))
+    args = args[2:]
+assert args[0] == "python", args
+os.execv(sys.executable, [sys.executable, *args[1:]])
+'''
+
+
+def fake_uv(test):
+    """Put FAKE_UV first on PATH for the test."""
+    d = Path(tempfile.mkdtemp()); (d / "uv").write_text(FAKE_UV); (d / "uv").chmod(0o755)
+    p = mock.patch.dict(os.environ, {"PATH": f"{d}{os.pathsep}{os.environ['PATH']}"}); p.start(); test.addCleanup(p.stop)
+
 
 class JevCases(unittest.TestCase):
     """A jev (non-driver) case through the real runner, `python -m jev_ultrafast`, with a stand-in Agent: no browser, no model."""
@@ -186,6 +208,7 @@ class JevCases(unittest.TestCase):
         shutil.copy(fc.fc_config.JEV_DIR / "jev_ultrafast" / "__main__.py", jev / "jev_ultrafast" / "__main__.py")
         p = mock.patch.object(fc.fc_config, "JEV_DIR", jev); p.start(); self.addCleanup(p.stop)
         k = mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "ts-test"}); k.start(); self.addCleanup(k.stop)  # what apply_config sets from auth.json
+        fake_uv(self)
 
     def test_a_case_without_a_typesafe_key_says_why_instead_of_running_jev(self):
         """Under `compose timed` the scratch config holds no keys: the case fails as a harness error naming that, never jev's bare KeyError."""

@@ -284,7 +284,7 @@ class TimedLoadWait(unittest.TestCase):
             return fc.fc_implement.timed(cmd, os.getcwd(), limit), events
 
     def test_a_full_suite_waits_with_the_slots_say_before_it_takes_the_slot_and_then_runs(self):
-        r, events = self.run_timed("echo ran; pytest -h >/dev/null 2>&1 || true")
+        r, events = self.run_timed("echo ran; true || pytest")
         self.assertEqual([e[0] for e in events], ["wait", "slot"])
         self.assertEqual(events[0][1], events[1][2])
         self.assertIs(events[1][1], False)
@@ -300,7 +300,7 @@ class TimedLoadWait(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_NO_LOAD", "COMPOSE_TEST_SLOT")}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_config, "LOAD", {"high": 12, "low": 8}), mock.patch.object(fc_load, "memory_level", return_value=None), \
                 mock.patch.object(fc_load, "WAIT_POLL", 0.01), mock.patch("os.getloadavg", avg), mock.patch.object(fc.fc_core, "say", said.append):
-            r = fc.fc_implement.timed(f"echo ran > {marker}; pytest -h >/dev/null 2>&1 || true", os.getcwd(), 10)
+            r = fc.fc_implement.timed(f"echo ran > {marker}; true || pytest", os.getcwd(), 10)
         self.assertEqual((loads, marker.exists(), r.returncode), ([False] * 4, True, 0))  # four reads held or just released, none after the start
         waits = [m for m in said if "waiting until" in m]
         self.assertEqual(len(waits), 1); self.assertIn("is above 12.0: waiting until it falls below 8.0", waits[0])
@@ -313,12 +313,12 @@ class TimedLoadWait(unittest.TestCase):
 
     def test_a_process_already_under_a_slot_does_not_wait(self):
         with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOT": "0"}):
-            r, events = self.run_timed("pytest -h >/dev/null 2>&1 || true")
+            r, events = self.run_timed("true || pytest")
         self.assertNotIn("wait", [e[0] for e in events])
         self.assertEqual(r.returncode, 0)
 
     def test_the_time_limit_starts_after_the_wait(self):
-        r, events = self.run_timed("pytest -h >/dev/null 2>&1 || true", limit=1, wait=lambda: time.sleep(1.5))
+        r, events = self.run_timed("true || pytest", limit=1, wait=lambda: time.sleep(1.5))
         self.assertEqual([e[0] for e in events], ["wait", "slot"])
         self.assertEqual(r.returncode, 0)
 

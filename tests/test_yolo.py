@@ -215,9 +215,8 @@ class Yolo(unittest.TestCase):
             lines = fc.fc_status.render_status(Path("."), [self.proj]).splitlines()
         self.assertIn(f"  away on since {since}", lines)
 
-    def test_help_and_docs_list_yolo(self):
+    def test_help_and_the_slash_command_list_yolo(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertIn("| `yolo", (root / "docs" / "cli.md").read_text())
         cmd = (root / "commands" / "yolo.md").read_text()
         self.assertIn("allowed-tools: Bash(compose yolo:*)", cmd)
         out = io.StringIO()

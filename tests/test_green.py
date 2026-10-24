@@ -82,13 +82,13 @@ class GreenStore(Repo):
     def test_an_edit_made_in_the_second_the_index_was_written_is_still_seen_a_second_later(self):
         # git rehashes a file whose stat matches its index entry only when it is as new as the index file itself: a copy of the
         # index must keep the real one's time, or a same-size edit of that second is taken for the committed file
-        for _ in range(20):
-            self.git("commit", "-q", "--allow-empty", "-m", "again"); self.git("add", "-A")
-            (self.repo / "a.txt").write_text("two\n" if (self.repo / "a.txt").read_text() == "one\n" else "one\n")  # the same size
-            if int((self.repo / "a.txt").stat().st_mtime) == int((self.repo / ".git" / "index").stat().st_mtime):
-                break
-            time.sleep(1)  # a second boundary came between: try again
-        time.sleep(1.1)
+        # times are set, not waited for: the file, its index entry and the index all on one past second, and the ctime the edit
+        # changes left out of the stat check
+        self.git("config", "core.trustctime", "false")
+        a, index, then = self.repo / "a.txt", self.repo / ".git" / "index", int(time.time()) - 10
+        os.utime(a, (then, then)); self.git("add", "-A")
+        a.write_text("two\n"); os.utime(a, (then, then))  # the same size and time as its entry
+        os.utime(index, (then, then))
         tree = fc.fc_green.tree_of(self.repo)
         self.git("add", "-A")
         self.assertEqual(tree, self.git("write-tree"))

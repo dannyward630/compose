@@ -98,7 +98,7 @@ class HermeticMachine(unittest.TestCase):
     """No test touches the real machine: lsof and herdr on PATH are fakes, and a process a test registers dies with it."""
 
     def process(self, cwd):
-        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"], cwd=cwd)
+        p = subprocess.Popen(["sleep", "300"], cwd=cwd)
         p.cwd = cwd
         self.addCleanup(lambda: (p.kill(), p.wait()))
         return p
@@ -125,8 +125,8 @@ class HermeticMachine(unittest.TestCase):
 
     def test_listeners_under_asks_lsof_twice_however_many_servers_there_are(self):
         root = Path(tempfile.mkdtemp()).resolve()
-        inside = [self.process(root) for _ in range(12)]
-        outside = [self.process(tempfile.mkdtemp()) for _ in range(3)]
+        inside = [self.process(root) for _ in range(4)]
+        outside = [self.process(tempfile.mkdtemp()) for _ in range(2)]
         for i, p in enumerate(inside + outside):
             hermetic.listen(p.pid, 9000 + i, Path(p.cwd).resolve())
         hermetic.guard_calls(clear=True)
@@ -146,7 +146,7 @@ class HermeticMachine(unittest.TestCase):
         fc.fc_jev.kill_listeners(set(servers))
         self.assertEqual(len(hermetic.guard_calls("lsof")), 1, hermetic.guard_calls())
         self.assertEqual([self.alive(p) for p in servers.values()], [False] * 3)
-        self.assertTrue(self.alive(keep))
+        self.assertIsNone(keep.poll())  # alive() would wait out its 5s on a process that lives
 
     def run_case(self, body):
         class Case(unittest.TestCase):

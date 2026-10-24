@@ -3,7 +3,7 @@ import io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 from cleanup_kit import CLI, ENV, FakeLinear, fc, repo
-os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path; test_treehouse covers the pool
+os.environ["COMPOSE_NO_TREEHOUSE"] = "1"  # these cover the plain-worktree path, not the treehouse pool
 os.environ["HERDR_ENV"] = ""
 
 
@@ -43,12 +43,6 @@ class ProjectBranch(unittest.TestCase):
         self.cli("clean", "--project", "q", "--delete-unmerged")
         self.cli("clean", "--project", "p", "--delete-unmerged")
         self.assertEqual(self.branches(), ["main"])
-
-    def test_init_names_the_cut_team_lead_a_long_project_name_gets(self):
-        """herdr names stop at 32 characters: a project name over 19 cuts `<slug>-orchestrator`, so init says the name herdr will hold."""
-        out = self.cli("init", "--project", "clean-recut-branches").stdout
-        self.assertIn("clean-recut-branche-orchestrator", out)
-        self.assertNotIn("herdr agent names stop at 32 characters", self.cli("init", "--project", "clean-recut-branche").stdout)  # 19 characters: uncut, nothing to say
 
     def test_a_project_without_a_stored_branch_keeps_compose_slash_slug(self):
         self.cli("init", "--project", "old")

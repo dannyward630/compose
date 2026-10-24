@@ -7,7 +7,10 @@ issue_text
 gh_status
 open_matches
 post
+split_ordinal
+entries_at
 find_entry
+find_entry_time
 record_issue
 cmd_tool_bug_pr
 cmd_tool_bug

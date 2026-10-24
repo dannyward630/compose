@@ -96,7 +96,6 @@ class Board(unittest.TestCase):
 
     def test_a_run_that_died_shows_without_any_file_changing(self):
         self.result("003", "running")
-        gone = subprocess.run(["true"], capture_output=True)  # a pid that is no longer alive
         marker = self.proj / "results" / "run.json"
         marker.write_text(json.dumps({"pid": os.getpid(), "started_at": "2026-10-19 01:00:00"}))
         self.assertEqual(self.states(fc.fc_status.board(self.repo, self.proj))["003"], "running")
