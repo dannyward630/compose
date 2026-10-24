@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, os, signal, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, json, os, signal, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""   # tests/test_modules.py fails a test file without this line
@@ -54,6 +54,16 @@ class ShedFree(unittest.TestCase):
         lines = fc_shed.tick()
         self.stop.assert_called_once_with("/w/a")
         self.assertEqual((sorted(self.forgot), self.sigs, any("why=dev server of a done crew" in l for l in lines)), ([100, 101], [], True))
+    def test_state_is_replaced_whole_from_a_temp_file_in_the_same_directory(self):
+        f, seen = fc_shed.home() / "shed.json", []
+        real = os.replace
+        def replace(src, dst):
+            seen.append((Path(src).parent, Path(dst), f.exists(), "hold" in json.loads(Path(src).read_text())))
+            real(src, dst)
+        with mock.patch("os.replace", replace):
+            fc_shed.tick(); self.avg = 1.0; fc_shed.tick()
+        self.assertEqual((seen[-1], [p.name for p in f.parent.glob("*.tmp")]), ((f.parent, f, True, True), []))
+        self.assertTrue(all(d == f.parent and t.name in ("load.json", "shed.json") for d, t, _, _ in seen))
     def test_not_held_runs_no_ps_and_prints_nothing(self):
         self.rec(100, waiter=self.dead); self.table = [(100, 1, 0.0, "sh")]
         self.avg = 1.0

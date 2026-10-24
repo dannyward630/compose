@@ -36,6 +36,17 @@ class LoadState(unittest.TestCase):
         self.assertEqual((s["held"], s["since"], s["n"], [x["kind"] for x in s["log"]]), (False, None, 2, ["held", "released"]))
         self.assertEqual((fc_load.since(1), fc_load.since(2), fc_load.since(0)), (s["new"], [], s["log"]))
 
+    def test_state_is_replaced_whole_from_a_temp_file_in_the_same_directory(self):
+        f, seen = Path.home() / ".compose" / "load.json", []
+        real = os.replace
+        def replace(src, dst):
+            seen.append((Path(src).parent, Path(dst), f.read_text() if f.exists() else None, json.loads(Path(src).read_text())["n"]))  # the target is still the old file; the temp is whole
+            real(src, dst)
+        with mock.patch("os.replace", replace):
+            fc_load.update(avg=13.0); fc_load.claim(1)
+        self.assertEqual([(d, t, n) for d, t, _, n in seen], [(f.parent, f, 1)] * 2)
+        self.assertEqual((seen[0][2], json.loads(seen[1][2])["held"], sorted(p.name for p in f.parent.iterdir() if p.name.endswith(".tmp"))), (None, True, []))
+
     def test_log_keeps_the_last_50(self):
         for i in range(60): fc_load.update(avg=13.0 if i % 2 == 0 else 7.0)
         s = fc_load.update(avg=13.0); self.assertEqual((s["n"], len(s["log"]), s["log"][0]["n"], s["log"][-1]["n"]), (61, 50, 12, 61))

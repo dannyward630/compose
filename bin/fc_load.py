@@ -1,5 +1,5 @@
 """The machine-wide load hold: one state file under ~/.compose that every process reads and moves."""
-import ctypes, ctypes.util, fcntl, json, os, time
+import ctypes, ctypes.util, fcntl, json, os, threading, time
 from pathlib import Path
 
 import fc_config
@@ -15,6 +15,14 @@ def limits():
 
 def off(force=False):
     return bool(force) or os.environ.get("COMPOSE_NO_LOAD") == "1"
+
+
+def write(path, text):
+    """Replace a state file whole: a reader in another process sees the old file or the new one, never half of it."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def _read(path):
@@ -66,7 +74,7 @@ def update(avg=None):
                     state["warn"] = kind == "warn"
                 state["log"] = (state["log"] + [entry])[-50:]
                 new.append(entry)
-            path.write_text(json.dumps(state))
+            write(path, json.dumps(state))
     return {**state, "avg": avg, "memory": mem, "new": new}
 
 
@@ -109,7 +117,7 @@ def claim(n):
         if n in state["claimed"]:
             return False
         state["claimed"] = (state["claimed"] + [n])[-50:]
-        path.write_text(json.dumps(state))
+        write(path, json.dumps(state))
         return True
 
 

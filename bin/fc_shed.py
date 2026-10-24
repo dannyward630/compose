@@ -63,7 +63,7 @@ def tick():
         held = bool(st and st["held"])
         if not held and not s["paused"]:
             s["hold"] = s["hot"] = None
-            (d / "shed.json").write_text(json.dumps(s))
+            fc_load.write(d / "shed.json", json.dumps(s))
             return []
         lines = []
         if held:
@@ -124,5 +124,5 @@ def tick():
                     os.kill(p, signal.SIGCONT)
                 s["step_at"] = now
                 lines.append(f"event shed=resumed pid={e['pid']} kind={e['kind']} project={e['project']}")
-        (d / "shed.json").write_text(json.dumps(s))
+        fc_load.write(d / "shed.json", json.dumps(s))
         return lines
