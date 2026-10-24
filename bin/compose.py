@@ -311,6 +311,7 @@ def main():
             s.add_argument("--only", help="judge: comma-separated design task ids; tree: one id")
             s.add_argument("--node", help="tree: comma-separated node ids to fetch through Framelink")
             s.add_argument("--depth", type=int, help="tree: how deep Framelink walks (default: all)")
+            s.add_argument("--force", action="store_true", help="judge: judge a task whose result was accepted by hand, replacing that result")
             s.add_argument("--bindings", help="tree: a file (or - for stdin) with what the write script returned, appended to the tree")
         if name == "report":
             s.add_argument("--as", dest="as_", required=True, help="your agent name, <slug>-<role>")

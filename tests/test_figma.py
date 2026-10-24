@@ -164,13 +164,13 @@ class FigmaJudge(unittest.TestCase):
         for mod, name, value in ((fc.fc_config, "ENV_FILE", self.proj / "none.env"), (fc.fc_core, "say", lambda m: None)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
 
-    def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None):
+    def judge(self, only, replies, confirm=None, fail=None, blocks=False, reask=None, force=False):
         replies = {t: {"model": "jev-test", "answers": {f"c{i}": {"choice": c, "probabilities": {c: p}} for i, (c, p) in enumerate(r)}} for t, r in replies.items()}
         self.out = io.StringIO()
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=lambda env, cfg, state, q, label: reask_reply(reask) if label.endswith("re-ask") else replies[state["task"]]) as self.ask, \
                 mock.patch.object(fc.fc_models, "fast_json", side_effect=fail, return_value=confirm) as self.confirm, mock.patch.object(fc.fc_linear, "linear_event") as self.ev, mock.patch("sys.stdout", self.out):
             try:
-                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only))
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only=only, force=force))
             except SystemExit as e:
                 if not blocks:
                     raise
@@ -189,6 +189,16 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((len(res["criteria"]), bool(res["finished_at"]), self.confirm.called, "TREE" in questions["c0"]["instructions"]["rules"]), (2, True, False, True))
         self.assertIn("001 MET p_not_met=0.00 Shows the total", self.out.getvalue())
         self.assertEqual(self.ev.call_args_list, [mock.call(self.proj, mock.ANY, "passed", res)])
+
+    def test_a_hand_accepted_task_is_not_judged_again_unless_forced(self):
+        hand = {"id": "001", "status": "hand_done", "note": "accepted by the designer", "attempts": 1}
+        (self.proj / "results" / "001.json").write_text(json.dumps(hand))
+        self.judge("001", {"Cart page": [("UNCLEAR", 0.3), ("MET", 0.9)]})
+        self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text()), hand)
+        self.assertEqual((self.ask.called, self.ev.called), (False, False))
+        self.assertIn("001 skipped: accepted by hand (hand_done); pass --force to judge it anyway", self.out.getvalue())
+        res = self.judge("001", {"Cart page": [("MET", 0.95), ("MET", 0.9)]}, force=True)
+        self.assertEqual((res["status"], self.ask.called, self.ev.called), ("passed", True, True))
 
     def test_only_a_confirmed_not_met_at_the_threshold_fails(self):
         res = self.judge("001", {"Cart page": [("NOT_MET", 0.65), ("NOT_MET", 0.7)]}, fail=RuntimeError("down"), blocks=True)
