@@ -45,9 +45,9 @@ class TaskBranches(unittest.TestCase):
     def git(self, *a):
         return subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True, text=True).stdout
 
-    def run_task(self, tid, tag=""):
-        task = {"id": tid, "title": "f", "files": [f"{tid}.py"], "protected": [], "test": f"grep -q F {tid}.py",
-                "model": "pi:x/y", "after": "", "linear": "", "body": "## Goal\nAdd F."}
+    def run_task(self, tid, tag="", after="", test=None, status="passed"):
+        task = {"id": tid, "title": "f", "files": [f"{tid}.py"], "protected": [], "test": test or f"grep -q F {tid}.py",
+                "model": "pi:x/y", "after": after, "linear": "", "body": "## Goal\nAdd F."}
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             (Path(cwd) / f"{tid}.py").write_text("F\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
@@ -55,7 +55,7 @@ class TaskBranches(unittest.TestCase):
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             r = fc.fc_implement.run_task(self.repo, self.proj, task, 1, tag=tag)
-        self.assertEqual(r["status"], "passed")
+        self.assertEqual(r["status"], status)
         return r
 
     def test_a_new_project_commits_on_its_project_branch_name(self):
@@ -79,6 +79,15 @@ class TaskBranches(unittest.TestCase):
         self.run_task("001")
         base, sha = fc.fc_implement.task_base(self.repo, self.proj, {"id": "002", "after": "001"})
         self.assertEqual((base, sha), ("compose/proj-001", self.git("rev-parse", "compose/proj-001").strip()))
+
+    def test_an_after_on_an_already_green_task_builds_on_that_task_s_own_dependency(self):
+        # 002's test passes on 001's code, so 002 ends already_green with no branch; 003 needs that code all the same
+        (self.proj / "results").mkdir()
+        (self.proj / "results" / "tasks.json").write_text('{"feature": {}, "tasks": [{"id": "001", "after": ""}, {"id": "002", "after": "001"}, {"id": "003", "after": "002"}]}')
+        self.run_task("001")
+        self.run_task("002", after="001", test="grep -q F 001.py", status="already_green")
+        base, _ = fc.fc_implement.task_base(self.repo, self.proj, {"id": "003", "after": "002"})
+        self.assertEqual(base, "compose/proj-001")
 
 
 class Waves(unittest.TestCase):
