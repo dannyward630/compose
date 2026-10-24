@@ -117,13 +117,22 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
 
 def task_base(repo, proj, meta):
     """The branch a task builds on. A task whose `after:` names unmerged task branches stacks on top of them (they must form one
-    chain, so each PR shows only its own layer); otherwise it builds on HEAD like any independent task."""
-    after = [x.strip() for x in str(meta.get("after") or "").split(",") if x.strip()]
+    chain, so each PR shows only its own layer); otherwise it builds on HEAD like any independent task. An already_green dependency
+    has no layer: its code is its own `after:` tasks' code, so those stand in for it."""
+    after_of = lambda m: [x.strip() for x in str(m.get("after") or "").split(",") if x.strip()]
+    after, seen = after_of(meta), set()
     head = fc_core.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     unmerged = []
-    for dep in after:
+    while after:
+        dep = after.pop(0)
+        if dep in seen:
+            continue
+        seen.add(dep)
         b = fc_worktree.task_branch(repo, proj, dep)
         if fc_core.sh(["git", "rev-parse", "--verify", "-q", b], repo, check=False).returncode != 0:
+            res = proj / "results" / f"{dep}.json"
+            if res.exists() and json.loads(res.read_text()).get("status") == "already_green":
+                after += [d for m in fc_tasks.load_tasks(proj) if m["id"] == dep for d in after_of(m)]
             continue  # no branch: the dependency was merged (or never ran, which `run` refuses earlier)
         if fc_core.sh(["git", "merge-base", "--is-ancestor", b, head], repo, check=False).returncode != 0:
             unmerged.append(b)
