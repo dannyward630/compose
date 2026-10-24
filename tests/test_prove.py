@@ -199,7 +199,28 @@ class ProveCommand(Proving):
         with mock.patch.object(fc.fc_worktree, "stack_order", return_value=["001"]), mock.patch.object(fc.fc_verify, "e2e_stage") as st:
             with self.assertRaises(SystemExit) as cm:
                 fc.fc_prove.cmd_prove(SimpleNamespace(repo=str(self.repo), project="p"))
-        self.assertIn("before `run`", str(cm.exception.code)); st.assert_not_called()
+        self.assertIn("before `run`", str(cm.exception.code)); self.assertIn("--only", str(cm.exception.code)); st.assert_not_called()
+
+    def test_after_a_replan_it_proves_the_cases_on_the_stack_below_the_first_task_to_redo(self):
+        self.config(e2e=[jev_case("export", MISSING)])
+        wt = Path(tempfile.mkdtemp())
+        seen = {}
+        def stage(root, cfg, *rest, **kw):
+            seen.update(root=root, e2e=cfg["e2e"])
+            rest[1]["e2e"] = [{"exit": 1}]
+        layers = [f"compose/p-{t}" for t in ("001", "002", "003")]
+        real_sh = fc.fc_core.sh
+        sh = lambda cmd, cwd=None, **kw: real_sh(["true"], cwd, **kw) if cmd[:2] == ["git", "checkout"] else real_sh(cmd, cwd, **kw)  # the stack worktree is no repo here
+        with mock.patch.object(fc.fc_core, "sh", side_effect=sh), mock.patch.object(fc.fc_worktree, "stack_order", return_value=layers), mock.patch.object(fc.fc_worktree, "task_prefix", return_value="compose/p-"), \
+             mock.patch.object(fc.fc_tasks, "load_tasks", return_value=[{"id": t} for t in ("001", "002", "003")]), \
+             mock.patch.object(fc.fc_worktree, "stack_worktree", return_value=wt), mock.patch.object(fc.fc_worktree, "ready_checkout"), \
+             mock.patch.object(fc.fc_layers, "linearize", return_value=layers[:2]) as lin, mock.patch.object(fc.fc_verify, "e2e_stage", side_effect=stage), \
+             mock.patch.object(fc.fc_models, "fast_object", return_value=JUDGE_MISSING):
+            code, out = self.call(fc.fc_prove.cmd_prove, only="003")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(lin.call_args.kwargs.get("through") or lin.call_args[0][4], layers[:2])  # the layers under 003 only
+        self.assertEqual(seen["root"], wt)
+        self.assertEqual(self.results("prove.json")["e2e_digest"], fc.fc_prove.e2e_digest(json.loads((self.proj / "verify.json").read_text())))
 
     def test_it_is_a_verify_flag(self):
         with mock.patch.object(sys, "argv", ["compose", "verify", "--project", "p", "--prove"]), \
