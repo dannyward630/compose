@@ -1,14 +1,15 @@
 import argparse, hashlib, http.server, json, os, signal, subprocess, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_herdr
+import fc_core
 
 
 # ---------- frame0: one wireframing app per project ----------
 
 # Frame0 sends every API command to its newest window, so sessions sharing one app draw over each other. Each project gets
 # its own app process instead: its own user-data dir (which holds the API port), one window on .compose/<project>/design.f0,
-# and a local-scope `frame0` MCP server pointed at that port in every directory the project's sessions run in. The MCP server
-# only reaches the app when a tool is called, so registering costs nothing until something draws. The server is registered as
+# and a `frame0` MCP server pointed at that port, given only to the sessions that wireframe (`crew start --frame0`, the designer)
+# through `--mcp-config`. Never in ~/.claude.json: a server registered there starts with every session in the directory, tools
+# allowed or not, so each teammate of a project ran its own idle copy. The server is
 # `compose frame0 mcp`, which runs it behind a proxy that renews its API token: Frame0 keeps tokens in memory, one set per app
 # process, and frame0-mcp-server asks for its token once and keeps it for good, so after the app restarts every call it makes
 # is refused (403 "Invalid API token", shown as "Failed to execute command(...)") and no Allow prompt ever comes.
@@ -31,22 +32,9 @@ def frame0_pid(proj):
             return int(pid)
     return None
 
-def frame0_register(cwd, port):
-    """Point the `frame0` MCP server of sessions started in `cwd` at `port` (local scope: ~/.claude.json, nothing in the repo).
-    Sessions read it at start, so this runs before a teammate starts."""
-    cwd = Path(cwd).resolve()
-    args = ["frame0", "mcp", f"--api-port={port}"]
-    try:
-        projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects") or {}
-    except (OSError, json.JSONDecodeError):
-        projects = {}
-    # claude keys a linked worktree's local config under the main checkout, so that is where the entry sits
-    current = ((projects.get(str(fc_core.worktrees(cwd)[0])) or {}).get("mcpServers") or {}).get("frame0")
-    if current and current.get("command") == "compose" and current.get("args") == args:
-        return
-    if current:
-        fc_core.sh(["claude", "mcp", "remove", "frame0", "-s", "local"], cwd, check=False)
-    fc_core.sh(["claude", "mcp", "add", "-s", "local", "frame0", "--", "compose", *args], cwd)
+def frame0_mcp_config(port):
+    """The `--mcp-config` value that gives one session the `frame0` MCP server, pointed at `port`."""
+    return json.dumps({"mcpServers": {"frame0": {"type": "stdio", "command": "compose", "args": ["frame0", "mcp", f"--api-port={port}"]}}})
 
 def frame0_post(port, path, body, token=None, timeout=60):
     """POST a JSON body to the app's API: (http status, reply). An app that refuses or stays silent raises RuntimeError saying what to check."""
@@ -143,10 +131,6 @@ def frame0_up(proj):
     fc_core.atomic_write((data / "config.json"), json.dumps({"api-server": True, "api-server-port": port}))
     if not design.exists():
         fc_core.atomic_write(design, json.dumps(frame0_empty_doc()))
-    try:
-        frame0_register(fc_herdr.project_worktree(proj), port)
-    except RuntimeError as e:  # the app still starts; only the MCP tools are missing
-        print(f"frame0 MCP server not registered: {e}")
     if frame0_pid(proj):
         return port, False
     if fc_core.port_listening(port):

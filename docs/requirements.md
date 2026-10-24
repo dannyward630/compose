@@ -16,7 +16,7 @@ Claude Code is optional when another harness is set up: the claude, herdr skill,
 | gh CLI and gh-stack | stacks and draft PRs | setup runs `brew install gh` and `gh extension install github/gh-stack`; you run `gh auth login` |
 | herdr | the visible fleet, and the session `compose` opens ([herdr.md](herdr.md)) | setup runs herdr's installer, installs the herdr skill file, and sets the notification lines |
 | pi | the default implementer harness | setup runs `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` and declares its `openrouter-fast` provider |
-| Claude Code | the team lead, every teammate session, model probes, `frame0` registration | [claude.com/claude-code](https://claude.com/claude-code); setup does not install it |
+| Claude Code | the team lead, every teammate session, model probes | [claude.com/claude-code](https://claude.com/claude-code); setup does not install it |
 | i-have-adhd skill | the skill file `doctor` requires | setup adds its marketplace (needs Claude Code) |
 | OpenRouter key | implementers, fixers, Mercury review | see [Keys](#keys) |
 | TypeSafe key | Jev acceptance checks, every jev e2e step, and the decision screen (`reflect`) | see [Keys](#keys) |
@@ -102,7 +102,7 @@ You need the `gpt-oss-120b-cerebras` preset (model `openai/gpt-oss-120b`, provid
 | `~/.compose/.env` | verify's `TEXT_MODEL*` and `TYPESAFE_MODEL` lines, no keys |
 | `~/.compose/model-probe.json` | the day's model availability probes |
 | `~/.compose/tool-bugs.jsonl`, `~/.compose/history.jsonl` | every project's tool-bug reports with the issue URL once filed, and one line per run start, run end, task result and verify round (time, task, model, attempts, duration, cost, outcome; no prompts or secrets) |
-| `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; the local `frame0` MCP server for each teammate's directory is written here |
+| `~/.claude.json` | read for folder trust and the user-scope `framelink-figma` MCP server; compose writes nothing here, and a wireframing session gets its `frame0` MCP server through `--mcp-config` |
 | `~/.config/figma-context-mcp/.env` | Framelink's Figma token (mode 600); it never goes on a command line |
 | `~/.pi/agent/` | pi's `models.json` (setup declares `openrouter-fast`), its own `auth.json`, and the herdr extension |
 | `CODEX_HOME` (default `~/.codex`) | Codex's `skills/compose`, `skills/compose-<name>`, `hooks.json` and `config.toml` |

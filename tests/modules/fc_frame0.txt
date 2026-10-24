@@ -4,7 +4,7 @@ FRAME0_CLIENT
 FRAME0_WAIT
 frame0_port
 frame0_pid
-frame0_register
+frame0_mcp_config
 frame0_post
 frame0_client
 frame0_command

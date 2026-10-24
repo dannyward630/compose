@@ -272,11 +272,6 @@ def cmd_crew(a):
     work = None  # with --work-repo the session starts in the project worktree, which Claude Code trusts; only its work is in the repo
     if repo:
         work, branch = fc_worktree.repo_worktree(repo, name)
-    try:
-        if frame0:
-            fc_frame0.frame0_register(cwd, fc_frame0.frame0_port(proj))  # before the session starts: it reads its MCP servers once
-    except (RuntimeError, OSError) as e:
-        print(f"teammate {name} starts without the project's frame0 tools: {e}")
     if work:
         brief = (f"Your session runs in the project worktree {cwd}; you work in your own worktree {work} of {repo}, on branch {branch}, "
                  f"by absolute path: read and edit its files there, and run its commands with `cd {work} && ...` and git with "
@@ -317,7 +312,9 @@ def cmd_crew(a):
         else:
             fc_herdr.herdr_start_crew(agent, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
                   *(["--model", fc_claude.claude_id(model)] if fc_claude.claude_id(model) else []), *(["--effort", effort] if effort else []),
-                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, "--settings", fc_claude.crew_settings(a.role, cwd), *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=frame0)) else []),
+                  "--no-chrome", "--append-system-prompt", TRUST_PROMPT, "--settings", fc_claude.crew_settings(a.role, cwd),
+                  *(["--mcp-config", fc_frame0.frame0_mcp_config(fc_frame0.frame0_port(proj))] if frame0 else []),  # this session only: a server in ~/.claude.json starts with every session in the directory
+                  *( ["--disallowedTools", *deny] if (deny := fc_mcp.disallowed(a.role, fc_mcp.installed_servers(cwd), frame0=frame0)) else []),
                   *( [] if fc_mcp.keeps_skills(a.role) else ["--disable-slash-commands"]),
                   *(["--add-dir", str(work)] if work else []), "--permission-mode", "auto", "--allowedTools", "Bash(npx -y lavish-axi:*)",
                   *(["Bash(compose frame0:*)"] if frame0 else []))  # a wireframing session runs `compose frame0 ...` (draw, pages, lint) with no prompt; the flag swallows what follows, so it stays last

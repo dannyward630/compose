@@ -18,46 +18,23 @@ class Frame0(unittest.TestCase):
         self.proj = self.wt / ".compose" / "shop"
         self.proj.mkdir(parents=True)
 
-    def register(self, existing):
-        (self.home / ".claude.json").write_text(json.dumps({"projects": {str(self.wt): {"mcpServers": existing}}}))
-        with mock.patch.object(Path, "home", return_value=self.home), mock.patch.object(fc.fc_core, "sh") as sh:
-            fc.fc_frame0.frame0_register(self.wt, 58411)
-        return [c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"]
-
     def test_port_is_stable_per_project_and_in_range(self):
         shop = Path("/compose-test/a/.compose/shop")
         self.assertEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(shop))
         self.assertIn(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.FRAME0_PORTS)
         self.assertNotEqual(fc.fc_frame0.frame0_port(shop), fc.fc_frame0.frame0_port(Path("/compose-test/a/.compose/cart")))
 
-    def test_register_adds_replaces_or_leaves_the_local_server(self):
-        add = ["claude", "mcp", "add", "-s", "local", "frame0", "--", "compose", "frame0", "mcp", "--api-port=58411"]
-        remove = ["claude", "mcp", "remove", "frame0", "-s", "local"]
-        self.assertEqual(self.register({}), [add])
-        stale = {"frame0": {"command": "compose", "args": ["frame0", "mcp", "--api-port=58320"]}}
-        self.assertEqual(self.register(stale), [remove, add])
-        bare = {"frame0": {"command": "npx", "args": ["-y", "frame0-mcp-server", "--api-port=58411"]}}  # registered before the proxy
-        self.assertEqual(self.register(bare), [remove, add])
-        same = {"frame0": {"command": "compose", "args": ["frame0", "mcp", "--api-port=58411"]}}
-        self.assertEqual(self.register(same), [])
+    def test_mcp_config_gives_one_session_the_proxied_server(self):
+        self.assertEqual(json.loads(fc.fc_frame0.frame0_mcp_config(58411)),
+                         {"mcpServers": {"frame0": {"type": "stdio", "command": "compose", "args": ["frame0", "mcp", "--api-port=58411"]}}})
 
-    def test_register_finds_the_entry_claude_keeps_under_the_main_checkout(self):
-        main = Path(tempfile.mkdtemp()).resolve()
-        stale = {"frame0": {"command": "compose", "args": ["frame0", "mcp", "--api-port=58320"]}}
-        (self.home / ".claude.json").write_text(json.dumps({"projects": {str(main): {"mcpServers": stale}}}))
-        with mock.patch.object(Path, "home", return_value=self.home), mock.patch.object(fc.fc_core, "worktrees", return_value=[main, self.wt]), \
-                mock.patch.object(fc.fc_core, "sh") as sh:
-            fc.fc_frame0.frame0_register(self.wt, 58411)
-        self.assertEqual([c.args[0] for c in sh.call_args_list if c.args[0][0] == "claude"][0], ["claude", "mcp", "remove", "frame0", "-s", "local"])
-
-    def test_up_still_launches_the_app_when_registering_fails(self):
+    def test_up_launches_the_app_and_registers_no_mcp_server(self):
         app = self.wt / "Frame0.app"
         app.mkdir()
-        with mock.patch.object(fc.fc_frame0, "FRAME0_APP", app), mock.patch.object(fc.fc_frame0, "frame0_register", side_effect=RuntimeError("boom")), \
-                mock.patch.object(fc.fc_frame0, "frame0_pid", return_value=None), mock.patch.object(fc.fc_core, "port_listening", side_effect=[False, True]), \
-                mock.patch.object(fc.fc_core, "sh") as sh, mock.patch("builtins.print"):
+        with mock.patch.object(fc.fc_frame0, "FRAME0_APP", app), mock.patch.object(fc.fc_frame0, "frame0_pid", return_value=None), \
+                mock.patch.object(fc.fc_core, "port_listening", side_effect=[False, True]), mock.patch.object(fc.fc_core, "sh") as sh, mock.patch("builtins.print"):
             self.assertEqual(fc.fc_frame0.frame0_up(self.proj), (fc.fc_frame0.frame0_port(self.proj), True))
-        self.assertEqual(sh.call_args.args[0][:2], ["open", "-n"])
+        self.assertEqual([c.args[0][:2] for c in sh.call_args_list], [["open", "-n"]])  # no `claude mcp add`: a registered server starts with every session
 
     def test_pid_is_the_main_process_of_this_projects_instance(self):
         app = fc.fc_frame0.FRAME0_APP / "Contents" / "MacOS" / "Frame0"

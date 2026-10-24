@@ -478,7 +478,7 @@ class HarnessPassDown(unittest.TestCase):
         with mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}), mock.patch.object(sys, "argv", ["compose", "crew", "start", "--role", "tests-001", "--brief", "Write the test.", *flags]), \
                 mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(time, "sleep"), \
-                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_frame0, "frame0_register"), \
+                mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch("builtins.print"):
             for k in ("COMPOSE_HARNESS", "CLAUDECODE", "CODEX_THREAD_ID"): os.environ.pop(k, None)
             os.environ.update(env)
@@ -830,7 +830,7 @@ class CodexStart(unittest.TestCase):
                 mock.patch.object(fc_harness, "signed_in", return_value=signed) if signed is not None else contextlib.nullcontext(), \
                 mock.patch.object(fc.fc_herdr, "herdr_ready", ready), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc.fc_frame0, "frame0_register"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=trusted), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", return_value=[]), mock.patch.object(fc.fc_config, "CREW_MODELS", {role: entry}), mock.patch.object(fc.fc_config, "CREW_EFFORT", {role: "high"}), \
                 mock.patch.object(fc.fc_hooks, "SKILL_DIR", skill), mock.patch("builtins.print"):
             fc.fc_crew.cmd_crew(a)
