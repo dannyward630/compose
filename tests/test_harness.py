@@ -1822,3 +1822,50 @@ print(json.dumps(r))
         for f in sorted(Path(self.BIN).glob("*.py")):
             names = [a.name for n in ast.parse(f.read_text()).body if isinstance(n, ast.Import) for a in n.names] + [n.module for n in ast.parse(f.read_text()).body if isinstance(n, ast.ImportFrom)]
             self.assertNotIn("tomllib", names, f.name)
+
+
+class GuardCorpus(unittest.TestCase):
+    """Every command in tests/guard_corpus.json was denied to a real teammate by an earlier guard and must be allowed: they write
+    scratch files, restore files without moving HEAD, start crew, or report. The corpus grows with each false positive found."""
+    CORPUS = Path(__file__).resolve().parent / "guard_corpus.json"
+    FILES = ("app/src/app/page.test.tsx", "src/app/actions/billing.test.ts", "src/app/actions/billing.ts", "src/config/env.ts")
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        fc.fc_core.sh(["git", "init", "-q"], self.repo)
+        for f in self.FILES:
+            (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / f).write_text("x\n")
+
+    def decision(self, cmd, role):
+        ev, out = {"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": cmd}}, io.StringIO()
+        with mock.patch.dict(os.environ, {"COMPOSE_ROLE": role, "COMPOSE_REPO": str(self.repo)}), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(ev))), mock.patch.object(sys, "stdout", out):
+            fc.fc_hooks.cmd_guard(None)
+        return json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"] if out.getvalue() else None
+
+    def test_every_real_denied_command_is_allowed(self):
+        corpus = json.loads(self.CORPUS.read_text())
+        self.assertGreaterEqual(len(corpus), 27)
+        for i, e in enumerate(corpus):
+            cmd = e["command"].replace("{repo}", str(self.repo))
+            self.assertEqual(e["expect"], "allow")
+            self.assertIsNone(self.decision(cmd, e["role"]), f"corpus[{i}] ({e['denied_as']}): {cmd[:200]}")
+
+    def test_scratch_is_always_the_team_leads_to_write(self):
+        for cmd in ("echo hi > .compose/shop/scratch/shop-orchestrator/notes.md", "cd .compose/shop/scratch && echo hi > plan.md",
+                    "S=.compose/shop/scratch/x; mkdir -p $S; cat > $S/story.md <<'EOF'\nbody > not a redirection\nEOF"):
+            self.assertIsNone(self.decision(cmd, "orchestrator"), cmd)
+            self.assertIsNone(self.decision(cmd, "planner"), cmd)
+
+    def test_a_cd_moves_the_targets_that_follow_it(self):
+        self.assertIn("never edit code", self.decision("cd src && echo x > a.py", "orchestrator") or "")
+        self.assertIsNone(self.decision("cd .compose/shop/scratch; echo x > a.md", "orchestrator"))
+        self.assertIsNone(self.decision("cd .compose/shop/scratch\necho x > a.md", "orchestrator"))
+        self.assertIsNone(self.decision("(cd .compose/shop/scratch && echo x > a.md)", "orchestrator"))
+
+    def test_a_file_restore_in_the_shared_worktree_never_moves_head(self):
+        for cmd in ("git checkout 940bd04 -- src/app/actions/billing.test.ts", "git checkout compose/x-006 -- src/app/actions/billing.ts src/config/env.ts",
+                    "git checkout app/src/app/page.test.tsx", "git checkout -- .", "git checkout -p"):
+            self.assertIsNone(self.decision(cmd, "crew"), cmd)
+        for cmd in ("git checkout main", "git switch -c feature", "git checkout compose/x-006", "git checkout"):
+            self.assertIn("move the team lead's HEAD", self.decision(cmd, "crew") or "", cmd)

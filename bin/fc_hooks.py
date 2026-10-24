@@ -79,10 +79,19 @@ def switch_decision(command, cwd, role, shared):
                 where = where / Path(words[i + 1]).expanduser()
             i += 2 if words[i] in ("-C", "-c") else 1
         verb, rest = (words[i] if i < len(words) else ""), words[i + 1:]
-        if verb in ("checkout", "switch") and rest[:1] not in (["--"], ["-p"], ["--patch"]) and toplevel(where) == toplevel(shared):
+        if verb in ("checkout", "switch") and not restores_files(rest, where) and toplevel(where) == toplevel(shared):
             return (f"`git {verb}` here would move the team lead's HEAD: {shared} is the project worktree, shared with the team lead. Work in a "
                     f"worktree of your own (ask for `crew start --work-repo` or `--cwd`) and run git there with `git -C <worktree>`.")
     return None
+
+def restores_files(rest, where):
+    """True when `git checkout <rest>` restores files and leaves HEAD alone: a `--` anywhere (`git checkout <tree-ish> -- <paths>`),
+    `-p`/`--patch`, or every argument an existing path under `where` (`git checkout app/page.test.tsx`). An empty `rest` is a
+    plain `git checkout`, which moves nothing, and is left to the branch rule's caller: it is denied as the conservative reading."""
+    if "--" in rest or rest[:1] in (["-p"], ["--patch"]):
+        return True
+    args = [a for a in rest if not a.startswith("-")]
+    return bool(args) and len(args) == len(rest) and all((Path(where) / a).expanduser().exists() for a in args)
 
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 
@@ -99,6 +108,7 @@ def without_heredoc_bodies(cmd):
     return "\n".join(kept)
 
 ASSIGN = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+SEPARATORS = ("&&", "||", ";", "|", "&", "\n", "(", ")")  # the tokens a new command starts after
 VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 
 def expand(word, assigned):
@@ -107,24 +117,28 @@ def expand(word, assigned):
     return VAR.sub(lambda m: assigned.get(n := m.group(1) or m.group(2), os.environ.get(n, m.group(0))), os.path.expanduser(word))
 
 def edit_paths(ev):
-    """The paths a tool call writes, relative ones resolved against the event's cwd."""
+    """The paths a tool call writes, relative ones resolved against the event's cwd, moved by any `cd` before them in the command."""
     ti = ev.get("tool_input") or {}
     cmd = ti.get("command") or ""
     found = [ti.get("file_path") or ti.get("notebook_path")]
     if ev.get("tool_name") == "apply_patch":
         found += re.findall(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", cmd, re.M)
     elif ev.get("tool_name") == "Bash":
-        lex = shlex.shlex(without_heredoc_bodies(cmd), posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
+        lex = shlex.shlex(without_heredoc_bodies(cmd), posix=True, punctuation_chars="();<>|&\n")  # a newline is a separator, never blank
+        lex.whitespace, lex.whitespace_split = " \t\r", True
         try:
             words = list(lex)
         except ValueError:  # an unclosed quote: the shell does not run it either
             words = []
-        assigned = {}
-        for w in words:
+        assigned, here, at_start = {}, Path(ev.get("cwd") or "."), True
+        for i, w in enumerate(words):
             if m := ASSIGN.fullmatch(w):
                 assigned[m.group(1)] = expand(m.group(2), assigned)
-        found += [expand(words[i + 1], assigned) for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
+            elif at_start and w == "cd" and i + 1 < len(words) and words[i + 1] not in SEPARATORS:  # a `cd` moves every later relative target
+                here = here / expand(words[i + 1], assigned)
+            elif w in (">", ">>", ">|", "&>", "&>>") and i + 1 < len(words):
+                found.append(str(here / expand(words[i + 1], assigned)))
+            at_start = w in SEPARATORS
     return [str(Path(ev.get("cwd") or ".") / p) for p in found if p]
 
 def cmd_guard(a):
