@@ -268,10 +268,16 @@ def review_base(repo, cfg):
         return base
     return default_branch(repo)
 
-def release_slot(repo, path):
+def release_slot(repo, path, own=None):
     """Hand a slot back to the pool with its installs intact, and say whether treehouse took it: `return` fails while a live
     process keeps respawning in the slot, and the slot stays leased. compose's own leftovers go first: `return` keeps ignored
-    files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot."""
+    files, so a project's `.compose/` results or graph would otherwise reach the next agent that leases the slot.
+    A slot that is still a project's own worktree is never cleared or returned, unless that project is `own`, the one being
+    removed: its `.compose/<name>` holds the plan cache, verify.json, and run results (#253 wiped a live project's this way)."""
+    held = [n for n, (wt, _) in fc_core.all_projects(repo).items() if n != own and Path(wt).resolve() == Path(path).resolve()]
+    if held:
+        fc_core.say(f"slot     {path} kept: it is project {', '.join(held)}'s worktree; `compose clean --project {held[0]}` gives it back")
+        return False
     clear_leftovers(path)
     return treehouse(repo, "return", "--force", str(path), check=False).returncode == 0
 

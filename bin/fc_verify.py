@@ -5,6 +5,12 @@ import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, f
 
 CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
+
+def check_env():
+    """A verify.json check's env: the clean one, marked COMPOSE_CHECK so compose's own `python3 -m tests.run` runs the whole suite."""
+    return {**fc_core.clean_env(), "COMPOSE_CHECK": "1"}
+
+
 def verify_failed(proj, rounds, findings):
     """verify ended FAIL after its fix rounds: screen the settled lines against the confirmed findings. Tool errors are not
     findings, so a FAIL with none is not screened."""
@@ -184,7 +190,7 @@ def run_stages(repo, proj, cfg, a, tests=None):
                 continue
             t1, clk = time.time(), fc_proc.clock()
             with fc_proc.slot(fc_core.say, not fc_proc.suite(c)) as held:
-                env = {**fc_core.clean_env(), "COMPOSE_TEST_SLOT": held}
+                env = {**check_env(), "COMPOSE_TEST_SLOT": held}
                 p = fc_proc.run_limited(["/bin/sh", "-c", c], cwd=repo, env=env, timeout=CHECK_TIMEOUT)  # in a group of its own: a stop ends the whole suite
                 full = fc_core.scrub(p.stdout + p.stderr)
                 out = full[-3000:]  # the retry and the label read this one text: a suite that prints harness errors in passing tests is no tool error
@@ -387,7 +393,7 @@ def fix_answers(repo, fixed, report, install=None):
     ran = [r["cmd"] for r in report.get("checks", []) + report.get("scoped", [])]
     named = [str(i.get("file") or "").lstrip("./") for i in (report.get("review") or {}).get("confirmed", [])]
     return any(q and q in removed for q in quotes) or bool(failed(report.get("e2e", []))) or \
-        any(fc_proc.run_limited(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=fc_core.clean_env(), timeout=CHECK_TIMEOUT).returncode == 0
+        any(fc_proc.run_limited(["/bin/sh", "-c", r["cmd"]], cwd=repo, env=check_env(), timeout=CHECK_TIMEOUT).returncode == 0
             for r in failed(report.get("checks", []) + report.get("scoped", []))) or \
         (any(n and (f == n or f.endswith("/" + n)) and not fc_gate.TEST_FILE_RE.search(f) for n in named for f in fixed)
          and fc_gate.new_tests_prove(fc_implement.timed, repo, fixed, ran, install))

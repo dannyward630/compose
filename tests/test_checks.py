@@ -93,7 +93,8 @@ class Machine(unittest.TestCase):
     def test_battery_stop_names_the_charge_and_the_override_only_on_battery_below_30_percent(self):
         self.assertIsNone(C.battery_stop())  # no pmset
         self.batt("Battery Power", 29)
-        self.assertEqual(C.battery_stop(), "the Mac is on battery at 29%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway")
+        self.assertEqual(C.battery_stop(), "the Mac is on battery at 29%, below 30%: it can die or sleep in the middle of the work; plug it in, "
+                                           "or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in")
         self.assertIsNone(C.battery_stop(force=True))
         with mock.patch.dict(os.environ, {"COMPOSE_NO_PREFLIGHT": "1"}):
             self.assertIsNone(C.battery_stop())
@@ -103,6 +104,24 @@ class Machine(unittest.TestCase):
         self.assertIsNone(C.battery_stop())
         self.fake("pmset", 'echo "Now drawing from \'Battery Power\'"')  # a charge that cannot be read stops nothing
         self.assertIsNone(C.battery_stop())
+
+    def test_a_battery_stop_is_announced_once_per_watcher_when_the_mac_is_plugged_in(self):
+        held = Path(tempfile.mkdtemp()) / "live" / "battery-held"
+        with mock.patch.object(C, "POWER_HELD", held):
+            self.assertEqual(C.power_back(None), (None, None))  # nothing stopped
+            self.batt("Battery Power", 20)
+            self.assertIsNotNone(C.battery_stop())
+            self.assertEqual(C.power_back(None), (None, None))  # still on battery
+            self.batt("AC Power", 21)
+            line, at = C.power_back(None)
+            self.assertRegex(line, r"^event power=ac held=\d\d:\d\d:\d\d  \(the Mac is plugged in: start again, with no ask, whatever a low battery stopped\)$")
+            self.assertEqual(C.power_back(at), (None, at))  # this watcher said it already
+            self.assertIsNotNone(C.power_back(at - 1)[0])  # another watcher has not
+            held.write_text('{"at": %f}' % (at - C.POWER_HELD_FOR - 5))
+            self.assertEqual(C.power_back(None), (None, None))  # a stop from hours ago is no news
+            self.fake("pmset", "exit 0")  # pmset says nothing: no claim the Mac is plugged in
+            held.write_text('{"at": %f}' % at)
+            self.assertEqual(C.power_back(None), (None, None))
 
     def test_busiest_process_is_the_first_row_of_ps(self):
         self.assertIsNone(C.busiest_process())

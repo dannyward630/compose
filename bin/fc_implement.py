@@ -169,17 +169,18 @@ def read_failure(wt, meta, output, log_path):
 HANG_HINT = ("The test did not finish within {limit}s, so it hangs: most likely a deadlock (for example a query run while "
              "another query's rows are still open on a single connection) or something waiting forever. Fix the hang.")
 
-def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL):
+def timed(cmd, cwd, limit, env=None, stdin=subprocess.DEVNULL, check=True):
     """Run a shell command with a hard time limit, whatever the language or test runner. On a hang the whole process
     group goes (a test binary must not outlive its shell) and the result is exit 124 with a deadlock hint. The output
     comes back scrubbed of secrets: it goes on to models and results/. A change to the user's ~/.compose meanwhile is flagged.
     The command runs under one of the machine's slots (fc_proc.slot; only a whole suite takes a suite slot, so any other command never waits on one)
-    and its group is in fc_proc.RUNNING, so a stop ends it."""
+    and its group is in fc_proc.RUNNING, so a stop ends it. A `check` (every caller but `compose timed`) gets COMPOSE_CHECK=1,
+    which lets compose's own `python3 -m tests.run` run the whole suite with no files named."""
     quick = not fc_proc.suite(cmd)
     if not quick and "COMPOSE_TEST_SLOT" not in os.environ:  # a suite waits at the load gate before it takes its slot
         fc_load.wait(fc_core.say)
     with fc_proc.slot(fc_core.say, quick) as held:
-        env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held}
+        env = {**(os.environ if env is None else env), "COMPOSE_TEST_SLOT": held} | ({"COMPOSE_CHECK": "1"} if check else {})
         before = fc_core.home_state()
         p = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              stdin=stdin, start_new_session=True, env=env)
@@ -218,7 +219,7 @@ def cmd_timed(argv):
         sys.exit("usage: compose timed <seconds> -- <command>")
     cmd = argv[2] if len(argv) == 3 else shlex.join(argv[2:])
     r = timed(cmd, os.getcwd(), int(argv[0]), env={**os.environ, "COMPOSE_CONFIG": fc_core.scratch_config()},
-              stdin=subprocess.DEVNULL if sys.stdin is None or sys.stdin.isatty() else sys.stdin)
+              stdin=subprocess.DEVNULL if sys.stdin is None or sys.stdin.isatty() else sys.stdin, check=False)
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 

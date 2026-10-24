@@ -1103,6 +1103,11 @@ class OwnerDigest(unittest.TestCase):
         line = "event tell='verify failed: checks 1/3 failed'"
         self.assertEqual(fc.fc_watch.watch_filter([line], "hw", [ORCH]), [line])
 
+    def test_the_mac_plugged_in_after_a_battery_stop_wakes_every_watch(self):
+        line = "event power=ac held=03:14:28  (the Mac is plugged in: start again, with no ask, whatever a low battery stopped)"
+        self.assertEqual((fc.fc_watch.watch_filter([line], "hw", [ORCH]), fc.fc_watch.watch_filter([line], "hw", [])), ([line], [line]))
+        self.assertTrue(fc.fc_watch.ATTENTION.search(line))  # the engineering manager's quiet watch wakes for it
+
     def test_progress_pings_are_info_and_the_rest_may_be_urgent(self):
         is_info, urgent = fc.fc_watch.is_info, fc.fc_watch.URGENT
         self.assertTrue(is_info("event crew=hw-designer state=working message=drawing page 2"))

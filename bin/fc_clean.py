@@ -101,7 +101,7 @@ def remove_project(main_repo, name, wt, proj, pbranch, force=False):
     close_space(proj, name, force)  # while its record is still in the worktree
     if fc_worktree.is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
         fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)
-        fc_worktree.release_slot(main_repo, wt)
+        fc_worktree.release_slot(main_repo, wt, own=name)
     else:
         fc_core.sh(["git", "worktree", "remove", "--force", str(wt)], main_repo, check=False)
     if wt.exists() and not fc_worktree.is_slot(main_repo, wt):

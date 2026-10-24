@@ -27,6 +27,7 @@ watch_filter
 WATCH_INTERVAL
 WATCH_SETTLE
 INFO_HOLD
+POWER_EVERY
 watch_key
 watch_scope
 cmd_watch

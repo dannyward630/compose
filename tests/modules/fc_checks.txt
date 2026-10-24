@@ -17,6 +17,9 @@ battery_report
 on_battery
 LOW_BATTERY
 battery_stop
+POWER_HELD
+POWER_HELD_FOR
+power_back
 busiest_process
 restarting_containers
 machine_warnings

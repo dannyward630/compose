@@ -129,6 +129,8 @@ The `working` reports and other progress lines wait and are printed in the same 
 `--all` wakes on every line again, and `--attention` gives any other watch the same behavior.
 A billing halt is an event too, shown as `event halt=payment` with the provider, the tasks left, the top-up link as `top_up=` and the exact command that continues as `resume=`.
 The Mac sleeping is not a stall: when the wall clock jumps by 90 s or more between two polls (2 s apart), the watch prints one `event sleep=woke from=<time> to=<time> slept=<span>` naming the window.
+A start refused on a low battery (`run`, `resume`, `verify`, `crew start`, `testcrews` below 30% on battery) is recorded in `~/.compose/live/battery-held`.
+Once the Mac runs on AC again, within six hours, every watch prints one `event power=ac held=<time>`, which wakes the engineering manager's quiet watch too, so the refused start runs again without waiting for the product owner.
 The silence alarms then wait one stall window after the wake, since nothing could move while the Mac slept.
 A run that died within 15 minutes of the wake, whose log was still being written when the Mac went to sleep and which did not halt on a payment limit, is resumed by the watch itself: `event sleep=resumed`, once per run, with `compose resume` logging to `results/resume.log`.
 Any other run that died after a wake raises `event sleep=run-lost` with the reason and the exact `compose resume --repo <repo> --project <slug>` command, and a run stopped with Ctrl-C is left alone.

@@ -579,7 +579,7 @@ class Preflight(unittest.TestCase):
 
     def test_a_low_battery_stops_the_start_with_the_fix_unless_forced_and_doctor_only_warns(self):
         self.fake("gh", "gh version 2.94.0")
-        low = "the Mac is on battery at 12%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway"
+        low = "the Mac is on battery at 12%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in"
         with self.serve(openrouter=Answer({}), linear=Answer({})), mock.patch.object(fc_checks, "battery_report", return_value="Now drawing from 'Battery Power'\n 12%; discharging"):
             msg, _ = self.stop()
             self.assertEqual(msg.splitlines()[1:], ["  " + low])
@@ -598,7 +598,8 @@ class Preflight(unittest.TestCase):
         stop = RuntimeError("stop here")
         with mock.patch.object(fc.fc_proc, "keep_awake") as awake, mock.patch.object(fc.fc_run, "preflight", side_effect=stop), \
              mock.patch.object(fc.fc_tasks, "load_tasks", side_effect=stop), mock.patch.object(fc.fc_init, "start_checks") as checks, \
-             mock.patch.object(fc.fc_core, "project_dir", return_value=self.repo / ".compose" / "p"):
+             mock.patch.object(fc.fc_core, "project_dir", return_value=self.repo / ".compose" / "p"), \
+             mock.patch.object(fc.fc_linear, "refresh_tasks"):  # no Linear here: the tasks stand as stored
             with self.assertRaises(RuntimeError):
                 fc.fc_run.run_tasks(self.repo, self.repo, [{"model": "m"}], None)
             self.assertEqual(awake.call_count, 1)

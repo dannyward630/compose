@@ -48,6 +48,17 @@ class Treehouse(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain"), "")  # the pool is excluded, never shown or committed
         self.assertEqual(self.git("branch", "--show-current"), "main")
 
+    def test_a_slot_that_is_a_live_projects_worktree_is_never_cleared_or_returned_but_its_own_clean_returns_it(self):
+        wt, proj = self.init()
+        with mock.patch.object(fc.fc_core, "say") as say:
+            self.assertFalse(fc.fc_worktree.release_slot(self.repo, wt))
+        self.assertIn("it is project p's worktree", say.call_args[0][0])
+        self.assertTrue((proj / "verify.json").exists())
+        self.assertEqual(self.status()[wt.resolve()], "leased")
+        self.git("checkout", "-q", "--detach", cwd=wt)
+        self.assertTrue(fc.fc_worktree.release_slot(self.repo, wt, own="p"))
+        self.assertFalse((wt / ".compose").exists())
+
     def test_a_collected_test_slot_can_be_leased_again(self):
         # `return` resets a slot to its lease's base, and treehouse reuses a slot only when its commit is an ancestor of the next
         # base; a slot leased on its test branch came back on a test commit, "in use or dirty" for every lease after it

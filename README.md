@@ -216,7 +216,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 
 ## Development
 
-Run the CLI tests with `python3 -m tests.run`, which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else a quarter of the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially.
+Run the CLI tests with `python3 -m tests.run test_x.py ...` for the files you changed, or `python3 -m tests.run --all` for every file (a verify or run check needs no flag), which runs the test files in parallel (`-j N`, else `COMPOSE_TEST_JOBS`, else a quarter of the cores) and prints unittest's summary; `python3 -m unittest discover -s tests` runs the same tests serially.
 Type-check the CLI with `npx -y pyright@1.1.414 --pythonpath /usr/bin/python3` (strict; the error count is reported, nothing is gated on it).
 Run the jev tests with `cd jev && uv run pytest`, and the bp tests with `cd bp && npm test`.
 The CLI core is stdlib; `jev/` is a uv project, and `bp/` is one Node file with no dependencies.

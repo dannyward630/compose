@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_load, fc_status, fc_briefs, fc_sleep, fc_stall, fc_shed
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_load, fc_status, fc_briefs, fc_sleep, fc_stall, fc_shed, fc_checks
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
@@ -324,7 +324,7 @@ def is_info(e):
 
 URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
 
-ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke|load=|shed=)|sign-in", re.I)
+ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke|load=|shed=|power=ac)|sign-in", re.I)
 
 def is_quiet(a, proj, sources):
     """Whether this watch wakes only for what needs attention: the engineering manager's `--from orchestrator` watch, or any watch given
@@ -352,7 +352,7 @@ def watch_filter(events, slug, sources, direct=(), others=()):
     if others := [n for n in others if n not in sources]:
         events = [e for e in events if not any(f"crew={n} " in e or f"agent={n} " in e for n in others)]
     if sources:  # a tool-bug from any teammate wakes the engineering manager too: it owns fixing the tool; a stall is its to supervise
-        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith(("event stall=", "event ready=", "event tell=", "event sleep="))
+        return [e for e in events if " state=tool-bug " in e or " state=fallback " in e or e.startswith(("event stall=", "event ready=", "event tell=", "event sleep=", "event power="))
                 or any(f"crew={n} " in e or f"agent={n} " in e for n in (*sources, *direct))]
     me = fc_herdr.agent_name(slug, "orchestrator")
     return [e for e in events if f"crew={me} " not in e and not e.startswith(f"event stall=idle agent={me} ")]  # idle: it waits on this watch
@@ -360,6 +360,7 @@ def watch_filter(events, slug, sources, direct=(), others=()):
 WATCH_INTERVAL = 2.0
 WATCH_SETTLE = 10.0  # seconds a wake waits for the rest of its burst (a wave of tasks finishing together is one wake, not N)
 INFO_HOLD = 300.0  # seconds progress pings (is_info) wait for a wake to travel with before they wake alone
+POWER_EVERY = 30.0  # seconds between two looks for a battery stop the Mac's charger now lifts
 
 def watch_key():
     """Whose watch this is: COMPOSE_ROLE, else the engineering manager, one per session (`manager-<herdr pane>`; bare `manager`
@@ -424,6 +425,7 @@ def cmd_watch(a, rewake=False):
         settle, held_since = getattr(a, "settle", 0), None
         agents, tick = Agents(), time.time()
         woke = watch_mem(proj, key).get("woke")  # the last sleep this watcher saw: a run found dead after it is the sleep's
+        power_seen, power_tick = watch_mem(proj, key).get("power_seen"), 0.0  # the last battery stop this watcher announced
         scope = lambda snap: watch_scope(proj, snap)
         def look(after, stalls):
             lines = watch_events(before, after) + (owner_lines(proj.name, before, after) if not os.environ.get("COMPOSE_ROLE") else []) + load_events(proj, key)
@@ -440,6 +442,12 @@ def cmd_watch(a, rewake=False):
                 woke = woke_was
                 watch_save(proj, key, woke=woke)
             stalls = slept + watch_stalls(proj, after, limit, key=key, woke=woke, agent_limit=cfg.get("agent_stall_seconds"))
+            if now - power_tick >= POWER_EVERY:
+                power_tick = now
+                line, at = fc_checks.power_back(power_seen)
+                if line:
+                    stalls, power_seen = stalls + [line], at
+                    watch_save(proj, key, power_seen=at)
             ev = look(after, stalls)
             if ev and all(is_info(e) or quiet and not (URGENT.search(e) or ATTENTION.search(e)) for e in ev):  # progress alone: it waits for a wake to travel with, `before` stays put
                 held_since = held_since or time.time()

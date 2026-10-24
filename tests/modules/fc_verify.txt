@@ -1,4 +1,5 @@
 CHECK_TIMEOUT
+check_env
 verify_failed
 review_inputs
 issue_line

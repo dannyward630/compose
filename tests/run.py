@@ -1,10 +1,11 @@
-"""Run compose's test suite in parallel: `python3 -m tests.run [-j N] [test_x.py ...]`.
+"""Run compose's test suite in parallel: `python3 -m tests.run [-j N] (test_x.py ... | --all)`.
 
 Each tests/test_*.py runs as `python3 -m unittest discover -s tests -p <file>` in a process of its own, N at a time
 (-j, else COMPOSE_TEST_JOBS, else a quarter of the cores), the biggest files first. It prints one line per finished file, then
 unittest's own failure blocks and its summary for the whole run (`Ran N tests in Ts`, `OK` or `FAILED (failures=, errors=)`), on
 stderr like unittest, so the FAIL:/ERROR: lines are the ones fc_gate.FAILING_RE reads. A file whose process dies or prints no
-summary is one error named after it. It exits 1 on any failure. `python3 -m unittest discover -s tests` still runs the same
+summary is one error named after it. It exits 1 on any failure. With no files it runs every file only given --all or under a
+compose check (COMPOSE_CHECK, set by fc_implement.timed), so an agent's habit of re-running the whole suite stops at the first try. `python3 -m unittest discover -s tests` still runs the same
 tests, serially."""
 import argparse, os, re, signal, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -56,7 +57,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m tests.run", description="Run compose's test files in parallel, one process each.")
     ap.add_argument("files", nargs="*", help="test files to run (default: every tests/test_*.py)")
     ap.add_argument("-j", "--jobs", type=int, default=default_jobs())
+    ap.add_argument("--all", action="store_true", help="run every test file; needed with no files outside a compose check")
     a = ap.parse_args(argv)
+    if not a.files and not a.all and not os.environ.get("COMPOSE_CHECK"):
+        sys.exit("name the test files of what you changed: python3 -m tests.run test_x.py ... A whole suite runs for many minutes on "
+                 "the machine's one suite slot, and verify and run's checks already run it (they set COMPOSE_CHECK). "
+                 "Pass --all only when a full run is what you were asked for.")
     paths = sorted(TESTS.glob("test_*.py"), key=lambda p: (-p.stat().st_size, p.name))
     if a.files:
         want = {Path(f).stem.removeprefix("test_") for f in a.files}

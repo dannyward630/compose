@@ -1,8 +1,9 @@
 """Read-only machine checks the setup steps table and doctor use. No network, no writes."""
-import datetime, json, os, re, shutil, subprocess
+import datetime, json, os, re, shutil, subprocess, time
 from pathlib import Path
 import platform
 import fc_core
+import fc_config
 import fc_harness
 
 
@@ -169,8 +170,28 @@ def battery_stop(force=False):
     out = battery_report()
     if "Battery Power" not in out or not (m := re.search(r"(\d+)%", out)) or int(m[1]) >= LOW_BATTERY:
         return None
+    try:  # `compose watch` says `event power=ac` once the Mac is plugged in, so what stopped here starts again with no ask
+        POWER_HELD.parent.mkdir(parents=True, exist_ok=True)
+        fc_core.atomic_write(POWER_HELD, json.dumps({"at": time.time(), "charge": int(m[1])}))
+    except OSError:
+        pass
     return (f"the Mac is on battery at {m[1]}%, below {LOW_BATTERY}%: it can die or sleep in the middle of the work; plug it in, "
-            "or run again with --force to start anyway")
+            "or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in")
+
+POWER_HELD = fc_config.CONFIG_PATH.parent / "live" / "battery-held"  # the last battery_stop: {"at": epoch seconds, "charge": percent}
+POWER_HELD_FOR = 6 * 3600  # seconds a battery stop stays worth announcing: one older than this was dealt with or forgotten
+
+def power_back(seen):
+    """(event line, stop time) once the Mac runs on AC again after a battery_stop newer than `seen`, the last stop this watcher
+    announced; (None, seen) otherwise. pmset is asked only while such a stop is waiting."""
+    try:
+        at = float(json.loads(POWER_HELD.read_text())["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, seen
+    if at <= (seen or 0) or time.time() - at > POWER_HELD_FOR or on_battery() or not battery_report():
+        return None, seen
+    return (f"event power=ac held={time.strftime('%H:%M:%S', time.localtime(at))}  (the Mac is plugged in: start again, with no ask, "
+            "whatever a low battery stopped)"), at
 
 def busiest_process():
     """(cpu percent, command name) of the process using the most CPU right now, else None."""

@@ -41,7 +41,7 @@ class TestRun(unittest.TestCase):
     def go(self, d, *argv):
         err = io.StringIO()
         with mock.patch.object(run, "TESTS", d), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"COMPOSE_TEST_JOBS": ""}):
-            code = run.main(["-j", "2", *argv])
+            code = run.main(["-j", "2", *(argv or ["--all"])])
         return code, err.getvalue()
 
     def test_a_passing_suite_prints_unittests_summary_and_exits_zero(self):
@@ -72,6 +72,19 @@ class TestRun(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             self.go(d, "nope")
         self.assertIn("nope", str(e.exception))
+
+    def test_no_files_runs_nothing_unless_all_is_given_or_a_compose_check_runs_it(self):
+        d = self.make_dir(a=PASSING)
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_JOBS": ""}), contextlib.redirect_stderr(io.StringIO()) as err:
+            os.environ.pop("COMPOSE_CHECK", None)
+            with mock.patch.object(run, "TESTS", d), self.assertRaises(SystemExit) as e:
+                run.main([])
+            self.assertIn("name the test files of what you changed", str(e.exception))
+            self.assertNotIn("running", err.getvalue())
+            os.environ["COMPOSE_CHECK"] = "1"
+            with mock.patch.object(run, "TESTS", d):
+                self.assertEqual(run.main(["-j", "1"]), 0)
+        self.assertEqual(self.go(d, "--all")[0], 0)
 
     def test_files_run_side_by_side_up_to_the_job_count(self):
         times = Path(tempfile.mkdtemp()) / "times"
@@ -104,7 +117,7 @@ class TestRun(unittest.TestCase):
             """))
         code = ("import importlib.util, pathlib, sys\n"
                 f"s = importlib.util.spec_from_file_location('r', {str(RUN)!r}); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
-                "m.TESTS = pathlib.Path(sys.argv[1]); sys.exit(m.main(['-j', '1']))\n")
+                "m.TESTS = pathlib.Path(sys.argv[1]); sys.exit(m.main(['-j', '1', '--all']))\n")
         p = subprocess.Popen([sys.executable, "-c", code, str(d)], env={**os.environ, "PIDS": str(pids)}, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: p.poll() is None and p.kill())
         t0 = time.time()
