@@ -139,6 +139,16 @@ def cmd_hold(a):
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
 CHANGE_CONTENT = ("title", "description", "blockedBy")  # what a change of course edits; status moves are the run's own
+def issue_content(issue):
+    """The parts of an issue a change of course edits. A description's `## Route` and `## Evidence` sections are the CLI's own:
+    every run, verify and reroute rewrites them, so they never count as an edit."""
+    desc = (issue or {}).get("description")
+    if desc:
+        route = fc_tasks.route_text(desc)
+        desc = re.sub(r"(?m)^## Evidence[ \t]*$[\s\S]*?(?=\n## |\Z)", "", desc.replace(route, "", 1) if route else desc)
+        desc = re.sub(r"\n{3,}", "\n\n", desc).strip()
+    return [(issue or {}).get("title"), desc, (issue or {}).get("blockedBy")]
+
 def load_change(proj, cid):
     f = changes_dir(proj) / f"{cid}.json"
     return json.loads(f.read_text()) if f.exists() else None
@@ -203,7 +213,7 @@ def change_diff(before, after):
     canceled = sorted(i for i in b if i not in a or (a[i]["status"] != b[i]["status"] and a[i]["status"].lower() in fc_tasks.CANCELED))
     new = sorted(i for i in a if i not in b or (b[i]["status"].lower() in fc_tasks.CANCELED and a[i]["status"].lower() not in fc_tasks.CANCELED))
     return {"superseded": gone, "new": new, "canceled": canceled,
-            "edited": sorted(i for i in a if i in b and i not in canceled + new and any(a[i].get(k) != b[i].get(k) for k in CHANGE_CONTENT)),
+            "edited": sorted(i for i in a if i in b and i not in canceled + new and issue_content(a[i]) != issue_content(b[i])),
             "feature": before["feature"].get("description") != after["feature"].get("description")}
 
 def issue_label(ident, issue):
@@ -269,9 +279,8 @@ def change_undo(a, proj, repo):
         sys.exit(f"{a.id} is still open: close it with `compose change done`, then undo it")
     cache, d, after = fresh_sync(proj), rec["diff"], rec["after"]
     now, was = cache.get("issues", {}), after["issues"]
-    content = lambda x: [(x or {}).get(k) for k in CHANGE_CONTENT]  # the run moves a new or edited task's state; only content counts
     moved = [issue_label(i, was.get(i) or rec["before"]["issues"].get(i)) for i in d["new"] + d["canceled"] + d["edited"]
-             if (now.get(i) != was.get(i) if i in d["canceled"] else content(now.get(i)) != content(was.get(i)))]
+             if (now.get(i) != was.get(i) if i in d["canceled"] else issue_content(now.get(i)) != issue_content(was.get(i)))]
     if d["feature"] and cache["feature"].get("description") != after["feature"].get("description"):
         moved.append(after["feature"]["id"])
     if moved:
