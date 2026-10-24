@@ -651,3 +651,15 @@ class DoneUnsaved(unittest.TestCase):
         self.assertEqual(le.call_count, 3)
         self.assertNotIn("not done", out)
         self.assertIn("003 hand_done  t003  (by hand)\n", out)
+
+    def test_done_brings_the_task_branch_from_its_clone_into_the_repo(self):
+        git = lambda cwd, *c: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *c], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "base")
+        clone = Path(tempfile.mkdtemp()) / "003"
+        git(self.repo, "clone", "-q", "--shared", "--no-hardlinks", str(self.repo), str(clone))
+        git(clone, "checkout", "-q", "-b", "task-003")
+        git(clone, "commit", "-q", "--allow-empty", "-m", "finished by hand in the clone")
+        (self.proj / "results" / "003.json").write_text(json.dumps({"id": "003", "status": "failed", "branch": "task-003", "worktree": str(clone)}))
+        self.done({"003": True}, only="003")
+        self.assertEqual(git(self.repo, "rev-parse", "task-003"), git(clone, "rev-parse", "HEAD"))
