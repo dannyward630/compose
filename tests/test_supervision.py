@@ -1338,6 +1338,29 @@ class RestoredTeammate(unittest.TestCase):
         self.assertIn("never edit code", guard(self.PANE))
         self.assertEqual((guard("w10:pT"), guard("w1Z:p1")), ("", ""))  # a crew teammate and the engineering manager
 
+    def test_a_restored_team_lead_gets_its_watch_at_a_turn_end_and_other_panes_get_none(self):
+        repo = self.proj.parent
+        fc.fc_core.sh(["git", "init", "-q"], repo)
+        (repo / ".compose").mkdir()
+        self.proj = self.proj.rename(repo / ".compose" / "hw")
+        (self.proj / "verify.json").write_text("{}")
+        def rewake(pane, snaps):
+            err = io.StringIO()
+            with mock.patch.dict(os.environ, {"HERDR_PANE_ID": pane, "CLAUDE_CODE_ENTRYPOINT": "cli"}, clear=True), \
+                    mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), \
+                    mock.patch.object(fc.fc_watch, "watch_snapshot", side_effect=snaps), mock.patch.object(fc.fc_watch, "WATCH_INTERVAL", 0.01), mock.patch.object(fc.fc_watch, "WATCH_SETTLE", 0), \
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(repo)}))), contextlib.redirect_stderr(err):
+                try:
+                    fc.fc_watch.cmd_rewake(SimpleNamespace())
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            return code, err.getvalue()
+        code, err = rewake(self.PANE, [wsnap("running"), wsnap("running"), wsnap("passed")])
+        self.assertEqual(code, 2)
+        self.assertIn("event task=001 state=passed", err)
+        self.assertEqual((rewake("w10:pT", []), rewake("w1Z:p1", [])), ((0, ""), (0, "")))  # a crew teammate and the engineering manager
+
 
 class SharedGuidance(unittest.TestCase):
     def test_every_teammate_brief_carries_the_wait_and_shell_rules(self):

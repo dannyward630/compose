@@ -492,13 +492,17 @@ def cmd_rewake(a):
     """Claude Code Stop hook (the plugin's hooks.json, asyncRewake): when a team lead's turn ends, park a watch whose event
     wakes the idle session. Its herdr tab carries the role, project, and worktree. Every other session returns at once,
     a headless one (`claude -p`, which Claude Code marks CLAUDE_CODE_ENTRYPOINT=sdk-*) too. A wake names skill files changed since the last one."""
-    project = os.environ.get("COMPOSE_PROJECT")
-    if os.environ.get("COMPOSE_ROLE") != "orchestrator" or not project or os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
+    if os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
         return
     try:
-        session = re.sub(r"[^\w-]", "", json.load(sys.stdin).get("session_id") or "")
+        ev = json.load(sys.stdin)
     except Exception:
-        session = ""
+        ev = {}
+    fc_hooks.restore_pane_env(ev.get("cwd"))  # a team lead restored after a computer restart has lost the env its tab was created with
+    project = os.environ.get("COMPOSE_PROJECT")
+    if os.environ.get("COMPOSE_ROLE") != "orchestrator" or not project:
+        return
+    session = re.sub(r"[^\w-]", "", ev.get("session_id") or "")
     cmd_watch(argparse.Namespace(repo=os.environ.get("COMPOSE_REPO") or ".", project=project, now=False, from_=None,
                                  timeout=0, stall=None, interval=WATCH_INTERVAL, settle=WATCH_SETTLE, session=session), rewake=True)
 
