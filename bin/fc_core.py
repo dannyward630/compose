@@ -44,14 +44,14 @@ def sh(cmd, cwd, timeout=None, check=True, env=None):
     return p
 
 def worktree_branches(repo):
-    """Every checkout of this repository (main plus linked worktrees), as [(path, branch)] in creation order, main checkout first, branch empty when detached."""
+    """Every checkout of this repository (main plus linked worktrees), as [(path, branch)] in the order git lists them, main checkout first, branch empty when detached."""
     out = []
     for line in sh(["git", "worktree", "list", "--porcelain"], repo, check=False).stdout.splitlines():
         if line.startswith("worktree "):
             out.append((Path(line[len("worktree "):]), ""))
         elif line.startswith("branch "):
             out[-1] = (out[-1][0], line[len("branch refs/heads/"):])
-    return out[:1] + sorted(out[1:], key=lambda wt: wt[0].stat().st_mtime) or [(Path(repo).resolve(), "")]
+    return out or [(Path(repo).resolve(), "")]
 
 def worktrees(repo):
     """Every checkout of this repository (main plus linked worktrees), as paths."""

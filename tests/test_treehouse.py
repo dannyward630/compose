@@ -305,13 +305,27 @@ class AllProjectsBranch(unittest.TestCase):
         self.git(self.repo, "worktree", "add", "-q", *flags, str(wt))
         return wt
 
+    def listed(self):
+        return [Path(l[len("worktree "):]) for l in self.git(self.repo, "worktree", "list", "--porcelain").splitlines() if l.startswith("worktree ")]
+
     def project(self, wt, name="p"):
         (wt / ".compose" / name).mkdir(parents=True); (wt / ".compose" / name / "verify.json").write_text("{}")
 
     def test_branch_per_worktree_in_git_order(self):
         wt = self.add("wt", "-b", "compose/p"); det = self.add("det", "--detach")
-        self.assertEqual(fc.fc_core.worktree_branches(self.repo), [(self.repo, "main"), (wt, "compose/p"), (det, "")])
-        self.assertEqual(fc.fc_core.worktrees(self.repo), [self.repo, wt, det])
+        branch, listed = {self.repo: "main", wt: "compose/p", det: ""}, self.listed()
+        self.assertEqual(fc.fc_core.worktree_branches(self.repo), [(d, branch[d]) for d in listed])
+        self.assertEqual(fc.fc_core.worktrees(self.repo), listed)
+
+    def test_git_order_holds_whatever_the_directory_times_and_a_gone_directory_is_listed(self):
+        a = self.add("a", "-b", "compose/a"); b = self.add("b", "-b", "compose/b"); c = self.add("c", "--detach")
+        for i, d in enumerate((a, b, c)): os.utime(d, (1_000_000 - i * 1000, 1_000_000 - i * 1000))  # the first listed is the newest
+        listed = self.listed()
+        self.assertEqual(sorted(listed), sorted([self.repo, a, b, c]))
+        self.assertEqual(fc.fc_core.worktrees(self.repo), listed)
+        shutil.rmtree(b)  # git still lists it until pruned
+        self.assertEqual(fc.fc_core.worktrees(self.repo), listed)
+        self.assertEqual(dict(fc.fc_core.worktree_branches(self.repo))[b], "compose/b")
 
     def test_no_git_gives_the_folder_with_no_branch(self):
         self.assertEqual(fc.fc_core.worktree_branches(self.base), [(self.base, "")])
