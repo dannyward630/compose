@@ -171,6 +171,12 @@ class RefreshBeforeRun(unittest.TestCase):
         self.assertIn("Old goal.", fc.fc_tasks.load_tasks(self.proj)[0]["body"])
         self.assertIn("no Linear key: run uses the tasks synced at", out)
 
+    def test_a_project_with_no_feature_keeps_its_stored_tasks_and_reads_nothing(self):
+        (self.proj / "linear.json").write_text("{}")
+        read, out = self.refresh()
+        self.assertFalse(read.called)
+        self.assertIn("Old goal.", fc.fc_tasks.load_tasks(self.proj)[0]["body"])
+
 
 class ScopedSyncNames(unittest.TestCase):
     """A story-scoped sync missing parentId, and the sync and change code, name no Linear MCP tool."""

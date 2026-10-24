@@ -467,6 +467,9 @@ def refresh_tasks(proj):
     """Before a run: read the feature and its tasks from Linear again into results/tasks.json, so a task body edited since the last
     sync reaches its implementer, and say each one that changed. Without a Linear key the stored tasks stand, and it says so."""
     stored = proj / "results" / "tasks.json"
+    link = json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}
+    if not link.get("feature"):  # nothing to read: the stored tasks stand
+        return
     if not fc_config.LINEAR_KEY:
         if stored.exists():
             fc_core.say(f"no Linear key: run uses the tasks synced at {fc_tasks.linear_cache(proj).get('synced_at')}")
