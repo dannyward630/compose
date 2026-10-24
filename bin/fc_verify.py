@@ -1,4 +1,4 @@
-import json, os, re, shutil, subprocess, sys, tempfile, time
+import itertools, json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load
@@ -155,12 +155,19 @@ def fix_tests(tasks, files):
     return list(dict.fromkeys(t["test"] for t in cover))
 
 def save_output(results, cmd, started, text):
-    """A check's whole output, in results/checks/ under a name from the start time and the command; returns its path."""
+    """A check's whole output, in results/checks/ under a name from the start time and the command; returns its path.
+    Two checks that start in one second with the same command prefix get `-2`, `-3`, ... so none overwrites another."""
     folder = Path(results) / "checks"
     folder.mkdir(parents=True, exist_ok=True)
-    f = folder / f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(started))}-{re.sub(r'[^A-Za-z0-9]+', '-', cmd).strip('-')[:40]}.log"
-    f.write_text(text)
-    return str(f)
+    stem = f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(started))}-{re.sub(r'[^A-Za-z0-9]+', '-', cmd).strip('-')[:40]}"
+    for n in itertools.count(1):
+        f = folder / (f"{stem}.log" if n == 1 else f"{stem}-{n}.log")
+        try:
+            with open(f, "x") as fh:
+                fh.write(text)
+            return str(f)
+        except FileExistsError:
+            pass
 
 def failure_summary(full, tail, path, cap=6000):
     """What a reflect or fix round reads of a failed check: every failing test (unittest's FAIL:/ERROR: header lines, up to `cap`

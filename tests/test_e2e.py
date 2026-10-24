@@ -427,6 +427,15 @@ class ToolErrors(unittest.TestCase):
         self.assertIn(check["output_file"], findings)
         self.assertLess(len(findings), 12000)
 
+    def test_two_checks_with_one_command_prefix_started_in_one_second_keep_separate_output_files(self):
+        results, started = tempfile.mkdtemp(), time.time()
+        prefix = "cd app && . /Users/someone/workspace/apps/project/smoke.env && "
+        first = fc.fc_verify.save_output(results, prefix + "bun test", started, "TEST OUTPUT")
+        second = fc.fc_verify.save_output(results, prefix + "bun lint", started, "LINT OUTPUT")
+        self.assertNotEqual(first, second)
+        self.assertEqual(Path(first).read_text(), "TEST OUTPUT")
+        self.assertEqual(Path(second).read_text(), "LINT OUTPUT")
+
     def test_a_check_past_its_time_limit_fails_as_a_timeout_naming_the_limit_and_verify_goes_on(self):
         with mock.patch.object(fc.fc_verify, "CHECK_TIMEOUT", 1):
             ok, report, findings = self.check("echo started; sleep 30")
