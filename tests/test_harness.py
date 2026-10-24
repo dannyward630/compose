@@ -1674,6 +1674,15 @@ class GuardRedirects(unittest.TestCase):
             self.assertIsNone(self.denied(cmd), cmd)
             self.assertEqual(self.targets(cmd), [], cmd)
 
+    def test_a_heredoc_body_is_data_not_shell(self):
+        for cmd in ("compose crew start --brief - <<'EOF'\nfix tests -> `x` and <angle> from y\nEOF", "cat <<-EOF\n  a > b.py\n  EOF", "cat <<\"EOF\"\na > b.py\nEOF"):
+            self.assertIsNone(self.denied(cmd), cmd)
+            self.assertEqual(self.targets(cmd), [], cmd)
+
+    def test_a_redirection_around_a_heredoc_is_still_checked(self):
+        self.assertEqual(self.targets("cat <<'EOF' > bin/a.py\na > b.py\nEOF\necho y >> c.txt"), [os.path.realpath(self.repo / n) for n in ("bin/a.py", "c.txt")])
+        self.assertEqual(self.targets("cat <<< hi\necho y > c.txt"), [os.path.realpath(self.repo / "c.txt")])
+
     def test_redirections_to_files_in_the_repo_are_denied(self):
         for cmd in ("echo x > bin/a.py", "echo x >> bin/a.py", "echo x>bin/a.py", "echo x >| bin/a.py", "echo x &> bin/a.py", "echo x &>> bin/a.py",
                     "echo x 2>&1 > bin/a.py", 'echo "a > b" > "bin/a.py"'):

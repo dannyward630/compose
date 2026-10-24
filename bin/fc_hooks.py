@@ -56,6 +56,20 @@ def switch_decision(command, cwd, role, shared):
                     f"worktree of your own (ask for `crew start --work-repo` or `--cwd`) and run git there with `git -C <worktree>`.")
     return None
 
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
+
+def without_heredoc_bodies(cmd):
+    """`cmd` minus the text of its heredocs: that text is data for the command, never shell, so a `>` in it is no redirection."""
+    kept, end = [], None
+    for line in cmd.split("\n"):
+        if end is not None:
+            end = None if line.strip() == end else end
+            continue
+        kept.append(line)
+        if m := HEREDOC.search(line):
+            end = m.group(2)
+    return "\n".join(kept)
+
 def edit_paths(ev):
     """The paths a tool call writes, relative ones resolved against the event's cwd."""
     ti = ev.get("tool_input") or {}
@@ -64,7 +78,7 @@ def edit_paths(ev):
     if ev.get("tool_name") == "apply_patch":
         found += re.findall(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", cmd, re.M)
     elif ev.get("tool_name") == "Bash":
-        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex = shlex.shlex(without_heredoc_bodies(cmd), posix=True, punctuation_chars=True)
         lex.whitespace_split = True
         try:
             words = list(lex)
