@@ -853,8 +853,9 @@ class BranchNamesInSections(unittest.TestCase):
         ("sections/3.md", "When it reports `stubs ready`, run `compose testcrews", [
             "Each test-writing teammate works in its own worktree on its own branch (`<project branch>-tests-NNN`, off the stubs commit), so no teammate can amend or reset another's commit.",
         ], "Tasks that share a protected test file get their writers one after another:"),
-        ("sections/3.md", "Each test teammate reports `working \"test ready\"` once", [
-            "Read every test once they are all in (`git log -p HEAD..<project branch>-tests-NNN`), send changes back with `herdr agent prompt <slug>-tests-NNN \"...\"` until each tests what its issue says, then tell each to report `done` and run `--collect` before `run`.",
+        ("sections/3.md", "Each test teammate reports `working \"test ready: <commit>; holdouts: <cases>\"` once", [
+            "Review each test on the project branch as its `done` arrives (`git log -p <stubs commit>..HEAD -- <its protected path>`), while the other writers go on.",
+            "A test that does not test what its issue says is replaced, never hand-edited: fix the issue if the brief was the gap, then `compose testcrews --project <slug> --only NNN --redo`, which starts a fresh writer off the project branch told to rewrite it.",
         ], "A test that fails on the stubs because it needs code another task owns"),
         ("sections/5.md", "You are the senior engineer over the fast models.", [
             "`run` ends with a `NNN triage clean|flag: <reason>` line per passed task: a fast model checked each diff against its brief and the simplicity bar, all at once (`compose triage` repeats it). Read flagged layers in full. For a clean layer check only its diffstat (`git diff --stat <base>..<project branch>-NNN`): when every changed file is in the task's `files:`, accept it without reading the diff. Reading every diff of an all-clean run is the time triage exists to save. A flag is a pointer, never a verdict.",
@@ -877,13 +878,13 @@ class BranchNamesInSections(unittest.TestCase):
 
     def test_each_new_name_appears_only_where_the_old_one_was(self):
         three, five = read("sections/3.md"), read("sections/5.md")
-        self.assertEqual(three.count("<project branch>-tests-NNN"), 2)
+        self.assertEqual(three.count("<project branch>-tests-NNN"), 1)  # the review reads the project branch: compose collected the test
         self.assertEqual(three.count("<project branch>-NNN"), 0, "the test writer's branch keeps its tests- part")
         self.assertEqual(five.count("<project branch>-NNN"), 2)
         self.assertEqual(five.count("<project branch>"), 2)
         # The results path and the herdr teammate name are not branches and keep their placeholders.
         self.assertEqual(five.count(".compose/<project>/results/NNN.json"), 1)
-        self.assertEqual(three.count("herdr agent prompt <slug>-tests-NNN"), 1)
+        self.assertEqual(three.count("herdr agent prompt <slug>-tests-NNN"), 0, "corrections go through testcrews --redo, not a prompt")
 
 
 class StackDocs(unittest.TestCase):

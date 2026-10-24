@@ -15,7 +15,8 @@ import fc_load
 
 def snap(proj):
     return {"tasks": {}, "agents": {}, "run": False, "verify": None,
-            "crew": {f.stem: fc.fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}}
+            "crew": {f.stem: fc.fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))},
+            "refused": {f.stem: fc.fc_crew.crew_refusals(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.refused"))}}
 
 
 _patches = [mock.patch.object(time, "sleep"),  # crew start waits for the agent to be working; a fake herdr answering {} never is, so do not sleep through the wait
@@ -1504,3 +1505,67 @@ class TerseTemplatesA(unittest.TestCase):
                     self.assertIn(token, brief)
                 self.assertEqual("\n6. " in brief, state == "maintainer")
                 self.assertNotIn("sections/", brief)
+
+
+class RefusedReports(unittest.TestCase):
+    """A report compose refuses leaves a record and a watch event: the team lead learns the teammate tried, and why it failed."""
+    def setUp(self):
+        wt = Path(tempfile.mkdtemp())
+        self.proj = wt / ".compose" / "shop"
+        self.proj.mkdir(parents=True)
+        for name in ("shop-orchestrator", "shop-q-neb-1", "shop-tests-003"):
+            (fc.fc_crew.crew_dir(self.proj) / f"{name}.json").write_text(json.dumps({"name": name, "role": name[5:], "title": name[5:], "space": "w9", "tab": f"w9:{name}", "pane": "p", "reports_to": "orchestrator"}))
+            fc.fc_crew.write_report(self.proj, name, "working", "started")
+
+    def report(self, who, state, msg):
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
+                mock.patch.object(fc.fc_herdr, "herdr", lambda *args, **kw: None):
+            try:
+                fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": state, "message": msg.split()}))
+            except SystemExit as e:
+                return str(e)
+
+    def test_a_bad_state_is_refused_recorded_and_an_urgent_event(self):
+        before = snap(self.proj)
+        why = self.report("shop-q-neb-1", "finished", "all good")
+        self.assertIn("REPORT REFUSED (shop-q-neb-1 finished): state is one of", why)
+        self.assertEqual([r["why"][:16] for r in fc.fc_crew.crew_refusals(self.proj, "shop-q-neb-1")], ["state is one of "])
+        self.assertEqual(fc.fc_crew.crew_reports(self.proj, "shop-q-neb-1")[-1]["message"], "started")  # nothing was sent
+        ev = fc.fc_watch.watch_events(before, snap(self.proj))
+        self.assertEqual(len(ev), 1)
+        self.assertTrue(ev[0].startswith("event crew=shop-q-neb-1 report=refused state=finished why='state is one of"), ev[0])
+        self.assertTrue(fc.fc_watch.URGENT.search(ev[0]))
+        self.assertEqual(fc.fc_watch.watch_filter(ev, "shop", []), ev)  # the team lead's watch gets it
+        self.assertEqual(fc.fc_watch.watch_events(snap(self.proj), snap(self.proj)), [])
+
+    def test_a_card_asked_twice_is_refused_with_the_gate_reason(self):
+        self.assertIsNone(self.report("shop-q-neb-1", "needs-user", "NEB-1: 2 cards Q1-Q2 on the map; recommendation A, B"))
+        self.assertIsNone(self.report("shop-q-neb-1", "needs-user", "NEB-1: 2 cards Q1-Q2 on the map; recommendation A, B"))
+        refusals = fc.fc_crew.crew_refusals(self.proj, "shop-q-neb-1")
+        self.assertEqual(len(refusals), 1)
+        self.assertIn("already asked", refusals[0]["why"])
+        self.assertEqual([r["state"] for r in fc.fc_crew.crew_reports(self.proj, "shop-q-neb-1")], ["working", "needs-user"])
+
+    def test_a_test_writers_test_ready_starts_the_collect_when_its_turn_ends(self):
+        spawned = []
+        with mock.patch.object(fc.fc_crew.subprocess, "Popen", lambda args, **kw: spawned.append((args, kw))), mock.patch.object(fc.fc_herdr, "herdr_env", lambda: True):
+            self.report("shop-tests-003", "working", "test ready: abc1234; holdouts: empty cart")
+            self.report("shop-q-neb-1", "working", "test ready for review")  # not a test writer
+            self.report("shop-tests-003", "working", "still writing")
+        self.assertEqual(len(spawned), 1)
+        args, kw = spawned[0]
+        self.assertEqual(args[:2], ["sh", "-c"])
+        self.assertIn("agent wait", args[2])
+        self.assertIn("testcrews --collect --only", args[2])
+        self.assertIn('report --repo "$4" --project "$5" --as "$2" blocked', args[2])
+        self.assertEqual(args[5:], ["shop-tests-003", "003", str(self.proj.resolve().parents[1]), "shop", str(self.proj / "results" / "collect.log")])
+        self.assertTrue(kw["start_new_session"])
+        self.assertEqual(fc.fc_crew.test_writer_id(self.proj, "shop-tests-003"), "003")
+        self.assertIsNone(fc.fc_crew.test_writer_id(self.proj, "other-tests-003"))
+        self.assertIsNone(fc.fc_crew.test_writer_id(self.proj, "shop-orchestrator"))
+
+    def test_outside_herdr_nothing_is_spawned(self):
+        spawned = []
+        with mock.patch.object(fc.fc_crew.subprocess, "Popen", lambda args, **kw: spawned.append(args)), mock.patch.object(fc.fc_herdr, "herdr_env", lambda: False):
+            self.report("shop-tests-003", "working", "test ready: abc1234")
+        self.assertEqual(spawned, [])

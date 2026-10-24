@@ -1,4 +1,4 @@
-import argparse, json, re, sys
+import argparse, fcntl, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug, fc_testred
@@ -318,13 +318,14 @@ def cmd_toolsmith(a):
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
 def contract_slice(contract, tid): return "".join(p for p in re.split(r"(?m)^(?=## )", contract) if not (m := re.match(r"## task (\S+)", p)) or m.group(1) == tid)
 def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
-    """`rebuilt`: the task passed before a re-plan changed its brief (testcrews --redo), so its file holds the old brief's test."""
+    """`rebuilt`: the task's test is on the project branch already (its task passed before a re-plan changed the brief, or the team
+    lead sent the collected test back) and `testcrews --redo` starts this writer to replace it."""
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
     args = " ".join(meta.get("protected") or []) or "<the test path>"  # git reads "a.py," as a path, so the command gets no commas
     budget = int(meta.get("test_lines") or budget or TEST_BUDGET)
     files = ", ".join(meta.get("files") or [])
-    fails = (f"Its brief changed after it was built: rewrite the test {paths} holds to the TASK BRIEF. It must fail on project "
-             f"branch for what the brief changed, and pass once {files} implement the new brief.\n" if rebuilt else
+    fails = (f"The test {paths} holds is being replaced (the brief changed after it was written, or the team lead sent it back): rewrite it to "
+             f"the TASK BRIEF. It must fail on the project branch for what the brief asks, and pass once {files} implement the brief.\n" if rebuilt else
              f"It must fail on current stubs for the reason this task fixes, and pass once {files} implement the brief.\n")
     return (f"Write the acceptance test for task {meta['id']} ({meta.get('title', '')}) and nothing else.\n"
             f"Test file: {paths}. Test command: {meta.get('test')}\n" + fails +
@@ -341,7 +342,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             f"`git add {args} && git commit {args} -m \"{fc_core.typed('<what the test covers>', 'test', conv) if conv else '<plain message>'}\"`.\n"
             "To fix your test, make another plain commit. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`.\n"
-            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when team lead says so.\n\n"
+            "Report `working \"test ready: <commit>; holdouts: <what they cover>\"` and end the turn: compose collects it and records your `done`; never report `done`.\n\n"
             f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract_slice(contract, meta['id'])}")
 
 def cmd_testcrews(a):
@@ -361,7 +362,7 @@ def cmd_testcrews(a):
     metas = [m for m in tasks if (not only or m["id"] in only) and not finished(m)]
     no_test = [m["id"] for m in metas if not (m.get("protected") or [])]  # nothing protected to write: no writer starts for it
     metas = [m for m in metas if m["id"] not in no_test]
-    rebuilt = {m["id"] for m in metas if redo and fc_tasks.task_finished(proj, m)}  # built on the old brief: its file holds the old test
+    rebuilt = {m["id"] for m in metas if redo and (fc_tasks.task_finished(proj, m) or test_collected(proj, m["id"]))}  # its file holds the old test
     for tid in sorted(only or no_test):  # a skipped task says why; with --only, only the named ones
         if tid in no_test:
             print(f"{tid} skipped: no protected test to write")
@@ -507,6 +508,12 @@ def collect_tests(proj, only=None, force=False):
     its slot ends the session still in it. A conflict keeps that writer's branch and worktree for a look, the rest are still
     collected, and the collect exits naming every conflict. `force` goes on to the writers it starts (a low battery)."""
     wt = fc_herdr.project_worktree(proj)
+    (proj / "results").mkdir(parents=True, exist_ok=True)
+    with open(proj / "results" / "collect.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # two writers ready at once (each report starts a collect) cherry-pick one after the other
+        return collect_tests_locked(proj, wt, only, force)
+
+def collect_tests_locked(proj, wt, only, force):
     want = {x.strip() for x in only.split(",")} if only else None
     by_id = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want}
     ids = sorted(by_id)

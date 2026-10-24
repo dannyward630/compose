@@ -278,7 +278,7 @@ class Groundwork(unittest.TestCase):
         self.assertNotIn("===== tests-001", kept)
         redo = printed(redo=True)
         self.assertIn("===== tests-001", redo)
-        self.assertIn("Its brief changed after it was built: rewrite the test server/store_test.go holds to the TASK BRIEF.", redo)
+        self.assertIn("The test server/store_test.go holds is being replaced (the brief changed after it was written, or the team lead sent it back): rewrite it to the TASK BRIEF.", redo)
         self.assertIn("003 skipped: its state is Done\n", redo)  # Done on Linear stays skipped, as in `run --redo`
         self.assertNotIn("rewrite the test", printed(only="002"))  # a task never built gets the plain brief
 

@@ -42,9 +42,12 @@ def decided_cards(issues, ids):
         out |= {i for i in ids if any(re.match(rf"[\s*_`(\[]*{re.escape(i)}(?!\w)", l) for l in lines)}
     return out
 
+class Refused(Exception):
+    """A report that must not go out, but is no error of the reporter's command: it is told why, and the attempt is recorded."""
+
 def ask_gate(proj, message, hop=""):
-    """What `report needs-user` sends: the message (a verified link and the text fallback added, repeats marked), or None when it
-    must not go out. Exits with the reason when a page link is missing, doubled, or does not answer. A card is asked once per `hop`
+    """What `report needs-user` sends: the message (a verified link and the text fallback added, repeats marked). Exits with the reason
+    when a page link is missing, doubled, or does not answer; raises Refused when the card is decided or asked already. A card is asked once per `hop`
     (whom the reporter reports to): a teammate's ask to its team lead does not use up the team lead's ask to the engineering manager."""
     urls = list(dict.fromkeys(SESSION_URL.findall(message)))
     if re.search(r"open in Lavish", message, re.I) and not urls:
@@ -65,8 +68,7 @@ def ask_gate(proj, message, hop=""):
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature")
     open_ids = [i for i in ids if i not in decided_cards([x for x in (head[2] if head else None, feature) if x], ids)]
     if not open_ids:
-        print(f"not reported: {', '.join(ids)} already in the map's Decisions so far. Build on the decisions; nothing is open.")
-        return None
+        raise Refused(f"not reported: {', '.join(ids)} already in the map's Decisions so far. Build on the decisions; nothing is open.")
     path = proj / "results" / "asked.json"
     asked = json.loads(path.read_text()) if path.exists() else {}
     key = lambda i: f"{scope}/{i}"
@@ -74,9 +76,8 @@ def ask_gate(proj, message, hop=""):
     if old and len(old) == len(open_ids):
         first = asked[key(old[0])]
         if not reminder or any(asked[key(i)].get("reminded") for i in old):
-            print(f"not reported: {', '.join(old)} already asked at {first['at']} and not answered yet. Wait for the answer; do not ask again."
-                  + (" (the one reminder is spent)" if reminder else " If the window closed, one `reminder: ` line may follow."))
-            return None
+            raise Refused(f"not reported: {', '.join(old)} already asked at {first['at']} and not answered yet. Wait for the answer; do not ask again."
+                          + (" (the one reminder is spent)" if reminder else " If the window closed, one `reminder: ` line may follow."))
         for i in old:
             asked[key(i)]["reminded"] = True
     for i in open_ids:

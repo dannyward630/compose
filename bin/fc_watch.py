@@ -33,6 +33,8 @@ def watch_snapshot(repo, proj, agents=None):
     # The marker alone is not enough: a run that crashes leaves it behind, and watch then waits on a dead run forever.
     snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "ended": fc_tasks.run_ended(proj), "verify": None, "halt": None,
             "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
+            if (proj / "results" / "crew").exists() else {},
+            "refused": {f.stem: fc_crew.crew_refusals(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.refused"))}
             if (proj / "results" / "crew").exists() else {}}
     try:
         h = json.loads((proj / "results" / "resume.json").read_text())
@@ -287,6 +289,9 @@ def watch_events(before, after):
         for r in reports[len(before.get("crew", {}).get(n, [])):]:
             if r["message"] != "started":
                 ev.append(f"event crew={n} state={r['state']} message={r['message']!r}")
+    for n, refusals in after.get("refused", {}).items():
+        for r in refusals[len(before.get("refused", {}).get(n, [])):]:
+            ev.append(f"event crew={n} report=refused state={r['state']} why={r['why']!r}  (its report never arrived: read it, then steer the teammate)")
     for n, changed in after.get("skill", {}).items():
         if changed != before.get("skill", {}).get(n):
             ev.append(f"event crew={n} skill=stale changed={','.join(changed)}")
@@ -326,7 +331,7 @@ def is_info(e):
     m = re.match(r"event crew=\S+ state=working message=(.*)$", e)
     return bool(m) and "test ready" not in m.group(1).lower()
 
-URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ state=(?:needs-user|blocked|contradiction|tool-bug|fallback) )|CRASHED")
+URGENT = re.compile(r"event (?:stall=|halt=|sleep=(?:resumed|run-lost)|agent=\S+ status=blocked|crew=\S+ (?:state=(?:needs-user|blocked|contradiction|tool-bug|fallback)|report=refused) )|CRASHED")
 
 ATTENTION = re.compile(r"event (?:crew=\S+ state=done |tell=|ready=|sleep=woke|load=|shed=|power=ac)|sign-in", re.I)
 
