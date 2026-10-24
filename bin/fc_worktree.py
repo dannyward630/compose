@@ -433,9 +433,14 @@ def ignore_tool_files(wt):
         gi.write_text("\n".join(lines + add) + "\n")
     return bool(add)
 
+def ignored_entries(wt):
+    return fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
+
 def dep_dirs(wt):
-    ignored = fc_core.sh(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], wt, check=False).stdout.splitlines()
-    return [d.rstrip("/") for d in ignored if d.endswith("/") and Path(d.rstrip("/")).name in fc_config.DEP_DIRS]
+    return [d.rstrip("/") for d in ignored_entries(wt) if d.endswith("/") and Path(d.rstrip("/")).name in fc_config.DEP_DIRS]
+
+def env_files(wt):
+    return [f for f in ignored_entries(wt) if not f.endswith("/") and (Path(f).name == ".env" or Path(f).name.startswith(".env."))]
 
 def stamp_trail_wiring(wt):
     """trail's session-start hook rewrites the wired files whenever .trail/cache/.cache/wiring-stamp.json is missing or names
@@ -451,16 +456,20 @@ def stamp_trail_wiring(wt):
 
 def ready_checkout(repo, wt, borrow=True, install=None):
     """Make a task clone or the CLI's worktree runnable like the main checkout: symlink each git-ignored dependency install
-    (node_modules at any depth, vendor, .venv) from it, and keep those links and trail's graph out of git status through
-    the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
-    `borrow=False` (a task that rewrites a lockfile) links nothing: an install there would write through the link into everyone's.
+    (node_modules at any depth, vendor, .venv) and each git-ignored .env or .env.* file from it, and keep those links and
+    trail's graph out of git status through the checkout's info/exclude. A link is a file to git, so a `node_modules/` rule would not cover it; `/client/node_modules` does.
+    `borrow=False` (a task that rewrites a lockfile) links no installs: an install there would write through the link into everyone's.
     `install` (verify.json `install`) runs in the checkout instead of linking: bundlers write a dependency's real path into
     unminified output, so a borrowed install builds different bytes than the project worktree's own. Links from an earlier
     borrow are removed first, so the command never writes through one. Call it with `install` once the checkout sits on the
     commit whose checks will run; it installs again only when that commit's lockfiles differ from the last install's."""
-    deps = dep_dirs(repo)
-    exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in WIRING), "/.ignore", *("/" + d for d in deps)])
+    deps, envs = dep_dirs(repo), env_files(repo)
+    exclude_paths(wt, ["/graft/", "/.trail/", *("/" + w for w in WIRING), "/.ignore", *("/" + d for d in deps + envs)])
     stamp_trail_wiring(wt)
+    for e in envs:  # settings a build or dev server reads; an install never writes them, so a lockfile task links them too
+        link = wt / e
+        if link.parent.is_dir() and not link.exists() and not link.is_symlink():
+            link.symlink_to(repo / e)
     if install and borrow:
         stamp = Path(fc_core.sh(["git", "rev-parse", "--path-format=absolute", "--git-path", "compose-install"], wt).stdout.strip())
         locks = "".join(l + "\n" for l in fc_core.sh(["git", "ls-tree", "-r", "HEAD"], wt, check=False).stdout.splitlines()
