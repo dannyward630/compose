@@ -9,6 +9,13 @@ _prefixes = {}
 _commons = {}
 _heads = {}
 
+def _common(repo):
+    """The git common dir of `repo`, looked up once per process; a repo that has none yet is looked up again next time."""
+    key = Path(repo).resolve()
+    if key not in _commons and (common := common_dir(repo)):
+        _commons[key] = common
+    return _commons.get(key)
+
 def refs_stamp(common):
     def st(p):
         try:
@@ -25,14 +32,13 @@ def task_prefix(repo, proj):
     key = (Path(repo).resolve(), Path(proj).resolve())
     f = proj / "verify.json"
     def stamp():
-        if key[0] not in _commons:
-            _commons[key[0]] = common_dir(repo)
+        common = _common(repo)
         try:
             s = os.stat(f)
             vs = (s.st_mtime_ns, s.st_size)
         except OSError:
             vs = None
-        return (vs, refs_stamp(_commons[key[0]]) if _commons[key[0]] else None)
+        return (vs, refs_stamp(common) if common else None)
     hit = _prefixes.get(key)
     if hit and hit[0] == stamp():
         return hit[1]
@@ -51,10 +57,7 @@ def task_prefix(repo, proj):
 
 def heads(repo):
     """The local branch names, listed once and again only when the refs change."""
-    key = Path(repo).resolve()
-    if key not in _commons:
-        _commons[key] = common_dir(repo)
-    common = _commons[key]
+    common = _common(repo)
     stamp = refs_stamp(common) if common else None
     hit = _heads.get(common) if common else None
     if hit and hit[0] == stamp:

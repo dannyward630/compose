@@ -302,6 +302,16 @@ class HeadsListing(unittest.TestCase):
             self.assertEqual(("only-here" in mine, "only-here" in theirs, len(listing), len(again)), (False, True, 1, 1))
             self.assertEqual((self.heads()[1] != [], fc.fc_worktree._heads), (True, {}))
 
+    def test_a_directory_with_no_repository_yet_is_not_remembered_as_having_no_common_dir(self):
+        fresh = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, fresh, True)
+        self.assertEqual(self.heads(fresh)[0], set())
+        self.assertNotIn(fresh, fc.fc_worktree._commons)
+        for cmd in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", *cmd], cwd=fresh, check=True, capture_output=True)
+        got, listing = self.heads(fresh)
+        self.assertEqual((got, len(listing)), ({"main"}, 1))
+        self.assertEqual(self.run_git(fc.fc_worktree.heads, fresh), (got, []))  # now cached by its common dir
+
     def test_layer_branches_are_the_numbered_layers_bottom_first_and_follow_new_ones(self):
         for n in ("10", "2", "01-prerebase", "1", "x"): self.git("branch", f"compose/p-layer-{n}")
         self.git("branch", "other-layer-3")
