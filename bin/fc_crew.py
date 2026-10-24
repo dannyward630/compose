@@ -159,6 +159,30 @@ def crew_effort(role, explicit=None):
     """The Claude Code effort for the entry crew_pick chose, or None to keep Claude Code's default."""
     return crew_pick(role, explicit)[1]
 
+def release_ended_slots(proj, agents):
+    """Give back the treehouse slots of this project's teammates whose tab is gone, so finished teammates stop holding the pool.
+    A teammate's slot is the `worktree` of a --work-repo record, or the `cwd` of a record that has a `branch` (a --cwd repo it was
+    given its own worktree of): a record with neither ran in a checkout that is not its own, and is never touched. The slot goes back
+    only while treehouse says that teammate holds it, nothing in it is uncommitted, and it is no project's worktree (release_slot);
+    its branch stays. `agents` is herdr's agent list: empty means herdr could not say (the session asking is itself in it), and nothing goes back."""
+    if not agents:
+        return
+    held = {}
+    for f in sorted(crew_dir(proj).glob("*.json")):
+        c = json.loads(f.read_text())
+        slot = c.get("worktree") or (c["cwd"] if c.get("branch") else None)
+        theirs = fc_worktree.common_dir(slot) if slot else None
+        if not theirs or not tab_closed(c, agents):
+            continue
+        if theirs not in held:
+            held[theirs] = {Path(e["path"]).resolve(): e.get("lease_holder") for e in json.loads(fc_worktree.treehouse(theirs.parent, "status", "--json", check=False).stdout or "[]")}
+        if held[theirs].get(Path(slot).resolve()) != f"compose:{c['name']}":
+            continue
+        if left := fc_worktree.dirty_paths(slot):
+            fc_core.say(f"slot     {slot} kept for {c['name']}: uncommitted {', '.join(left[:3])}")
+        elif fc_worktree.release_slot(theirs.parent, slot):
+            fc_core.say(f"slot     {slot} back to the pool: {c['name']} ended (branch {c.get('branch')} kept)")
+
 def crew_workdir(cwd, wt, name, leased=False):
     """(directory, branch) a teammate session works in. A --cwd in a git repo, the project's own repo included and whatever the
     role, gets its own worktree on a new branch under that repo's .claude/worktrees, so no existing checkout (the repo's, a project
@@ -182,6 +206,7 @@ def cmd_crew(a):
     if a.action == "list":
         listed = fc_herdr.herdr("agent", "list")
         agents = None if listed is None else listed.get("agents", [])
+        release_ended_slots(proj, agents)
         for f in sorted(crew_dir(proj).glob("*.json")):
             c = json.loads(f.read_text())
             last = (crew_reports(proj, c["name"]) or [{}])[-1]
@@ -246,6 +271,7 @@ def cmd_crew(a):
     h = fc_harness.HARNESSES.get(key)
     if h and not fc_harness.signed_in(key):
         sys.exit(fc_harness.login_message(key))
+    release_ended_slots(proj, live)  # a full pool is mostly the slots of teammates that ended
     cwd, branch = (wt, None) if repo else crew_workdir(getattr(a, "cwd", None), wt, name, getattr(a, "leased", False))
     if not (model.startswith("pi:") or h) and fc_claude.claude_trusted(Path(cwd).resolve()) is False:
         sys.exit(fc_claude.untrusted(Path(cwd).resolve()))
