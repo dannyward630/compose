@@ -215,6 +215,10 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limi
             if m := NET_ERROR.search(pane):
                 fire(f"net:{n}:{since}", f"network agent={n} its last turn ended on an API or network error ({m.group(0)}) and it has been idle since {hm(since)}; "
                      f"once the network is back, nudge: herdr agent prompt {n} \"{NET_NUDGE}\"")
+        if st == "idle" and n != orch and n not in closed and r and r[-1]["state"] == "working" and now_s - since >= limit and f"net:{n}:{since}" not in fired \
+                and not (re.search(r"-tests-\d+$", n) and fc_briefs.test_ready(r[-1])):  # collect closes a writer after its test ready
+            fire(f"closable:{n}:{since}", f"closable agent={n} its turn ended and it has been idle since {hm(since)} with its last report working; "
+                 f"if its work is finished, nudge: herdr agent prompt {n} \"If nothing is left for you, report done\" (its tab then closes)")
     spells = mem.get("spells", {})
     for what_key, what in fc_stall.limit_spells(snap, spells, now_s) + fc_stall.silent_stalls(proj, snap, seen, now_s, agent_limit or fc_stall.AGENT_STALL_SECONDS, woke[1] if woke else 0):
         fire(what_key, what)  # a pane stuck on a limit or a retry loop, a teammate working for ages with nothing to show

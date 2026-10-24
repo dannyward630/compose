@@ -420,13 +420,24 @@ def herdr_stalled(session, prompt, deadline):
     return "timeout"
 
 
+def herdr_close_tabs(space, label):
+    """Closes the tabs `label` names: its own and the older `<label> HH:MM` ones."""
+    for old, t in herdr_tabs(space).items():
+        if re.fullmatch(re.escape(label) + r"( \d\d:\d\d)?", old or ""):
+            herdr("tab", "close", t["tab_id"])
+
+def herdr_close_task(proj, tid):
+    """Closes the pane of a task's pi agent, whichever session the task ended on: a fallback turn runs headless, and a hand-done
+    task has no session, so only the agent's name still reaches the pane an earlier attempt left."""
+    got = herdr("agent", "get", agent_name(Path(proj).name, tid)) or {}
+    if pane := (got.get("agent") or got).get("pane_id"):
+        herdr("pane", "close", pane)
+
 def herdr_verify_panes(space, wt, names, label="verify"):
     """The project's one `verify` tab, rebuilt per run, with one pane per stage, each a plain shell the CLI reports states for. {name: pane_id}."""
     if not space or not names:
         return {}
-    for old, t in herdr_tabs(space).items():  # the previous run's tab (and the older `verify HH:MM` ones)
-        if re.fullmatch(re.escape(label) + r"( \d\d:\d\d)?", old or ""):
-            herdr("tab", "close", t["tab_id"])
+    herdr_close_tabs(space, label)  # the previous run's tab (and the older `verify HH:MM` ones)
     r = herdr("tab", "create", "--workspace", space, "--label", label, "--cwd", str(wt), "--no-focus") or {}
     pane = (r.get("root_pane") or {}).get("pane_id")
     if not pane:

@@ -59,8 +59,8 @@ class RunHolds(unittest.TestCase):
 
 class FastAttempts(unittest.TestCase):
     """A FAST task needs a green base: its existing tests pass before the fix, and the fix ends unproven."""
-    def run_task(self, workflow, test, write="ok\n"):
-        """Runs task 001 in a real repo whose a.txt is `ok`; the implementer writes `write` into it. Returns the result, with calls, sent, closed and repo on self."""
+    def run_task(self, workflow, test, write="ok\n", ends={"pane": "p1"}, answers=None):
+        """Runs task 001 in a real repo whose a.txt is `ok`; the implementer writes `write` into it and ends on the session `ends`. Returns the result, with calls, sent, closed and repo on self."""
         self.repo = Path(tempfile.mkdtemp()).resolve(); proj = self.repo / ".compose" / "p"; proj.mkdir(parents=True); self.proj = proj
         git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=self.repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main"); (self.repo / "a.txt").write_text("ok\n"); git("add", "-A"); git("commit", "-qm", "init")
@@ -68,11 +68,11 @@ class FastAttempts(unittest.TestCase):
         self.calls, self.closed = [], []
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             self.calls.append(prompt); (Path(cwd) / "a.txt").write_text(write)
-            return {"pane": "p1"}, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
+            return ends, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc_fast, "workflow", return_value=workflow), mock.patch.object(fc.fc_implement, "implementer", impl), \
              mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_config, "TEST_READER", None), \
              mock.patch.object(fc.fc_linear, "linear_event") as self.events, mock.patch.object(fc.fc_core, "say") as self.say, mock.patch.object(fc.fc_herdr, "herdr_label"), \
-             mock.patch.object(fc.fc_herdr, "herdr", side_effect=lambda *a, **k: self.closed.append(a)), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
+             mock.patch.object(fc.fc_herdr, "herdr", side_effect=lambda *a, **k: (self.closed.append(a), (answers or {}).get(a[:2]))[1]), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
             r = fc.fc_implement.run_task(self.repo, proj, meta, 1)
         self.sent = [c.args[2:] for c in self.events.call_args_list]  # (event, result?) of each linear_event
         return r
@@ -91,6 +91,14 @@ class FastAttempts(unittest.TestCase):
         self.assertEqual(subprocess.run(["git", "show", f"{r['branch']}:a.txt"], cwd=self.repo, capture_output=True, text=True).stdout, "ok fixed\n")
         self.assertEqual(self.closed, [("pane", "close", "p1")])
         self.assertEqual(self.say.call_args_list[-1].args[0].split()[:2], ["001", "unproven"])
+
+    def test_a_task_that_passes_on_a_fallback_turn_closes_the_pi_pane_its_earlier_attempts_left(self):
+        r = self.run_task(FIX, "grep -q ok a.txt", write="ok fixed\n", ends=None, answers={("agent", "get"): {"agent": {"pane_id": "p9"}}})
+        self.assertEqual(r["status"], "unproven")
+        self.assertEqual(self.closed, [("agent", "get", "p-001"), ("pane", "close", "p9")])
+        self.closed.clear()
+        r = self.run_task(FIX, "grep -q ok a.txt", write="no\n", ends=None, answers={("agent", "get"): {"agent": {"pane_id": "p9"}}})
+        self.assertEqual((r["status"], self.closed), ("failed", []))  # a missed task keeps its pane to read
 
     def test_a_fast_attempt_that_fails_stays_failed(self):
         r = self.run_task(FIX, "grep -q ok a.txt", write="no\n")

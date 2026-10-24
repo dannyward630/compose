@@ -577,4 +577,6 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
     if not ok and not left_out and not lost:  # a smoke run is a sign of life only; its findings never reach the reflect screen
         print("\nUnresolved after the fix budget. Escalate to the team lead with the confirmed findings above.")
         verify_failed(proj, rounds, findings)
+    if ok and (space := fc_herdr.herdr_project_space(proj)):  # a failed run keeps its tab to read, like a missed task's pane
+        fc_herdr.herdr_close_tabs(space, fc_herdr.tab_label(proj, "verify"))
     sys.exit(0 if ok else 1)
