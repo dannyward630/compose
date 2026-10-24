@@ -369,8 +369,11 @@ def main():
     detached = os.environ.pop("COMPOSE_DETACHED", None)  # the marker is for this process alone: a compose run by anything it starts must detach on its own
     if a.cmd in DETACHED and not detached and not fc_run.joins_live_run(a):  # it only queues its tasks on the live run: nothing to outlive the terminal
         return detach(a)
-    if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it
-        fc_update.hold(a.cmd, fc_core.project_dir(argparse.Namespace(repo=a.repo, project=a.project)).name, a.repo)
+    if a.cmd in DETACHED:  # the work itself: from here `compose update` on this machine waits for it, and the project runs on the version it pinned
+        ns = argparse.Namespace(repo=a.repo, project=a.project)
+        proj = fc_core.project_dir(ns)
+        fc_update.hold(a.cmd, proj.name, ns.repo)
+        fc_update.pin(proj, ns.repo)
     if a.fn not in (fc_config.cmd_workspace, fc_hooks.cmd_guard, fc_watch.cmd_rewake, fc_hooks.cmd_skillcheck):  # the hooks run in every session: no config, no output
         ws = fc_config.apply_config(move=not getattr(a, "dry_run", False), harness=getattr(a, "harness", None))  # "default" when no workspace is chosen
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)

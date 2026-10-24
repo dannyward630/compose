@@ -1,6 +1,6 @@
 import ast, json, os, re, shlex, shutil, subprocess, sys, time
 from pathlib import Path
-import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify, fc_started
+import fc_mcp, fc_core, fc_load, fc_proc, fc_config, fc_tasks, fc_claude, fc_models, fc_herdr, fc_worktree, fc_change, fc_frame0, fc_ask, fc_hooks, fc_providers, fc_harness, fc_budget, fc_tierpin, fc_tiers, fc_checks, fc_notify, fc_started, fc_update
 
 
 # ---------- `crew`: teammates, the Claude sessions in the project's space, reporting upward ----------
@@ -295,6 +295,7 @@ def cmd_crew(a):
         skill = {"skill": fc_hooks.skill_hashes()} if model.startswith("pi:") or h else {}
     except OSError:
         skill = {}
+    fc_update.pin(proj)  # the first teammate pins the compose version the project runs on
     fc_core.atomic_write(rec, json.dumps({"name": name, "agent": agent, "role": a.role, "title": title, "model": model, "effort": effort, "model_from": why_model, "cwd": str(cwd), "branch": branch, **({"worktree": str(work)} if work else {}), "space": space, "tab": tab["tab"]["tab_id"], "pane": pane,
                                "reports_to": reports_to, **({"started_by": started_by} if started_by else {}), "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "booting": True, **skill}, indent=2))
     seen = len(crew_reports(proj, name)) + 1  # with the `started` below: any report past these is the teammate's own

@@ -184,7 +184,7 @@ def skill_notice(session):
     changed = skill_changed(seen or {}, cur)
     if seen is None or not changed:
         return None
-    return f"compose's skill changed since you read it: {', '.join(changed)}. Re-read the ones your role uses before acting."
+    return f"compose's skill changed since you read it: {', '.join(changed)}. Re-read only those files before acting; nothing else changed."
 
 def cmd_skillcheck(a):
     """Claude Code UserPromptSubmit and PostToolUse(Skill) hook: a session with a role, or one that loaded the compose skill

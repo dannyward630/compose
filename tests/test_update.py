@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import io, json, os, subprocess, sys, tempfile, unittest
+import io, json, os, shutil, subprocess, sys, tempfile, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -27,6 +27,9 @@ class Fixture(unittest.TestCase):
         self.relink = mock.Mock(return_value=["linked compose CLI link"])
         self.live = root / "live"  # the registry of runs and verifies: this test's, not the machine's
         p = mock.patch.object(fc_update, "live_dir", return_value=self.live); p.start(); self.addCleanup(p.stop)
+        self.pins = root / "pins"  # the version pins of this test's projects, not the machine's
+        p = mock.patch.object(fc_update, "pins_dir", return_value=self.pins); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc_update.fc_herdr, "live_agents", lambda: []); p.start(); self.addCleanup(p.stop)
     def update(self, doctor_code=0, force=False):
         def doctor(a):
             print("doctor says hi"); sys.exit(doctor_code) if doctor_code else None
@@ -183,3 +186,55 @@ class Overlap(unittest.TestCase):
                 self.hold(kind, pid)
                 with mock.patch.object(fc_update, "live_dir", return_value=self.cfg / "live"):
                     fc_update.refuse_while_running("run", self.repo / ".compose" / "p", self.repo)  # in-process: a started run would outlive the test
+
+
+class Pins(Fixture):
+    """A project pins the compose version it starts on; an update refuses while one of its teammates is mid-turn, and once it has
+    pulled it names, per project, the skill files that changed since the pin, then moves the pin."""
+    def setUp(self):
+        super().setUp()
+        self.skill = Path(tempfile.mkdtemp()); (self.skill / "sections").mkdir()
+        for n in ("SKILL.md", "sections/0b.md", "sections/3.md"):
+            (self.skill / n).write_text(f"{n} v1\n")
+        p = mock.patch.object(fc_update.fc_hooks, "SKILL_DIR", self.skill); p.start(); self.addCleanup(p.stop)
+        self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; (self.proj / "results").mkdir(parents=True)
+
+    def test_pin_records_once_and_renew_moves_it(self):
+        d = fc_update.pin(self.proj)
+        self.assertEqual((d["project"], d["repo"]), ("shop", str(self.proj.resolve().parents[1])))
+        self.assertEqual(sorted(fc_update.skill_name(f) for f in d["skill"]), ["SKILL.md", "sections/0b.md", "sections/3.md"])
+        (self.skill / "sections/3.md").write_text("v2\n")
+        self.assertEqual(fc_update.pin(self.proj), d)  # kept: the project runs on what it started with
+        self.assertNotEqual(fc_update.pin(self.proj, renew=True)["skill"], d["skill"])
+        self.assertEqual([p["project"] for p in fc_update.pinned()], ["shop"])
+
+    def test_a_pin_of_a_cleaned_project_is_dropped(self):
+        fc_update.pin(self.proj)
+        shutil.rmtree(self.proj.parents[1])
+        self.assertEqual(fc_update.pinned(), [])
+        self.assertEqual(list(self.pins.glob("*.json")), [])
+
+    def test_a_teammate_mid_turn_stops_the_update_and_force_overrides(self):
+        fc_update.pin(self.proj)
+        agents = [{"name": "shop-tests-003", "agent_status": "working"}, {"name": "shop-orchestrator", "agent_status": "idle"}, {"name": "other-planner", "agent_status": "working"}]
+        self.assertEqual(fc_update.mid_turn(fc_update.pinned(), agents), [("shop", "shop-tests-003")])
+        commit(self.seed, "b"); git(self.seed, "push", "-q", str(self.remote), "main")
+        with mock.patch.object(fc_update.fc_herdr, "live_agents", lambda: agents):
+            code, out = self.update()
+            self.assertEqual(code, 1); self.assertFalse((self.co / "b").exists())
+            self.assertIn("shop: shop-tests-003 is mid-turn", out); self.assertIn("between phases", out)
+            code, out = self.update(force=True)
+            self.assertEqual(code, 0, out); self.assertTrue((self.co / "b").exists())
+
+    def test_the_update_names_the_changed_skill_files_per_project_and_moves_the_pin(self):
+        before = fc_update.pin(self.proj)
+        quiet = Path(tempfile.mkdtemp()) / ".compose" / "blog"; quiet.mkdir(parents=True); fc_update.pin(quiet)
+        (self.skill / "sections/3.md").write_text("v2\n"); (self.skill / "sections/0h.md").write_text("new\n")
+        fc_update.pin(quiet, renew=True)  # blog started after the change: nothing to re-read
+        commit(self.seed, "b"); git(self.seed, "push", "-q", str(self.remote), "main")
+        code, out = self.update()
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"update  shop: since its pin ({before['commit']}) these skill files changed: sections/0h.md, sections/3.md. Tell its team lead: "
+                      '"compose updated: re-read sections/0h.md, sections/3.md; nothing else changed"', out)
+        self.assertIn("update  blog: no skill file changed since its pin", out)
+        self.assertEqual(fc_update.pin(self.proj)["skill"], fc_update.pin(quiet)["skill"])  # both pins moved to the installed version

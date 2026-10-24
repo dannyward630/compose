@@ -58,7 +58,7 @@ class SkillCheck(unittest.TestCase):
         self.assertIn("compose's skill changed since you read it:", note)
         self.assertIn(str(self.skill / "SKILL.md"), note)  # absolute: a teammate's worktree holds an older SKILL.md of its own
         self.assertNotIn("lead.md", note)
-        self.assertIn("Re-read the ones your role uses before acting.", note)
+        self.assertIn("Re-read only those files before acting; nothing else changed.", note)
         self.assertEqual(self.prompt(), "")
 
     def test_added_and_removed_files_are_named(self):
