@@ -1275,7 +1275,7 @@ class RestoredTeammate(unittest.TestCase):
     def restore(self, pane, env=None):
         env = {"HERDR_PANE_ID": pane} | (env or {})
         with mock.patch.dict(os.environ, env, clear=True):
-            fc.fc_crew.restore_crew_env(self.proj)
+            fc.fc_hooks.restore_crew_env(self.proj)
             return dict(os.environ)
 
     def test_the_team_lead_pane_gets_its_role_back_and_claims_no_manager_seat(self):
@@ -1291,6 +1291,20 @@ class RestoredTeammate(unittest.TestCase):
 
     def test_a_role_already_set_is_kept(self):
         self.assertEqual(self.restore(self.PANE, {"COMPOSE_ROLE": "crew"})["COMPOSE_ROLE"], "crew")
+
+    def test_the_edit_guard_finds_the_role_of_a_restored_team_lead_from_the_pane(self):
+        repo = self.proj.parent
+        fc.fc_core.sh(["git", "init", "-q"], repo)
+        (repo / ".compose").mkdir()
+        self.proj.rename(repo / ".compose" / "hw")
+        (repo / ".compose" / "hw" / "verify.json").write_text("{}")
+        def guard(pane):
+            ev, out = {"tool_name": "Write", "cwd": str(repo), "tool_input": {"file_path": str(repo / "a.go")}}, io.StringIO()
+            with mock.patch.dict(os.environ, {"HERDR_PANE_ID": pane}, clear=True), mock.patch.object(sys, "stdin", io.StringIO(json.dumps(ev))), mock.patch.object(sys, "stdout", out):
+                fc.fc_hooks.cmd_guard(None)
+            return out.getvalue()
+        self.assertIn("never edit code", guard(self.PANE))
+        self.assertEqual((guard("w10:pT"), guard("w1Z:p1")), ("", ""))  # a crew teammate and the engineering manager
 
 
 class SharedGuidance(unittest.TestCase):

@@ -8,6 +8,26 @@ GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "B
 GUARDED_ROLES = ("orchestrator", "planner")
 CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+|[^/]+/pr/[^/]+\.md)$")  # the team lead's own: the CLI's config and the layers' PR text
 
+def env_role(role):
+    """The COMPOSE_ROLE of a teammate's tab. `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code."""
+    return role if role in GUARDED_ROLES else "planner" if role.startswith("planner-") else "crew"
+
+def restore_crew_env(proj):
+    """A teammate's session that comes back without the env its tab was created with (herdr rebuilds the pane after a computer
+    restart) is found by its pane in the project's crew records, and gets that env again: otherwise it is taken for an engineering
+    manager. A session with a role, outside herdr, or in a pane no record names is left alone."""
+    pane = os.environ.get("HERDR_PANE_ID")
+    if os.environ.get("COMPOSE_ROLE") or not pane:
+        return
+    for f in sorted((Path(proj) / "results" / "crew").glob("*.json")):
+        try:
+            c = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(c, dict) and c.get("pane") == pane and c.get("role") and c.get("name"):
+            os.environ.update(COMPOSE_ROLE=env_role(c["role"]), COMPOSE_TEAMMATE=c["name"], COMPOSE_PROJECT=Path(proj).name, COMPOSE_REPO=str(Path(proj).resolve().parents[1]))
+            return
+
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear, the CLI's JSON, and the layers' PR text; code, tests, and docs
     are teammate work. The toolsmith edits in its own worktree of the compose repo, never in a shared checkout of it."""
@@ -95,6 +115,11 @@ def cmd_guard(a):
     except json.JSONDecodeError:
         return
     ti = ev.get("tool_input") or {}
+    if os.environ.get("HERDR_PANE_ID") and not os.environ.get("COMPOSE_ROLE"):  # a restored pane has lost its env (compose.py does the same for commands)
+        for _, proj in fc_core.all_projects(ev.get("cwd") or ".").values():
+            restore_crew_env(proj)
+            if os.environ.get("COMPOSE_ROLE"):
+                break
     role = os.environ.get("COMPOSE_ROLE")
     why = (switch_decision(ti.get("command"), ev.get("cwd"), role, os.environ.get("COMPOSE_REPO")) if ev.get("tool_name") == "Bash" else None)
     why = why or next(filter(None, (guard_decision(ev.get("tool_name"), p, role) for p in edit_paths(ev))), None)
