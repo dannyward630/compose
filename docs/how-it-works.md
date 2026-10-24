@@ -122,7 +122,7 @@ The designer requires Framelink; [requirements.md](requirements.md#for-the-desig
 `compose figma check --project <name> --figma <file url or key>` stores the target file and prints the Framelink setup when it cannot read the file.
 With no file stored, the designer asks you for one.
 Before it plans anything it checks what your Figma plan allows (`compose figma check --plan`, from `whoami`'s tier, measured by one probe on a scratch file when a tier's limit would block): pages per file, modes per collection, and whether a library can be published.
-The design system needs Light and Dark, so a Starter plan blocks it, and that comes to you as one card, upgrade or design around it, before any task is written around the limit.
+The design system needs Light and Dark unless a recorded decision says otherwise (light only needs one mode), so a Starter plan blocks it only when two modes are needed, and that comes to you as one card, upgrade or design around it, before any task is written around the limit.
 It asks you to publish a library only after `compose figma publish` shows a publish is pending, and once per review round.
 Its model is the `designer` entry under `models.crew`, Opus 5.5 at high effort when the entry is missing.
 

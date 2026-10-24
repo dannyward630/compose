@@ -314,6 +314,7 @@ def main():
             s.add_argument("--pages", help="check: pages per file the probe measured (a count or unlimited), replacing the tier's predicted limit")
             s.add_argument("--modes", help="check: modes per collection the probe measured (a count or unlimited), replacing the tier's predicted limit")
             s.add_argument("--need-pages", type=int, help="check: pages per file the design needs; BLOCKED when the plan allows fewer")
+            s.add_argument("--need-modes", type=int, help="check: modes per collection the design needs (default 2, Light and Dark; 1 when a decision says light only); BLOCKED when the plan allows fewer")
             s.add_argument("--library", help="publish: the library file's url or key (stored after the first use)")
             s.add_argument("--keys", help="publish: comma-separated component keys the consumer file needs")
             s.add_argument("--withdraw", action="store_true", help="publish: withdraw the open ask (the product owner will not publish); the line reads none until a publish shows")

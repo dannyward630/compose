@@ -18,7 +18,7 @@ import fc_core, fc_config, fc_tiers
 TASK_BLOCK = re.compile(r"\n*```compose[ \t]*\n(.*?)\n```[ \t]*\n*", re.S)
 SYNC_SHAPE = ('{"feature": {"id", "title", "description"}, "issues": [{"id", "title", "description", "status", "parentId", "labels", '
               '"blockedBy": ["<issue id>" or {"id", "status", "labels"}]}]}'
-              ": every issue under the feature, its stories' children included")
+              ": every issue under the feature, its stories' children included, and under the linear.json `design_epic` when it names one")
 WORKFLOWS = ("test-first", "implement-then-test", "fix-then-regression-test", "check-only")
 DEPTHS = ("FAST", "STANDARD", "DEEP")
 
@@ -78,13 +78,19 @@ def sync_tasks(proj, data):
         sys.exit(f"sync reads JSON on stdin shaped {SYNC_SHAPE}")
     if data["feature"].get("id") != feature:
         sys.exit(f"sync got feature {data['feature'].get('id')!r}, but {link} says {feature!r}")
-    stories = set(json.loads(link.read_text()).get("stories") or [])
-    if stories:  # a project scoped to stories sees those stories and their children, nothing else under the feature
+    linked = json.loads(link.read_text())
+    stories, design_epic = set(linked.get("stories") or []), linked.get("design_epic")
+    if stories:  # a project scoped to stories sees those stories and their children, nothing else under the feature; the design epic's issues stay
         missing = [i["id"] for i in data["issues"] if i["id"] not in stories and "parentId" not in i]
         if missing:
             sys.exit(f"{link} scopes this project to stories, so sync needs each issue's parentId (the `parentId` field of each issue): "
                      f"missing on {', '.join(missing)}")
-        data = {**data, "issues": [i for i in data["issues"] if i["id"] in stories or i.get("parentId") in stories]}
+        parents = {i["id"]: i.get("parentId") for i in data["issues"]}
+        def in_design_epic(i):
+            while i and i != design_epic:
+                i = parents.get(i)
+            return bool(design_epic and i)
+        data = {**data, "issues": [i for i in data["issues"] if i["id"] in stories or i.get("parentId") in stories or in_design_epic(i["id"])]}
     # A canceled issue is no task even with its block still on: a re-plan or an undo canceled it, and it must not run or stack.
     tasks = [t for t in (task_from_issue(i) for i in data["issues"] if (i.get("status") or "").lower() not in CANCELED) if t]
     ids = [t["id"] for t in tasks]

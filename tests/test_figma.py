@@ -54,6 +54,25 @@ class FigmaCheck(unittest.TestCase):
         self.assertIn("framelink reads figma file AbCdEf123456", out)
         fetch.assert_called_with("AbCdEf123456", depth=1)
 
+    def test_check_passes_an_empty_file_framelink_cannot_parse(self):
+        crash = RuntimeError("framelink fetch failed (exit 1): TypeError: Cannot read properties of undefined (reading 'children')")
+        empty = {"document": {"children": [{"type": "CANVAS", "id": "0:1", "children": []}]}}
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=crash), \
+             mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", return_value=empty) as api:
+            out = self.check("AbCdEf123456")
+        self.assertIn("framelink reads figma file AbCdEf123456 (empty: no frame on any page yet)", out)
+        self.assertEqual(api.call_args.args[0], "/files/AbCdEf123456?depth=2")
+
+    def test_check_keeps_the_crash_for_a_file_that_has_content_or_cannot_be_read(self):
+        crash = RuntimeError("framelink fetch failed (exit 1): TypeError: Cannot read properties of undefined (reading 'children')")
+        filled = {"document": {"children": [{"type": "CANVAS", "id": "0:1", "children": [{"type": "FRAME", "id": "1:2"}]}]}}
+        for rest in (filled, RuntimeError("figma api /files/AbCdEf123456 failed: HTTP 404")):
+            with self.subTest(rest=rest), mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=crash), \
+                 mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", **{"side_effect" if isinstance(rest, Exception) else "return_value": rest}):
+                with self.assertRaises(SystemExit) as e:
+                    self.check("AbCdEf123456")
+                self.assertIn("framelink cannot read figma file AbCdEf123456: framelink fetch failed", str(e.exception))
+
     def test_check_says_how_to_set_up_framelink_when_it_cannot_read(self):
         with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=RuntimeError(fc.fc_figma.FRAMELINK_SETUP)):
             with self.assertRaises(SystemExit) as e:
@@ -401,7 +420,7 @@ class FigmaCaps(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
 
     def check(self, **kw):
-        ns = dict(repo=".", project="p", action="check", figma=None, only=None, plan=None, pages=None, modes=None, need_pages=None)
+        ns = dict(repo=".", project="p", action="check", figma=None, only=None, plan=None, pages=None, modes=None, need_pages=None, need_modes=None)
         out = io.StringIO()
         top = '{"nodes": [{"type": "CANVAS", "id": "0:1"}, {"type": "CANVAS", "id": "0:2"}]}'
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out), \
@@ -431,6 +450,13 @@ class FigmaCaps(unittest.TestCase):
         self.assertIn("measure them with the probe", out)
         self.assertEqual(self.caps()["plan"], "starter")
         self.assertEqual(self.caps()["source"], "table")
+
+    def test_a_design_with_one_mode_is_not_blocked_by_a_starter_plan(self):
+        out, err = self.check(plan="starter", need_modes=1)
+        self.assertIsNone(err)
+        self.assertNotIn("BLOCKED", out)
+        out, err = self.check(plan="starter", need_modes=2)
+        self.assertIn("BLOCKED variable modes: the design system needs 2 per collection", out)
 
     def test_a_probed_value_replaces_the_predicted_limit_and_an_upgrade_unblocks(self):
         out, err = self.check(plan="starter", modes="unlimited", pages="3", need_pages=5)
