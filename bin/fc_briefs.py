@@ -536,7 +536,7 @@ def test_worktree(proj, tid):
 
 def collect_tests(proj, only=None, force=False):
     """Cherry-pick the own commits of every test-writing teammate that reported its test ready onto the project branch in task order,
-    remove their worktrees and branches, then start the writers that waited for them. A writer not yet ready is skipped: returning
+    remove their worktrees and branches, then start the writers that waited for them. A writer not yet ready, or on a turn again, is skipped: returning
     its slot ends the session still in it. A conflict keeps that writer's branch and worktree for a look, the rest are still
     collected, and the collect exits naming every conflict. `force` goes on to the writers it starts (a low battery)."""
     wt = fc_herdr.project_worktree(proj)

@@ -31,7 +31,8 @@ def sent_back(proj, update=None):
     return have
 
 def gate(proj, meta, writer):
-    """Whether the collect of a writer that reported its test ready waits. The test runs in the writer's checkout; one that fails
+    """Whether the collect of a writer that reported its test ready waits. It waits while the writer is on a turn again, since a
+    correction may be pending. The test runs in the writer's checkout; one that fails
     because it cannot load (see BROKEN_RE) goes back to its writer once with the error, and the collect leaves it until the
     writer reports ready again. A test that passes, or fails any other way, is collected as before, and so is one that is still
     broken after its one send back, or whose writer cannot be reached: each says so."""
@@ -40,8 +41,15 @@ def gate(proj, meta, writer):
     wt = Path(held) if held else Path(proj) / "worktrees" / f"tests-{tid}"
     if not wt.exists() or not meta.get("test"):
         return False
-    reports, before = len(fc_crew.crew_reports(proj, writer)), sent_back(proj).get(tid)
-    live = writer in {a.get("name") for a in fc_herdr.live_agents()}
+    sent, before = fc_crew.crew_reports(proj, writer), sent_back(proj).get(tid)
+    reports = len(sent)
+    agents = {a.get("name"): a for a in fc_herdr.live_agents()}
+    live = writer in agents
+    last = (sent or [{}])[-1]
+    if last.get("state") != "done" and (agents.get(writer) or {}).get("agent_status") == "working":
+        # a correction sent with `herdr agent prompt` leaves no report, so the writer's turn is the only trace of it
+        fc_core.say(f"tests-{tid} waits: its writer is on a turn since its test ready report (a correction may be pending); its branch and worktree are kept")
+        return True
     if before is not None and reports <= before and live:
         fc_core.say(f"tests-{tid} waits: sent back once, it has not reported test ready again")
         return True
