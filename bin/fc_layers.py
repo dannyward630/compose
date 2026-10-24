@@ -119,6 +119,7 @@ def _linearize(repo, proj, trunk, wt, through=()):
     replaced = fc_worktree.replaced_tips(repo, proj)
     prefix = fc_worktree.task_prefix(repo, proj)
     tips = list(replaced)  # (branch, a tip it no longer has): rebuilt layers, plus every layer this pass rebases
+    before = {}  # branch -> its tip before this pass rebased it
     contains = lambda anc, b: fc_core.sh(["git", "merge-base", "--is-ancestor", anc, b], repo, check=False).returncode == 0
     waiting = set(through)
     for b in chain:
@@ -132,18 +133,22 @@ def _linearize(repo, proj, trunk, wt, through=()):
             # that is being rebuilt: one recorded in this pass (a replaced layer, or a layer rebased just now), a chained layer
             # as it is now, or one in the reflog of a layer below (fork-point), which holds a rewrite made before this pass,
             # by hand or by a redo whose replaced ref is gone. Else one in the trunk's reflog; without any, a plain rebase.
+            # A reflog tip that the layer's own tip sits below is no rewrite: the layer was moved back (its commits moved up
+            # by hand to b), so those commits are b's own now.
             old = [(t, "the old base recorded in this pass") for rb, t in tips if (rb in linear or t in stale) and contains(t, b)]
             old += [(x, f"{x}, the chained layer it sits on") for x in linear if contains(x, b)]
             for x in dict.fromkeys([prev, *linear]):  # b may sit on the old tip of any layer below, not only the one it is going onto
                 fork = fc_core.sh(["git", "merge-base", "--fork-point", x, b], repo, check=False).stdout.strip()
-                old += [(fork, f"the old base from the reflog of {x}")] if fork else []
+                start = before.get(x) or fc_core.sh(["git", "rev-parse", x], repo).stdout.strip()
+                old += [(fork, f"the old base from the reflog of {x}")] if fork and (fork == start or not contains(start, fork)) else []
             upstream, source = max(old, key=lambda o: int(fc_core.sh(["git", "rev-list", "--count", f"{trunk}..{o[0]}"], repo).stdout)) if old else ("", "")
             if not upstream:
                 upstream = fc_core.sh(["git", "merge-base", "--fork-point", trunk, b], repo, check=False).stdout.strip()
                 source = f"the old base from the reflog of {trunk}"
             if not upstream:
                 upstream, source = prev, "no old base found: a plain rebase"
-            tips.append((b, fc_core.sh(["git", "rev-parse", b], repo).stdout.strip()))
+            before[b] = fc_core.sh(["git", "rev-parse", b], repo).stdout.strip()
+            tips.append((b, before[b]))
             fc_core.sh(["git", "checkout", "-q", b], wt)
             r = fc_core.sh(["git", "rebase", "-q", "--onto", prev, upstream], wt, check=False)
             if r.returncode:
