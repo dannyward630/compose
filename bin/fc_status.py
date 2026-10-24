@@ -322,6 +322,11 @@ def cmd_done(a):
         prev.update({"id": tid, "title": meta.get("title"), "status": "hand_done", "note": a.note, "model": "orchestrator",
                      "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "attempts": prev.get("attempts", 0), "seconds": prev.get("seconds", 0.0),
                      "cost": prev.get("cost", 0.0), "branch": prev.get("branch", fc_worktree.task_branch(repo, proj, tid))})
+        clone = Path(prev.get("worktree") or "")
+        if (clone / ".git").exists():  # a task that missed finished by hand there: bring its branch in as a pass does, or the layers above start without it
+            fetched = fc_core.sh(["git", "fetch", "-q", str(clone), f"{prev['branch']}:{prev['branch']}"], repo, check=False)
+            if fetched.returncode:
+                print(f"{tid} note: its branch {prev['branch']} was not brought in from {clone}: {fetched.stderr.strip()[-200:]}")
         sha = fc_core.sh(["git", "rev-parse", "--verify", "-q", prev["branch"] + "^{commit}"], repo, check=False).stdout.strip()
         if not fc_ledger.record_task(repo, proj, meta, [fc_ledger.event(fc_ledger.run_id(proj, tid), sha, [tid], fc_ledger.criterion_ids(meta), "done", "done", "pass", None, f"hand done: {a.note}")]):
             print(f"{tid} not done: its done event is not saved on Linear; run compose done again")
