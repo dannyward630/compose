@@ -153,6 +153,11 @@ class Secrets(unittest.TestCase):
         (home / "live" / "27545.json").write_text("{}")
         (home / "linear-get").mkdir()  # another session's `compose linear get` caches a read
         (home / "linear-get" / "0123456789ab-ba9876543210.json").write_text("{}")
+        for d in ("started", "usage"):  # another session's timed run, implementer or status call records itself and its session usage
+            (home / d).mkdir(exist_ok=True)
+            (home / d / "1.json").write_text("{}")
+        for f in ("load.json", "load.lock", "shed.json"):  # the machine-wide load hold, its lock and the shed's state
+            (home / f).write_text("{}")
         go.touch()
         out, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 0, err)
