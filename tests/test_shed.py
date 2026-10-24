@@ -7,7 +7,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_crew, fc_load, fc_shed, fc_started
+import fc_config, fc_crew, fc_load, fc_shed, fc_started
 class ShedFree(unittest.TestCase):
     def setUp(self):
         p = subprocess.Popen([sys.executable, "-c", "pass"]); p.wait()
@@ -106,6 +106,21 @@ class ShedPause(unittest.TestCase):
         got = [self.go(1200, 7.0), self.go(1210, 10.0), self.go(1215, 7.0), self.go(1261, 7.0), self.go(1400, 7.0)]
         self.assertEqual(got, [([resumed(200, "teammate")], [(200, CONT), (202, CONT)]), ([], []), ([], []), ([resumed(400, "teammate")], [(400, CONT), (402, CONT)]), ([], [])])
         self.assertEqual(fc_shed.state()["paused"], [])
+    def test_resume_and_its_text_follow_the_configured_low_not_the_cores(self):
+        with mock.patch.object(fc_config, "LOAD", {"high": 20, "low": 5}):  # 8 cores: low 5 is below the cores
+            got = [self.go(t, a) for t, a in ((1000, 21.0), (1130, 21.0), (1195, 21.0), (1200, 4.0), (1261, 6.0), (1262, 4.0))]
+        self.assertEqual([l for lines, _ in got for l in lines if "shed=paused" in l], [paused(400, "teammate").replace("8.0)", "5.0)"), paused(200, "teammate").replace("8.0)", "5.0)")])
+        self.assertEqual([(len(lines), sigs[:1]) for lines, sigs in got[3:]], [(1, [(200, CONT)]), (0, []), (1, [(400, CONT)])])  # 6.0 is below the cores but not below low
+    def test_a_pid_gone_or_not_ours_never_ends_the_tick(self):
+        def kill(pid, sig):
+            if sig in (STOP, CONT): self.sigs.append((pid, sig))
+            if pid == 400 and sig == STOP: raise ProcessLookupError
+            if pid == 200 and sig == CONT: raise PermissionError
+        with mock.patch("os.kill", kill):
+            self.assertEqual(self.go(1000), ([], [])); got = self.go(1130)
+            self.assertEqual((got[0], got[1]), ([paused(400, "teammate")], [(400, STOP), (401, STOP)]))  # the gone root does not stop the rest of its tree
+            self.go(1195); self.assertEqual(self.go(1200, 7.0), ([resumed(200, "teammate")], [(200, CONT), (201, CONT)]))
+        self.assertEqual([e["pid"] for e in fc_shed.state()["paused"]], [400])
     def test_a_released_hold_restarts_the_120s(self):
         got = [self.go(t, a) for t, a in ((1000, 13.0), (1100, 7.0), (1150, 13.0), (1200, 13.0), (1275, 13.0))]
         self.assertEqual(got, [([], [])] * 4 + [([paused(400, "teammate")], [(400, STOP), (401, STOP)])])
