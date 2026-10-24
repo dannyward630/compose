@@ -51,7 +51,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         started = fc_herdr.herdr_agent_start(name, "--kind", "pi", "--pane", pane, "--timeout", "60000", "--", *args)
         pids = fc_herdr.agent_pids(pane)
         if pids:
-            fc_started.record(min(pids), "implementer", str(proj), waiter=os.getpid(), cwd=cwd)
+            fc_started.record(min(pids), "implementer", str(proj), waiter=os.getpid(), cwd=str(cwd))
         sfile = ((started.get("agent") or {}).get("agent_session") or {}).get("value")
         session = {"name": name, "pane": pane, "sfile": sfile, "seen": 0}
         fc_herdr.herdr("pane", "report-metadata", pane, "--source", "compose", "--title", title, "--token", f"model={model.split('/')[-1].split('@')[0]}")

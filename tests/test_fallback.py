@@ -1031,6 +1031,15 @@ class HerdrPiKey(unittest.TestCase):
                 self.assertFalse(self.process_key)  # the fallback did not leak into the process either
 
 
+    def test_the_agent_is_recorded_as_started_when_the_clone_is_a_Path(self):
+        task = {"meta": {"id": "028", "title": "t"}, "proj": self.root / "shop", "space": "w9"}
+        with mock.patch.object(fc.fc_herdr, "herdr", return_value={}), mock.patch.object(fc.fc_herdr, "herdr_agent_start", return_value={}), \
+                mock.patch.object(fc.fc_herdr, "herdr_implementer_pane", return_value="p1"), mock.patch.object(fc.fc_herdr, "agent_pids", return_value=[4242]), \
+                mock.patch.object(fc.fc_herdr, "herdr_error", return_value=(None, "stopped")), self.assertRaises(RuntimeError):  # the turn is not under test
+            fc.fc_implement.herdr_pi(self.root / "wt", "openrouter/x/y", "hi", None, task)
+        self.assertEqual(fc.fc_implement.fc_started.entries()[0]["cwd"], str(self.root / "wt"))
+        fc.fc_implement.fc_started.forget(4242)
+
 class HerdrPiTurn(unittest.TestCase):
     """One turn of the herdr pi implementer once its agent is up, on a fake clock: herdr answers the prompt, pi writes the session file."""
     USER = {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}
