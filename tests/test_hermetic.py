@@ -130,10 +130,10 @@ class HermeticMachine(unittest.TestCase):
         for i, p in enumerate(inside + outside):
             hermetic.listen(p.pid, 9000 + i, Path(p.cwd).resolve())
         hermetic.guard_calls(clear=True)
-        self.assertEqual(sorted(fc.fc_crew.listeners_under(root)), sorted(str(p.pid) for p in inside))
+        self.assertEqual(sorted(fc.fc_worktree.listeners_under(root)), sorted(str(p.pid) for p in inside))
         self.assertEqual(len(hermetic.guard_calls("lsof")), 2, hermetic.guard_calls())
         hermetic.guard_calls(clear=True)
-        self.assertEqual(fc.fc_crew.listeners_under(tempfile.mkdtemp()), [])
+        self.assertEqual(fc.fc_worktree.listeners_under(tempfile.mkdtemp()), [])
         self.assertEqual(len(hermetic.guard_calls("lsof")), 2)
 
     def test_kill_listeners_asks_lsof_once_for_all_the_ports(self):

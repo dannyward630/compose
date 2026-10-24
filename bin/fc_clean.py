@@ -97,7 +97,7 @@ def standing_in(wt, proj, force=False):
 def remove_project(main_repo, name, wt, proj, pbranch, force=False):
     """Take a merged project away: stop its servers, close its herdr space or tabs, hand its worktree back (to the pool when it is
     a slot), and delete its branch and its change-of-course refs. `force` closes the tabs of unfinished teammates too."""
-    fc_crew.stop_listeners_under(wt)
+    fc_worktree.stop_listeners_under(wt)
     close_space(proj, name, force)  # while its record is still in the worktree
     if fc_worktree.is_slot(main_repo, wt):  # back to the pool with its installs; the branch is let go first so it can be deleted
         fc_core.sh(["git", "checkout", "-q", "--detach"], wt, check=False)

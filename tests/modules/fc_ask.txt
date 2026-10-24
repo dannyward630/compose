@@ -4,4 +4,5 @@ ASK_HEAD
 url_problem
 card_ids
 decided_cards
+Refused
 ask_gate

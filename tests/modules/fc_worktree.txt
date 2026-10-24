@@ -37,7 +37,9 @@ WIRING
 dirty_paths
 graph_dir
 ignore_tool_files
+ignored_entries
 dep_dirs
+env_files
 stamp_trail_wiring
 ready_checkout
 names_lockfile
@@ -46,3 +48,5 @@ STACK_LOCK
 GENERATED_RE
 LOCKFILE_RE
 LOCKFILES
+listeners_under
+stop_listeners_under

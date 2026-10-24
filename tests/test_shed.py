@@ -8,7 +8,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_config, fc_crew, fc_load, fc_shed, fc_started
+import fc_config, fc_crew, fc_load, fc_shed, fc_started, fc_worktree
 class ShedFree(unittest.TestCase):
     def setUp(self):
         p = subprocess.Popen([sys.executable, "-c", "pass"]); p.wait()
@@ -19,7 +19,7 @@ class ShedFree(unittest.TestCase):
             if sig == signal.SIGTERM: self.sigs.append(pid)
         self.run, self.stop = mock.Mock(side_effect=lambda *a, **k: mock.Mock(returncode=0, stdout="".join(f"{p} {pp} {c} {cmd}\n" for p, pp, c, cmd in self.table))), mock.Mock(return_value=["999"])
         for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", lambda: (self.avg,) * 3), mock.patch("time.time", return_value=1000.0), mock.patch("os.kill", kill),
-                  mock.patch("subprocess.run", self.run), mock.patch.dict(os.environ), mock.patch.object(fc_crew, "stop_listeners_under", self.stop),
+                  mock.patch("subprocess.run", self.run), mock.patch.dict(os.environ), mock.patch.object(fc_worktree, "stop_listeners_under", self.stop),
                   mock.patch.object(fc_started, "entries", lambda: self.recs), mock.patch.object(fc_started, "forget", self.forgot.append)):
             p.start(); self.addCleanup(p.stop)
         os.environ.pop("COMPOSE_NO_LOAD", None)

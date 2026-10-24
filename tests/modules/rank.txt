@@ -47,6 +47,8 @@ fc_frame0
 fc_f0pages
 fc_ask
 fc_hooks
+fc_pin
+fc_reports
 fc_crew
 fc_shed
 fc_toolbug

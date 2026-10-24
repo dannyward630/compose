@@ -1,6 +1,6 @@
 import json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
-import fc_auth, fc_checks, fc_config, fc_core, fc_harness, fc_steps, fc_tasks, fc_linear, fc_providers, fc_herdr, fc_worktree, fc_layers, fc_crew, fc_update
+import fc_auth, fc_checks, fc_config, fc_core, fc_harness, fc_steps, fc_tasks, fc_linear, fc_providers, fc_herdr, fc_worktree, fc_layers, fc_crew, fc_pin
 
 
 TRAIL_INIT = ["trail", "init", "--no-agents", "--no-global", "--no-build"]  # Claude Code wiring only, nothing outside the repo
@@ -331,7 +331,7 @@ def cmd_init(a):
             fc_core.sh(["git", "add", ".gitignore"], wt)
             fc_core.sh(["git", "commit", "-qm", fc_core.typed("Ignore local tool directories", "deps", fc_core.commit_convention(proj))], wt, check=False)
         (proj / "results").mkdir(parents=True, exist_ok=True)
-        fc_update.pin(proj, wt)  # the compose version this project runs on, until an update between phases renews it
+        fc_pin.pin(proj, wt)  # the compose version this project runs on, until an update between phases renews it
         setup_trail(wt)
         link = fc_core.repo_link(here)  # the repo's Linear project (step 0): the main checkout's file, which every worktree reads
         if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own

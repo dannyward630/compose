@@ -5,8 +5,6 @@ crew_dir
 crew_reports
 tab_closed
 scratch_dir
-listeners_under
-stop_listeners_under
 TRUST_PROMPT
 LINEAR_RULE
 PARALLEL_CLAUSE
@@ -35,6 +33,7 @@ cmd_report
 log_tool_bug
 close_after_turn
 finish_clean_after_turn
+close_collected
 crew_closed
 TASK_TAB
 VERIFY_TAB

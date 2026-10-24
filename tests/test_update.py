@@ -6,7 +6,7 @@ from unittest import mock
 os.environ["HERDR_ENV"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
-import fc_init, fc_links, fc_update
+import fc_init, fc_links, fc_pin, fc_update
 
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 
@@ -28,7 +28,7 @@ class Fixture(unittest.TestCase):
         self.live = root / "live"  # the registry of runs and verifies: this test's, not the machine's
         p = mock.patch.object(fc_update, "live_dir", return_value=self.live); p.start(); self.addCleanup(p.stop)
         self.pins = root / "pins"  # the version pins of this test's projects, not the machine's
-        p = mock.patch.object(fc_update, "pins_dir", return_value=self.pins); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc_pin, "pins_dir", return_value=self.pins); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(fc_update.fc_herdr, "live_agents", lambda: []); p.start(); self.addCleanup(p.stop)
     def update(self, doctor_code=0, force=False):
         def doctor(a):
@@ -196,28 +196,28 @@ class Pins(Fixture):
         self.skill = Path(tempfile.mkdtemp()); (self.skill / "sections").mkdir()
         for n in ("SKILL.md", "sections/0b.md", "sections/3.md"):
             (self.skill / n).write_text(f"{n} v1\n")
-        p = mock.patch.object(fc_update.fc_hooks, "SKILL_DIR", self.skill); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc_pin.fc_hooks, "SKILL_DIR", self.skill); p.start(); self.addCleanup(p.stop)
         self.proj = Path(tempfile.mkdtemp()) / ".compose" / "shop"; (self.proj / "results").mkdir(parents=True)
 
     def test_pin_records_once_and_renew_moves_it(self):
-        d = fc_update.pin(self.proj)
+        d = fc_pin.pin(self.proj)
         self.assertEqual((d["project"], d["repo"]), ("shop", str(self.proj.resolve().parents[1])))
-        self.assertEqual(sorted(fc_update.skill_name(f) for f in d["skill"]), ["SKILL.md", "sections/0b.md", "sections/3.md"])
+        self.assertEqual(sorted(fc_pin.skill_name(f) for f in d["skill"]), ["SKILL.md", "sections/0b.md", "sections/3.md"])
         (self.skill / "sections/3.md").write_text("v2\n")
-        self.assertEqual(fc_update.pin(self.proj), d)  # kept: the project runs on what it started with
-        self.assertNotEqual(fc_update.pin(self.proj, renew=True)["skill"], d["skill"])
-        self.assertEqual([p["project"] for p in fc_update.pinned()], ["shop"])
+        self.assertEqual(fc_pin.pin(self.proj), d)  # kept: the project runs on what it started with
+        self.assertNotEqual(fc_pin.pin(self.proj, renew=True)["skill"], d["skill"])
+        self.assertEqual([p["project"] for p in fc_pin.pinned()], ["shop"])
 
     def test_a_pin_of_a_cleaned_project_is_dropped(self):
-        fc_update.pin(self.proj)
+        fc_pin.pin(self.proj)
         shutil.rmtree(self.proj.parents[1])
-        self.assertEqual(fc_update.pinned(), [])
+        self.assertEqual(fc_pin.pinned(), [])
         self.assertEqual(list(self.pins.glob("*.json")), [])
 
     def test_a_teammate_mid_turn_stops_the_update_and_force_overrides(self):
-        fc_update.pin(self.proj)
+        fc_pin.pin(self.proj)
         agents = [{"name": "shop-tests-003", "agent_status": "working"}, {"name": "shop-orchestrator", "agent_status": "idle"}, {"name": "other-planner", "agent_status": "working"}]
-        self.assertEqual(fc_update.mid_turn(fc_update.pinned(), agents), [("shop", "shop-tests-003")])
+        self.assertEqual(fc_update.mid_turn(fc_pin.pinned(), agents), [("shop", "shop-tests-003")])
         commit(self.seed, "b"); git(self.seed, "push", "-q", str(self.remote), "main")
         with mock.patch.object(fc_update.fc_herdr, "live_agents", lambda: agents):
             code, out = self.update()
@@ -227,14 +227,14 @@ class Pins(Fixture):
             self.assertEqual(code, 0, out); self.assertTrue((self.co / "b").exists())
 
     def test_the_update_names_the_changed_skill_files_per_project_and_moves_the_pin(self):
-        before = fc_update.pin(self.proj)
-        quiet = Path(tempfile.mkdtemp()) / ".compose" / "blog"; quiet.mkdir(parents=True); fc_update.pin(quiet)
+        before = fc_pin.pin(self.proj)
+        quiet = Path(tempfile.mkdtemp()) / ".compose" / "blog"; quiet.mkdir(parents=True); fc_pin.pin(quiet)
         (self.skill / "sections/3.md").write_text("v2\n"); (self.skill / "sections/0h.md").write_text("new\n")
-        fc_update.pin(quiet, renew=True)  # blog started after the change: nothing to re-read
+        fc_pin.pin(quiet, renew=True)  # blog started after the change: nothing to re-read
         commit(self.seed, "b"); git(self.seed, "push", "-q", str(self.remote), "main")
         code, out = self.update()
         self.assertEqual(code, 0, out)
         self.assertIn(f"update  shop: since its pin ({before['commit']}) these skill files changed: sections/0h.md, sections/3.md. Tell its team lead: "
                       '"compose updated: re-read sections/0h.md, sections/3.md; nothing else changed"', out)
         self.assertIn("update  blog: no skill file changed since its pin", out)
-        self.assertEqual(fc_update.pin(self.proj)["skill"], fc_update.pin(quiet)["skill"])  # both pins moved to the installed version
+        self.assertEqual(fc_pin.pin(self.proj)["skill"], fc_pin.pin(quiet)["skill"])  # both pins moved to the installed version

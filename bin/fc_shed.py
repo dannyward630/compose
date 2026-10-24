@@ -1,6 +1,6 @@
 import fcntl, json, os, signal, subprocess, time
 from pathlib import Path
-import fc_crew, fc_load, fc_started
+import fc_worktree, fc_crew, fc_load, fc_started
 
 EMPTY = {"hold": None, "freed": [], "hot": None, "paused": []}
 
@@ -87,7 +87,7 @@ def tick():
                     fc_started.forget(r["pid"])
                     cwd = r["cwd"]
                     if r["kind"] == "teammate" and cwd and not any(o["kind"] == "teammate" and o["alive"] and o["cwd"] == cwd for o in recs):
-                        fc_crew.stop_listeners_under(cwd)
+                        fc_worktree.stop_listeners_under(cwd)
                         why = "dev server of a done crew"
                         s["freed"].append({"pid": r["pid"], "kind": r["kind"], "project": name, "why": why, "at": time.time()})
                         lines.append(f"event shed=freed pid={r['pid']} kind={r['kind']} project={name} why={why}")

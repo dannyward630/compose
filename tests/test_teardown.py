@@ -71,7 +71,7 @@ class Teardown(unittest.TestCase):
         log.write_text("evidence")
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("builtins.print"), \
                 mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
-                mock.patch.object(subprocess, "Popen"), mock.patch.object(fc.fc_crew, "stop_listeners_under", return_value=[]) as stop:
+                mock.patch.object(subprocess, "Popen"), mock.patch.object(fc.fc_worktree, "stop_listeners_under", return_value=[]) as stop:
             fc.fc_crew.cmd_report(type("A", (), {"as_": "shop-e2e", "state": "done", "message": ["finished"]}))
             stop.assert_called_with(log.parent)  # servers it left listening are stopped
         self.assertEqual(log.read_text(), "evidence")

@@ -23,6 +23,7 @@ class RoleModels(unittest.TestCase):
         p = mock.patch.object(fc.fc_models, "model_available", return_value=(True, "answered")); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS); p.start(); self.addCleanup(p.stop)
         p = mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}); p.start(); self.addCleanup(p.stop)  # the team lead starts every teammate here
+        p = mock.patch.object(fc.fc_pin, "pin", return_value={}); p.start(); self.addCleanup(p.stop)  # the pin's git call is not a model probe
 
     def config(self, crew):
         d = Path(tempfile.mkdtemp())
@@ -100,7 +101,8 @@ class PlannerChain(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "config.json").write_text(json.dumps({"models": {"implementer": "pi:x/y", "crew": PLANNER}}))
         for p in (mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"),
-                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"})):
+                  mock.patch.object(fc.fc_mcp, "installed_servers", return_value=SERVERS), mock.patch.dict(os.environ, {"COMPOSE_ROLE": "orchestrator"}),
+                  mock.patch.object(fc.fc_pin, "pin", return_value={})):  # the pin's git call is not a model probe
             p.start(); self.addCleanup(p.stop)
         fc.fc_config.apply_config(); fc.fc_models._PROBED.clear()
         self.addCleanup(fc.fc_models._PROBED.clear)

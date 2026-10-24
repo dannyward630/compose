@@ -522,3 +522,26 @@ LOCKFILE_RE = re.compile(r"(^|/)(bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-
 
 LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "Gemfile.lock", "composer.lock")
+
+
+# ---------- the servers a worktree's teammates or run left behind ----------
+def listeners_under(root):
+    """Pids listening on a TCP port whose working directory is inside `root`: the servers and dev watchers a teammate or run
+    left behind. Listening narrows it to servers, so the herdr shells and agent sessions that also sit in the worktree stay.
+    Two lsof calls however many servers the machine has (each one walks every process), the second for all the pids at once."""
+    pids = sorted(set(fc_core.sh("lsof -nP -iTCP -sTCP:LISTEN -t", ".", check=False).stdout.split()))
+    if not pids:
+        return []
+    root, out, pid = str(Path(root).resolve()), [], None
+    for l in fc_core.sh(["lsof", "-nP", "-a", "-d", "cwd", "-Fpn", "-p", ",".join(pids)], ".", check=False).stdout.splitlines():
+        if l.startswith("p"):
+            pid = l[1:]
+        elif l.startswith("n") and pid in pids and (l[1:] == root or l[1:].startswith(root + "/")):
+            out.append(pid)
+    return out
+
+def stop_listeners_under(root):
+    pids = listeners_under(root)
+    if pids:
+        fc_core.sh(["kill", *pids], ".", check=False)
+    return pids

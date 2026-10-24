@@ -5,6 +5,8 @@ live_on
 refuse_while_verifying
 SHARED_STATE
 refuse_while_running
+mid_turn
+rollout
 local_commits
 listing
 diverged

@@ -43,6 +43,8 @@ herdr_implementer_pane
 herdr_agent_start
 PROMPT_START_WAIT
 herdr_stalled
+herdr_close_tabs
+herdr_close_task
 herdr_verify_panes
 herdr_stage
 herdr_space_is

@@ -2,9 +2,9 @@
 A run or verify live on this machine freezes the CLI, and so does a teammate mid-turn: updating then changes the code and the skill under
 them. Each project pins the version it started on (~/.compose/pins), and an update names, per project, the skill files that changed
 since the pin, so its team lead re-reads those and nothing else."""
-import atexit, hashlib, json, os, shlex, sys, time
+import atexit, json, os, shlex, sys, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_init, fc_links, fc_hooks, fc_herdr
+import fc_core, fc_config, fc_tasks, fc_init, fc_links, fc_hooks, fc_herdr, fc_pin
 
 
 def live_dir():
@@ -59,63 +59,11 @@ def refuse_while_running(cmd, proj, repo):
 
 # ---------- the version pin: what a project runs on, and what changed under it at an update ----------
 
-def pins_dir():
-    return fc_config.CONFIG_PATH.parent / "pins"
-
-def cli_commit():
-    return fc_core.sh(["git", "rev-parse", "--short", "HEAD"], Path(__file__).resolve().parents[1], check=False).stdout.strip() or "unknown"
-
-def pin_file(proj):
-    proj = Path(proj).resolve()
-    return pins_dir() / f"{proj.name}-{hashlib.sha1(str(proj).encode()).hexdigest()[:8]}.json"
-
-def pin(proj, repo=None, renew=False):
-    """Record the compose version `proj` runs on: the CLI commit and each skill file's hash, when the project starts (init, the first
-    crew start, run, verify). A pin already there stays, so a project keeps the version it began with until `update` renews it."""
-    proj = Path(proj).resolve()
-    f = pin_file(proj)
-    if f.exists() and not renew:
-        try:
-            return json.loads(f.read_text())
-        except (OSError, ValueError):
-            pass
-    try:
-        skill = fc_hooks.skill_hashes()
-    except (FileNotFoundError, OSError):
-        skill = {}
-    d = {"project": proj.name, "proj": str(proj), "repo": str(Path(repo).resolve()) if repo else str(proj.parents[1]),
-         "commit": cli_commit(), "at": time.strftime("%Y-%m-%d %H:%M:%S"), "skill": skill}
-    f.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(f, json.dumps(d))
-    return d
-
-def pinned():
-    """Every pinned project whose directory still exists; the pin of a cleaned project is removed."""
-    found = []
-    for f in sorted(pins_dir().glob("*.json")) if pins_dir().exists() else []:
-        try:
-            d = json.loads(f.read_text())
-        except (OSError, ValueError):
-            f.unlink(missing_ok=True)
-            continue
-        if isinstance(d, dict) and d.get("proj") and Path(d["proj"]).exists():
-            found.append(d)
-        else:
-            f.unlink(missing_ok=True)
-    return found
-
 def mid_turn(pins, agents=None):
     """[(project, teammate)] for every teammate of a pinned project herdr shows working: a turn an update would change the skill under."""
     agents = fc_herdr.live_agents() if agents is None else agents
     return [(p["project"], ag["name"]) for p in pins for ag in agents or []
             if ag.get("agent_status") == "working" and fc_herdr.agent_id(p["project"], ag.get("name") or "")]
-
-def skill_name(path):
-    """A skill file as the team lead knows it: `sections/0b.md`, `SKILL.md`."""
-    try:
-        return str(Path(path).relative_to(fc_hooks.SKILL_DIR.resolve()))
-    except ValueError:
-        return Path(path).name
 
 def rollout(pins):
     """One line per pinned project: the skill files that changed since its pin (what its team lead re-reads, and nothing else), then
@@ -126,7 +74,7 @@ def rollout(pins):
         cur = {}
     lines = []
     for p in pins:
-        changed = [skill_name(f) for f in fc_hooks.skill_changed(p.get("skill") or {}, cur)] if p.get("skill") else []
+        changed = [fc_pin.skill_name(f) for f in fc_hooks.skill_changed(p.get("skill") or {}, cur)] if p.get("skill") else []
         was = p.get("commit", "?")
         if changed:
             lines.append(f"update  {p['project']}: since its pin ({was}) these skill files changed: {', '.join(changed)}. Tell its team lead: "
@@ -135,7 +83,7 @@ def rollout(pins):
             lines.append(f"update  {p['project']}: no skill file changed since its pin ({was}); its team lead has nothing to re-read")
         else:
             lines.append(f"update  {p['project']}: pinned without skill hashes; tell its team lead which sections the merged fixes touched")
-        pin(p["proj"], p.get("repo"), renew=True)
+        fc_pin.pin(p["proj"], p.get("repo"), renew=True)
     return lines
 
 def local_commits(checkout):
@@ -191,7 +139,7 @@ def rebase_local(checkout):
 def cmd_update(a):
     """Exits 1 while a run or verify is live (unless --force), on local changes, or a failed pull or rebase, else with doctor's code."""
     checkout = Path(__file__).resolve().parents[1]
-    live, pins = live_work(), pinned()
+    live, pins = live_work(), fc_pin.pinned()
     busy = mid_turn(pins) if not a.force else []
     if (live or busy) and not a.force:
         sys.exit("\n".join(["compose update stopped: updating the CLI changes the code and the skill under work that is running now:",

@@ -24,3 +24,4 @@ test_blockers
 test_ready
 test_worktree
 collect_tests
+collect_tests_locked

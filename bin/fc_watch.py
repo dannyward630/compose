@@ -1,6 +1,6 @@
 import argparse, fcntl, json, os, re, sys, time
 from pathlib import Path
-import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_crew, fc_hooks, fc_load, fc_status, fc_briefs, fc_sleep, fc_stall, fc_shed, fc_checks
+import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_reports, fc_crew, fc_hooks, fc_load, fc_status, fc_briefs, fc_sleep, fc_stall, fc_shed, fc_checks
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
@@ -34,7 +34,7 @@ def watch_snapshot(repo, proj, agents=None):
     snap = {"tasks": {}, "agents": {}, "run": fc_tasks.run_alive(proj), "ended": fc_tasks.run_ended(proj), "verify": None, "halt": None,
             "crew": {f.stem: fc_crew.crew_reports(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.status"))}
             if (proj / "results" / "crew").exists() else {},
-            "refused": {f.stem: fc_crew.crew_refusals(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.refused"))}
+            "refused": {f.stem: fc_reports.crew_refusals(proj, f.stem) for f in sorted((proj / "results" / "crew").glob("*.refused"))}
             if (proj / "results" / "crew").exists() else {}}
     try:
         h = json.loads((proj / "results" / "resume.json").read_text())
