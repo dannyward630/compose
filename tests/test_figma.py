@@ -471,7 +471,7 @@ class FigmaCaps(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"figma": "AbCdEf123456", "figma_caps": caps}))
         with mock.patch.object(fc.fc_figma.fc_tasks, "load_tasks", return_value=metas), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
             with self.assertRaises(SystemExit) as e:
-                fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=None, print_=False, max=None))
+                fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=None, print_=False, max=None, redo=False))
         self.assertIn("pages: the design needs 4 per file, the starter plan allows 3", str(e.exception))
         self.assertIn("raise ONE needs-user card", str(e.exception))
 
