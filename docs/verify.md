@@ -46,6 +46,8 @@ A task whose base run is unknown there as well is rejected as a regression, with
 `review_base` is the branch the project's work is reviewed and stacked against: `init` records the branch the project started from.
 One that names no branch (a project made before init recorded it holds `main`, also in a repository whose trunk is `master`) reads as the repository's default branch.
 `fix_model` overrides the fix model, which defaults to the implementer.
+`database` records the database targets the project started on, one entry per git-ignored env file and variable (`{".env DATABASE_URL": "localhost:5433/dtt"}`: host, port and name, never the credentials); `init` writes it, or the first `run` or `verify` of an older project.
+A start stops while a target differs from the record or an env file sets one the record lacks, until the user confirms the new target and the entry is updated, so no run touches a database the user did not confirm.
 `env_file` replaces `~/.compose/.env` for this project.
 
 ## Stages

@@ -9,6 +9,8 @@ herdr_loud
 herdr_toast_warning
 key_problems
 start_problems
+verify_config
+record_databases
 start_checks
 cmd_doctor
 created_from

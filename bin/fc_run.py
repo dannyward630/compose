@@ -54,13 +54,13 @@ def cmd_triage(a):
 
 RUN_PARALLEL = 3  # tasks at once when neither --parallel nor the config's `parallel` says
 
-def require_committed(repo, stack=True, force=False):
+def require_committed(repo, proj, stack=True, force=False):
     """The preflight of a run (fc_init.start_checks), every problem at once before anything is cloned. Every task clone starts
     from the project branch's last commit, so its tests must be committed: it stops on anything dirty, naming it (the agent wiring
     a session hook rewrites and the tools' own directories are left out: fc_worktree.dirty_paths), on a key its service rejects,
-    and with `stack` on a gh that is not logged in, and on a Mac on battery below 30% unless `force`. A loaded machine or a
-    crash-looping container only warns."""
-    fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them", force=force)
+    and with `stack` on a gh that is not logged in, and on a Mac on battery unless `force`; then it prints the startup checklist
+    (power, docker, the database targets, sleep). A loaded machine or a crash-looping container only warns."""
+    fc_init.start_checks(repo, stack, hint="commit the tests first so worktrees include them", force=force, proj=proj)
 
 QUEUE = "run-queue"  # results/run-queue/<id>.json: a task `compose run --only` added to the live run
 QUEUE_POLL = 2  # seconds the live run waits for a task to finish before it looks at the queue again
@@ -121,7 +121,7 @@ def cmd_run(a):
     if why:  # an e2e case that fails for the environment fails every verify, and no implementer can fix it
         sys.exit(f"run stopped before anything was cloned: {why}. Run `compose verify --project {proj.name} --prove` and fix every case it "
                  "names first; `--unproven` runs anyway.")
-    require_committed(repo, not a.no_stack, getattr(a, "force", False))
+    require_committed(repo, proj, not a.no_stack, getattr(a, "force", False))
     fc_linear.refresh_tasks(proj)  # a task edited on Linear since the last sync reaches its implementer
     tasks = [m for m in fc_tasks.runnable(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
@@ -461,7 +461,7 @@ def cmd_resume(a):
     fc_core.say(f"resume {state['command']}  halted {state['halted_at']} at {state['provider']}")
     ns = argparse.Namespace(repo=str(repo), project=proj.name, force=getattr(a, "force", False), **state["args"])
     if state["command"] == "run":
-        require_committed(repo, not getattr(ns, "no_stack", False), getattr(a, "force", False))
+        require_committed(repo, proj, not getattr(ns, "no_stack", False), getattr(a, "force", False))
         redo, since = bool(state["args"].get("redo")), since_of(state["halted_at"])
         if redo:  # the tasks that had not started still read passed from before the redo; only a result newer than the stop is new
             os.environ["COMPOSE_REDO"] = "1"

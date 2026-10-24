@@ -1,10 +1,11 @@
 """Read-only machine checks the setup steps table and doctor use. No network, no writes."""
-import datetime, json, os, re, shutil, subprocess, time
+import datetime, json, os, re, shutil, subprocess, time, urllib.parse
 from pathlib import Path
 import platform
 import fc_core
 import fc_config
 import fc_harness
+import fc_worktree
 
 
 def owned_links(checkout):
@@ -160,22 +161,22 @@ def on_battery():
     """True when `pmset -g batt` says the Mac runs on its battery; False on AC power, off macOS, and without pmset."""
     return "Battery Power" in battery_report()
 
-LOW_BATTERY = 30  # percent: on battery below this, run, resume, verify and crew start refuse without --force
-
 def battery_stop(force=False):
-    """The line that stops a start while the Mac runs on its battery below LOW_BATTERY percent, with why and how to override;
-    None on AC power, at or above it, when the charge cannot be read, with `force`, and under COMPOSE_NO_PREFLIGHT=1."""
+    """The line that stops a start while the Mac runs on its battery, with why and how to override; None on AC power, when pmset
+    cannot say, with `force`, and under COMPOSE_NO_PREFLIGHT=1. A closed lid sleeps a Mac on battery, which caffeinate cannot
+    prevent, so long work starts on AC: the first item of the startup checklist."""
     if force or os.environ.get("COMPOSE_NO_PREFLIGHT"):
         return None
     out = battery_report()
-    if "Battery Power" not in out or not (m := re.search(r"(\d+)%", out)) or int(m[1]) >= LOW_BATTERY:
+    if "Battery Power" not in out:
         return None
+    charge = f" at {m[1]}%" if (m := re.search(r"(\d+)%", out)) else ""
     try:  # `compose watch` says `event power=ac` once the Mac is plugged in, so what stopped here starts again with no ask
         POWER_HELD.parent.mkdir(parents=True, exist_ok=True)
-        fc_core.atomic_write(POWER_HELD, json.dumps({"at": time.time(), "charge": int(m[1])}))
+        fc_core.atomic_write(POWER_HELD, json.dumps({"at": time.time(), "charge": int(m[1]) if m else None}))
     except OSError:
         pass
-    return (f"the Mac is on battery at {m[1]}%, below {LOW_BATTERY}%: it can die or sleep in the middle of the work; plug it in, "
+    return (f"the Mac is on battery{charge}: closing the lid sleeps it and the work stops, and it can die before the end; plug it in, "
             "or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in")
 
 POWER_HELD = fc_config.CONFIG_PATH.parent / "live" / "battery-held"  # the last battery_stop: {"at": epoch seconds, "charge": percent}
@@ -247,3 +248,129 @@ def machine_warnings():
     for name in restarting_containers():
         out.append(f"WARNING: docker container {name} keeps restarting and burns CPU, so a verify measures the machine, not the code: docker stop {name}")
     return out
+
+
+# ---------- the startup checklist: power, docker, the database targets, sleep ----------
+# Printed when a run, resume or verify starts, after the problems above are settled, so the user sees on one screen what the
+# work runs on. The power and docker items stop a start when wrong; a database target is recorded when the project starts and
+# a start stops when it changes, so no run writes a database the user did not confirm.
+COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
+def compose_files(wt):
+    """The docker compose files at the work tree's root: what makes docker a need of the project rather than a bystander."""
+    return [n for n in COMPOSE_FILES if (Path(wt) / n).exists()]
+
+def docker_running():
+    """None without docker; else whether its daemon answers `docker info` within 10 s."""
+    if not shutil.which("docker"):
+        return None
+    try:
+        return fc_core.sh(["docker", "info"], None, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+def docker_names(*filters):
+    """The names of the containers `docker ps` lists under `filters`; empty without docker or when it does not answer."""
+    if not shutil.which("docker"):
+        return []
+    try:
+        p = fc_core.sh(["docker", "ps", *(x for f in filters for x in ("--filter", f)), "--format", "{{.Names}}"], None, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return p.stdout.split() if p.returncode == 0 else []
+
+def docker_problems(wt):
+    """Problem lines with their fix, only where the project has a compose file: a daemon that is down, and containers whose
+    own health check fails (what runs against them fails for the machine's reasons, not the code's)."""
+    needs = compose_files(wt)
+    if not needs:
+        return []
+    up = docker_running()
+    if up is False:
+        return [f"docker is not running and {needs[0]} needs it: start Docker Desktop, bring the services up, and run again"]
+    return [f"docker container {n} is unhealthy, so what runs against it fails for the wrong reason: docker logs {n}, then fix or restart it"
+            for n in (docker_names("health=unhealthy") if up else [])]
+
+DB_SCHEMES = {"postgres", "postgresql", "mysql", "mysql2", "mariadb", "mongodb", "mongodb+srv", "redis", "rediss", "mssql", "sqlserver",
+              "cockroachdb", "sqlite", "libsql", "file"}
+ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+
+def env_values(path):
+    """{VAR: value} of a dotenv file: `export` and quotes dropped, a trailing ` # comment` of an unquoted value dropped."""
+    try:
+        lines = Path(path).read_text(errors="replace").splitlines()
+    except OSError:
+        return {}
+    out = {}
+    for l in lines:
+        if m := ENV_LINE.match(l):
+            v = m[2]
+            out[m[1]] = v[1:-1] if len(v) > 1 and v[0] in "\"'" and v.endswith(v[0]) else v.split(" #")[0].strip()
+    return out
+
+def database_target(value):
+    """`host[:port]/name` of a database URL (the file, for sqlite), never its credentials; None when the value is no database URL."""
+    u = urllib.parse.urlsplit(value.strip())
+    scheme = u.scheme.lower()
+    if scheme not in DB_SCHEMES:
+        return None
+    if scheme in ("sqlite", "libsql", "file"):
+        return (u.netloc + u.path) or value.strip()
+    try:
+        port = u.port
+    except ValueError:
+        port = None
+    return f"{u.hostname or '?'}{f':{port}' if port else ''}{u.path.rstrip('/')}"
+
+def database_targets(wt):
+    """{"<env file> <VAR>": target} for every database URL the work tree's env files set (fc_worktree.env_files: the git-ignored
+    .env and .env.* anywhere in the tree, so an app/ with a database of its own is a line of its own): what the work reads and writes."""
+    out = {}
+    for f in fc_worktree.env_files(wt):
+        for var, value in env_values(Path(wt) / f).items():
+            if (t := database_target(value)) is not None:
+                out[f"{f} {var}"] = t
+    return out
+
+def database_problems(now, recorded):
+    """Problem lines for a database target that is not the one recorded when the project started (`database` in verify.json),
+    or that was not there then: a run that would touch a database the user did not confirm stops here, with how to confirm it."""
+    out = []
+    for key, target in now.items():
+        was = recorded.get(key)
+        if was is None:
+            out.append(f"database target not confirmed: {key} points at {target}, which the project did not start with; confirm it with "
+                       f"the user, then add {{\"{key}\": \"{target}\"}} to `database` in verify.json (or take it out of the env file)")
+        elif was != target:
+            out.append(f"database target changed: {key} points at {target}, the project started on {was}; confirm the change with the user, "
+                       f"then set `database` {{\"{key}\": \"{target}\"}} in verify.json (or restore the env file)")
+    return out
+
+def power_line():
+    out = battery_report()
+    if not out:
+        return "power: unknown (no pmset here)"
+    charge = f" {m[1]}%" if (m := re.search(r"(\d+)%", out)) else ""
+    return f"power: battery{charge}" if "Battery Power" in out else f"power: AC{charge}"
+
+def docker_line(wt):
+    up, needs = docker_running(), compose_files(wt)
+    need = f" ({needs[0]} is here)" if needs else ""
+    if up is None:
+        return f"docker: not installed{need}"
+    if not up:
+        return f"docker: not running{need}"
+    names, bad = docker_names(), docker_names("health=unhealthy")
+    return f"docker: {len(names)} container{'' if len(names) == 1 else 's'} up" + (f", unhealthy: {', '.join(bad)}" if bad else ", none unhealthy")
+
+def awake_line():
+    if os.environ.get("COMPOSE_NO_AWAKE"):
+        return "sleep: COMPOSE_NO_AWAKE is set, so the Mac may sleep during the work"
+    if platform.system() != "Darwin" or not shutil.which("caffeinate"):
+        return "sleep: no caffeinate here; keep the machine from sleeping yourself"
+    return "sleep: caffeinate holds the Mac awake for as long as this command lives (a closed lid on battery still sleeps it)"
+
+def startup_lines(wt, targets):
+    """The checklist a start prints, one `startup  <item>: <state>` line each: power, docker, every database target, sleep."""
+    db = [f"database: {k} -> {v}" for k, v in targets.items()] or ["database: no database URL in the env files"]
+    return [f"startup  {l}" for l in (power_line(), docker_line(wt), *db, awake_line())]

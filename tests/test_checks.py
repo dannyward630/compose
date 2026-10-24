@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import datetime, os, platform, stat, sys, tempfile, unittest
+import datetime, os, platform, shutil, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 os.environ["HERDR_ENV"] = ""
@@ -7,6 +7,7 @@ os.environ["HERDR_ENV"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 import fc_checks as C
+ORIGINAL_PATH = os.environ["PATH"]
 
 
 class Checks(unittest.TestCase):
@@ -90,20 +91,18 @@ class Machine(unittest.TestCase):
     def batt(self, power, pct):
         self.fake("pmset", f"echo \"Now drawing from '{power}'\"\necho \" -InternalBattery-0 (id=4653155)\t{pct}%; discharging; 3:12 remaining present: true\"")
 
-    def test_battery_stop_names_the_charge_and_the_override_only_on_battery_below_30_percent(self):
+    def test_battery_stop_names_the_charge_and_the_override_whenever_the_mac_is_on_battery(self):
         self.assertIsNone(C.battery_stop())  # no pmset
-        self.batt("Battery Power", 29)
-        self.assertEqual(C.battery_stop(), "the Mac is on battery at 29%, below 30%: it can die or sleep in the middle of the work; plug it in, "
+        self.batt("Battery Power", 64)
+        self.assertEqual(C.battery_stop(), "the Mac is on battery at 64%: closing the lid sleeps it and the work stops, and it can die before the end; plug it in, "
                                            "or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in")
         self.assertIsNone(C.battery_stop(force=True))
         with mock.patch.dict(os.environ, {"COMPOSE_NO_PREFLIGHT": "1"}):
             self.assertIsNone(C.battery_stop())
-        self.batt("Battery Power", 30)
-        self.assertIsNone(C.battery_stop())
         self.batt("AC Power", 12)  # charging at 12% is fine
         self.assertIsNone(C.battery_stop())
-        self.fake("pmset", 'echo "Now drawing from \'Battery Power\'"')  # a charge that cannot be read stops nothing
-        self.assertIsNone(C.battery_stop())
+        self.fake("pmset", 'echo "Now drawing from \'Battery Power\'"')  # a charge that cannot be read still stops: the lid is the risk
+        self.assertEqual(C.battery_stop()[:36], "the Mac is on battery: closing the l")
 
     def test_a_battery_stop_is_announced_once_per_watcher_when_the_mac_is_plugged_in(self):
         held = Path(tempfile.mkdtemp()) / "live" / "battery-held"
@@ -149,3 +148,77 @@ class Machine(unittest.TestCase):
         self.assertEqual(container, "WARNING: docker container api keeps restarting and burns CPU, so a verify measures the machine, not the code: docker stop api")
         with mock.patch("os.getloadavg", return_value=(16.0, 16.0, 16.0)):  # twice the cores is busy, not far above
             self.assertEqual(len(C.machine_warnings()), 2)
+
+
+class Startup(unittest.TestCase):
+    """The startup checklist: docker where the project's compose file needs it, the database targets the env files set, the lines a start prints."""
+    def setUp(self):
+        self.bin, self.wt = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()).resolve()
+        p = mock.patch.dict(os.environ, {"PATH": str(self.bin)}); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("COMPOSE_NO_AWAKE", None)
+        os.environ["PATH"] += os.pathsep + str(Path(shutil.which("git", path=ORIGINAL_PATH)).parent)  # the real git, after the fake tools
+        subprocess.run(["git", "init", "-q", str(self.wt)], check=True)
+        (self.wt / ".gitignore").write_text(".env\n.env.*\n")
+
+    fake = Checks.fake
+
+    def test_a_database_url_gives_its_host_port_and_name_and_never_its_password(self):
+        self.assertEqual(C.database_target("postgresql://dtt:s3cret@localhost:5433/dtt?schema=public"), "localhost:5433/dtt")
+        self.assertEqual(C.database_target("postgres://u:p@db.example.com/website"), "db.example.com/website")
+        self.assertEqual(C.database_target("mysql://root@127.0.0.1:3306/shop/"), "127.0.0.1:3306/shop")
+        self.assertEqual(C.database_target("file:./dev.db"), "./dev.db")
+        self.assertEqual(C.database_target("redis://:pw@cache:6379"), "cache:6379")
+        self.assertIsNone(C.database_target("https://api.example.com"))
+        self.assertIsNone(C.database_target("not a url"))
+
+    def test_env_values_drop_export_quotes_and_trailing_comments(self):
+        f = self.wt / ".env"
+        f.write_text('export A="x y"\nB=\'q\'\n# comment\nC=plain # note\nbad line\nD=\n')
+        self.assertEqual(C.env_values(f), {"A": "x y", "B": "q", "C": "plain", "D": ""})
+        self.assertEqual(C.env_values(self.wt / "missing"), {})
+
+    def test_database_targets_are_keyed_by_env_file_so_an_app_with_its_own_database_is_a_line_of_its_own(self):
+        (self.wt / ".env").write_text("DATABASE_URL=postgresql://u:p@localhost:5432/website\nNEXT_PUBLIC_URL=https://x.test\n")
+        (self.wt / "app").mkdir(); (self.wt / "app" / ".env.local").write_text("DATABASE_URL=postgresql://u:p@localhost:5433/dtt\n")
+        (self.wt / ".env.example").write_text("DATABASE_URL=postgresql://user:pass@host/db\n")  # tracked, not ignored: no target
+        subprocess.run(["git", "-C", str(self.wt), "add", "-f", ".gitignore", ".env.example"], check=True, capture_output=True)
+        self.assertEqual(C.database_targets(self.wt), {".env DATABASE_URL": "localhost:5432/website", "app/.env.local DATABASE_URL": "localhost:5433/dtt"})
+
+    def test_database_problems_name_a_changed_and_an_unconfirmed_target_with_how_to_confirm(self):
+        now = {".env DATABASE_URL": "localhost:5433/dtt", "app/.env DATABASE_URL": "localhost:5433/app"}
+        self.assertEqual(C.database_problems(now, now), [])
+        changed, new = C.database_problems(now, {".env DATABASE_URL": "localhost:5432/website"})
+        self.assertTrue(changed.startswith("database target changed: .env DATABASE_URL points at localhost:5433/dtt, the project started on localhost:5432/website; confirm"))
+        self.assertIn('set `database` {".env DATABASE_URL": "localhost:5433/dtt"} in verify.json', changed)
+        self.assertTrue(new.startswith("database target not confirmed: app/.env DATABASE_URL points at localhost:5433/app, which the project did not start with"))
+        self.assertEqual(C.database_problems({}, {".env DATABASE_URL": "gone"}), [])  # a target that went away is no problem
+
+    def docker(self, body):
+        self.fake("docker", body)
+
+    def test_docker_problems_only_where_a_compose_file_needs_it(self):
+        self.docker("exit 1")
+        self.assertEqual(C.docker_problems(self.wt), [])  # no compose file: docker is a bystander
+        (self.wt / "compose.yaml").write_text("services: {}\n")
+        self.assertEqual(C.docker_problems(self.wt), ["docker is not running and compose.yaml needs it: start Docker Desktop, bring the services up, and run again"])
+        self.docker('case "$1" in info) exit 0;; ps) case "$*" in *unhealthy*) echo db;; *) echo db; echo api;; esac;; esac')
+        self.assertEqual(C.docker_problems(self.wt), ["docker container db is unhealthy, so what runs against it fails for the wrong reason: docker logs db, then fix or restart it"])
+        self.docker('case "$1" in info) exit 0;; ps) case "$*" in *unhealthy*) ;; *) echo db;; esac;; esac')
+        self.assertEqual(C.docker_problems(self.wt), [])
+        self.assertEqual(C.docker_line(self.wt), "docker: 1 container up, none unhealthy")
+
+    def test_startup_lines_cover_power_docker_every_database_and_sleep(self):
+        self.fake("pmset", "echo \"Now drawing from 'AC Power'\"\necho \" -InternalBattery-0\t88%; charging\"")
+        with mock.patch.object(platform, "system", return_value="Linux"):
+            lines = C.startup_lines(self.wt, {".env DATABASE_URL": "localhost:5433/dtt", "app/.env DATABASE_URL": "localhost:5433/app"})
+        self.assertEqual(lines, ["startup  power: AC 88%", "startup  docker: not installed", "startup  database: .env DATABASE_URL -> localhost:5433/dtt",
+                                 "startup  database: app/.env DATABASE_URL -> localhost:5433/app", "startup  sleep: no caffeinate here; keep the machine from sleeping yourself"])
+        self.fake("pmset", "echo \"Now drawing from 'Battery Power'\"\necho \" -InternalBattery-0\t40%; discharging\"")
+        self.fake("caffeinate", "")
+        (self.wt / "compose.yaml").write_text("")
+        with mock.patch.object(platform, "system", return_value="Darwin"), mock.patch.dict(os.environ, {"COMPOSE_NO_AWAKE": "1"}):
+            power, docker, db, sleep = C.startup_lines(self.wt, {})
+        self.assertEqual((power, docker, db), ("startup  power: battery 40%", "startup  docker: not installed (compose.yaml is here)", "startup  database: no database URL in the env files"))
+        self.assertEqual(sleep, "startup  sleep: COMPOSE_NO_AWAKE is set, so the Mac may sleep during the work")
+        with mock.patch.object(platform, "system", return_value="Darwin"):
+            self.assertEqual(C.awake_line(), "sleep: caffeinate holds the Mac awake for as long as this command lives (a closed lid on battery still sleeps it)")

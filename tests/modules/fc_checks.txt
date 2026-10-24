@@ -15,7 +15,6 @@ CRASH_RESTARTS
 CRASH_WINDOW
 battery_report
 on_battery
-LOW_BATTERY
 battery_stop
 POWER_HELD
 POWER_HELD_FOR
@@ -23,3 +22,18 @@ power_back
 busiest_process
 restarting_containers
 machine_warnings
+COMPOSE_FILES
+compose_files
+docker_running
+docker_names
+docker_problems
+DB_SCHEMES
+ENV_LINE
+env_values
+database_target
+database_targets
+database_problems
+power_line
+docker_line
+awake_line
+startup_lines

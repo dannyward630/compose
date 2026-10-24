@@ -499,7 +499,7 @@ class Preflight(unittest.TestCase):
         os.environ.pop("COMPOSE_NO_PREFLIGHT", None)  # hermetic sets it; restored with the rest of the environment
         for p in (mock.patch.object(fc.fc_config, "OPENROUTER_KEY", "or-key"), mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin-key"),
                   mock.patch.object(fc.fc_config, "WORKSPACE", "work"), mock.patch.object(fc_checks, "machine_warnings", return_value=[]),
-                  mock.patch.object(fc_checks, "battery_report", return_value="")):  # never the real battery: below 30% on battery it stops a start
+                  mock.patch.object(fc_checks, "battery_report", return_value="")):  # never the real battery: on battery it stops a start
             p.start(); self.addCleanup(p.stop)
         self.requests = []
 
@@ -577,15 +577,45 @@ class Preflight(unittest.TestCase):
         self.assertEqual(msg.splitlines()[0], "preflight stopped, nothing was cloned or run. Fix this, then run again:")
         self.assertIn("uncommitted changes (new_test.py); commit or discard them", msg)
 
-    def test_a_low_battery_stops_the_start_with_the_fix_unless_forced_and_doctor_only_warns(self):
+    def test_a_mac_on_battery_stops_the_start_with_the_fix_unless_forced_and_doctor_only_warns(self):
         self.fake("gh", "gh version 2.94.0")
-        low = "the Mac is on battery at 12%, below 30%: it can die or sleep in the middle of the work; plug it in, or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in"
-        with self.serve(openrouter=Answer({}), linear=Answer({})), mock.patch.object(fc_checks, "battery_report", return_value="Now drawing from 'Battery Power'\n 12%; discharging"):
+        low = "the Mac is on battery at 62%: closing the lid sleeps it and the work stops, and it can die before the end; plug it in, or run again with --force to start anyway; `compose watch` says `event power=ac` once it is plugged in"
+        with self.serve(openrouter=Answer({}), linear=Answer({})), mock.patch.object(fc_checks, "battery_report", return_value="Now drawing from 'Battery Power'\n 62%; discharging"):
             msg, _ = self.stop()
             self.assertEqual(msg.splitlines()[1:], ["  " + low])
             fc.fc_init.start_checks(self.repo, force=True)
             problems, _ = fc.fc_init.start_problems(self.repo)
         self.assertEqual(problems, [])  # doctor reports the machine as a warning: only a start refuses
+
+    def project(self, database=None):
+        proj = self.repo / ".compose" / "p"
+        proj.mkdir(parents=True, exist_ok=True)
+        cfg = {"checks": [], "branch": "compose/p", **({"database": database} if database is not None else {})}
+        (proj / "verify.json").write_text(json.dumps(cfg))
+        return proj
+
+    def test_the_first_start_records_the_database_targets_and_prints_the_checklist(self):
+        self.fake("gh", "gh version 2.94.0")
+        (self.repo / ".gitignore").write_text(".env*\n"); (self.repo / ".env").write_text("DATABASE_URL=postgresql://u:p@localhost:5433/dtt\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", ".gitignore"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ignore"], check=True, capture_output=True)
+        proj, say = self.project(), []
+        with self.serve(openrouter=Answer({}), linear=Answer({})), mock.patch.object(fc.fc_core, "say", say.append), \
+                mock.patch.object(fc_checks, "battery_report", return_value="Now drawing from 'AC Power'\n 90%; charged"), mock.patch.object(fc_checks.platform, "system", return_value="Linux"), mock.patch.dict(os.environ, {"COMPOSE_NO_AWAKE": ""}):
+            fc.fc_init.start_checks(self.repo, proj=proj)
+        self.assertEqual(json.loads((proj / "verify.json").read_text())["database"], {".env DATABASE_URL": "localhost:5433/dtt"})
+        self.assertEqual(say, ["startup  power: AC 90%", "startup  docker: not installed", "startup  database: .env DATABASE_URL -> localhost:5433/dtt",
+                               "startup  sleep: no caffeinate here; keep the machine from sleeping yourself"])
+        (self.repo / ".env").write_text("DATABASE_URL=postgresql://u:p@localhost:5432/website\n")  # the target moved under the project
+        with self.serve(openrouter=Answer({}), linear=Answer({})):
+            msg, _ = self.stop(proj=proj)
+            problems, _ = fc.fc_init.start_problems(self.repo, proj=proj)  # doctor --project names it too
+        self.assertEqual(msg.splitlines()[1:], ["  database target changed: .env DATABASE_URL points at localhost:5432/website, the project started on localhost:5433/dtt; "
+                                                "confirm the change with the user, then set `database` {\".env DATABASE_URL\": \"localhost:5432/website\"} in verify.json (or restore the env file)"])
+        self.assertEqual(len(problems), 1)
+        with self.serve(openrouter=Answer({}), linear=Answer({})):
+            problems, _ = fc.fc_init.start_problems(self.repo)  # without the project there is no record to hold it to
+        self.assertEqual(problems, [])
 
     def test_the_opt_out_keeps_only_the_tree_check(self):
         (self.repo / "new_test.py").write_text("x\n")
@@ -606,13 +636,13 @@ class Preflight(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 fc.fc_verify.cmd_verify(type("A", (), {"repo": str(self.repo), "project": "p", "skip_review": True, "fix": 0})())
             self.assertEqual(awake.call_count, 2)
-            checks.assert_called_once_with(self.repo, stack=False, tree=False, force=False)  # verify tolerates a dirty tree and submits nothing
+            checks.assert_called_once_with(self.repo, stack=False, tree=False, force=False, proj=self.repo / ".compose" / "p")  # verify tolerates a dirty tree and submits nothing
             with self.assertRaises(RuntimeError):
                 fc.fc_run.cmd_run(type("A", (), {"repo": str(self.repo), "project": "p", "only": None, "no_stack": True})())
-            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=False)  # --no-stack: gh need not be logged in
+            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=False, proj=self.repo / ".compose" / "p")  # --no-stack: gh need not be logged in
             with self.assertRaises(RuntimeError):
                 fc.fc_run.cmd_run(type("A", (), {"repo": str(self.repo), "project": "p", "only": None, "no_stack": True, "force": True})())
-            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=True)  # --force starts on a low battery
+            checks.assert_called_with(self.repo, False, hint="commit the tests first so worktrees include them", force=True, proj=self.repo / ".compose" / "p")  # --force starts on battery
 
     def doctor(self, args, rows=()):
         out, code = io.StringIO(), 0

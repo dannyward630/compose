@@ -158,25 +158,45 @@ def key_problems():
             warnings.append(f"WARNING: could not check the {name} key ({'no answer' if status is None else 'HTTP ' + str(status)}): the work may stop later if it is bad")
     return problems, warnings
 
-def start_problems(repo, tree=True, hint="commit or discard them"):
+def start_problems(repo, tree=True, hint="commit or discard them", proj=None):
     """(problems, warnings) to settle before long work starts, all at once so they are fixed in one pass: a work tree with changes
     of the user's (fc_worktree.dirty_paths ignores compose's and the tools' own files), a key its service rejects (key_problems),
-    and the machine warnings (fc_checks.machine_warnings). `tree=False` skips the tree, for verify, which tolerates it.
-    A problem is a line with its fix; a warning starts with WARNING. COMPOSE_NO_PREFLIGHT=1 drops everything but the tree."""
+    docker down or unhealthy where the project's compose file needs it (fc_checks.docker_problems), a database target that is not
+    the one recorded in `proj`'s verify.json (fc_checks.database_problems), and the machine warnings (fc_checks.machine_warnings).
+    `tree=False` skips the tree, for verify, which tolerates it. A problem is a line with its fix; a warning starts with WARNING.
+    COMPOSE_NO_PREFLIGHT=1 drops everything but the tree."""
     problems, warnings = key_problems()
     if not os.environ.get("COMPOSE_NO_PREFLIGHT"):
         warnings += fc_checks.machine_warnings()
+        problems += fc_checks.docker_problems(repo)
+        if proj is not None and (recorded := verify_config(proj).get("database")) is not None:
+            problems += fc_checks.database_problems(fc_checks.database_targets(repo), recorded)
     if tree and (dirty := fc_worktree.dirty_paths(repo)):
         shown = ", ".join(dirty[:8]) + (f" and {len(dirty) - 8} more" if len(dirty) > 8 else "")
         problems.insert(0, f"repo has uncommitted changes ({shown}); {hint}")
     return problems, warnings
 
-def start_checks(repo, stack=True, tree=True, hint="commit or discard them", force=False):
+def verify_config(proj):
+    try:
+        return json.loads((Path(proj) / "verify.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+def record_databases(proj, repo):
+    """Record the database targets the project runs on, once: the first start after init (or after this check arrived) writes
+    `database` into verify.json, and from then on a target that changes or appears stops a start until the user confirms it."""
+    cfg, targets = verify_config(proj), fc_checks.database_targets(repo)
+    if "database" not in cfg and (Path(proj) / "verify.json").exists():
+        fc_core.atomic_write(Path(proj) / "verify.json", json.dumps({**cfg, "database": targets}, indent=2))
+    return targets
+
+def start_checks(repo, stack=True, tree=True, hint="commit or discard them", force=False, proj=None):
     """The start of run, resume and verify: print the warnings and stop with every problem at once (nothing is cloned or run
     yet), so the work never stops later to ask. With `stack` (the work will be submitted as a gh stack), a gh that is not
-    logged in is one more problem; a Mac on battery below fc_checks.LOW_BATTERY percent is one too, unless `force` (--force).
+    logged in is one more problem; a Mac on battery is one too, unless `force` (--force). Then, with `proj`, the startup checklist
+    (fc_checks.startup_lines): power, docker, the database targets (recorded on the first start), sleep.
     COMPOSE_NO_PREFLIGHT=1 skips that with the calls and machine checks."""
-    problems, warnings = start_problems(repo, tree, hint)
+    problems, warnings = start_problems(repo, tree, hint, proj)
     if low := fc_checks.battery_stop(force):
         problems.append(low)
     if stack and not os.environ.get("COMPOSE_NO_PREFLIGHT") and shutil.which("gh") and not fc_checks.gh_authed():
@@ -186,6 +206,9 @@ def start_checks(repo, stack=True, tree=True, hint="commit or discard them", for
     if problems:
         sys.exit("preflight stopped, nothing was cloned or run. Fix " + ("this" if len(problems) == 1 else f"all {len(problems)} of these")
                  + ", then run again:\n  " + "\n  ".join(problems))
+    if proj is not None and not os.environ.get("COMPOSE_NO_PREFLIGHT"):
+        for line in fc_checks.startup_lines(repo, record_databases(proj, repo)):
+            fc_core.say(line)
 
 def cmd_doctor(a):
     """Check every tool and skill file compose depends on; print every line first, then exit 1 when a required one is missing.
@@ -204,7 +227,7 @@ def cmd_doctor(a):
         pick = fc_core.all_projects(Path(a.repo).resolve()).get(a.project)
         wt = pick[0] if pick else None
         missing = [] if pick else [f"no project {a.project!r} in {Path(a.repo).resolve()}: check the name with `compose projects`"]
-    problems, warnings = start_problems(wt or Path.cwd(), tree=wt is not None)
+    problems, warnings = start_problems(wt or Path.cwd(), tree=wt is not None, proj=wt / ".compose" / a.project if wt else None)
     problems += missing
     for line in warnings:
         print(line)
@@ -337,11 +360,14 @@ def cmd_init(a):
         if link.exists() and not fc_core.repo_link(wt).exists():  # written in a linked worktree only: the project worktree gets its own
             (wt / ".compose" / "linear.json").write_text(link.read_text())
         if not (proj / "verify.json").exists():
+            databases = fc_checks.database_targets(wt)  # what the work reads and writes, recorded now: a start stops when it changes
             fc_core.atomic_write((proj / "verify.json"), json.dumps({
                 "checks": [], "docs": ["README.md"], "e2e": [],
                 "review": True, "perspectives": ["correctness", "security", "spec", "docs"],
                 "jev_acceptance": True, "acceptance_threshold": 0.6, **({"review_base": base} if base else {}),
-                **({"after": a.after} if a.after else {}), "branch": branch}, indent=2))
+                **({"after": a.after} if a.after else {}), "branch": branch, "database": databases}, indent=2))
+            for key, target in databases.items():
+                print(f"database {key} -> {target}  (recorded in verify.json: a run or verify stops when it changes, until the user confirms the new target)")
     except BaseException:  # nothing half-made stays behind
         if made:
             undo_worktree(here, *made)
