@@ -377,6 +377,34 @@ class FigmaJudge(unittest.TestCase):
         res = self.judge_big(lambda t: ("UNCLEAR", 0.0))
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
 
+    def test_a_criterion_whose_nodes_sit_in_different_chunks_is_settled_on_the_whole_tree(self):
+        """Design 102: a frame criterion named nodes in three chunks, every chunk answered UNCLEAR (each lacks the others' nodes), and
+        the criterion never passed though the tree met it. A tree that fits one confirm call is put whole to that call before any
+        re-ask, and met when it shows every part of the criterion."""
+        text, criterion = big_tree(5), "The first (2:0) and the last (2:4) variant have a Tint"
+        for met in (True, False):
+            with self.subTest(met=met):
+                res = self.judge_big(lambda t: ("UNCLEAR", 0.0), confirm={"confirmed": met, "evidence": "both Tints are there" if met else "2:4 has none"}, text=text, criterion=criterion)
+                row = res["criteria"][0]
+                self.assertGreater(res["chunks"], 1)
+                self.assertEqual((res["status"], row["choice"], row["parts"].count("UNCLEAR"), self.confirm.call_count), ("passed" if met else "failed", "MET" if met else "UNCLEAR", res["chunks"], 1))
+                self.assertEqual(row["whole_tree"], {"met": met, "evidence": "both Tints are there" if met else "2:4 has none"})
+                system, user = self.confirm.call_args.args[1:3]
+                self.assertEqual((criterion in user, user.split("TREE:\n", 1)[1]), (True, text))
+                self.assertIn("satisfies EVERY part", system)
+                self.assertEqual(len(self.states), res["chunks"] * (1 if met else 2))  # judged once per chunk, re-asked per chunk only when the whole tree did not settle it
+
+    def test_a_whole_tree_check_that_fails_is_a_judge_error_not_a_verdict(self):
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), confirm=[1, 2], text=big_tree(5))
+        row = res["criteria"][0]
+        self.assertEqual((res["status"], row["judge_error"], row["choice"], res["failed"]), ("blocked", True, "UNCLEAR", []))
+        self.assertIn("confirm call failed", row["evidence"])
+
+    def test_a_chunk_showing_met_or_not_met_is_not_put_to_the_whole_tree_check(self):
+        has = lambda t: '"id": "2:4"' in t
+        self.judge_big(lambda t: ("MET", 0.0) if has(t) else ("UNCLEAR", 0.0), text=big_tree(5))
+        self.assertFalse(self.confirm.called)
+
     def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
         def jev(env, cfg, state, q, label):
             if state.get("tree_part", "").startswith("2 of"):

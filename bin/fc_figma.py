@@ -289,6 +289,12 @@ CONFIRM = ("You are verifying whether a node tree VIOLATES one acceptance criter
 CONFIRM_PART = (" The tree shown is one part of a larger tree: a node the criterion names that this part does not hold may be in another part, "
                 "so its absence here is never a violation. Confirm only a node in this part that violates the criterion.")
 
+SATISFIED = ("You are verifying whether a node tree SATISFIES one acceptance criterion. The criterion may name nodes that sit far apart in the tree. "
+             "Find the node for each part the criterion names and quote it with its id. Answer confirmed=true only when the tree satisfies EVERY part; "
+             "if a part has no node, or a node contradicts it, answer confirmed=false and say which part. "
+             f"{TREE_READING} "
+             'Return JSON {"confirmed": bool, "evidence": str}.')
+
 def combine_choices(choices):
     """One criterion over every chunk: NOT_MET if any chunk shows it, else MET if any chunk shows it, else UNCLEAR."""
     return "NOT_MET" if "NOT_MET" in choices else "MET" if "MET" in choices else "UNCLEAR"
@@ -591,7 +597,19 @@ def cmd_figma(a):
                 # no chunk's NOT_MET survived its confirm: those chunks showed no violation, so the chunks that show the
                 # criterion met decide it (MET when one does and none contradicts)
                 row["choice"] = combine_choices([x for x in per_chunk if x != "NOT_MET"])
-            choice = figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)
+            if parted and row["choice"] == "UNCLEAR" and not row.get("judge_error") and len(text) <= CONFIRM_TREE_CHARS:
+                # a criterion naming nodes of different chunks is UNCLEAR in each: the whole tree, which one call can hold, settles it
+                try:
+                    met, evidence = fc_models.confirm_call(env, SATISFIED, f"CRITERION: {c}\n\nTREE:\n{text}")
+                except fc_models.PaymentRequired:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
+                else:
+                    row["whole_tree"] = {"met": met, "evidence": evidence}
+                    if met:
+                        row["choice"] = "MET"
+            choice = row["choice"] if row.get("judge_error") else figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)
         prev = {}
