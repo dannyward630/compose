@@ -1,8 +1,8 @@
 _prefixes
 _commons
+_heads
 refs_stamp
 task_prefix
-_heads
 heads
 rename_legacy_branches
 task_branch

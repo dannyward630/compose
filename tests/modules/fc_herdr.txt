@@ -37,7 +37,6 @@ herdr_project_tabs
 herdr_repo_space
 herdr_space
 herdr_tabs
-herdr_status_tab
 herdr_label
 IMPLEMENTERS_TAB
 herdr_implementer_pane

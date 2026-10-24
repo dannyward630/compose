@@ -12,6 +12,7 @@ watch_mem
 watch_save
 watch_base
 load_events
+load_lines
 watch_lock
 watch_stalls
 RUN_ENDED
