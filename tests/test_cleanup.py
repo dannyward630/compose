@@ -100,6 +100,21 @@ class TestCrewWorktrees(unittest.TestCase):
         self.assertTrue((self.repo / "a_test.go").exists())
         self.assertEqual(len(sent), 1)
 
+    def test_a_writer_on_a_turn_after_its_test_ready_report_is_not_collected(self):
+        """A correction sent to the writer with `herdr agent prompt` leaves no report: its turn is the only trace."""
+        self.start_writers([])
+        wt = self.crew_commits("001", "a_test.go", "a\n")
+        status = ["working"]
+        with mock.patch.object(fc.fc_herdr, "live_agents", lambda: [{"name": "p-tests-001", "agent_status": status[0]}]):
+            fc.fc_briefs.collect_tests(self.proj, "001")
+            self.assertTrue(wt.exists())  # kept: its writer is fixing the test
+            self.assertTrue(self.run("branch", "--list", "*tests-001").stdout.strip())
+            self.assertFalse((self.repo / "a_test.go").exists())
+            status[0] = "idle"
+            fc.fc_briefs.collect_tests(self.proj, "001")
+        self.assertTrue((self.repo / "a_test.go").exists())
+        self.assertEqual(self.writer_branches(), ["compose/p-tests-002"])
+
     def test_a_collected_writer_is_not_started_again(self):
         self.start_writers([])
         self.crew_commits("001", "a_test.go", "a\n")
