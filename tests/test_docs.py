@@ -326,22 +326,40 @@ class BriefsNameFiles(unittest.TestCase):
         self.assertNotIn("\u2014", self.text)
 
 
-class PlannerReadsWritingPlans(unittest.TestCase):
-    LS = "`ls ~/.claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md`"
+class PlanWritingRules(unittest.TestCase):
+    """The plan-writing rules are compose's own: no third-party skill file is read, and the plan has a header, a file map, steps, spikes, and a self-review."""
     SKILLS_OFF = "The planner session starts with skills off, so every skill it needs is read as a file."
     RUN = [
         "Read all of it.",
-        f"Then read the writing-plans skill file (the newest of {LS}) for how to write the plan, but not where: the plan is a `## Plan` section in the feature issue's description (`compose linear update <feature> --section \"## Plan\" --file <path>`), never a file in the repo.",
-        "Writing-plans' own save path does not apply.",
+        "Write the plan for an implementer who has not seen the codebase and will not ask: the plan is the set of decisions that implementer cannot make alone, so every such decision is in it, and nothing it can read off the named files is.",
+        "The plan is a `## Plan` section in the feature issue's description (`compose linear update <feature> --section \"## Plan\" --file <path>`), never a file in the repo.",
         SKILLS_OFF,
     ]
+    SHAPE = [
+        "The plan opens with a header: Goal (one or two sentences), Architecture (how the pieces fit, one paragraph), Global constraints (what every task must respect: the simplicity bar, no new dependencies, naming, the test runner), and Review focus (where a reviewer should look hardest, and why).",
+        "Then a file map: every file the feature creates or changes, one line each with its responsibility, before any step.",
+        "Then numbered steps, each with the files it touches, the exact signature or export it adds, the test that proves it, and the steps it depends on.",
+        "A step holds code only where the implementer could not derive it: an algorithm the spec leaves open, exact copy, a fixed data shape; everywhere else one line of description beats a pasted function body.",
+        "An unknown the plan cannot settle (does the library support it, how slow is the query) becomes a spike: a probe task whose deliverable is the answer, written to the map's Notes, never a code task that guesses.",
+        "Before the cut the planner reads its own plan once as the implementer will: every acceptance criterion maps to a step, no step names a file the file map lacks, a type or signature means one thing in every step that uses it, the Review focus names a test or step that covers it, and the plan is no longer than the feature needs.",
+    ]
 
-    def test_planner_reads_the_newest_writing_plans_file(self):
+    def test_no_third_party_skill_is_read(self):
         text = read("sections/1.md")
-        self.assertNotRegex(text, r"(?i)invoke\W*superpowers:writing-plans")
-        self.assertIn(self.LS, text)
-        self.assertIn("the newest", text)
+        self.assertNotRegex(text, r"(?i)superpowers|writing-plans|plugins/cache")
         self.assertEqual(text.count(self.SKILLS_OFF), 1)
+
+    def test_the_plan_shape_is_stated_line_for_line(self):
+        lines = read("sections/1.md").splitlines()
+        first = lines.index(self.SHAPE[0])
+        self.assertEqual(lines[first:first + len(self.SHAPE)], self.SHAPE)
+
+    def test_setup_has_no_superpowers_row(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_steps
+        self.assertNotIn("superpowers", [r[0] for r in fc_steps.STEPS])
+        for doc in ("docs/requirements.md", "docs/new-machine.md"):
+            self.assertNotIn("superpowers", read(doc), doc)
 
     def test_edited_sentences_keep_their_words_and_order(self):
         flat = " ".join(read("sections/1.md").split())
@@ -624,12 +642,12 @@ class CardsOnTheMap(unittest.TestCase):
 
 
 class PlannerSavesInPatches(unittest.TestCase):
-    SAVE_PATH = "Writing-plans' own save path does not apply."
+    AFTER = PlanWritingRules.SKILLS_OFF
 
     def rule(self):
         text = read("sections/1.md")
-        self.assertIn(self.SAVE_PATH + "\n", text)
-        return " ".join(text.split(self.SAVE_PATH, 1)[1].split()).lower()
+        self.assertIn(self.AFTER + "\n", text)
+        return " ".join(text.split(self.AFTER, 1)[1].split()).lower()
 
     def test_drafts_the_whole_plan_then_saves_in_few_patches_one_per_section(self):
         rule = self.rule()
@@ -651,8 +669,8 @@ class PlannerSavesInPatches(unittest.TestCase):
         text = read("sections/1.md")
         self.assertEqual(text.count("prints only `updated <id>`"), 1)
         flat = " ".join(text.split())
-        self.assertIn(" ".join(PlannerReadsWritingPlans.RUN[:3]), flat)
-        self.assertIn(PlannerReadsWritingPlans.SKILLS_OFF, flat)
+        self.assertIn(" ".join(PlanWritingRules.RUN[:3]), flat)
+        self.assertIn(PlanWritingRules.SKILLS_OFF, flat)
 
     def test_plain_dashes_and_one_sentence_per_line(self):
         text = read("sections/1.md")

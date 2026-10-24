@@ -2,7 +2,6 @@ import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
 import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started
 
-
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
     is inside herdr and `task` names the project's space), anything else runs OpenCode."""
@@ -20,7 +19,6 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
             return herdr_pi(cwd, model[3:], prompt, session, task, timeout)
         return fc_models.pi_turn(cwd, model[3:], prompt, session, timeout)
     return fc_models.opencode(cwd, model, prompt, session)
-
 
 def herdr_pi(cwd, model, prompt, session, task, timeout=None):
     """One turn of an interactive pi running as a named herdr agent in its own pane of the space's `implementers` tab.
@@ -228,7 +226,6 @@ def task_checks(cfg):
     layers run on the whole change."""
     return (cfg["task_checks"] if "task_checks" in cfg else cfg.get("checks")) or []
 
-
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -322,8 +319,10 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"Hard limits: the whole change must stay under {fc_config.MAX_DIFF_LINES} changed lines (added plus deleted), you must not "
               "create any document file (.md, .txt, .rst, docs/), and you may change ONLY the files listed above, even if other "
               "tests in the repo fail: other tasks own them. A change that breaks any of these is rejected.\n"
-              "If a fact this brief states is wrong (a function, file, or API it names is missing or behaves differently), do not "
-              "work around it: end your reply with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` and stop.")
+              "If a fact this brief states is wrong (a function, file, or API it names is missing or behaves differently), or a fact you "
+              "need is not in it (which file, which signature, what a value looks like), do not work around it or guess: end your reply "
+              "with one line `CONTRADICTION: <what the brief says> / <what the code shows, file:line>` (`brief lacks <fact>` before the slash "
+              "for a missing one) and stop.")
     log, session, started, status, cost, reference_cost = [], None, time.time(), "failed", 0.0, 0.0
     original_prompt = prompt
     # The attempts spent: each numbered turn once (a turn and the test of the edits it left are one), never a provider's refusal.
@@ -588,7 +587,6 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     if not reset_files and not tag:
         fc_linear.linear_event(proj, meta, status if status in ("passed", "unproven") else "failed", result)
     return result
-
 
 CONTRADICTION_RE = re.compile(r"^[ \t>*_`-]*CONTRADICTION[*_`]*:[*_]*[ \t]*(.+?)[`*_ \t]*$", re.M)  # markdown around it too
 

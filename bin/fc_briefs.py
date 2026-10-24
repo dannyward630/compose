@@ -64,6 +64,8 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
 1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking, look in
    Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
    A decision found there is settled: do not ask again.
+   Before any card, put two or three approaches under the map's Notes (`### Approaches`): a line each with what it changes and
+   costs, and the one you recommend with why; the cards then ask only what the approaches leave open.
 2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
    open question as a card in the card format, one block per card under Not yet specified:
    `Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same: two
@@ -101,8 +103,9 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
    (`compose linear get <id> --body`) and go on from it; an answer that reaches you any other way goes back to the team lead for `compose decide`, never onto the map by your hand.
 6. New questions the answers open, and groundwork toolchain findings the team lead forwards, are asked the same way: text cards in a new needs-user; visual cards on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
-7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}` if the page was opened, then report
-   `done` with the decisions in one line each.
+7. When every card is answered and Not yet specified is empty, read the map once as the planner will, with no one to ask: a how
+   it leaves non-obvious (which component, which table, which flow) is one more card, asked as in 6. Then `npx -y lavish-axi end {page}`
+   if the page was opened, and report `done` with the decisions in one line each.
 """
 
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
@@ -115,7 +118,9 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
    - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is architect's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
-     numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.
+     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,
+     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where
+     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.
      Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice
      that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,
      several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories
@@ -157,6 +162,7 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
    - no file shared by two tasks: one task, or one is `after:` the other
    - `after:` for code a task needs (calls, imports, edits what the other creates), set as blocked-by links
    - ids numbered in review order
+   - split where a reviewer could reject one half while approving the other; setup and scaffolding fold into the task that needs them
    Groundwork never finishes a story: each code, dependency, lockfile, toolchain change is a task. A choice it needs is a decision card (checks 1, 3, 6), settled before the cut.
 
 4. Task issue: sub-issue of its story, label Task, state Todo, its title the task's title. Description, in this order:
@@ -167,7 +173,9 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
    ## Test plan
    Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md).
    ## Constraints
-   No new dependencies beyond what the goal names. Do not edit protected files.
+   The plan's Global constraints that apply. No new dependencies beyond what the goal names. Do not edit protected files.
+   ## Interfaces
+   Only when something crosses the task's boundary: Consumes: <exact signature, file, task> / Produces: <exact signature, file>.
    last, the CLI's block:
    ```compose
    id: 001
@@ -178,7 +186,9 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` the issue title.
 
-5. After cutting: `compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says, then
+5. After cutting, read the plan and the task issues once as the implementer will: every criterion has a step and a task,
+   every named file is in the file map, one meaning per signature, the Review focus is covered by a test. Then `compose sync`
+   (it reads the feature and every issue under it from Linear) as sections/2.md says, then
    `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
    Cut and re-cut are one diff: read live task issues, compare to story and map, cancel, edit, add;
    ids stay monotonic; a canceled task loses its `compose` block.
@@ -341,6 +351,9 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             "Assert only what the TASK BRIEF states or the code shows: implementer never sees the contract, "
             "so a line or value only it gives is not asserted.\n"
             "Cover the brief's acceptance criteria plus holdout cases it does not list. One file; "
+            "test behavior through the interface the brief names, one behavior per case, each named for the behavior it checks, "
+            "expected and actual in every failure; never mock what the task owns, and never assert an implementation detail "
+            "(a private helper, call order, a log line) the brief does not state; "
             "never a test that asserts dependency lists, lint or tool configuration, or config file contents.\n" +
             ("The TASK BRIEF's `scenarios` block gives one scenario per criterion: write a case per scenario and per negative_case, then holdouts none lists, within the budget.\n" if fc_tasks.scenarios_block(meta.get("body")) else "") +
             f"Budget: at most {budget} lines, holdouts included.\n"

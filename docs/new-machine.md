@@ -39,7 +39,7 @@ Without `claude` on the PATH it runs every step that does not need it, skips the
 | herdr config, herdr pi integration | default | writes herdr's config (below) and installs herdr's pi integration | no |
 | Models and `.env` | default | adds the default model choices to `~/.compose/config.json` and the `TEXT_MODEL` lines to `~/.compose/.env`, never overwriting what is there | no |
 | git rerere, Claude Code permissions | default | sets `rerere.enabled` globally when it is unset; shows the narrow Claude Code permission rules `compose` needs and writes them to `~/.claude/settings.json` only on your yes (never with `--yes` or `--dry-run`) | no |
-| superpowers, herdr claude integration | default | installs the superpowers plugin and herdr's claude integration | yes |
+| herdr claude integration | default | installs herdr's claude integration | yes |
 | Framelink | opt-in, designer | adds the `framelink-figma` MCP server and your Figma token, for the designer only | yes |
 
 Setup ends with a model probe against `models.implementer`, unless you skipped the OpenRouter key or ran with `--yes`.

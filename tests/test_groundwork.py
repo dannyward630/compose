@@ -642,7 +642,9 @@ class TersePlannerBrief(unittest.TestCase):
     """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
     FEATURE = (
         "     No plan: write `## Plan` in the feature description with `compose linear update <id> --section \"## Plan\" --file <path>`:",
-        "     numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.",
+        "     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,",
+        "     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where",
+        "     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.",
         "     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice",
         '     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,',
         "     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories",
@@ -651,8 +653,8 @@ class TersePlannerBrief(unittest.TestCase):
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
-        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 7250)
-        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 585)
+        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 8200)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
 
     def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
         lines = fc.fc_briefs.PLANNER_BRIEF.splitlines()
@@ -1167,7 +1169,7 @@ class ContractSlice(unittest.TestCase):
 class TerseTemplatesB(unittest.TestCase):
     B = fc.fc_briefs
     META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
-    SIZES = {"GROUNDWORK_BRIEF": 3000, "ARCHITECT_BRIEF": 5300, "CHANGE_BRIEF": 3900}
+    SIZES = {"GROUNDWORK_BRIEF": 3000, "ARCHITECT_BRIEF": 5800, "CHANGE_BRIEF": 3900}
     PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "ARCHITECT_BRIEF": "feature name page slug wt",
                     "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
     LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
@@ -1183,7 +1185,7 @@ class TerseTemplatesB(unittest.TestCase):
     def test_each_text_fits_its_size(self):
         for name, limit in self.SIZES.items():
             self.assertLessEqual(len(getattr(self.B, name)), limit, name)
-        self.assertLessEqual(len(self.B.test_brief(self.META, "")), 1340)
+        self.assertLessEqual(len(self.B.test_brief(self.META, "")), 1700)
 
     def test_each_constant_keeps_exactly_its_placeholders(self):
         for name, fields in self.PLACEHOLDERS.items():

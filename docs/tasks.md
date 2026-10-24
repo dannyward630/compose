@@ -21,7 +21,11 @@ One paragraph. What to build, where, exact export names.
 - Holdout: the test has cases not listed here.
 
 ## Constraints
-- No new dependencies beyond what the goal names. Do not edit protected files.
+- The plan's Global constraints that apply here. No new dependencies beyond what the goal names. Do not edit protected files.
+
+## Interfaces
+- Consumes: `parseNode(node: Node): Entry` from extension/parse.js (task 001)
+- Produces: `snapshot(page: Page): Entry[]`, exported from extension/snapshot.js
 
 ```compose
 id: 002
@@ -30,6 +34,8 @@ protected: tests/snapshot.test.js
 test: node --test 'tests/**/*.test.js'
 ```
 ````
+
+`## Interfaces` names, with exact signatures, what the task takes from other tasks (Consumes) and what other tasks take from it (Produces); a task nothing crosses omits it.
 
 The `## Test plan` may end with an optional `scenarios` fence, one scenario per acceptance criterion:
 

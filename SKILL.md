@@ -183,7 +183,11 @@ One paragraph. What to build, where, exact export names.
 - Holdout: state that the test has cases not listed here (do not list them).
 
 ## Constraints
-- No new dependencies beyond what the goal names. Do not edit protected files.
+- The plan's Global constraints that apply here. No new dependencies beyond what the goal names. Do not edit protected files.
+
+## Interfaces
+- Consumes: `parseEntry(line: string): Entry` from extension/parse.js (task 001)
+- Produces: `isDenied(host: string): boolean`, exported from extension/deny_list.js
 
 ```compose
 id: 001
@@ -202,6 +206,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - An issue under the feature without the block is not a task (a story): the CLI ignores it.
   One labelled `Task` is a hand task (a lowfi flow in Frame0): `run` never dispatches it, and spec-check counts it as one of its story's tasks.
 - `## Test plan` may end with a ```` ```scenarios ```` block per docs/tasks.md; `spec-check` checks it.
+- `## Interfaces` names, with exact signatures, what the task takes from other tasks (Consumes) and what other tasks take from it (Produces); a task nothing crosses omits the section.
 - A design task (0d) adds `kind: design` and replaces `files:` with `nodes:` (Figma page and top-level names it may touch); its `test:` is `compose figma judge --project <slug> --only NNN`.
   An optional `figma:` line (file key or url) names the task's own Figma file when not the stored one.
 
@@ -250,6 +255,8 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - Linear is the source of truth.
   What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it.
   Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.compose/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the layers' PR text under `pr/` (step 4), the architect's Lavish page under `lavish/`, and the Frame0 wireframes in `design.f0` (app data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, its state kept true at every step and level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
+- Rule, do not stall: a judgment call that is not a product decision (which split, which `after:`, whether a finding is a defect, which of two equal libraries) is the team lead's, made in the wake that raised it and logged as one comment on the issue it touches.
+  Only a choice the product owner must make (one they settled, scope, money, anything user-facing they have not seen) goes up, and it goes up as a card in the card format (0b), never as a question inside a report.
 - After the first dispatch, a change to the map, plan, or a task brief is a change of course (step 8): opened with `change start`, closed with `change done`, never an untracked edit, so it can be undone.
   That includes step 7's re-split of an exhausted task and the product owner's edits to the task list in 3b.
 - A `PAYMENT REQUIRED` stop is the user's, not yours.

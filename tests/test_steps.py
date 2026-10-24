@@ -12,7 +12,7 @@ ROWS = [("Homebrew", D, "interactive"), ("git", R, "manual"), ("npx", R, "run"),
         ("pi openrouter-fast provider", R, "write"), ("compose CLI link", R, "write"), ("compose skill link", R, "write"),
         ("Codex skill link", D, "write"), ("Codex commands", D, "write"), ("Codex hooks", D, "write"), ("~/.local/bin on PATH", R, "manual"),
         ("OpenRouter key", R, "key"), ("TypeSafe key", R, "key"), ("Linear key", R, "key"), ("uv", D, "run"), ("jev", D, "run"),
-        ("treehouse", D, "run"), ("bp link", D, "write"), ("Chromium", D, "run"), ("superpowers", D, "run", c), ("herdr pi integration", D, "run"),
+        ("treehouse", D, "run"), ("bp link", D, "write"), ("Chromium", D, "run"), ("herdr pi integration", D, "run"),
         ("herdr claude integration", D, "run", c), ("TEXT_MODEL lines", D, "write"), ("git rerere", D, "run"), ("pi auth.json override", D, "manual"),
         ("Claude Code permissions", D, "perms"),
         ("framelink-figma", G, "run", c), ("framelink-figma token", G, "key")]
@@ -173,8 +173,7 @@ class AbsentLink(unittest.TestCase):
         self.assertEqual(fc_steps.check(self.rows["compose CLI link"], self.co), (False, f"{p} is not a link to {self.co / 'bin/compose'}"))
 
 class RowFixes(unittest.TestCase):
-    """superpowers adds its marketplace first; herdr integration details drop the agent; the pi auth.json override row names file and reason."""
-    SUPERPOWERS = "claude plugin marketplace add anthropics/claude-plugins-official && claude plugin install superpowers@claude-plugins-official"
+    """herdr integration details drop the agent; the pi auth.json override row names file and reason."""
 
     def setUp(self):
         tmp = Path(tempfile.mkdtemp()); self.bin = tmp / "bin"; self.bin.mkdir()
@@ -183,11 +182,6 @@ class RowFixes(unittest.TestCase):
 
     def status(self, *lines):
         f = self.bin / "herdr"; f.write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(f"'{l}'" for l in lines) + "\n"); f.chmod(stat.S_IRWXU)
-
-    def test_superpowers_adds_the_marketplace_then_installs(self):
-        name, check, install, level, needs_claude, mode = self.rows["superpowers"]
-        self.assertEqual(install, self.SUPERPOWERS)
-        self.assertEqual((check, level, needs_claude, mode), (".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "default", True, "run"))
 
     def test_herdr_integration_detail_drops_the_agent(self):
         self.assertEqual(fc_steps.herdr_integration("pi"), (False, ""))  # no herdr on PATH

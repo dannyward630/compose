@@ -38,7 +38,6 @@ Setup installs these unless you skip them.
 | `bp` and Chromium | browser exploration and extension e2e ([bp/README.md](../bp/README.md)) | setup links `bp/bin/bp.mjs` into `~/.local/bin` and runs `npx playwright install chromium` |
 | treehouse | worktrees from a pool inside the repo; plain git worktrees without it | `curl -fsSL https://kunchenguid.github.io/treehouse/install.sh \| sh` |
 | trail | `file:line` context packs for implementers | `npm i -g @trailhq/trail-code` |
-| superpowers plugin | the writing-plans skill (needs Claude Code) | `claude plugin install superpowers@claude-plugins-official` |
 | herdr integrations | herdr shows pi and Claude Code agents' state (the Claude one needs Claude Code) | `herdr integration install pi`, `herdr integration install claude` |
 | Codex | a harness for the team lead, implementers, fix rounds and the test reader as well as teammate sessions; you sign in with `codex login`, and setup links its skill, commands and hooks | `codex login` (setup never installs Codex and never signs in for you; its rows only link, copy and write) |
 | herdr config | herdr's own toasts and sounds stay off | setup writes it ([new-machine.md](new-machine.md#herdr-settings)) |

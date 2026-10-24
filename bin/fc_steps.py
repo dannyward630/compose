@@ -120,7 +120,6 @@ STEPS = (  # the rows, in setup order
     ("treehouse", "treehouse", fc_worktree.TREEHOUSE_INSTALL, "default", False, "run"),
     ("bp link", lambda co: owned_link("bp link", co), "compose setup", "default", False, "write"),
     ("Chromium", lambda co: (fc_checks.chromium_installed(), ""), "npx playwright install chromium", "default", False, "run"),
-    ("superpowers", ".claude/plugins/cache/*/superpowers/*/skills/writing-plans/SKILL.md", "claude plugin marketplace add anthropics/claude-plugins-official && claude plugin install superpowers@claude-plugins-official", "default", True, "run"),
     ("herdr pi integration", lambda co: herdr_integration("pi"), "herdr integration install pi", "default", False, "run"),
     ("herdr claude integration", lambda co: herdr_integration("claude"), "herdr integration install claude", "default", True, "run"),
     ("TEXT_MODEL lines", lambda co: (fc_pi.text_model_set(fc_config.ENV_FILE), ""), "compose setup", "default", False, "write"),
