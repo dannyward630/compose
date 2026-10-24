@@ -221,7 +221,7 @@ class FigmaJudge(unittest.TestCase):
         self.assertIn("CRITERION: Has a pay button", self.confirm.call_args.args[2])
         replies = {"Cart page": [("MET", 0.9), ("MET", 0.9)], "Pay": [("NOT_MET", 0.9)]}
         with self.assertRaises(SystemExit) as e:
-            self.judge("001,004", replies, confirm={"confirmed": True, "evidence": "FRAME 004"})
+            self.judge("001,004", replies, confirm={"violated": True, "evidence": "FRAME 004"})
         self.assertNotIn(e.exception.code, (0, None))
         res = json.loads((self.proj / "results" / "004.json").read_text())
         self.assertEqual((res["status"], len(res["failed"])), ("failed", 1))
@@ -229,7 +229,7 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual([c.args[1]["id"] for c in self.ev.call_args_list], ["001"])
 
     def test_a_refuted_not_met_or_unclear_is_re_asked_once_and_only_a_met_reply_passes(self):
-        refuted = {"confirmed": False, "evidence": "Criterion is satisfied"}
+        refuted = {"violated": False, "evidence": "Criterion is satisfied"}
         res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=refuted, reask="MET")
         row = res["criteria"][0]
         self.assertEqual((res["status"], row["choice"], row["first_choice"], row["reask"]["choice"], row["evidence"]), ("passed", "MET", "NOT_MET", "MET", "Criterion is satisfied"))
@@ -252,7 +252,7 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], res["criteria"][0]["choice"], self.ask.call_count), ("blocked", "NOT_MET", 1))
 
     def test_only_all_met_passes_so_unclear_and_unconfirmed_not_met_block(self):
-        res = self.judge("001", {"Cart page": [("NOT_MET", 0.0), ("UNCLEAR", 0.14)]}, confirm={"confirmed": False, "evidence": ""}, blocks=True)
+        res = self.judge("001", {"Cart page": [("NOT_MET", 0.0), ("UNCLEAR", 0.14)]}, confirm={"violated": False, "evidence": ""}, blocks=True)
         self.assertEqual((res["status"], res["failed"], len(res["unclear"])), ("failed", [], 2))
         self.assertFalse(self.ev.called)
 
@@ -278,8 +278,20 @@ class FigmaJudge(unittest.TestCase):
         self.assertFalse((self.proj / "results" / "001.json").exists())
 
     def test_a_confirm_reply_wrapped_in_a_list_is_unwrapped(self):
-        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=[{"confirmed": True, "evidence": "FRAME 004"}], blocks=True)
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=[{"violated": True, "evidence": "FRAME 004"}], blocks=True)
         self.assertEqual((res["status"], res["criteria"][0]["evidence"], self.confirm.call_count, res["judge_errors"]), ("failed", "FRAME 004", 1, []))
+
+    def test_only_a_violated_reply_confirms_a_not_met(self):
+        """Asked for {"confirmed": bool}, the confirmer answered confirmed=true with evidence that the criterion is met (on "No
+        sidebar ...": "no Sidebar exists"), reading the key as "the criterion is confirmed", and a met criterion failed. The
+        reply names the violation, after its evidence, and the prompt says a met or rightly absent criterion is no violation."""
+        for reply, status in (({"evidence": "no node is a Sidebar, as the criterion requires", "violated": False}, "passed"),
+                              ({"evidence": "FRAME 004 is a Sidebar", "violated": True}, "failed")):
+            res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, confirm=reply, reask="MET", blocks=True)
+            self.assertEqual((res["status"], res["judge_errors"]), (status, []), reply)
+        system = self.confirm.call_args_list[0].args[1]
+        self.assertIn('{"evidence": str, "violated": bool}', system)
+        self.assertIn("absent and it is absent, is violated=false", system)
 
     def test_a_confirm_call_that_still_fails_is_a_judge_error_not_a_verdict(self):
         for kw in ({"confirm": [1, 2]}, {"fail": ValueError("bad json")}):
@@ -355,7 +367,7 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual([s["tree_part"] for s in self.states][:2], [f"1 of {res['chunks']}", f"2 of {res['chunks']}"])
 
     def test_a_confirmed_violation_in_one_chunk_fails_the_criterion_whatever_the_others_say(self):
-        res = self.judge_big(lambda t: ("NOT_MET", 0.9) if '"id": "1:12"' in t else ("MET", 0.0), confirm={"confirmed": True, "evidence": "variant=12"})
+        res = self.judge_big(lambda t: ("NOT_MET", 0.9) if '"id": "1:12"' in t else ("MET", 0.0), confirm={"violated": True, "evidence": "variant=12"})
         self.assertEqual((res["status"], res["criteria"][0]["choice"], res["criteria"][0]["evidence"]), ("failed", "NOT_MET", "variant=12"))
 
     def test_a_node_held_by_another_chunk_is_met_though_the_chunks_without_it_said_not_met(self):
@@ -364,7 +376,7 @@ class FigmaJudge(unittest.TestCase):
         not depend on it: the confirm call sees the whole tree, finds the node, and the chunk that holds it decides."""
         text = big_tree(5)
         has = lambda t: '"id": "2:4"' in t
-        confirm = lambda system, user: {"confirmed": not has(user), "evidence": "2:4 is in the tree" if has(user) else "the tree has no 2:4"}
+        confirm = lambda system, user: {"violated": not has(user), "evidence": "2:4 is in the tree" if has(user) else "the tree has no 2:4"}
         for absent in (("NOT_MET", 0.9), ("UNCLEAR", 0.0), ("NOT_MET", 0.3)):
             with self.subTest(absent=absent):
                 res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else absent, confirm=confirm, text=text, criterion="The last variant has its Tint (2:4)")
@@ -383,7 +395,7 @@ class FigmaJudge(unittest.TestCase):
 
     def test_a_tree_too_big_for_one_confirm_call_is_confirmed_chunk_by_chunk_where_absence_is_no_violation(self):
         has = lambda t: '"id": "2:12"' in t
-        res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else ("NOT_MET", 0.9), confirm={"confirmed": False, "evidence": "nothing here violates it"})
+        res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else ("NOT_MET", 0.9), confirm={"violated": False, "evidence": "nothing here violates it"})
         self.assertGreater(len(big_tree()), fc.fc_figma.CONFIRM_TREE_CHARS)
         self.assertEqual((res["status"], self.confirm.call_count), ("passed", res["chunks"] - 1))
         for call in self.confirm.call_args_list:
