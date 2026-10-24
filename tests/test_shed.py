@@ -155,3 +155,8 @@ class ShedMemory(unittest.TestCase):
         held = [self.go(t, lv, avg) for t, lv, avg in ((1070, 2, 1.0), (1075, 4, 1.0), (1080, 1, 9.0), (1085, None, 9.0))]
         got = [self.go(t, None, 7.0) for t in (1090, 1100, 1155)]
         self.assertEqual((held, got, self.pids("paused")), ([[]] * 4, [self.sig(200, CONT), [], self.sig(400, CONT)], []))
+    def test_normal_memory_resumes_the_paused_agents_in_reverse_one_a_minute(self):
+        self.go(1000, 4); self.go(1065, 4); self.go(1130, 4)
+        self.assertEqual(self.pids("paused"), [400, 200, 100])
+        got = [self.go(t, 1, 7.0) for t in (1135, 1140, 1194, 1195, 1254, 1255)]
+        self.assertEqual((got, self.pids("paused")), ([self.sig(100, CONT), [], [], self.sig(200, CONT), [], self.sig(400, CONT)], []))
