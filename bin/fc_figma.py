@@ -518,7 +518,7 @@ def cmd_figma(a):
                     raise
                 except Exception as e:  # noqa: BLE001
                     row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
-            choice = figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)
+            choice = row["choice"] if row.get("judge_error") else figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)  # an error is never re-asked into a pass
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)
         prev = {}

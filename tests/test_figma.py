@@ -416,6 +416,7 @@ class FigmaJudge(unittest.TestCase):
         res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=text, criterion=crit, confirm=lambda system, user: {"no": "verdict"})
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("blocked", "UNCLEAR"))
         self.assertIn("confirm call failed", res["judge_errors"][0]["evidence"])
+        self.assertNotIn("reask", res["criteria"][0])  # the chunks' re-ask could still turn it MET
 
     def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
         def jev(env, cfg, state, q, label):
