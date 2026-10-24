@@ -646,6 +646,17 @@ class Changes(unittest.TestCase):
         self.assertNotIn("Edited", out)
         self.assertIn("No changes: the plan stays as it was.", out)
 
+    def test_the_route_and_evidence_the_cli_writes_are_not_an_edit(self):
+        change(self.proj, self.repo, "start", why="x")
+        stamped = dict(BEFORE["ENG-3"], description=BEFORE["ENG-3"]["description"].replace(
+            "\n\n```compose", "\n\n## Route\n\nrerouted after a failed run\n\n```compose") + "\n## Evidence\n\nVerdict: passed\n")
+        synced(self.proj, MAP, dict(BEFORE, **{"ENG-3": stamped}), ahead=2)
+        out = change(self.proj, self.repo, "done")
+        self.assertNotIn("Edited", out)
+        self.assertEqual(fc.fc_change.load_change(self.proj, "C1")["diff"]["edited"], [])
+        edited = dict(stamped, description=stamped["description"].replace("localStorage", "the server"))
+        self.assertEqual(fc.fc_change.change_diff({"feature": {}, "issues": BEFORE}, {"feature": {}, "issues": {**BEFORE, "ENG-3": edited}})["edited"], ["ENG-3"])
+
     def test_a_canceled_issue_the_sync_no_longer_lists_still_counts(self):
         change(self.proj, self.repo, "start", why="x")
         synced(self.proj, MAP, {"ENG-3": BEFORE["ENG-3"]}, ahead=2)
