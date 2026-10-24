@@ -294,12 +294,14 @@ def cmd_toolsmith(a):
     if not entry:
         sys.exit(f"no tool-bug entry for project {proj.name}")
     repo, state = fc_toolbug.REPO, fc_toolbug.gh_status()[0]
+    same = len(fc_toolbug.entries_at(proj.name, entry["at"]))  # several at one time: the entry is named by its number
+    at = f"{entry['at']}#{same}" if same > 1 else entry["at"]
     if state == "maintainer":
         variant = f"""4. Maintainer on {repo}: file or comment first, then fix root cause on own branch in your own worktree of compose repo,
    with test failing without fix, passing with it; run only test files of what you changed, never whole suite.
    Never commit on main of any checkout, in ~/.compose/src, or in project worktree: tool refuses.
 5. Commit with plain message, no `Fixes #`, then run
-   `compose tool-bug pr --project {proj.name} --entry "{entry['at']}" --worktree <your worktree>`: pushes branch, opens PR,
+   `compose tool-bug pr --project {proj.name} --entry "{at}" --worktree <your worktree>`: pushes branch, opens PR,
    closing issue when product owner merges. You never merge.
 6. Report `done` with the PR's URL.
 """
@@ -310,7 +312,7 @@ def cmd_toolsmith(a):
 """
         if state == "no-gh":
             variant += "   gh fails here: if filing prints `gh auth login` hint, put it in needs-user line too.\n"
-    print(TOOLSMITH_BRIEF.format(project=proj.name, reporter=entry["reporter"], at=entry["at"], cli_commit=entry["cli_commit"],
+    print(TOOLSMITH_BRIEF.format(project=proj.name, reporter=entry["reporter"], at=at, cli_commit=entry["cli_commit"],
                                  cli_repo=entry["cli_repo"], message=entry["message"], repo=repo, variant=variant))
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code

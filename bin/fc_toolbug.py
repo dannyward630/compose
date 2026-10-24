@@ -99,10 +99,42 @@ def post(title, body, comment=None):
     out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
     return out[-1] if out else None
 
+def split_ordinal(at):
+    """(time, n) of an entry name: `<at>#<n>` picks the nth entry (1-based, log order) of a project that logged several at one time."""
+    m = re.fullmatch(r"(.*)#(\d+)", at)
+    return (m.group(1), int(m.group(2))) if m else (at, None)
+
+def entries_at(project, at):
+    """The tool-bugs.jsonl entries of `project` whose time is exactly `at`, in log order, each as (line index, entry)."""
+    import json
+    log = Path(fc_crew.TOOL_BUGS)
+    found = []
+    for i, line in enumerate(log.read_text().splitlines() if log.exists() else []):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("project") == project and e.get("at") == at:
+            found.append((i, e))
+    return found
+
 def find_entry(project, at):
     """(project, at, note) of the tool-bugs.jsonl entry `at` names: the project's own entry at that time, else the one entry of any
     project at that time, else the one entry within 2 seconds of it (a `compose watch` event can show a second off), with a note
-    saying which one was used. (project, at, None) when nothing matches; ValueError listing the candidates when several do."""
+    saying which one was used. (project, at, None) when nothing matches; ValueError listing the candidates when several do, also
+    when the project logged several entries at that time and `at` carries no `#<n>` (the returned `at` then keeps its `#<n>`)."""
+    base, n = split_ordinal(at)
+    project, found, note = find_entry_time(project, base)
+    same = entries_at(project, found)
+    if n is None and len(same) > 1:
+        raise ValueError(f"{len(same)} entries of {project} share {found}, pass the one you mean:\n"
+                         + "\n".join(f"  {found}#{k}: {e.get('message', '')[:70]}" for k, (_, e) in enumerate(same, 1)))
+    if n is not None and not 1 <= n <= max(len(same), 1 if not same else 0):
+        raise ValueError(f"{project} has {len(same)} entries at {found}, none numbered #{n}")
+    return project, found if n is None else f"{found}#{n}", note
+
+def find_entry_time(project, at):
+    """find_entry's time match: (project, at, note) without the `#<n>` rule."""
     import json
     from datetime import datetime
     log = Path(fc_crew.TOOL_BUGS)
@@ -138,22 +170,18 @@ def record_issue(project, url, at, field="issue"):
     log = fc_crew.TOOL_BUGS
     if not log.exists():
         return None
+    at, n = split_ordinal(at)
+    same = entries_at(project, at)
+    if not same or (n is not None and not 1 <= n <= len(same)):
+        return None
+    i, e = same[-1 if n is None else n - 1]
+    if field in e:
+        return e[field]
+    e[field] = url
     lines = log.read_text().splitlines(keepends=True)
-    for i in range(len(lines) - 1, -1, -1):
-        try:
-            e = json.loads(lines[i])
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue
-        if e.get("project") == project and e.get("at") == at:
-            if field in e:
-                return e[field]
-            e[field] = url
-            lines[i] = json.dumps(e) + "\n"
-            log.write_text("".join(lines))
-            return url
-    return None
+    lines[i] = json.dumps(e) + "\n"
+    log.write_text("".join(lines))
+    return url
 
 def cmd_tool_bug_pr(a):
     """`tool-bug pr --worktree <path>`: push the toolsmith's branch from its own worktree of the compose repo and open a PR on REPO that
@@ -189,8 +217,10 @@ def cmd_tool_bug_pr(a):
             d = json.loads(line)
         except ValueError:
             continue
-        if isinstance(d, dict) and d.get("project") == project and (at in (None, d.get("at"))):
+        if isinstance(d, dict) and d.get("project") == project and (at is None or split_ordinal(at)[0] == d.get("at")):
             entry = d
+    if at is not None and (same := entries_at(project, split_ordinal(at)[0])):
+        entry = same[-1 if split_ordinal(at)[1] is None else split_ordinal(at)[1] - 1][1]
     n = re.search(r"/issues/(\d+)$", entry.get("issue", ""))
     pushed = fc_core.sh(["git", "push", "-q", "-u", "origin", branch], wt, check=False)
     if pushed.returncode:
@@ -204,7 +234,7 @@ def cmd_tool_bug_pr(a):
     print(out[-1])
     if note:
         print(note)
-    if entry and record_issue(project, out[-1], entry["at"], "pr") != out[-1]:
+    if entry and record_issue(project, out[-1], at or entry["at"], "pr") != out[-1]:
         print(f"{out[-1]} not recorded: {entry['at']} already links another PR")
     elif a.entry and not entry:
         print(f"{out[-1]} not recorded: no tool-bugs.jsonl entry has at {a.entry}, or within 2 seconds of it")
