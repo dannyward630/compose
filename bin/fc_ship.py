@@ -29,10 +29,11 @@ def checked(label, outs):
     return run
 
 def layer_commands(proj, layer, checks, top):
-    """What the gate runs on a layer: the `test` of each task the layer holds, then every check on the top layer or only the cheap ones
+    """What the gate runs on a layer: the `test` of each task it is the lowest layer for (build_layers' `tested`: the task's code and
+    all its test commits are there, which can be above the layer with its code), then every check on the top layer or only the cheap ones
     (all but a whole test suite) below it, so a layer is held to its own tasks and the full suite runs once, on the stack as a whole."""
     tests = {m["id"]: m.get("test") for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj))}
-    return list(dict.fromkeys([c for c in checks if top or not fc_proc.suite(c)] + [tests[t] for t in layer["tasks"] if tests.get(t)]))
+    return list(dict.fromkeys([c for c in checks if top or not fc_proc.suite(c)] + [tests[t] for t in layer["tested"] if tests.get(t)]))
 
 def against_base(repo, cfg, wt, base, top, failed, ran):
     """{command: (new, touched, accepted, unknown)} for the failing ids of a layer (`failed`: command -> ids), judged by what the same
@@ -62,7 +63,7 @@ def layer_refusal(name, c, out, why=""):
 
 def layer_checks(repo, proj, layers, trunk, wt):
     """The gate on a submit: verify.json `checks` (the cheap ones, never e2e) on each layer's own tree, bottom up, in the CLI's
-    worktree. Each layer runs the tests of its own tasks; the top layer also every check, a layer below it only the cheap ones (layer_commands).
+    worktree. Each layer runs the tests of the tasks it is the lowest layer for (layer_commands); the top layer also every check, a layer below it only the cheap ones (layer_commands).
     A failing test that fails on the stack's base too, in a test the stack does not touch, was red before this work: it is accepted
     and reported (against_base). One that passes on the base, or that the stack touches, refuses the submit, as does a failure that
     names no test. The first layer refused is the reason returned, with nothing pushed; "" when every layer passes. A layer that

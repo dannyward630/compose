@@ -80,6 +80,25 @@ class LayerScope(Gate):
         self.assertIn("Nothing was pushed", stop)
         self.assertFalse(any("stack submit" in c for c in self.log()))
 
+    def test_a_task_whose_test_commit_sits_in_a_higher_layer_is_tested_there_not_where_its_code_is(self):
+        """All three tasks protect one test file. 003's test went in first and 001's was appended right after it, so 001's test
+        cannot apply below 003's layer: placement puts it there, and the gate runs 001's `test` on that layer, the lowest one
+        that holds both 001's code and 001's test."""
+        tasks = [{"id": t, "protected": [f"t{t}.test", "shared.test"], "files": [f"{t}.src"], "after": "", "test": f"test -f {t}.src", "title": f"Build {t}", "linear": f"ENG-{t}", "body": f"## Goal\nBuild {t}.\n"}
+                 for t in ("001", "002", "003")]
+        tasks[0]["test"] = f"grep -q case001 shared.test && echo t001 >> {self.counter}"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("t003.test", "u\n" * 5); self.write("shared.test", "case003\n"); self.commit("tests for 003")
+        self.write("shared.test", "case003\ncase001\n"); self.commit("tests for 001")
+        self.config(checks=["true # unittest"])
+        out, code = self.submit()
+        self.assertEqual(self.git("ls-tree", "--name-only", "compose/p-layer-01", "shared.test"), "")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ran(), ["t001"])
+        scope = [l for l in out if l.startswith("layers scope")]
+        self.assertNotIn("grep -q case001", scope[0] + scope[1])
+        self.assertIn("grep -q case001", scope[2])
+
     def test_a_task_without_a_test_adds_no_command_and_a_command_runs_once_on_a_layer(self):
         self.tests(**{"001": "", "002": f"echo same >> {self.counter}", "003": f"echo same >> {self.counter}"})
         self.config(checks=[f"echo same >> {self.counter}"])
