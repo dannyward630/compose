@@ -1408,11 +1408,11 @@ class WatchLoadEvents(unittest.TestCase):  # the load log reaches each watcher o
         self.load, self.proj = fc_load, Path(tempfile.mkdtemp()) / "hw"
         (self.proj / "results").mkdir(parents=True)
         self.json = self.proj / "results" / "watch-m.json"
-        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(10.0,) * 3)):  # between low and high: update() changes nothing
+        for p in (mock.patch("os.cpu_count", return_value=8), mock.patch("os.getloadavg", return_value=(9.0,) * 3)):  # between low (8) and warn (10): update() changes nothing
             p.start(); self.addCleanup(p.stop)
 
     def events(self, key="m"):
-        return fc.fc_watch.load_events(self.proj, key)
+        return fc.fc_watch.load_lines(self.proj, key)  # the shed adds its own lines on a tick (test_shed)
 
     def test_a_hold_and_a_release_are_each_reported_once_after_the_first_call(self):
         self.load.update(avg=13.0); self.load.update(avg=7.0)
