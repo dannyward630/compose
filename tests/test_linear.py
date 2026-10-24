@@ -246,14 +246,14 @@ class DesignTasks(unittest.TestCase):
         (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         design = lambda i, nodes: issue(f"ENG-{i}", f"Page {i}", block(id=f"00{i}", kind="design", nodes=nodes, test="t"))
         self.tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
-            design(1, " Checkout/Cart ,Checkout/Pay"), issue("ENG-2", "Store", block(id="002", files="a.go, b.go", protected="a_test.go", test="go test")),
+            design(1, " Checkout/Cart ,Checkout/Pay"), issue("ENG-2", "Store", block(id="002", files="a.go, b.go", protected="a_test.go", figma_nodes="7-21, 9:144", test="go test")),
             design(3, "Home/Hero"), design(4, "Checkout/Summary"), design(5, "Home/Footer")]})
         self.by = {m["id"]: m for m in fc.fc_tasks.load_tasks(self.proj)}
 
     def test_sync_keeps_kind_and_nodes_and_code_tasks_drops_design(self):
         self.assertEqual((self.by["001"]["kind"], self.by["001"]["nodes"]), ("design", ["Checkout/Cart", "Checkout/Pay"]))
-        self.assertEqual({k: self.by["002"][k] for k in ("kind", "nodes", "files", "protected")},
-                         {"kind": "code", "nodes": [], "files": ["a.go", "b.go"], "protected": ["a_test.go"]})
+        self.assertEqual({k: self.by["002"][k] for k in ("kind", "nodes", "files", "protected", "figma_nodes")},
+                         {"kind": "code", "nodes": [], "files": ["a.go", "b.go"], "protected": ["a_test.go"], "figma_nodes": ["7-21", "9:144"]})
         self.assertEqual([m["id"] for m in fc.fc_tasks.code_tasks(self.tasks + [{"id": "009"}])], ["002", "009"])  # no kind: an older sync, code
 
     def test_run_stack_and_acceptance_never_see_a_design_task(self):

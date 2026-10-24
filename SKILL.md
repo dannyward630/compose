@@ -209,6 +209,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
 - `## Interfaces` names, with exact signatures, what the task takes from other tasks (Consumes) and what other tasks take from it (Produces); a task nothing crosses omits the section.
 - A design task (0d) adds `kind: design` and replaces `files:` with `nodes:` (Figma page and top-level names it may touch); its `test:` is `compose figma judge --project <slug> --only NNN`.
   An optional `figma:` line (file key or url) names the task's own Figma file when not the stored one.
+- A code task that builds a Figma node names it on `figma_nodes: <node ids>`; `run` writes the node's Framelink JSON into its clone, so the brief never carries it.
 
 ## Rules
 - Fact-check before you say it.

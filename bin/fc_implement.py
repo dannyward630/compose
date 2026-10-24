@@ -1,6 +1,6 @@
 import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started, fc_figma
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -292,7 +292,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     words = "\n".join([goal.group(1) if goal else body] + [(wt / f).read_text() for f in meta["protected"] if (wt / f).exists()])
     section = fc_libapi.section(wt, meta["files"], words)
     pack = trail_pack(wt, f"{meta.get('title', '')}: {(goal.group(1) if goal else body)[:400]}", repo=repo, cap=12000 - len(section))
-    fc_readguard.write_guard(wt, meta["files"] + meta["protected"], pack)
+    fc_readguard.write_guard(wt, meta["files"] + meta["protected"] + (nodes := fc_figma.code_nodes(proj, wt, meta)), pack)
     context = (f"CONTEXT PACK from the repo's trail graph (exact file:line, with source). Use it instead of exploring. "
                f"If you need more, run `trail ask \"<question>\"` or `trail callers <symbol>`; do not open unrelated files.\n{pack}\n\n"
                if pack else "")
@@ -307,7 +307,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               f"(for example the original checkout this task was cloned from); those are read-only references, never edit them.\n\n"
               f"{context}{body}\n\n"
               f"Files you may edit: {abs_files}.\n"
-              f"Files you must NOT edit: {abs_protected}.\n"
+              f"Files you must NOT edit: {abs_protected}.\n" + (f"Figma nodes this task builds, as Framelink JSON (read, never edit): {', '.join(nodes)}.\n" if nodes else "") +
               f"Done means this command exits 0: {meta['test']}\n"
               "Do not run it, or any other test or build: compose runs the test after your turn ends and sends you what failed. "
               "Read the test file, edit, and end your turn.\n"

@@ -1362,8 +1362,10 @@ class ReadGuardWiring(unittest.TestCase):
     """Task 009 (NEB-946): run_task writes the guard, herdr pi loads it, refusals are counted per attempt."""
     USAGE = {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
 
-    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}, pack="", stale=0):
+    def run_one(self, impl, task_extra=None, attempts=3, files={"a.txt": "no\n"}, pack="", stale=0, figma=None):
         root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
+        if figma:
+            (proj / "linear.json").write_text(json.dumps({"figma": figma}))
         (proj / "worktrees").mkdir(); (proj / "worktrees" / "001.refused").write_text("{}\n" * stale)  # a previous run's refusals
         git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main")
@@ -1389,6 +1391,29 @@ class ReadGuardWiring(unittest.TestCase):
             wt = proj / "worktrees" / "001"
             self.assertTrue(seen[0], "no guard file beside the clone when the turn started")
             self.assertEqual(set(seen[0]["allow"]), {os.path.realpath(wt / f) for f in allowed}, pack)
+
+    def test_a_code_task_reads_its_figma_nodes_from_the_clone_and_never_commits_them(self):
+        doc = {"metadata": {"name": "f"}, "nodes": [{"id": "7:21", "name": "message", "type": "FRAME"}], "globalVars": {"styles": {}}}
+        fetched, seen = [], []
+        def fetch(key, node=None, depth=None):
+            fetched.append((key, node))
+            return json.dumps(doc)
+        def impl(cwd, model, prompt, *a, **k):
+            g = json.loads((Path(cwd).parent / "001.guard.json").read_text())
+            seen.append((prompt, g["allow"], json.loads((Path(cwd) / ".figma" / "7-21.json").read_text())))
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return ("s", "", 1, self.USAGE)
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", fetch):
+            result, _, proj = self.run_one(impl, {"figma_nodes": ["7-21"]}, figma="KEY")
+        wt = proj / "worktrees" / "001"
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(fetched, [("KEY", "7:21")])
+        prompt, allow, doc = seen[0]
+        self.assertEqual(doc["nodes"][0]["name"], "message")
+        self.assertIn(os.path.realpath(wt / ".figma" / "7-21.json"), allow)
+        self.assertIn(str(wt.resolve() / ".figma" / "7-21.json"), prompt)
+        tracked = subprocess.run(["git", "ls-tree", "-r", "--name-only", result["branch"]], cwd=wt, capture_output=True, text=True).stdout
+        self.assertNotIn(".figma", tracked)
 
     def test_each_attempt_counts_only_its_own_refusals_in_the_result_and_the_run_log(self):
         def impl(cwd, *a, **k):

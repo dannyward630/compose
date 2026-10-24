@@ -27,5 +27,6 @@ figma_judge_chunks
 figma_reask
 store_figma
 figma_tree
+code_nodes
 figma_capabilities
 cmd_figma

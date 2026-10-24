@@ -114,6 +114,13 @@ Two design tasks never share a page.
 A design task never runs, stacks, or is judged from files.
 The builder saves the node tree as text under `results/`, and the judge reads it.
 
+## Code tasks that build a Figma node
+
+A code task names the Figma nodes it builds on a `figma_nodes:` line, like `figma_nodes: 7-21, 9-144`, and its brief never carries their JSON.
+`run` fetches each node through Framelink as the task starts, from the `figma:` file or the project's stored one.
+It writes them into the task's clone as `.figma/<node>.json`, kept out of git, and the implementer may read them.
+A fetch that fails stops the task before its first turn.
+
 ## Hand tasks
 
 A change nobody can write a red test for (removing tests, a rename, a config edit) is built by hand on its own branch.
