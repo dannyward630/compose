@@ -230,7 +230,7 @@ def review_units(repo, proj, base, trunk, chain, held=()):
     one unit per commit), then each chain task with its acceptance-test commits first and its own commits after. A test commit
     is a task's when every file it touches is in that task's `protected:`; when its author date falls in the span of a test
     writer whose task protects its files, it is that writer's task's alone. The tests of a task not in the chain yet ride with
-    the last one. The layers must apply: an owned commit goes to its writer's task, or without one to the first task that
+    the first one whose own commits edit their files (it was built on them), else the last one. The layers must apply: an owned commit goes to its writer's task, or without one to the first task that
     protects its files, as long as it applies there without the earlier commits on its files placed higher (a test written in
     its own part of a shared file skips them; one written on top of them does not). Else it goes no lower than the highest of
     them, to the first task at or above it that protects its files; one no task owns is a groundwork unit of its own right
@@ -247,6 +247,8 @@ def review_units(repo, proj, base, trunk, chain, held=()):
         return {"name": name, "key": key or name, "commits": commits, "lines": sum(n for _, n, _ in facts), "generated": gen,
                 "owned": {c: of[c] for c in commits if c in of}}
     # slot 2i is task i's unit, 2i+1 the groundwork right above it; placed: (commit, slot, files) of each commit placed in one
+    edits = [set(fc_core.sh(["git", "log", "--no-merges", "--name-only", "--no-renames", "--format=", f"{a}..{b}"], repo).stdout.split())
+             for a, b in zip([trunk, *chain], chain)]  # the files each chain task's own commits touch
     ground, slots, placed, writers, of = [], {}, [], test_writers(proj, protected), {}
     for c, at in (l.split() for l in fc_core.sh(["git", "log", "--reverse", "--no-merges", "--format=%H %at", f"{base}..{trunk}"], repo).stdout.splitlines()):
         files = set(commit_facts(repo, c)[0])
@@ -255,7 +257,7 @@ def review_units(repo, proj, base, trunk, chain, held=()):
         if not owners and files and any(files <= protected[t] for t in held):
             continue
         if not owners and files and any(files <= protected[t] for t in set(protected) - set(ids)):
-            owners = [len(ids) - 1]
+            owners = [next((i for i, e in enumerate(edits) if e & files), len(ids) - 1)]
         on = [(p, s) for p, s, f in placed if f & files]
         floor = max((s for _, s in on), default=None)
         fits = lambda slot: floor is None or slot >= floor or applies_without(repo, c, [p for p, s in on if s > slot], files)

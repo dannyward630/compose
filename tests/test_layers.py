@@ -120,6 +120,23 @@ class Layers(LayersBase):
         self.assertEqual(self.changed("compose/p-layer-03", "compose/p-layer-02"), {"t003.test", "003.src", "shared.test"})
         self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
 
+    def test_a_held_task_s_test_rides_no_higher_than_a_task_whose_own_commit_edits_it(self):
+        """Task 004 has not passed, so its test rides in the top layer; but 002 was built on the trunk with that test and its own
+        commit cuts lines from it: the test goes into 002's layer, where 002's commit applies on it."""
+        tasks = json.loads((self.proj / "results" / "tasks.json").read_text())["tasks"]
+        tasks += [{"id": "004", "protected": ["t004.test"], "files": ["004.src"], "after": ""}]
+        tasks[1]["files"] += ["t004.test"]
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"feature": {}, "tasks": tasks}))
+        self.write("t004.test", "a\n" * 5 + "b\n" * 5); self.commit("test 004")
+        self.git("checkout", "-q", "compose/p-002"); self.git("rebase", "-q", "compose/p")
+        self.write("t004.test", "a\n" * 5); self.commit("Cut the failing tests")
+        self.git("checkout", "-q", "compose/p")
+        out = self.stack()
+        self.assertEqual([l for l in out if "STOP" in l], [])
+        self.assertEqual(self.layers(), ["compose/p-layer-01", "compose/p-layer-02", "compose/p-layer-03"])
+        self.assertEqual(self.git("show", "compose/p-layer-02:t004.test") + "\n", "a\n" * 5)
+        self.assertEqual(self.git("diff", "compose/p-layer-03", "compose/p-003"), "")
+
     def stop(self, breaks):
         """Run `compose stack` after a first good build and `breaks`; return its STOP lines, having checked that it exits non-zero and
         changes no layer branch, recorded layer or gh stack."""
