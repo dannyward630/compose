@@ -1,4 +1,10 @@
-tick
+EMPTY
+home
 state
+table
 tree
 hottest
+alive
+signal_tree
+why_freeable
+tick
