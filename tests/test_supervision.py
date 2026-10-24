@@ -1262,6 +1262,37 @@ class OneManager(unittest.TestCase):
         self.assertEqual(self.owner(), self.A)
 
 
+class RestoredTeammate(unittest.TestCase):
+    """A teammate's session that comes back without the env its tab was created with (a computer restart) is still that teammate."""
+    PANE = "w10:pK"
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "hw"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+        (self.proj / "results" / "crew" / "hw-orchestrator.json").write_text(json.dumps({"name": "hw-orchestrator", "role": "orchestrator", "pane": self.PANE}))
+        (self.proj / "results" / "crew" / "hw-tests-001.json").write_text(json.dumps({"name": "hw-tests-001", "role": "tests-001", "pane": "w10:pT"}))
+
+    def restore(self, pane, env=None):
+        env = {"HERDR_PANE_ID": pane} | (env or {})
+        with mock.patch.dict(os.environ, env, clear=True):
+            fc.fc_crew.restore_crew_env(self.proj)
+            return dict(os.environ)
+
+    def test_the_team_lead_pane_gets_its_role_back_and_claims_no_manager_seat(self):
+        env = self.restore(self.PANE)
+        self.assertEqual((env["COMPOSE_ROLE"], env["COMPOSE_TEAMMATE"], env["COMPOSE_PROJECT"]), ("orchestrator", "hw-orchestrator", "hw"))
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True):
+            fc.fc_herdr.herdr_manager_claim(self.proj)  # no SystemExit, no manager.json
+        self.assertEqual(fc.fc_herdr.herdr_manager_record(self.proj), {})
+
+    def test_a_crew_teammate_gets_the_crew_role_and_a_manager_pane_gets_nothing(self):
+        self.assertEqual(self.restore("w10:pT")["COMPOSE_ROLE"], "crew")
+        self.assertNotIn("COMPOSE_ROLE", self.restore("w1Z:p1"))
+
+    def test_a_role_already_set_is_kept(self):
+        self.assertEqual(self.restore(self.PANE, {"COMPOSE_ROLE": "crew"})["COMPOSE_ROLE"], "crew")
+
+
 class SharedGuidance(unittest.TestCase):
     def test_every_teammate_brief_carries_the_wait_and_shell_rules(self):
         proj = Path(tempfile.mkdtemp()) / "hw"; proj.mkdir(parents=True)

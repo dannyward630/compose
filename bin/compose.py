@@ -375,6 +375,11 @@ def main():
         sys.stdout, sys.stderr = fc_core.Scrubbed(sys.stdout), fc_core.Scrubbed(sys.stderr)
         if a.cmd in ("run", "verify", "review", "bench", "resume"):  # the commands that spend; `watch` output stays one line
             fc_core.say(f"workspace {ws}")
+    if os.environ.get("HERDR_PANE_ID") and not os.environ.get("COMPOSE_ROLE") and hasattr(a, "repo"):  # a restored teammate pane has lost its env: no role looks like an engineering manager
+        try:
+            fc_crew.restore_crew_env(fc_core.project_dir(argparse.Namespace(repo=a.repo, project=getattr(a, "project", None))))
+        except SystemExit:  # no such project, or none named: this is no teammate's command
+            pass
     try:
         a.fn(a)
     except KeyboardInterrupt:

@@ -11,6 +11,26 @@ CREW_STATES = ("working", "needs-user", "blocked", "done", "tool-bug", "contradi
 CLI_REPO = Path(__file__).resolve().parent.parent  # the compose repo itself: where a toolsmith fixes the tool
 TOOL_BUGS = fc_config.CONFIG_PATH.parent / "tool-bugs.jsonl"  # every project's tool-bug reports, for the engineering manager
 
+def env_role(role):
+    """The COMPOSE_ROLE of a teammate's tab. `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code."""
+    return role if role in fc_hooks.GUARDED_ROLES else "planner" if role.startswith("planner-") else "crew"
+
+def restore_crew_env(proj):
+    """A teammate's session that comes back without the env its tab was created with (herdr rebuilds the pane after a computer
+    restart) is found by its pane in the project's crew records, and gets that env again: otherwise it is taken for an engineering
+    manager. A session with a role, outside herdr, or in a pane no record names is left alone."""
+    pane = os.environ.get("HERDR_PANE_ID")
+    if os.environ.get("COMPOSE_ROLE") or not pane:
+        return
+    for f in sorted((Path(proj) / "results" / "crew").glob("*.json")):
+        try:
+            c = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(c, dict) and c.get("pane") == pane and c.get("role") and c.get("name"):
+            os.environ.update(COMPOSE_ROLE=env_role(c["role"]), COMPOSE_TEAMMATE=c["name"], COMPOSE_PROJECT=Path(proj).name, COMPOSE_REPO=str(fc_herdr.project_worktree(proj)))
+            return
+
 def crew_dir(proj):
     d = proj / "results" / "crew"
     d.mkdir(parents=True, exist_ok=True)
@@ -281,7 +301,7 @@ def cmd_crew(a):
         brief = (f"You work in your own worktree {cwd}, on branch {branch}. Commit there; never switch branches in, or edit, "
                  f"the repo's own checkout. Report done with the branch name.\n\n") + brief
     space = fc_herdr.herdr_space(proj)
-    role = a.role if a.role in fc_hooks.GUARDED_ROLES else "planner" if a.role.startswith("planner-") else "crew"  # `guard` keeps the team lead and every planner, `planner-<ticket>` too, off the code
+    role = env_role(a.role)
     tab = fc_herdr.herdr_tab(space, fc_herdr.tab_label(proj, title), cwd, "--env", f"COMPOSE_ROLE={role}", "--env", f"COMPOSE_TEAMMATE={name}", "--env", f"COMPOSE_PROJECT={slug}", "--env", f"COMPOSE_REPO={wt}", "--env", "GRAFT_NO_GITIGNORE=1", "--env", "GRAFT_NO_IGNORE=1",
                              *[x for k, v in (fc_providers.pi_env(fc_models.pi_id(model)) if model.startswith("pi:") else {}).items() for x in ("--env", f"{k}={v}")],
                              *(["--env", f"COMPOSE_HARNESS={fc_config.HARNESS}"] if fc_config.HARNESS else []), check=True)
