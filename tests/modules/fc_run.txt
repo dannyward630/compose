@@ -9,6 +9,7 @@ joins_live_run
 still_open
 queue_tasks
 cmd_run
+suite_warning
 preflight
 claude_capped
 run_tasks

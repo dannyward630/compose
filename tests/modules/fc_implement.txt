@@ -10,6 +10,7 @@ HANG_HINT
 timed
 run_test
 cmd_timed
+task_checks
 run_task
 CONTRADICTION_RE
 says_none
