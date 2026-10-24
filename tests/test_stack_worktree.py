@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import contextlib, importlib.machinery, importlib.util, io, json, os, subprocess, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -292,6 +292,15 @@ class HeadsListing(unittest.TestCase):
         self.assertEqual(set(got), {"main", "w"})
         self.assertEqual(self.heads(wt), (got, []))
         self.git("branch", "y"); self.assertIn("y", self.heads(wt)[0])
+
+    def test_without_a_common_dir_nothing_is_cached_so_unrelated_repos_never_share_a_listing(self):
+        other = Path(tempfile.mkdtemp()).resolve(); self.addCleanup(shutil.rmtree, other, True)
+        for cmd in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "i"], ["branch", "only-here"]):
+            subprocess.run(["git", *cmd], cwd=other, check=True, capture_output=True)
+        with mock.patch.object(fc.fc_worktree, "common_dir", return_value=None):
+            (mine, listing), (theirs, again) = self.heads(), self.heads(other)
+            self.assertEqual(("only-here" in mine, "only-here" in theirs, len(listing), len(again)), (False, True, 1, 1))
+            self.assertEqual((self.heads()[1] != [], fc.fc_worktree._heads), (True, {}))
 
     def test_layer_branches_are_the_numbered_layers_bottom_first_and_follow_new_ones(self):
         for n in ("10", "2", "01-prerebase", "1", "x"): self.git("branch", f"compose/p-layer-{n}")

@@ -56,12 +56,13 @@ def heads(repo):
         _commons[key] = common_dir(repo)
     common = _commons[key]
     stamp = refs_stamp(common) if common else None
-    hit = _heads.get(common)
+    hit = _heads.get(common) if common else None
     if hit and hit[0] == stamp:
         return hit[1]
     out = fc_core.sh(["git", "for-each-ref", "--format=%(refname)", "refs/heads"], repo, check=False).stdout
     names = {l.removeprefix("refs/heads/") for l in out.split()}
-    _heads[common] = (stamp, names)
+    if common:  # without a common dir there is nothing to tell this repo's entry from another's: list afresh every time
+        _heads[common] = (stamp, names)
     return names
 
 def rename_legacy_branches(repo, proj):
