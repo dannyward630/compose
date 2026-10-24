@@ -1496,13 +1496,13 @@ class SiblingStubs(unittest.TestCase):
     TESTS = {"tests/test_one.py": "import unittest, m\n\n\nclass One(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(m.one(), 1)\n",
              "tests/test_names.py": "import unittest, m\n\n\nclass Names(unittest.TestCase):\n    def test_two_is_defined(self):\n        self.assertTrue(hasattr(m, 'two'))\n"}
 
-    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",), tests=None):
+    def run_one(self, answers, checks=("python3 -m unittest discover -s tests",), tests=None, task_checks=None):
         root = Path(tempfile.mkdtemp()); repo, proj = root / "repo", root / "proj"; repo.mkdir(); proj.mkdir(); self.addCleanup(shutil.rmtree, root, True)
         git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
         git("init", "-q", "-b", "main")
         for f, t in {"m.py": self.STUBS, ".gitignore": "__pycache__/\n", **(tests or self.TESTS)}.items(): (repo / f).parent.mkdir(parents=True, exist_ok=True); (repo / f).write_text(t)
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-        (proj / "verify.json").write_text(json.dumps({"checks": list(checks)}))
+        (proj / "verify.json").write_text(json.dumps({"checks": list(checks), **({} if task_checks is None else {"task_checks": list(task_checks)})}))
         task = {"id": "001", "title": "one", "files": ["m.py"], "protected": ["tests/test_one.py"], "model": "pi:p/primary", "after": "", "linear": "ENG-1",
                 "test": "python3 -m unittest discover -s tests -p test_one.py", "body": "## Goal\nMake one() return 1."}
         prompts, turn = [], iter(answers)
@@ -1534,6 +1534,13 @@ class SiblingStubs(unittest.TestCase):
         result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=(suite,))
         self.assertEqual(result["status"], "passed")
         self.assertEqual(counter.read_text().split(), ["run"])  # once, after the task: the base run only answers a failure
+
+    def test_task_checks_replace_checks_after_a_task_and_leave_the_suite_to_verify(self):
+        counter = Path(tempfile.mkdtemp()) / "runs"; self.addCleanup(shutil.rmtree, counter.parent, True)
+        suite = f"echo run >> {counter}; python3 -m unittest discover -s tests"
+        result, _ = self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=(suite,), task_checks=("true",))
+        self.assertEqual((result["status"], counter.exists()), ("passed", False))
+        self.assertIn("001 checks  `true` after the task", self.said)
 
     def test_a_check_that_runs_says_what_it_runs_before_it_starts(self):
         self.run_one(["def one():\n    return 1\n\n\ndef two():\n    raise NotImplementedError\n"], checks=("true",))

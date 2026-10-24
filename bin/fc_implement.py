@@ -209,6 +209,12 @@ def cmd_timed(argv):
     sys.stdout.write(r.stdout); sys.stderr.write(r.stderr if r.stderr.endswith("\n") or not r.stderr else r.stderr + "\n")
     sys.exit(r.returncode)
 
+def task_checks(cfg):
+    """The checks `run` makes after each task: verify.json `task_checks` when it has them, else `checks`, which verify and the stack's
+    layers run on the whole change."""
+    return (cfg["task_checks"] if "task_checks" in cfg else cfg.get("checks")) or []
+
+
 def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     meta = dict(task)  # the fallback switches meta["model"]; the shared task list stays as synced
     body = meta.pop("body")
@@ -257,7 +263,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         return result
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
-    checks, limit = fc_core.project_config(proj).get("checks") or [], int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
+    checks, limit = task_checks(fc_core.project_config(proj)), int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
     def checked(where):  # the project's checks run a long time: each one says what it runs, and where, before it starts
         def run(cmd, tree, secs, env=None):
             sha = fc_green.tree_of(tree)

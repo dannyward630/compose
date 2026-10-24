@@ -159,6 +159,15 @@ def cmd_run(a):
             m.setdefault("waits_on", []).append(f"the route ({held[m['id']]})")
     run_tasks(repo, proj, tasks, a)
 
+def suite_warning(cfg, tasks):
+    """The line to say before a run of `tasks` tasks when a check each task runs is a whole test suite, else None."""
+    suites = [c for c in fc_implement.task_checks(cfg) if fc_proc.suite(c)]
+    if not suites or tasks < 2:
+        return None
+    return (f"run warn  `{suites[0]}` is a whole test suite and runs after each of the {tasks} tasks; keep it under `checks`, which verify "
+            f"runs once, and list only the cheap checks under `task_checks` in verify.json")
+
+
 def preflight(models):
     """One tiny turn per model a run can call, before any clone: a wrong model id or preset slug stops the run here with the
     provider's message, instead of failing every task (and, for a fallback, only on the first miss). A rate limit proves the
@@ -244,6 +253,8 @@ def run_tasks(repo, proj, tasks, a):
     write_marker()
     fc_history.record(proj, repo, "run-start", tasks=len(tasks), parallel=a.parallel, attempts=a.attempts)
     fc_core.say(f"run start project={proj.name} tasks={len(tasks)} parallel={a.parallel} attempts={a.attempts}")
+    if warning := suite_warning(fc_core.project_config(proj), len(tasks)):
+        fc_core.say(warning)
     # Dependency order: a task runs once every `after:` task in this run has passed (it then stacks on that branch) or was
     # merged or skipped earlier. Independent tasks run in parallel; a chain runs layer by layer.
     metas = {m["id"]: m for m in tasks}
