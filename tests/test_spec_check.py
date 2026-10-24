@@ -157,12 +157,14 @@ class SpecCheck(unittest.TestCase):
         for body in ("import fc_shrink", "see bin/fc_shrink.py", "see bin/fc_shrink and fc_shrink.shrink"):
             self.assertEqual(miss(shrink, dict(jev, body=body)), {"004": {"001": ["bin/fc_shrink.py"]}}, body)
         self.assertEqual(miss(shrink, dict(jev, body="", test="python3 -m unittest tests.test_x; python3 bin/fc_shrink.py")), {"004": {"001": ["bin/fc_shrink.py"]}})
-        for body in ("see bin/fc_shrink_extra.py and old/bin/fc_shrink.py", "the shrink step", "fc_shrinker.run(x)"):  # a lookalike names nothing
+        for body in ("see bin/fc_shrink_extra.py and old/bin/fc_shrink.py", "the shrink step", "fc_shrinker.run(x)", "tests in bin/fc_shrink.test.py"):  # a lookalike names nothing
             self.assertEqual(miss(shrink, dict(jev, body=body)), {}, body)
         self.assertEqual(miss(shrink, dict(jev, files=["bin/fc_shrink.py"])), {})  # the same file is the file clash's to report
         for owner, body in (("app/src/lib/api.ts", "returns api.Identity and api.NewRouter"), ("server/api/api.go", "from api import x"), ("app/package.json", "imports from package X")):
             self.assertEqual(miss(dict(shrink, files=[owner]), dict(jev, body=body)), {}, body)  # a bare stem names a module only in Python (stem.name, import stem) and JS/TS (require)
-        for owner, body in (("app/src/lib/api.ts", "require('./api')"), ("app/package.json", "see app/package.json")):
+        for owner, body in (("app/src/lib/limit-message.ts", "Delete app/src/lib/limit-message.test.ts."), ("app/src/app/[threadId]/page.tsx", "app/src/app/[threadId]/page.test.tsx")):
+            self.assertEqual(miss(dict(shrink, files=[owner]), dict(jev, body=body)), {}, body)  # a test file's path does not name its source
+        for owner, body in (("app/src/lib/api.ts", "require('./api')"), ("app/package.json", "see app/package.json"), ("app/src/lib/limit-message.ts", "see app/src/lib/limit-message.")):
             self.assertEqual(miss(dict(shrink, files=[owner]), dict(jev, body=body)), {"004": {"001": [owner]}}, body)
         self.assertEqual(miss(dict(shrink, files=["app/package-lock.json"]), dict(jev, body="app/package-lock.json")), {})  # generated
         self.assertEqual(miss(dict(shrink, kind="design"), jev), {})  # a design task builds a page, not code
