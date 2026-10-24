@@ -332,7 +332,7 @@ class OwnWorktree(unittest.TestCase):
             p.start(); self.addCleanup(p.stop)
 
     def pr(self, worktree=None, **kw):
-        a = SimpleNamespace(**{**dict(project="shop", action="pr", worktree=str(worktree or self.wt), entry=None, title=None), **kw})
+        a = SimpleNamespace(**{**dict(project="shop", action="pr", worktree=str(worktree or self.wt), entry=None, title=None, issue=None), **kw})
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
             try: fc.fc_toolbug.cmd_tool_bug(a); status = 0
@@ -394,6 +394,13 @@ class OwnWorktree(unittest.TestCase):
         self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.remote, "rev-parse", "main"))  # main moved nowhere
         status, out = self.pr(title="Better title"); self.assertEqual(status, 0)
         self.assertEqual(json.loads(self.log.read_text())["pr"], self.PR); self.assertEqual(self.gh_calls[-1][self.gh_calls[-1].index("--title") + 1], "Better title")
+
+    def test_pr_fixes_the_issue_it_is_given_not_the_first_one_the_entry_links(self):
+        self.commit(self.wt, "fix.py"); self.gh()
+        status, out = self.pr(issue=9); self.assertEqual(status, 0)
+        body = self.gh_calls[-1][self.gh_calls[-1].index("--body") + 1]
+        self.assertIn("Fixes #9", body); self.assertNotIn("Fixes #2", body)
+        self.assertEqual(json.loads(self.log.read_text())["issue"], self.URL)
 
     def test_pr_fixes_the_numbered_entrys_issue_when_several_share_one_time(self):
         self.commit(self.wt, "fix.py"); self.gh()
@@ -459,8 +466,8 @@ class Cli(unittest.TestCase):
         self.assertEqual((a.comment, a.new, a.approved, a.entry), (None, True, True, "2026-10-17 15:30:00"))
 
     def test_tool_bug_pr_takes_the_worktree_title_and_entry(self):
-        a = self.run_main("tool-bug", "pr", "--project", "shop", "--worktree", "/tmp/fix", "--title", "Fix it", "--entry", "2026-10-17 15:30:00")[0].call_args.args[0]
-        self.assertEqual((a.action, a.project, a.worktree, a.title, a.entry), ("pr", "shop", "/tmp/fix", "Fix it", "2026-10-17 15:30:00"))
+        a = self.run_main("tool-bug", "pr", "--project", "shop", "--worktree", "/tmp/fix", "--title", "Fix it", "--entry", "2026-10-17 15:30:00", "--issue", "9")[0].call_args.args[0]
+        self.assertEqual((a.action, a.project, a.worktree, a.title, a.entry, a.issue), ("pr", "shop", "/tmp/fix", "Fix it", "2026-10-17 15:30:00", 9))
 
     def test_tool_bug_usage_errors(self):
         self.run_main("tool-bug", "file", "--project", "shop", "--body", "b.md")[0].assert_called_once()
