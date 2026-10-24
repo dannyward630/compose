@@ -986,5 +986,64 @@ class NoTestToWrite(unittest.TestCase):
         self.assertEqual(self.testcrews(only="003", print_=False)[1], ["tests-003"])
 
 
+class ScenarioPlannerLine(unittest.TestCase):
+    NEW = "   How to run (the `test:` command), what is covered in words, unlisted holdouts, then a `scenarios` block (SKILL.md)."
+    OLD = "   How to run (the `test:` command), what is covered in words, and that the test has holdout cases not listed."
+    BRIEF = fc.fc_briefs.PLANNER_BRIEF
+
+    def test_the_new_line_follows_the_test_plan_heading(self):
+        lines = self.BRIEF.splitlines()
+        self.assertEqual(lines[lines.index("   ## Test plan") + 1], self.NEW)
+        self.assertEqual(lines[lines.index("   ## Test plan") + 2], "   ## Constraints")
+
+    def test_the_new_line_appears_once_and_the_old_line_is_gone(self):
+        self.assertEqual(self.BRIEF.splitlines().count(self.NEW), 1)
+        self.assertNotIn(self.OLD, self.BRIEF)
+        self.assertNotIn("holdout cases not listed", self.BRIEF)
+
+    def test_the_brief_still_formats_with_its_four_fields_and_the_line(self):
+        fields = {f for _, f, _, _ in string.Formatter().parse(self.BRIEF) if f}
+        self.assertEqual(fields, {"issue", "name", "slug", "wt"})
+        printed = self.BRIEF.format(issue="NEB-9", name="n", slug="s", wt="/w")
+        self.assertIn(self.NEW + "\n", printed)
+
+
+class ScenarioTestBrief(unittest.TestCase):
+    LINE = ("The TASK BRIEF's `scenarios` block gives one scenario per criterion: write a case for each scenario and for each of its negative_cases, "
+            "then add holdout cases none of them lists, within the budget.\n")
+    F = "`" * 3
+    CRIT = "## Acceptance criteria\n\n* a\n* b\n\n"
+    COMPOSE = f"{F}compose\nfiles: bin/a.py\n{F}\n"
+    PLAIN = CRIT + COMPOSE
+    BLOCK = f"## Test plan\n\n{F}scenarios\nid: 1\ngiven: g\nnegative_cases: n\n{F}\n\n"
+    WITH = CRIT + BLOCK + COMPOSE
+    META = {"id": "005", "protected": ["tests/test_a.py"], "test": "true", "files": ["bin/a.py"]}
+
+    def brief(self, body="", **kw):
+        return fc.fc_briefs.test_brief({**self.META, "body": body}, "C", **kw)
+
+    def test_the_line_sits_between_the_cover_line_and_the_budget_line_once(self):
+        brief = self.brief(self.WITH)
+        self.assertIn("test behavior only.\n" + self.LINE + "Budget: at most 60 lines", brief)
+        self.assertEqual(brief.count(self.LINE), 1)
+
+    def test_with_the_line_removed_the_brief_is_the_plain_brief_for_the_same_body(self):
+        self.assertEqual(self.brief(self.WITH).replace(self.LINE, "", 1), self.brief(self.PLAIN).replace(self.PLAIN, self.WITH))
+
+    def test_the_line_holds_for_a_rebuilt_brief_and_a_task_budget(self):
+        brief = self.brief(self.WITH, budget=30, rebuilt=True)
+        self.assertIn("test behavior only.\n" + self.LINE + "Budget: at most 30 lines", brief)
+
+    def test_no_line_without_a_block(self):
+        plain = self.brief(self.PLAIN)
+        for brief in (fc.fc_briefs.test_brief({k: v for k, v in self.META.items()}, "C"), self.brief(""), plain,
+                      self.brief(self.CRIT + f"{self.F}python\nid: 1\n{self.F}\n" + self.COMPOSE)):
+            self.assertNotIn("`scenarios` block", brief)
+        self.assertIn("test behavior only.\nBudget: at most 60 lines", plain)
+
+    def test_the_task_brief_part_carries_the_whole_body_block_included(self):
+        self.assertIn(f"TASK BRIEF:\n{self.WITH}\n\nCONTRACT:\nC", self.brief(self.WITH))
+
+
 if __name__ == "__main__":
     unittest.main()
