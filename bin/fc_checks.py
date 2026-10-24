@@ -1,16 +1,107 @@
 """Read-only machine checks the setup steps table and doctor use. No network, no writes."""
-import datetime, os, re, shutil, subprocess
+import datetime, json, os, re, shutil, subprocess
 from pathlib import Path
 import platform
 import fc_core
+import fc_harness
 
 
 def owned_links(checkout):
-    """[(name, link, target)] for the three links compose owns: compose CLI link, compose skill link, bp link."""
+    """[(name, link, target)] for the three links compose owns (compose CLI link, compose skill link, bp link) plus, for each
+    installed harness row in order, the compose skill link in that harness's skills folder."""
     checkout, home = Path(checkout), Path.home()
-    return [("compose CLI link", home / ".local/bin/compose", checkout / "bin/compose"),
-            ("compose skill link", home / ".claude/skills/compose", checkout),
-            ("bp link", home / ".local/bin/bp", checkout / "bp/bin/bp.mjs")]
+    links = [("compose CLI link", home / ".local/bin/compose", checkout / "bin/compose"),
+             ("compose skill link", home / ".claude/skills/compose", checkout),
+             ("bp link", home / ".local/bin/bp", checkout / "bp/bin/bp.mjs")]
+    links += [(f"{fc_harness.HARNESSES[key]['name']} skill link", fc_harness.skills_dir(key) / "compose", checkout)
+              for key in fc_harness.installed()]
+    return links
+
+def command_copies(key, checkout):
+    """[(copy, source)] for one harness row: each <checkout>/commands/*.md sorted by name, copied to its skills folder as
+    compose-<name>/SKILL.md (Codex loads a real SKILL.md, not a link); [] when the row's exe is not on PATH."""
+    if not shutil.which(fc_harness.HARNESSES[key]["exe"]):
+        return []
+    return [(fc_harness.skills_dir(key) / f"compose-{c.stem}" / "SKILL.md", c)
+            for c in sorted(Path(checkout).glob("commands/*.md"))]
+
+def commands_ok(key, checkout):
+    """(ok, detail) for the row's command copies: ok when every copy is a regular file holding its source's bytes, else the
+    first bad copy, named as missing (not a regular file) or stale (different bytes)."""
+    for copy, source in command_copies(key, checkout):
+        if copy.is_symlink() or not copy.is_file():
+            return False, f"{fc_core.tilde(copy)} is missing"
+        if copy.read_bytes() != source.read_bytes():
+            return False, f"{fc_core.tilde(copy)} is stale"
+    return True, ""
+
+def hook_records(key, checkout):
+    """[(sub, trust key, hash)] for each handler of compose's wanted hook groups found in the row's hooks file; the key and hash
+    are None for a group the file lacks."""
+    row, out = fc_harness.HARNESSES[key], []
+    path = fc_harness.home_dir(key) / row["hooks_file"]
+    have = json.loads(path.read_text()).get("hooks", {}) if path.exists() else {}
+    for ev, groups in fc_harness.hook_groups(key, checkout).items():
+        for g in groups:
+            sub = g["hooks"][0]["command"].rsplit('" ', 1)[1]
+            i = next((j for j, e in enumerate(have.get(ev, ())) if e == g), None)
+            if i is None:
+                out.append((sub, None, None))
+                continue
+            snake = re.sub(r"(?<=[a-z])(?=[A-Z])", "_", ev).lower()
+            out += [(sub, f"{path.resolve()}:{snake}:{i}:{j}", row["hash"](ev, g)) for j in range(len(g["hooks"]))]
+    return out
+
+def hooks_ok(key, checkout):
+    """(ok, detail): (True, "") for a row without hooks or without its exe on PATH; else the first hook the hooks file lacks or
+    the first hook with no trust record (a wrong hash counts as none) in the trust file; a file that does not parse is named
+    instead of raising (a hooks file that is not valid JSON, a trust file that is not valid TOML)."""
+    row = fc_harness.HARNESSES[key]
+    if not row.get("hooks") or not shutil.which(row["exe"]):
+        return True, ""
+    home = fc_harness.home_dir(key)
+    try:
+        recs = hook_records(key, checkout)
+    except json.JSONDecodeError:
+        return False, f"{fc_core.tilde(home / row['hooks_file'])} is not valid JSON"
+    for sub, k, h in recs:
+        if k is None:
+            return False, f"{fc_core.tilde(home / row['hooks_file'])} lacks compose's {sub} hook"
+    trust = home / row["trust_file"]
+    try:
+        state = trust_state(trust.read_text()) if trust.exists() else {}
+    except ValueError:
+        return False, f"{fc_core.tilde(trust)} is not valid TOML"
+    for sub, k, h in recs:
+        if state.get(k, {}).get("trusted_hash") != h:
+            return False, f"{fc_core.tilde(trust)} has no trust record for compose's {sub} hook"
+    return True, ""
+
+def trust_state(text):
+    """A trust file's [hooks.state."<key>"] tables as {key: {"trusted_hash": h}}. When import tomllib succeeds inside it,
+    tomllib.loads(text).get("hooks", {}).get("state", {}) (invalid TOML raises, a ValueError); else, in the style of
+    fc_init.herdr_toml: a [hooks.state.<json key>] header line gives its key (json.loads), any other [...] header ends it, and
+    its trusted_hash = "<v>" line gives the hash (no such line: {}); never raises."""
+    try:
+        import tomllib
+        return tomllib.loads(text).get("hooks", {}).get("state", {})
+    except ImportError:
+        pass
+    state, cur = {}, None
+    for line in text.splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if m := re.match(r"\[hooks\.state\.(.*)\]$", line):
+            try:
+                cur = json.loads(m.group(1))
+            except ValueError:
+                cur = None
+            if cur is not None:
+                state[cur] = {}
+        elif re.match(r"\[.*\]$", line):
+            cur = None
+        elif cur is not None and (m := re.match(r"trusted_hash[ \t]*=(.*)$", line)):
+            state[cur] = {"trusted_hash": m.group(1).strip().strip("\"'")}
+    return state
 
 def link_state(path):
     """("ok", target) when path resolves to something that exists, ("dangling", raw link text), or ("missing", None)."""

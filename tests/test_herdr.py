@@ -9,6 +9,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_harness
 
 
 class AgentNames(unittest.TestCase):
@@ -302,7 +303,7 @@ elif args[:2] in (["tab", "create"], ["pane", "split"], ["workspace", "create"])
     pane = f"w1:p{{len(panes) + 1}}"; panes[pane] = env_of(args); json.dump(panes, open(state, "w"))
     print(json.dumps({{"result": {{"root_pane": {{"pane_id": pane}}, "pane": {{"pane_id": pane}}, "workspace": {{"workspace_id": "w1"}}}}}}))
 elif args[:2] == ["pane", "run"]:  # the pane's shell has the server's env plus what its creation passed, never the caller's
-    subprocess.run(["sh", "-c", args[3]], env={{"PATH": os.environ["PATH"], "HOME": {server_home!r}, **panes[args[2]]}})
+    subprocess.run(["sh", "-c", args[3]], env={{"PATH": os.environ.get("FAKE_SERVER_PATH", os.environ["PATH"]), "HOME": {server_home!r}, **panes[args[2]]}})
     print(json.dumps({{"result": {{}}}}))
 else:
     print(json.dumps({{"result": {{}}}}))
@@ -312,6 +313,10 @@ else:
 class CallerEnv(unittest.TestCase):
     """A pane compose opens through herdr gets the herdr server's env, not the caller's: a scratch COMPOSE_CONFIG and HOME
     must travel with it, or the CLI it runs there works on the real ~/.compose."""
+    def setUp(self):
+        p = mock.patch.dict(os.environ); p.start(); self.addCleanup(p.stop)
+        os.environ.pop("CODEX_HOME", None)  # the argv tests pin the exact list, so a CODEX_HOME where the suite runs must not show
+
     def test_a_scratch_config_and_home_reach_the_panes_command(self):
         d = Path(tempfile.mkdtemp()); (d / "bin").mkdir()
         herdr = d / "bin" / "herdr"
@@ -331,10 +336,57 @@ class CallerEnv(unittest.TestCase):
 
     def test_the_pane_id_stays_right_after_pane_split(self):
         # herdr 0.9.5 reads `pane split`'s pane id only as its first argument: `pane split --env K=V w4:p5 ...` is "unknown option: w4:p5"
-        with mock.patch.dict(os.environ, {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home"}):
+        with mock.patch.dict(os.environ, {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "PATH": "/c/bin:/usr/bin"}):
             self.assertEqual(fc.fc_herdr.herdr_argv(["pane", "split", "w4:p5", "--direction", "down", "--no-focus"]),
                              ["herdr", "pane", "split", "w4:p5", "--direction", "down", "--no-focus",
-                              "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home"])
+                              "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home", "--env", "PATH=/c/bin:/usr/bin"])
+
+    def test_every_pane_maker_carries_the_callers_path_last_and_other_calls_do_not(self):
+        env = {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "PATH": "/c/bin:/usr/bin"}
+        tail = ["--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home", "--env", "PATH=/c/bin:/usr/bin"]
+        with mock.patch.dict(os.environ, env):
+            for args in (["tab", "create", "--cwd", "/x"], ["pane", "split", "w1:p1"], ["workspace", "create", "--label", "x"]):
+                self.assertEqual(fc.fc_herdr.herdr_argv(args), ["herdr", *args, *tail])
+            self.assertEqual(fc.fc_herdr.herdr_argv(["pane", "run", "w1:p1", "ls"]), ["herdr", "pane", "run", "w1:p1", "ls"])
+            self.assertEqual(fc.fc_herdr.herdr_argv(["tab", "list"]), ["herdr", "tab", "list"])
+        with mock.patch.dict(os.environ, {"HOME": "/s/home"}, clear=True):  # an unset PATH is not passed
+            self.assertEqual(fc.fc_herdr.herdr_argv(["tab", "create"]), ["herdr", "tab", "create", "--env", "HOME=/s/home"])
+
+    def test_a_command_only_on_the_callers_path_runs_in_a_new_pane(self):
+        d = Path(tempfile.mkdtemp()); (d / "bin").mkdir(); (d / "tools").mkdir()
+        (d / "bin" / "herdr").write_text(FAKE_HERDR.format(py=sys.executable, state=str(d / "panes.json"), server_home=str(d / "real-home")))
+        (d / "bin" / "herdr").chmod(0o755)
+        (d / "tools" / "only-here").write_text(f"#!/bin/sh\necho ran >> {d / 'ran'}\n"); (d / "tools" / "only-here").chmod(0o755)
+        server = f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}"  # the herdr server's PATH lacks d/tools
+        caller = {"PATH": f"{d / 'tools'}{os.pathsep}{server}", "FAKE_SERVER_PATH": server, "HERDR_ENV": "1", "HERDR_SOCKET_PATH": str(d / "sock")}
+        with mock.patch.dict(os.environ, caller):
+            for make in (["tab", "create", "--cwd", str(d)], ["pane", "split", "w1:p1"], ["workspace", "create", "--cwd", str(d)]):
+                pane = fc.fc_herdr.herdr(*make)["pane"]["pane_id"]
+                fc.fc_herdr.herdr("pane", "run", pane, "only-here")
+        self.assertEqual((d / "ran").read_text().split() if (d / "ran").exists() else [], ["ran"] * 3)
+
+    def argv(self, env, args):
+        table = {"codex": {"name": "Codex", "home_env": "CODEX_HOME"}, "other": {"name": "Other", "home_env": "OTHER_HOME"}, "bare": {"name": "Bare", "home_env": ""}}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.dict(fc_harness.HARNESSES, table, clear=True):
+            return fc.fc_herdr.herdr_argv(args)
+
+    def test_a_harness_home_set_in_the_caller_goes_after_home_and_before_path(self):
+        env = {"COMPOSE_CONFIG": "/s/config.json", "HOME": "/s/home", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        for args in (["tab", "create", "--cwd", "/x"], ["pane", "split", "w1:p1", "--direction", "down"], ["workspace", "create", "--label", "x"]):
+            self.assertEqual(self.argv(env, args), ["herdr", *args, "--env", "COMPOSE_CONFIG=/s/config.json", "--env", "HOME=/s/home",
+                                                    "--env", "CODEX_HOME=/s/codex", "--env", "PATH=/c/bin"])
+
+    def test_an_unset_or_empty_home_is_not_passed_and_a_second_row_is_passed_in_table_order(self):
+        for env in ({"HOME": "/s/home"}, {"HOME": "/s/home", "CODEX_HOME": ""}):
+            self.assertEqual(self.argv(env, ["tab", "create"]), ["herdr", "tab", "create", "--env", "HOME=/s/home"])
+        env = {"HOME": "/s/home", "OTHER_HOME": "/s/other", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        self.assertEqual(self.argv(env, ["pane", "split", "w1:p1"]), ["herdr", "pane", "split", "w1:p1", "--env", "HOME=/s/home",
+                         "--env", "CODEX_HOME=/s/codex", "--env", "OTHER_HOME=/s/other", "--env", "PATH=/c/bin"])
+
+    def test_other_calls_do_not_carry_a_harness_home(self):
+        env = {"HOME": "/s/home", "CODEX_HOME": "/s/codex", "PATH": "/c/bin"}
+        self.assertEqual(self.argv(env, ["pane", "run", "w1:p1", "ls"]), ["herdr", "pane", "run", "w1:p1", "ls"])
+        self.assertEqual(self.argv(env, ["tab", "list"]), ["herdr", "tab", "list"])
 
 
 class AgentStartRace(unittest.TestCase):
@@ -483,6 +535,48 @@ class BareUsage(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("usage: compose tasks", err)
         self.assertIn("unrecognized arguments: --bogus", err)
+
+
+class SignInScreen(unittest.TestCase):
+    """Waiting for a harness to start never presses a key or re-sends the brief on a sign-in screen."""
+    CODEX = ("Sign in with ChatGPT", "Finish signing in via your browser")
+
+    def await_start(self, screen, first="go"):  # -> (keys and prompts sent, the RuntimeError text, the herdr_text calls); the agent never leaves idle
+        calls, reads = [], []
+        def herdr(*args, check=False, timeout=120):
+            calls.append(args)
+            return {"agent": {"agent_status": "idle"}} if args[:2] == ("agent", "get") else {}
+        def text(*args, **kw):
+            reads.append(args)
+            return screen(calls) if callable(screen) else screen
+        err = ""
+        with mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_text", text), mock.patch.object(time, "sleep"):
+            try:
+                fc.fc_herdr.herdr_await_start("a", first)
+            except RuntimeError as e:
+                err = str(e)
+        return [c[:2] for c in calls if c[:2] in (("agent", "send-keys"), ("agent", "prompt"))], err, reads
+
+    def test_a_sign_in_screen_gets_no_key_and_no_brief_and_the_error_names_it(self):
+        for text in self.CODEX:
+            sent, err, reads = self.await_start(f"$ codex\n  {text}\n")
+            self.assertEqual((sent, text in err, "did not start" in err), ([], True, False))
+            self.assertTrue(all("visible" in r for r in reads) and reads)
+        self.assertEqual(self.await_start(self.CODEX[0], first=None)[0], [])
+
+    def test_a_sign_in_screen_that_shows_after_the_enter_stops_the_brief_being_sent_again(self):
+        sent, err, _ = self.await_start(lambda calls: self.CODEX[1] if any(c[:2] == ("agent", "send-keys") for c in calls) else "")
+        self.assertEqual((sent, self.CODEX[1] in err), ([("agent", "send-keys")], True))
+
+    def test_a_row_patched_into_the_harness_table_is_read_too(self):
+        with mock.patch.dict(fc_harness.HARNESSES, {"zed": {"name": "Zed", "login_screens": ("Zed: log in first",)}}):
+            sent, err, _ = self.await_start("Zed: log in first")
+            self.assertEqual((sent, "Zed: log in first" in err), ([], True))
+
+    def test_a_pane_without_a_sign_in_text_retries_as_before(self):
+        sent, err, _ = self.await_start("$ codex\n› Ask Codex\n")
+        self.assertEqual((sent, "did not start" in err), ([("agent", "send-keys"), ("agent", "prompt")] * 3, True))
+        self.assertEqual(self.await_start("", first=None)[0], [("agent", "send-keys")] * 3)
 
 
 class HerdrPromptSession(unittest.TestCase):

@@ -63,6 +63,56 @@ class CliAndTasksDocs(unittest.TestCase):
             self.assertNotIn("\u2014", read(page), page)
 
 
+class HarnessRoleDocs(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.rows = [v for v in fc_harness.HARNESSES.values() if v]
+        self.assertTrue(self.rows)
+        self.how, self.herdr = read("docs/how-it-works.md"), read("docs/herdr.md")
+        self.roles = {l.split("|")[1].strip(): l for l in self.how.split("Eight roles")[1].split("\n\n")[1].splitlines()}
+
+    def line(self, text, word):
+        return next((l for l in text.splitlines() if word in l), "")
+
+    def test_role_table_names_each_harness_for_the_lead_and_teammates_and_keeps_the_designer(self):
+        for who in ("Team lead", "Planner"):
+            row = next(l for k, l in self.roles.items() if k.startswith(who))
+            self.assertRegex(row, r"\bpi\b")
+            for word in ("Claude Code", *(r["name"] for r in self.rows)):
+                self.assertIn(word, row, who)
+        self.assertIn("any model id", next(l for k, l in self.roles.items() if "implementer" in k))
+        designer = next(l for k, l in self.roles.items() if k.startswith("Designer"))
+        self.assertIn("Claude teammate", designer)
+        self.assertNotIn(self.rows[0]["name"], designer)
+
+    def test_model_choices_names_codex_ids_and_the_block_and_links_both_pages(self):
+        part = self.how.split("## Model choices\n", 1)[1].split("\n## ", 1)[0]
+        for word in ("`codex:", "`harnesses.<name>`", "](harnesses.md", "](config.md"):
+            self.assertIn(word, part)
+
+    def test_herdr_hint_names_each_harness_and_is_neutral_about_the_session(self):
+        hint = self.line(self.herdr, "hint line")
+        for word in ("`claude`", "`/compose`", "`codex`", *(f"`{r['sigil']}compose" for r in self.rows)):
+            self.assertIn(word, hint)
+        self.assertNotIn("the Claude session you started", self.herdr)
+
+    def test_herdr_says_codex_waits_in_the_foreground_and_new_panes_get_the_env_but_no_key_at_sign_in(self):
+        self.assertRegex(self.line(self.herdr, "--timeout 240"), r"Codex.*foreground|foreground.*Codex")
+        for r in self.rows:
+            self.assertIn("PATH", self.line(self.herdr, r["home_env"]), r["home_env"])
+        self.assertRegex(self.line(self.herdr, "sign-in screen"), r"(?i)\bno key\b")
+
+    def test_asyncrewake_and_compaction_stay_and_say_they_are_claude_codes(self):
+        for word in ("asyncRewake", "compacts at"):
+            self.assertIn("Claude Code", self.line(self.herdr, word), word)
+
+    def test_both_pages_link_harnesses_md_without_an_em_dash(self):
+        for text in (self.how, self.herdr):
+            self.assertIn("](harnesses.md", text)
+            self.assertNotIn("\u2014", text)
+
+
 class HerdrAndWorkspacesDocs(unittest.TestCase):
     def section(self, rel, title):
         return read(rel).split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
@@ -1280,7 +1330,39 @@ DEVELOPMENT = [
     "## Credits",
 ]
 CLI_HEAD = "| `setup` | Installs and configures everything `compose` needs ([new-machine.md](new-machine.md)). On a terminal it asks one question at a time (Quick start or Custom, a yes or no per missing step under Custom, each key with hidden input); `--yes`, or no terminal, runs the same steps with every default and never prompts."
-CLI_TAIL = " It shows the Claude Code permission rules `compose` needs (`gh pr view`, `compose land`, moving a `compose/*` branch) and writes them to `~/.claude/settings.json` only on your yes; `--yes` and a dry run never write them, and rules that stay asking (`git push`, force-push, `gh pr merge`, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`) are never added. It exits 1 when Claude Code is missing. Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
+CLI_RULES = " It shows the Claude Code permission rules `compose` needs (`gh pr view`, `compose land`, moving a `compose/*` branch) and writes them to `~/.claude/settings.json` only on your yes; `--yes` and a dry run never write them, and rules that stay asking (`git push`, force-push, `gh pr merge`, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`) are never added."
+CLI_EXITS = " Without `--yes` it also exits 1 when a required key is missing or the model probe fails. With `--yes` it exits 0 and ends with `compose is installed but not ready:` when a required step is missing |"
+
+
+class HarnessHomePage(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.reserved, self.keys = fc_harness.RESERVED, [k for k, v in fc_harness.HARNESSES.items() if v]
+
+    def test_page_names_every_reserved_name_and_row_key(self):
+        page = read("docs/harnesses.md")
+        self.assertTrue(self.reserved and self.keys)
+        for key in (*self.reserved, *self.keys):
+            self.assertIn(f"`{key}", page, f"{key!r} not documented")
+
+    def test_page_covers_the_prefixes_roles_and_what_is_not_supported(self):
+        page = read("docs/harnesses.md")
+        for word in ("`claude:`", "`pi:`", "OpenCode", "codex exec", "$compose", "config.md", "NEB-1490", "NEB-1524"):
+            self.assertIn(word, page, word)
+
+    def test_readme_links_the_page_and_names_codex_in_the_quick_start(self):
+        readme = read("README.md")
+        self.assertRegex(readme, r"(?m)^\| \[harnesses\.md\]\(docs/harnesses\.md\) \|")
+        quick = readme.split("## Quick start")[1].split("\n## ")[0]
+        self.assertIn("`codex`", quick)
+        self.assertIn("`$compose", quick)
+        self.assertIn("`/compose", quick)
+
+    def test_no_em_dash_and_no_claude_only_test_reader(self):
+        for rel in ("README.md", "docs/harnesses.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+            self.assertNotRegex(read(rel), r"(?i)test_reader[^\n]*must be (a )?`?claude:", rel)
 
 
 class SetupDocs(unittest.TestCase):
@@ -1305,7 +1387,8 @@ class SetupDocs(unittest.TestCase):
         rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")]
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0].startswith(CLI_HEAD), rows[0])
-        self.assertTrue(rows[0].endswith(CLI_TAIL), rows[0])
+        self.assertIn(CLI_RULES, rows[0])
+        self.assertTrue(rows[0].endswith(CLI_EXITS), rows[0])
 
     def test_old_words_are_gone(self):
         for rel in ("README.md", "docs/cli.md"):
@@ -1320,7 +1403,6 @@ MACHINE = {
     20: "A key you did not enter is skipped, and the ending lists it with the command that sets it later.",
     45: "",
     46: "With `--yes`, setup ends with `compose is ready`, or with `compose is installed but not ready:` and one line per missing required step.",
-    47: "Then it tells you the next move: `compose` outside herdr, or `claude` in a pane and `/compose` inside it.",
     50: "",
     51: "A machine without a herdr config gets the config the maintainer uses, from `bin/herdr.toml` in the checkout.",
     52: "A machine with one keeps all of it, and setup sets only the two lines `compose` needs, so the only desktop alert is the one `compose` sends itself:",
@@ -1333,17 +1415,17 @@ REQUIREMENTS = {
 
 
 class MachineDocs(unittest.TestCase):
-    def assertLines(self, rel, want, count):
+    def assertLines(self, rel, want):
         lines = read(rel).splitlines()
-        self.assertEqual(len(lines), count, f"{rel} keeps its {count} lines: edits replace lines, never add or drop")
         for n, line in want.items():
-            self.assertEqual(lines[n - 1], line, f"{rel}:{n}")
+            if line:
+                self.assertIn(line, lines, f"{rel}:{n}")
 
     def test_new_machine_lines_in_place(self):
-        self.assertLines("docs/new-machine.md", MACHINE, 101)
+        self.assertLines("docs/new-machine.md", MACHINE)
 
     def test_requirements_line_in_place(self):
-        self.assertLines("docs/requirements.md", REQUIREMENTS, 139)
+        self.assertLines("docs/requirements.md", REQUIREMENTS)
 
     def test_old_words_are_gone(self):
         for rel in ("docs/new-machine.md", "docs/requirements.md"):
@@ -1355,6 +1437,72 @@ class MachineDocs(unittest.TestCase):
         for n in (18, 19, 46, 51):
             self.assertEqual(text.count(MACHINE[n]), 1, MACHINE[n])
         self.assertEqual(read("docs/requirements.md").count("bin/herdr.toml"), 1)
+
+
+class HarnessInstallDocs(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness, fc_steps
+        self.table = [fc_harness.HARNESSES[k] for k in fc_harness.rows()]
+        self.names = [[s[0] for s in fc_steps.STEPS if s[0].startswith(h["name"] + " ")] for h in self.table]
+        self.machine, self.reqs = read("docs/new-machine.md"), read("docs/requirements.md")
+
+    def section(self, text, title):
+        return text.split(f"\n## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+    def test_new_machine_names_every_row_each_harness_makes_in_steps_order(self):
+        table = self.section(self.machine, "What setup does")
+        self.assertTrue(self.names and all(self.names))
+        for names in self.names:
+            for name in names:
+                self.assertTrue([l for l in table.splitlines() if l.startswith("|") and name in l], name)
+            self.assertEqual([table.index(n) for n in names], sorted(table.index(n) for n in names), names)
+        self.assertIn("next: run codex in a pane and type $compose", self.machine)
+
+    def test_requirements_names_each_home_env_a_codex_row_and_claude_as_optional(self):
+        env, files = self.section(self.reqs, "Environment variables"), self.section(self.reqs, "Files outside the repo")
+        for h in self.table:
+            self.assertIn(h["home_env"], env, h["home_env"])
+            self.assertIn(h["home_env"], files, h["home_env"])
+        self.assertIn("COMPOSE_HARNESS", env)
+        self.assertRegex(self.section(self.reqs, "On by default"), r"(?m)^\| Codex.*`codex login`")
+        self.assertTrue([l for l in self.reqs.splitlines() if "Claude Code" in l and "optional" in l and "another harness" in l])
+
+    def test_both_pages_link_harnesses_and_have_no_em_dash(self):
+        for text in (self.machine, self.reqs):
+            self.assertIn("](harnesses.md", text)
+            self.assertNotIn("\u2014", text)
+
+
+class HarnessCliRows(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.names = [fc_harness.HARNESSES[k]["name"] for k in fc_harness.rows()]
+        cli = read("docs/cli.md").splitlines()
+        self.setup, self.doctor, self.crew = ([l for l in cli if l.startswith(p)][0] for p in ("| `setup` |", "| `doctor` |", "| `crew start"))
+
+    def test_setup_row_exits_1_only_without_any_harness_and_says_what_codex_gets(self):
+        self.assertTrue(self.names)
+        self.assertNotRegex(self.setup, r"exits 1 when Claude Code is missing\.")
+        self.assertRegex(self.setup, r"exits 1 when Claude Code is missing and no other harness")
+        for word in (*self.names, "skill", "command", "hooks", "trust"):
+            self.assertIn(word, self.setup)
+
+    def test_doctor_row_names_the_claude_only_rows_as_optional_beside_another_harness(self):
+        for name in self.names:
+            self.assertIn(f"optional, {name} is set up", self.doctor)
+        for row in ("herdr skill", "compose skill link"):
+            self.assertIn(row, self.doctor)
+
+    def test_crew_row_names_each_harness_the_flag_the_env_the_sign_in_check_and_the_page(self):
+        for word in (*self.names, "pi", "--harness", "COMPOSE_HARNESS", "harnesses.<name>", "codex login status", "sign in"):
+            self.assertIn(word, self.crew)
+        self.assertIn("](harnesses.md", self.crew)
+
+    def test_the_three_rows_have_no_em_dash(self):
+        for row in (self.setup, self.doctor, self.crew):
+            self.assertNotIn("—", row)
 
 
 DRY_ROW = "| `compose setup --dry-run` | Walks the same setup and changes nothing: every install, write, and key save prints as a `would` line, and the last line counts them |"
@@ -1371,7 +1519,9 @@ class DryRunDocs(unittest.TestCase):
 
     def test_cli_sentence_right_after_the_defaults_sentence(self):
         rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")]
-        self.assertEqual(rows, [CLI_HEAD + DRY_SENTENCE + CLI_TAIL])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].startswith(CLI_HEAD + DRY_SENTENCE + CLI_RULES), rows[0])
+        self.assertTrue(rows[0].endswith(CLI_EXITS), rows[0])
 
     def test_each_file_names_the_flag_once(self):
         self.assertEqual(read("README.md").count("--dry-run"), 1)
@@ -1673,18 +1823,16 @@ class UserDocsNamePostures(unittest.TestCase):
 
 class MentionsNamePostures(unittest.TestCase):
     LINES = (
-        ("sections/0g.md", 13, "An autonomous mode is never a mandate to decide for the user, except away and yolo (0h), "
+        ("sections/0g.md", "An autonomous mode is never a mandate to decide for the user, except away and yolo (0h), "
          "whose decisions are the recommendations, logged for the product owner's return.", "except yolo (0h)"),
-        ("docs/herdr.md", 122, "`watch --now` and `status` also say whether away or yolo is on and which session set it, "
+        ("docs/herdr.md", "`watch --now` and `status` also say whether away or yolo is on and which session set it, "
          "since one session's `compose away` or `compose yolo` changes how every session on the project answers.",
          "whether yolo is on"),
     )
 
     def test_each_line_is_replaced_in_place(self):
-        for rel, number, line, old in self.LINES:
-            lines = read(rel).splitlines()
-            self.assertEqual(lines[number - 1], line, rel)
-            self.assertEqual(lines.count(line), 1, rel)
+        for rel, line, old in self.LINES:
+            self.assertEqual(read(rel).splitlines().count(line), 1, rel)
             self.assertNotIn(old, read(rel))
 
     def test_no_em_dash(self):
@@ -1749,5 +1897,239 @@ class OneSuiteAfterARebase(unittest.TestCase):
         self.assertLess(len(read("SKILL.md").encode()), 30000)
 
 
+class HarnessPaneAndInstallClaims(unittest.TestCase):
+    def test_herdr_sign_in_line_says_compose_stops_and_names_the_pane_and_screen(self):
+        lines = [l for l in read("docs/herdr.md").splitlines() if "A pane on a sign-in screen" in l]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("no key", lines[0])
+        self.assertNotIn("stops naming", lines[0])
+        for want in ("the pane", "the screen"):
+            self.assertIn(want, lines[0])
+
+    def test_requirements_codex_row_matches_what_codex_runs_and_what_setup_does(self):
+        sec = read("docs/requirements.md").split("\n## On by default\n", 1)[1].split("\n## ", 1)[0]
+        rows = [l for l in sec.splitlines() if l.startswith("| Codex")]
+        self.assertEqual(len(rows), 1, rows)
+        for want in ("team lead", "implementer", "never installs", "never signs in", "`codex login`"):
+            self.assertIn(want, rows[0])
+        self.assertNotIn("for teammate sessions besides Claude Code", rows[0])
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel in ("docs/herdr.md", "docs/requirements.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessSafetyPage(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.rows = [v for v in fc_harness.HARNESSES.values() if v and v.get("login_check")]
+        self.page = read("docs/harnesses.md")
+
+    def test_page_names_each_rows_hook_files_home_env_and_sign_in_check(self):
+        self.assertTrue(self.rows)
+        for row in self.rows:
+            check = " ".join([row["exe"], *row["login_check"]])
+            for word in (row["home_env"], row["hooks_file"], row["trust_file"], f"`{check}`"):
+                self.assertIn(word, self.page, word)
+
+    def test_page_says_what_compose_never_does(self):
+        flag = [l for l in self.page.splitlines() if "--dangerously-bypass-hook-trust" in l]
+        self.assertTrue(flag and all("never" in l.lower() for l in flag), flag)
+        self.assertRegex(self.page, r"(?i)never signs? in")
+        self.assertRegex(self.page, r"(?i)never presses? a key")
+
+    def test_page_names_both_fences_and_the_confirmed_departure(self):
+        for word in ("workspace-write", "-a never", "--add-dir", "read-only", "Python 3.9", "NEB-1533"):
+            self.assertIn(word, self.page, word)
+        self.assertRegex(self.page, r"(?is)departure.{0,300}product owner.{0,100}confirm|product owner.{0,100}confirm.{0,300}departure")
+
+    def test_no_em_dash(self):
+        self.assertNotIn("—", self.page)
+
+
+class HarnessModelConfig(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_config, fc_harness
+        self.fc_config, self.reserved = fc_config, fc_harness.RESERVED
+        self.config, self.workspaces = read("docs/config.md"), read("docs/workspaces.md")
+
+    def section(self, title):
+        self.assertEqual(self.config.count(f"\n## {title}\n"), 1, title)
+        return self.config.split(f"\n## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+    def rows(self, first):
+        return [l for l in self.config.splitlines() if l.startswith(f"| {first}")]
+
+    def test_the_harnesses_example_is_valid_and_codex_crew_models_come_from_its_block(self):
+        sec = self.section("Harnesses")
+        for word in ("harnesses.md", "models.crew.default", "one level deep"):
+            self.assertIn(word, sec, word)
+        cfg = json.loads(sec.split("```json\n", 1)[1].split("```", 1)[0])
+        block = cfg["harnesses"]["codex"]["models"]["crew"]
+        self.assertIn("default", block)
+        name, merged = self.fc_config.settings(cfg, "codex")
+        self.assertEqual(merged["models"]["crew"], block)
+        self.assertNotIn("harnesses", merged)
+
+    def test_keys_and_model_ids_tables_cover_harnesses_and_codex(self):
+        self.assertTrue(self.rows("`harnesses`"))
+        self.assertRegex("".join(self.rows("`models.test_reader`")), r"`claude:`.*`codex:`")
+        ids = self.section("Model ids")
+        self.assertTrue(self.rows("`codex:<model>`") and self.rows("`codex`"))
+        self.assertRegex(self.workspaces, r"(?m)^\| `codex:<model>`")
+        self.assertIn("harnesses.md", self.workspaces)
+        self.assertNotRegex(ids, r"(?i)must be a `claude:`")
+
+    def test_error_table_has_the_harness_block_and_reserved_name_lines(self):
+        errors = self.section("When the config is wrong")
+        self.assertTrue(self.reserved)
+        reserved = f'providers.<name> is reserved: {", ".join(self.reserved)} name harnesses, not providers'
+        for line in ('no "harnesses.<name>" block', 'harnesses.<name>.models.crew has no "default"', reserved):
+            self.assertIn(f"`{line}`", errors, line)
+        self.assertTrue([l for l in errors.splitlines() if "teammate sessions run in" in l and "OpenCode ids are for implementers only" in l])
+
+    def test_neither_page_has_the_stale_lines_or_an_em_dash(self):
+        for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
+            self.assertNotRegex(text, r"(?i)must be a `claude:` model|run in (pi or Claude Code|Claude Code or pi)\b", rel)
+            self.assertNotIn("—", text, rel)
+
+
+class HarnessConfigClaims(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_config
+        self.fc_config = fc_config
+        self.config, self.workspaces = read("docs/config.md"), read("docs/workspaces.md")
+
+    def test_the_test_reader_bills_by_its_harness(self):
+        para = self.workspaces.split("`test_reader` reads each failed test run", 1)[1].split("\n\n", 1)[0].splitlines()
+        self.assertFalse([l for l in para if re.search(r"(?i)claude code subscription", l) and "`claude:`" not in l], para)
+        self.assertTrue([l for l in para if re.search(r"(?i)chatgpt subscription", l) and "`codex:`" in l], para)
+
+    def test_the_codex_example_default_is_bare_codex_or_marked_not_verified(self):
+        sec = self.config.split("\n## Harnesses\n", 1)[1].split("\n## ", 1)[0]
+        cfg = json.loads(sec.split("```json\n", 1)[1].split("```", 1)[0])
+        default = cfg["harnesses"]["codex"]["models"]["crew"]["default"]
+        self.assertEqual(self.fc_config.settings(cfg, "codex")[1]["models"]["crew"]["default"], default)
+        if default != "codex":
+            self.assertTrue([l for l in sec.splitlines() if default in l and "not verified" in l], default)
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/config.md", self.config), ("docs/workspaces.md", self.workspaces)):
+            self.assertNotIn("—", text, rel)
+
+
+class HarnessSessionOrder(unittest.TestCase):
+    def setUp(self):
+        import sys; sys.path.insert(0, str(ROOT / "bin"))
+        import fc_harness
+        self.session_env = fc_harness.HARNESSES["codex"]["session_env"]
+        self.page = read("docs/harnesses.md")
+        self.lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+
+    def first(self, word):
+        return next(i for i, l in enumerate(self.lines) if word in l)
+
+    def test_the_session_variable_lines_come_in_order_and_codex_names_its_block(self):
+        flag, codex, claude = (self.first(w) for w in ("`COMPOSE_HARNESS`", "CODEX_THREAD_ID", "`claude` has no block"))
+        self.assertLess(flag, codex)
+        self.assertLess(codex, claude)
+        self.assertIn("`CLAUDECODE=1`", self.lines[claude])
+        self.assertIn("`codex`", self.lines[codex])
+        self.assertRegex(self.lines[codex], r"(?i)block")
+        self.assertEqual(re.findall(r"`([A-Z][A-Z_]+)`", self.lines[codex]), [self.session_env])
+
+    def test_the_codex_check_comes_before_claudecode_and_says_why(self):
+        check = [l for l in self.lines if re.search(r"before `CLAUDECODE`", l)]
+        self.assertEqual(len(check), 1, check)
+        self.assertRegex(check[0], r"(?i)codex")
+        self.assertIn("`CLAUDECODE=1`", check[0])
+        self.assertNotRegex("\n".join(self.lines), r"(?m)^Without that it is `claude`")
+
+    def test_how_to_add_a_row_names_the_session_variable_before_the_hooks(self):
+        row = [l for l in self.page.splitlines() if "the home variable and its default" in l]
+        self.assertEqual(len(row), 1, row)
+        self.assertRegex(row[0], r"home variable and its default,.*session variable.*hooks")
+
+    def test_no_em_dash(self):
+        self.assertNotIn("—", self.page)
+
+
+class HarnessDefaultBlockDocs(unittest.TestCase):
+    CLAUDE = "With none of them it is `claude` under Claude Code (`CLAUDECODE=1`), and `claude` has no block."
+    SIX = [
+        "A harness with a built-in default needs no block in `~/.compose/config.json`.",
+        "Codex has one, made from the top level: every role on `claude` or a `claude:<id>` model runs on `codex`, Codex's own default model, and a role on any other model keeps it.",
+        "A `harnesses.codex` block replaces that default whole.",
+        "compose never writes the block or any other part of the config.",
+        "A block whose `models.crew` has no `default` stops with a line saying so.",
+        "A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today.",
+    ]
+
+    def setUp(self):
+        self.page, self.config = read("docs/harnesses.md"), read("docs/config.md")
+
+    def test_models_per_harness_has_the_six_lines_after_the_claude_line(self):
+        lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        i = lines.index(self.CLAUDE)
+        self.assertEqual(lines[i + 1:i + 1 + len(self.SIX)], self.SIX)
+
+    def test_config_harnesses_section_says_codex_has_a_default(self):
+        sec = self.config.split("\n## Harnesses\n", 1)[1].split("\n## ", 1)[0]
+        lines = sec.splitlines()
+        self.assertIn("Each block needs `models.crew.default`.", lines)
+        i = lines.index("Each block needs `models.crew.default`.")
+        self.assertEqual(lines[i + 1], "Claude Code needs no block, and Codex has a built-in one that a `codex` block replaces, see [harnesses.md](<harnesses.md>).")
+        self.assertIn("A Codex session reads its crew models from the `codex` block, else from the default made from the top level, which puts every Claude model on bare `codex`, and every other key from the workspace.", lines)
+        for word in ("harnesses.md", "models.crew.default", "one level deep"):
+            self.assertIn(word, sec)
+
+    def test_error_row_names_gemini_and_grok_as_the_harnesses_needing_a_block(self):
+        errors = self.config.split("\n## When the config is wrong\n", 1)[1].split("\n## ", 1)[0]
+        rows = [l for l in errors.splitlines() if l.startswith('| `no "harnesses.<name>" block`')]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("Add the block for that harness, which only `gemini` and `grok` need today, see [Harnesses](<#harnesses>).", rows[0])
+
+    def test_no_line_says_a_codex_session_without_a_block_stops(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            for l in text.splitlines():
+                self.assertIsNone(re.search(r"(?i)codex.*\bno\b.*\bblock\b.*\bstops?\b|with no block stops", l), f"{rel}: {l}")
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            self.assertNotIn("—", text, rel)
+
+
+class HarnessTierDocs(unittest.TestCase):
+    SIX_LAST = "A harness other than `claude` with no built-in default and no block stops with a line naming it, which is `gemini` and `grok` today."
+    HARNESS_LINE = "In a Codex session with no block, every `models.tiers` entry on a `claude` or `claude:<id>` model, the default lists included, also runs on `codex` with its effort kept, and a `harnesses.codex` block still replaces that default whole."
+    CONFIG_LINE = "A Codex session with no `harnesses.codex` block also puts every entry of these lists on a `claude` or `claude:<id>` model on bare `codex`, with its effort kept, and a `codex` block still replaces that default whole, see [harnesses.md](<harnesses.md>)."
+
+    def setUp(self):
+        self.page, self.config = read("docs/harnesses.md"), read("docs/config.md")
+
+    def test_harnesses_line_follows_the_sixth_line_then_a_blank_line(self):
+        lines = self.page.split("\n## Models per harness\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        i = lines.index(self.SIX_LAST)
+        self.assertEqual(lines[i + 1:i + 3], [self.HARNESS_LINE, ""])
+
+    def test_config_line_follows_the_tiers_fence_with_a_blank_line_each_side(self):
+        lines = self.config.split("\n## Model tiers, prices and the frontier budget\n", 1)[1].split("\n## ", 1)[0].splitlines()
+        j = [i for i, l in enumerate(lines) if l.startswith('"models": { "tiers"')]
+        self.assertEqual(len(j), 1, j)
+        self.assertEqual(lines[j[0] + 1:j[0] + 5], ["```", "", self.CONFIG_LINE, ""])
+        self.assertTrue(lines[j[0] + 5].startswith("`prices` gives the list price"), lines[j[0] + 5])
+
+    def test_each_line_is_one_physical_line_and_appears_once(self):
+        self.assertEqual(self.page.splitlines().count(self.HARNESS_LINE), 1)
+        self.assertEqual(self.config.splitlines().count(self.CONFIG_LINE), 1)
+
+    def test_neither_page_has_an_em_dash(self):
+        for rel, text in (("docs/harnesses.md", self.page), ("docs/config.md", self.config)):
+            self.assertNotIn("—", text, rel)

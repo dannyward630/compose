@@ -154,7 +154,7 @@ The figures in this README come from small benchmarks and one prototype, and the
    [docs/new-machine.md](docs/new-machine.md) lists every step.
 3. Run `compose` in a terminal.
    It opens the herdr session `compose`.
-   Run `claude` in a pane, then type `/compose <what you want>`.
+   Run `claude` in a pane, then type `/compose <what you want>`, or run `codex` and type `$compose <what you want>`.
    Answer the questions it asks, in the session or on the Lavish page it opens for visual ones.
 4. Review the task list, say go, and read the stack it builds.
 
@@ -211,6 +211,7 @@ Every command is documented in [docs/cli.md](docs/cli.md).
 | [tasks.md](docs/tasks.md) | The task issue format and `sync` |
 | [verify.md](docs/verify.md) | `verify.json`, the stages, e2e, and jev |
 | [config.md](docs/config.md) | Every `config.json` key, what it takes, and what a bad entry does |
+| [harnesses.md](docs/harnesses.md) | The agent CLIs compose runs in, how a model id picks one, and which role runs where |
 | [workspaces.md](docs/workspaces.md) | Workspaces, model config, and billing halts |
 
 ## Development

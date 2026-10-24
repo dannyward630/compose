@@ -4,6 +4,7 @@ CLI_FILE
 guard_decision
 toplevel
 switch_decision
+edit_paths
 cmd_guard
 SKILL_DIR
 SKILL_SEEN

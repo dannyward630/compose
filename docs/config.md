@@ -74,11 +74,12 @@ Everything else you edit by hand.
 | `models.implementer` | a model id | GLM 5.3 Flash on OpenRouter | The model that implements each task. |
 | `models.fallback` | a model id or `null` | `null` | The model a task moves to after `fallback_after` failed attempts. |
 | `models.fallback_after` | a whole number | `2` | Failed attempts on the task's own model before the fallback takes over. |
-| `models.test_reader` | a `claude:` model id or `null` | `claude:claude-haiku-5-5` | Reads a failed test run and writes the fix brief. `null` sends the raw output. |
+| `models.test_reader` | a `claude:` or `codex:` model id, or `null` | `claude:claude-haiku-5-5` | Reads a failed test run and writes the fix brief. `null` sends the raw output. |
 | `models.fix` | a model id | the implementer | The model of verify's fix rounds. A project's `verify.json` `fix_model` beats it. |
 | `models.crew` | a map of role to entry | none | The model of each teammate role, see [Crew models](#crew-models). |
 | `models.tiers` | a map of `cheap`, `standard`, `frontier` to a list of entries | see [Model tiers](#model-tiers-prices-and-the-frontier-budget) | The models of each tier, in order. A tier you leave out keeps its default list. |
 | `prices` | a map of model id to 2 or 4 numbers | the built-in list | Dollars per million tokens, see [Model tiers](#model-tiers-prices-and-the-frontier-budget). |
+| `harnesses` | a map of harness name to settings | none | Per-harness overrides for a teammate session, see [Harnesses](#harnesses). |
 | `providers` | a map of name to server | none | Local OpenAI-compatible servers, see [Providers](#providers). |
 | `env` | a map of name to value | none | Environment variables set for the CLI and everything it starts. |
 | `parallel` | a whole number of 1 or more | `run` and `resume` use 3, `testcrews` starts all at once | How many agents start at once. |
@@ -100,11 +101,13 @@ A model id names the harness that runs it.
 | `pi:<local provider>/<model>` | pi, on a local server | the same, see [Providers](#providers) |
 | `claude:<model-id>` | Claude Code with that model | implementers, `test_reader`, teammates |
 | `claude` | Claude Code with its default model | implementers, teammates |
+| `codex:<model>` | Codex with that model | implementers, `test_reader`, teammates |
+| `codex` | Codex with its default model | implementers, teammates |
 | `<local provider>/<model>` | OpenCode, on a local server | implementers, fallbacks, fix rounds |
 | anything else | OpenCode | implementers, fallbacks, fix rounds |
 
-- `test_reader` must be a `claude:` model, since it runs in Claude Code with read-only tools.
-- Teammate sessions (`models.crew`) run in pi or Claude Code, so an OpenCode id there stops `crew start` with a line saying so.
+- `test_reader` takes a `claude:` or `codex:` id and runs headless with read-only tools.
+- Teammate sessions (`models.crew`) run in Claude Code, pi or a harness from [harnesses.md](harnesses.md), so an OpenCode id there stops `crew start` with a line saying so.
 - `run` and `resume` send every model they may call one tiny prompt before they clone anything.
   A wrong id or preset stops the run there with the provider's message.
 - Crew models are probed when a teammate starts, and a good answer is cached for a day in `model-probe.json`.
@@ -155,6 +158,8 @@ The default lists are:
 "models": { "tiers": { "frontier": [{ "model": "claude:claude-opus-5-5", "effort": "high" }] } }
 ```
 
+A Codex session with no `harnesses.codex` block also puts every entry of these lists on a `claude` or `claude:<id>` model on bare `codex`, with its effort kept, and a `codex` block still replaces that default whole, see [harnesses.md](<harnesses.md>).
+
 `prices` gives the list price of a model in dollars per million tokens: two numbers (input, output) or four (input, output, cache write, cache read).
 Your entries are added to the built-in ones and win over them.
 `compose status` uses them for the spend of each tier, as reference dollars at list prices for a Claude Code call and as real dollars for any other model.
@@ -169,6 +174,31 @@ The limit lives in the project's `results/budget.json` as `{"frontier": 25}`.
 A project that has spent the limit starts new frontier work on standard and reports `needs-user` to the team lead, until the limit is raised.
 A file that is not an object, or a `frontier` that is negative or not a number, stops the command with a line that names the file.
 
+## Harnesses
+
+A harness is the program that runs a model, and [harnesses.md](harnesses.md) lists them.
+A `harnesses.<name>` block is merged over the workspace's settings one level deep for a session of that harness.
+Each block needs `models.crew.default`.
+Claude Code needs no block, and Codex has a built-in one that a `codex` block replaces, see [harnesses.md](<harnesses.md>).
+The `harnesses` key itself is gone from the merged settings.
+
+```json
+{
+  "models": {
+    "crew": { "default": "claude:claude-sonnet-5-5" }
+  },
+  "harnesses": {
+    "codex": {
+      "models": {
+        "crew": { "default": "codex" }
+      }
+    }
+  }
+}
+```
+
+A Codex session reads its crew models from the `codex` block, else from the default made from the top level, which puts every Claude model on bare `codex`, and every other key from the workspace.
+
 ## Providers
 
 `providers` declares OpenAI-compatible servers, such as Ollama, LM Studio, or vLLM, that can run a model for free.
@@ -179,7 +209,7 @@ A file that is not an object, or a `frontier` that is negative or not a number, 
 
 | Field | Takes | Means |
 |---|---|---|
-| (the map key) | lowercase letters, digits, `-` and `_`, starting with a letter or digit | The provider's name. `openrouter` and `openrouter-fast` are reserved. |
+| (the map key) | lowercase letters, digits, `-` and `_`, starting with a letter or digit | The provider's name. `openrouter`, `openrouter-fast`, `codex`, `gemini` and `grok` are reserved. |
 | `base_url` | a URL starting with `http://` or `https://` | Required. The server's OpenAI API root, such as `http://localhost:11434/v1`. |
 | `models` | a list of model ids | Optional. When set, a model of this provider that is not in the list stops every command. When unset, any id is accepted. |
 
@@ -190,7 +220,7 @@ Using one:
   pi's own `models.json` is never touched.
 - A bare `<provider>/<model>` runs it in OpenCode.
 - Any model setting can name one: `models.implementer`, `fallback`, `fix`, and every `models.crew` entry (those must use the `pi:` form).
-  `test_reader` cannot, since it must be a `claude:` model.
+  `test_reader` cannot, since it takes a `claude:` or `codex:` id.
 - Claude Code never runs a local model.
 - A local call costs `$0.0000` and shows up in the cost line as a row under the provider's name, with its calls and tokens.
 
@@ -303,10 +333,13 @@ A bad entry stops the command with one line that names the entry.
 | `providers.<name>.models must be a list of model ids` | Make `models` a list of strings, or remove it. |
 | `<model> is not in providers.<name>.models: <the list>` | Add the model to the list, or use one that is in it. |
 | `parallel must be a whole number of 1 or more` | Same for `claude_parallel`. |
-| `... teammate sessions run in Claude Code or pi` | Use `claude:<model-id>` or `pi:<provider/model>` under `models.crew`. |
 | `models.tiers.<tier>: tiers are cheap, standard, frontier` | Rename the tier. |
 | `prices must be an object of model id to 2 or 4 numbers, not <value>` | Make `prices` a map of model id to a list of 2 or 4 numbers. |
 | `prices.<model> must be 2 or 4 numbers` | Give that model 2 numbers (input, output) or 4 (input, output, cache write, cache read). |
+| `providers.<name> is reserved: codex, gemini, grok name harnesses, not providers` | Pick another name. |
+| `no "harnesses.<name>" block` | Add the block for that harness, which only `gemini` and `grok` need today, see [Harnesses](<#harnesses>). |
+| `harnesses.<name>.models.crew has no "default"` | Add `models.crew.default` to the block. |
+| `... teammate sessions run in Claude Code, pi, ...: use ...; OpenCode ids are for implementers only` | Use an id of a harness the line names under `models.crew`. |
 
 ## Checking it
 

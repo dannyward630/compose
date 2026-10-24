@@ -9,4 +9,7 @@ owned_link
 key_ok
 herdr_integration
 check
+CLAUDE_ONLY
+other_harness
+required
 STEPS

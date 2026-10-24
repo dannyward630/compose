@@ -1,6 +1,6 @@
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_proc, fc_readguard, fc_providers, fc_tiers, fc_notify
+import fc_core, fc_config, fc_claude, fc_harness, fc_proc, fc_readguard, fc_providers, fc_tiers, fc_notify
 
 
 def opencode(cwd, model, prompt, session=None, timeout=600):
@@ -269,6 +269,8 @@ def pi_id(model):
     return model.split(":", 1)[1]
 
 def probe_command(model):
+    if fc_harness.harness_of(model):
+        return fc_harness.probe_command(model)
     if model.startswith("pi:"):
         return ["pi", "-p", "--mode", "json", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
                 "--thinking", "off", *fc_providers.pi_args(pi_id(model)), "--model", pi_id(model), "Reply with exactly: ok"]
@@ -277,6 +279,8 @@ def probe_command(model):
 def probe_result(model, p):
     """(ok, why) from a finished probe process: Claude Code reports `is_error` in its JSON; pi streams events, so a clean exit
     plus an assistant text reply is ok and anything else is the error it printed."""
+    if fc_harness.harness_of(model):
+        return fc_harness.probe_result(model, p)
     if model.startswith("pi:"):
         events = []
         for line in p.stdout.splitlines():
@@ -299,6 +303,9 @@ def model_available(model):
     non-interactive turn, cached for the day in ~/.compose/model-probe.json. Returns (ok, why)."""
     mid, today = model.split(":", 1)[1] if ":" in model else "", time.strftime("%Y-%m-%d")
     if not mid:
+        key = fc_harness.harness_of(model)
+        if key:
+            return True, f"{fc_harness.HARNESSES[key]['name']}'s default model"
         return True, "Claude Code's default model"
     local = fc_config.provider_of(model)
     if local:  # a local provider must be answering before anything else: no probe turn, no cache, when it is down
@@ -352,7 +359,7 @@ def cmd_models(a):
         sys.exit("models --probe clears the day's cached model probes and probes the crew models again")
     probe_clear()
     for model in dict.fromkeys(m for chain in [[(m, None)] for m in fc_config.CREW_MODELS.values()] + list(fc_config.CREW_FALLBACK.values()) for m, _ in chain):
-        if fc_claude.is_claude(model) or str(model).startswith("pi:"):
+        if fc_claude.is_claude(model) or str(model).startswith("pi:") or fc_harness.harness_of(model):
             ok, why = model_available(model)
             print(f"{model}: {'ok' if ok else 'unavailable'} ({why})")
 

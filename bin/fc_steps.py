@@ -4,7 +4,7 @@ manual (never run), write (compose's own writer; install is `compose setup`), ke
 written by fc_perms.offer only on the user's yes)."""
 import json, re, shutil
 from pathlib import Path
-import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_pi, fc_keys, fc_perms
+import fc_core, fc_auth, fc_config, fc_worktree, fc_checks, fc_harness, fc_pi, fc_keys, fc_perms
 
 
 FRAMELINK_ENV = Path.home() / ".config" / "figma-context-mcp" / ".env"
@@ -76,6 +76,19 @@ def check(row, checkout):
             return False, f"{'.'.join(map(str, v))} is older than {floor}"
     return True, ""
 
+CLAUDE_ONLY = ("claude", "herdr skill", "i-have-adhd skill", "compose skill link")
+
+def other_harness(checkout):
+    """The first installed harness whose skill link points at this checkout (e.g. "codex"), else None."""
+    for key in fc_harness.installed():
+        if owned_link(f"{fc_harness.HARNESSES[key]['name']} skill link", checkout)[0]:
+            return key
+    return None
+
+def required(row, other):
+    """Whether the row must be set up: level required, unless it feeds only Claude Code and another harness is set up."""
+    return row[3] == "required" and not (other and row[0] in CLAUDE_ONLY)
+
 STEPS = (  # the rows, in setup order
     ("Homebrew", "brew", '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', "default", False, "interactive"),
     ("git", "git", "xcode-select --install", "required", False, "manual"),
@@ -91,6 +104,12 @@ STEPS = (  # the rows, in setup order
     ("pi openrouter-fast provider", lambda co: (fc_pi.provider_declared(fc_pi.PI_MODELS), ""), "compose setup", "required", False, "write"),
     ("compose CLI link", lambda co: owned_link("compose CLI link", co), "compose setup", "required", False, "write"),
     ("compose skill link", lambda co: owned_link("compose skill link", co), "compose setup", "required", False, "write"),
+    *[row for k in fc_harness.rows() for r in (fc_harness.HARNESSES[k],) for row in (
+        (f"{r['name']} skill link",
+         lambda co, r=r: owned_link(f"{r['name']} skill link", co) if shutil.which(r["exe"]) else (True, ""),
+         "compose setup", "default", False, "write"),
+        (f"{r['name']} commands", lambda co, k=k: fc_checks.commands_ok(k, co), "compose setup", "default", False, "write"),
+        *(((f"{r['name']} hooks", lambda co, k=k: fc_checks.hooks_ok(k, co), "compose setup", "default", False, "write"),) if r.get("hooks") else ()))],
     ("~/.local/bin on PATH", lambda co: (fc_checks.local_bin_on_path(), ""), 'put `export PATH="$HOME/.local/bin:$PATH"` in your shell profile', "required", False, "manual"),
     ("OpenRouter key", lambda co: key_ok("openrouter"), "get one at openrouter.ai/keys; compose setup stores it", "required", False, "key"),
     ("TypeSafe key", lambda co: key_ok("typesafe"), "get one from TypeSafe; compose setup stores it", "required", False, "key"),

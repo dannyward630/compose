@@ -3,7 +3,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-import fc_core, fc_auth, fc_config, fc_defaults, fc_herdrconf, fc_keys, fc_links, fc_steps
+import fc_core, fc_auth, fc_config, fc_defaults, fc_harness, fc_herdrconf, fc_keys, fc_links, fc_steps
 
 CLAUDE_MISSING = "Claude Code is missing: install it with curl -fsSL https://claude.ai/install.sh | bash, log in, then run compose setup again"
 
@@ -60,7 +60,8 @@ def _finish(results, yes, dry=False):
         lines += [line for line in probe_lines if line not in fc_defaults.PRESET_STEPS]
         ready = ready and ok
         probe_ok = ok
-    if not shutil.which("claude"):
+    other = fc_steps.other_harness(Path(__file__).resolve().parents[1])
+    if not shutil.which("claude") and other is None:
         lines.append(CLAUDE_MISSING)
         return lines, 1
     if not ready and not yes:
@@ -72,11 +73,15 @@ def _finish(results, yes, dry=False):
         lines.append("setup is not finished: " + "; ".join(reasons))
         return lines, 1
     if yes:
-        rows = [(name, install) for name, _, install, level, _, _ in fc_steps.STEPS
-                if level == "required" and state.get(name) in groups]
+        rows = [(row[0], row[2]) for row in fc_steps.STEPS
+                if state.get(row[0]) in groups and fc_steps.required(row, other)]
         if rows:
             lines += ["compose is installed but not ready:", *[f"  {name}: {install}" for name, install in rows],
                       "run compose setup in a terminal to finish"]
             return lines, 0
+    if not shutil.which("claude") and other is not None:
+        exe, sigil = fc_harness.HARNESSES[other]["exe"], fc_harness.HARNESSES[other]["sigil"]
+        lines += ["compose is ready", f"next: run {exe} in a pane and type {sigil}compose" if os.environ.get("HERDR_ENV") else "next: run compose to open herdr"]
+        return lines, 0
     lines += ["compose is ready", "next: run claude in a pane and type /compose" if os.environ.get("HERDR_ENV") else "next: run compose to open herdr"]
     return lines, 0

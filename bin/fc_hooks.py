@@ -1,10 +1,10 @@
 import hashlib, json, os, re, shlex, sys
 from pathlib import Path
-import fc_core, fc_config, fc_worktree
+import fc_core, fc_config, fc_harness, fc_worktree
 
 # ---------- Claude Code hooks: `guard` keeps the team lead and planner out of code, `skillcheck` names changed skill files ----------
 
-GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+GUARDED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "Bash")
 GUARDED_ROLES = ("orchestrator", "planner")
 CLI_FILE = re.compile(r"/\.compose/(linear\.json|[^/]+/(linear|verify)\.json|[^/]+/scratch/.+|[^/]+/pr/[^/]+\.md)$")  # the team lead's own: the CLI's config and the layers' PR text
 
@@ -56,6 +56,23 @@ def switch_decision(command, cwd, role, shared):
                     f"worktree of your own (ask for `crew start --work-repo` or `--cwd`) and run git there with `git -C <worktree>`.")
     return None
 
+def edit_paths(ev):
+    """The paths a tool call writes, relative ones resolved against the event's cwd."""
+    ti = ev.get("tool_input") or {}
+    cmd = ti.get("command") or ""
+    found = [ti.get("file_path") or ti.get("notebook_path")]
+    if ev.get("tool_name") == "apply_patch":
+        found += re.findall(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", cmd, re.M)
+    elif ev.get("tool_name") == "Bash":
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        try:
+            words = list(lex)
+        except ValueError:  # an unclosed quote: the shell does not run it either
+            words = []
+        found += [words[i + 1] for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
+    return [str(Path(ev.get("cwd") or ".") / p) for p in found if p]
+
 def cmd_guard(a):
     """Claude Code PreToolUse hook (the plugin's hooks.json): deny the team lead's file edits inside a repository, and a crew
     session's branch switch in the shared project worktree."""
@@ -65,8 +82,8 @@ def cmd_guard(a):
         return
     ti = ev.get("tool_input") or {}
     role = os.environ.get("COMPOSE_ROLE")
-    why = (switch_decision(ti.get("command"), ev.get("cwd"), role, os.environ.get("COMPOSE_REPO")) if ev.get("tool_name") == "Bash"
-           else guard_decision(ev.get("tool_name"), ti.get("file_path") or ti.get("notebook_path"), role))
+    why = (switch_decision(ti.get("command"), ev.get("cwd"), role, os.environ.get("COMPOSE_REPO")) if ev.get("tool_name") == "Bash" else None)
+    why = why or next(filter(None, (guard_decision(ev.get("tool_name"), p, role) for p in edit_paths(ev))), None)
     if why:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why}}))
 
@@ -109,7 +126,8 @@ def cmd_skillcheck(a):
         if not session:
             return
         loads = "/" + (ev.get("tool_input") or {}).get("skill", "") if ev.get("hook_event_name") == "PostToolUse" else ev.get("prompt", "")
-        if re.match(r"/compose(:|\s|$)", loads):
+        sigils = "|".join(re.escape(h["sigil"]) for h in fc_harness.HARNESSES.values() if h.get("sigil"))
+        if re.match(rf"/compose(:|\s|$)|(?:{sigils or '(?!)'})compose(-|\s|$)", loads):
             skill_notice(session)  # the version it loads now is the one it read
         elif os.environ.get("COMPOSE_ROLE") or (SKILL_SEEN / f"{session}.json").exists():
             if ev.get("hook_event_name") == "UserPromptSubmit" and (note := skill_notice(session)):

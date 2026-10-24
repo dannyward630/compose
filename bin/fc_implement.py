@@ -1,6 +1,6 @@
-import json, os, re, shlex, signal, subprocess, sys, time
+import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
+import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format
 
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -10,6 +10,9 @@ def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     if fake and os.environ.get("COMPOSE_FAKE_402_MATCH", "") in prompt:
         raise fc_models.PaymentRequired(fake, "Payment required to access this resource (simulated)")
     prompt = fc_core.scrub(prompt)
+    if fc_harness.harness_of(model):
+        p = fc_proc.run(fc_harness.once_command(model, cwd, prompt), cwd=cwd, env=fc_claude.headless_env(), timeout=timeout or 900)
+        return fc_harness.once_result(model, p)
     if fc_claude.is_claude(model):
         return fc_claude.claude_once(cwd, prompt, model=fc_claude.claude_id(model))
     if model.startswith("pi:"):
@@ -42,7 +45,6 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
         fc_herdr.herdr("pane", "rename", pane, title)
         sdir = Path(cwd).parent / (Path(cwd).name + ".pi-sessions")
         sdir.mkdir(exist_ok=True)
-        import uuid
         args = ["--tui-mode", "regular", "--no-extensions", *(["-e", str(fc_herdr.PI_HERDR_EXT)] if fc_herdr.PI_HERDR_EXT.exists() else []),
                 *(["-e", str(fc_readguard.PI_EXT)] if guard.exists() else []), *fc_providers.pi_args(model),
                 "--no-skills", "--no-prompt-templates", "--thinking", "low", "--session-id", str(uuid.uuid4()), "--session-dir", str(sdir), "--model", model]
@@ -93,7 +95,6 @@ def trail_pack(wt, query, repo=None, limit=6, cap=12000):
     worktree's files (so a bench reset is not leaked)."""
     src = repo and fc_worktree.graph_dir(repo)
     if src and not fc_worktree.graph_dir(wt):
-        import shutil
         shutil.copytree(src, wt / src.relative_to(repo), dirs_exist_ok=True)
         (wt / ".trail" / "cache").mkdir(parents=True, exist_ok=True)
         fc_core.sh(["trail", "build", "--no-gitignore", "--no-ignore", str(wt)], wt, timeout=600, check=False)
@@ -145,7 +146,7 @@ def read_failure(wt, meta, output, log_path):
     (models.test_reader, Claude Haiku by default) runs headless in the task's clone with read-only tools, so it can point at the
     file:line but never edit or run anything. ("", None) when no Claude reader is set, or it fails or times out: the raw tail
     always follows, so this only ever adds."""
-    if not fc_config.TEST_READER or not fc_claude.is_claude(fc_config.TEST_READER):
+    if not fc_config.TEST_READER or not (fc_claude.is_claude(fc_config.TEST_READER) or fc_harness.harness_of(fc_config.TEST_READER)):
         return "", None
     prompt = (f"A test run failed in this repository.\nTest command: {meta['test']}\nFull output: {log_path}\nOutput (tail):\n{output[-6000:]}\n\n"
               f"Files the fix may change: {', '.join(meta['files']) or 'any'}. Open the test file and those files with Read when the output alone does not "
@@ -153,7 +154,11 @@ def read_failure(wt, meta, output, log_path):
               "Reply with at most 8 short lines and nothing else: each failing case, what it expected versus what it got, and the file:line "
               "to look at. No advice beyond that, no code.")
     try:
-        _, reply, _, usage = fc_claude.claude_once(wt, prompt, timeout=READER_TIMEOUT, model=fc_claude.claude_id(fc_config.TEST_READER), tools="Read,Grep,Glob")
+        if fc_harness.harness_of(fc_config.TEST_READER):
+            p = fc_proc.run(fc_harness.once_command(fc_config.TEST_READER, wt, prompt, read_only=True), cwd=wt, env=fc_claude.headless_env(), timeout=READER_TIMEOUT)
+            _, reply, _, usage = fc_harness.once_result(fc_config.TEST_READER, p)
+        else:
+            _, reply, _, usage = fc_claude.claude_once(wt, prompt, timeout=READER_TIMEOUT, model=fc_claude.claude_id(fc_config.TEST_READER), tools="Read,Grep,Glob")
     except Exception:  # noqa: BLE001 - a timeout or a refused call leaves the raw tail
         return "", None
     return reply.strip()[:1500], usage
@@ -219,7 +224,6 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     wt = proj / "worktrees" / (tid + tag)
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
-    import shutil
     if wt.exists(): shutil.rmtree(wt)
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))

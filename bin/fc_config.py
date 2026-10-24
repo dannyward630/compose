@@ -1,7 +1,7 @@
 from __future__ import annotations  # the X | None annotations on /usr/bin/python3 3.9
 import json, os, re, sys
 from pathlib import Path
-import fc_auth, fc_core
+import fc_auth, fc_core, fc_harness
 
 
 # ---------- global config and workspaces ----------
@@ -66,6 +66,7 @@ DEFAULT_TIERS = {"cheap": ["claude:claude-haiku-5-5", "pi:openrouter-fast/z-ai/g
                               {"model": "pi:openai/gpt-6-astra", "effort": "high"}]}
 TIERS = {t: [((e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)) for e in es] for t, es in DEFAULT_TIERS.items()}
 PROVIDERS = {}  # name -> the active settings' providers entry (base URL, optional models list), set by apply_config
+HARNESS = None  # the session's harness, set by apply_config; its block under "harnesses" picks the crew's models
 
 
 def read_config():
@@ -76,8 +77,48 @@ def write_config(cfg):
     fc_core.atomic_write(CONFIG_PATH, json.dumps(cfg, indent=2) + "\n", keep_secrets=True)  # a config env's *_API_KEY stays as it is
     CONFIG_PATH.chmod(0o600)  # settings stay private
 
-def settings(cfg):
-    """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep."""
+def session_harness(flag=None):
+    """The session's harness: the flag, else $COMPOSE_HARNESS, else what its own environment names, else "claude" under
+    Claude Code ($CLAUDECODE=1), else None."""
+    return flag or os.environ.get("COMPOSE_HARNESS") or fc_harness.detected() or ("claude" if os.environ.get("CLAUDECODE") == "1" else None)
+
+def _stand_in_block(out, stand):
+    """A harness block derived from the merged settings: each Claude model becomes `stand`."""
+    swap = lambda m: stand if isinstance(m, str) and (m == "claude" or m.startswith("claude:")) else m
+    models = out.get("models") or {}
+    crew = {}
+    for role, e in (models.get("crew") or {}).items():
+        if isinstance(e, dict):
+            e = dict(e)
+            e["model"] = swap(e.get("model"))
+            if "fallback" in e:
+                fbs = e["fallback"] if isinstance(e["fallback"], list) else [e["fallback"]]
+                fbs = [{**f, "model": swap(f.get("model"))} if isinstance(f, dict) else swap(f) for f in fbs]
+                fbs = [f for f in fbs if (f.get("model") if isinstance(f, dict) else f) != e["model"]]
+                if fbs:
+                    e["fallback"] = fbs
+                else:
+                    del e["fallback"]
+        else:
+            e = swap(e)
+        crew[role] = e
+    crew.setdefault("default", stand)
+    for role in CREW_DEFAULTS:
+        crew.setdefault(role, stand)
+    block = {"crew": crew}
+    for k in ("implementer", "fallback", "fix", "test_reader"):
+        m = models.get(k, TEST_READER if k == "test_reader" else None)
+        if m is not None:
+            block[k] = swap(m)
+    tiers = dict(models.get("tiers") or {})
+    for t in TIER_NAMES:
+        tiers[t] = [{**e, "model": swap(e.get("model"))} if isinstance(e, dict) else swap(e) for e in tiers.get(t, DEFAULT_TIERS[t])]
+    block["tiers"] = tiers
+    return {"models": block}
+
+def settings(cfg, harness=None):
+    """The active workspace's settings: the top level with the workspace's entry merged over it, one level deep, then
+    harness's block under "harnesses" merged over that the same way ("harnesses" itself never reaches the result)."""
     name = cfg.get("workspace") or "default"
     if name != "default" and name not in cfg.get("workspaces", {}):
         sys.exit(f"{CONFIG_PATH}: active workspace {name!r} is not under \"workspaces\"")
@@ -85,22 +126,36 @@ def settings(cfg):
     out = {k: v for k, v in cfg.items() if k not in ("workspace", "workspaces")}
     for k, v in ws.items():
         out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    blocks = out.pop("harnesses", None) or {}
+    for n, block in blocks.items():
+        if "default" not in (block.get("models") or {}).get("crew", {}):
+            sys.exit(f'{CONFIG_PATH}: harnesses.{n}.models.crew has no "default"')
+    stand = fc_harness.HARNESSES.get(harness, {}).get("stand_in")
+    if stand and harness not in blocks:
+        blocks = {**blocks, harness: _stand_in_block(out, stand)}
+    if harness and harness != "claude" and harness not in blocks:
+        sys.exit(f'{CONFIG_PATH}: no "harnesses.{harness}" block')
+    for k, v in (blocks.get(harness) or {}).items():
+        out[k] = {**out[k], **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
     return name, out
 
-def apply_config(move=True):
+def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS, PRICES
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
-    name, st = settings(read_config())
+    harness = session_harness(harness)
+    name, st = settings(read_config(), harness)
     PROVIDERS = st.get("providers", {})
     for pname, p in PROVIDERS.items():
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pname):
             sys.exit(f"{CONFIG_PATH}: provider names are lowercase letters, digits, - and _: {pname!r}")
         if pname in ("openrouter", "openrouter-fast"):
             sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: openrouter models already route there")
+        if pname in fc_harness.RESERVED:
+            sys.exit(f"{CONFIG_PATH}: providers.{pname} is reserved: {', '.join(fc_harness.RESERVED)} name harnesses, not providers")
         if not (isinstance(p.get("base_url"), str) and p["base_url"].startswith(("http://", "https://"))):
             sys.exit(f"{CONFIG_PATH}: providers.{pname} needs a base_url such as http://localhost:11434/v1")
         ids = p.get("models")
@@ -113,6 +168,7 @@ def apply_config(move=True):
     if type(CLAUDE_PARALLEL) is not int or CLAUDE_PARALLEL < 1:
         sys.exit(f"{CONFIG_PATH}: claude_parallel must be a whole number of 1 or more, not {CLAUDE_PARALLEL!r}")
     WORKSPACE = name
+    HARNESS = harness
     auth = fc_auth.read_auth(AUTH_PATH)
     held = auth.get("workspaces", {})
     own = held.get(name, {}).get("openrouter")

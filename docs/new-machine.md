@@ -28,6 +28,9 @@ Without `claude` on the PATH it runs every step that does not need it, skips the
 | herdr | required | installs herdr with its own installer and the herdr skill file | no |
 | pi | required | installs pi with `npm install -g --ignore-scripts`, and declares its `openrouter-fast` provider in `~/.pi/agent/models.json` with no key in it | no |
 | Links | required | links `compose` into `~/.local/bin` and the skill into `~/.claude/skills`; reports when `~/.local/bin` is not on your PATH | no |
+| Codex skill link | default | links the skill into Codex's `skills/compose` under `CODEX_HOME`; ok when `codex` is not on the PATH | no |
+| Codex commands | default | writes the `skills/compose-<name>` command skills under `CODEX_HOME`; ok when `codex` is not on the PATH | no |
+| Codex hooks | default | writes `hooks.json` and the trust records in `config.toml` under `CODEX_HOME`; ok when `codex` is not on the PATH | no |
 | Keys | required | saves the OpenRouter key, the TypeSafe key, and the Linear key into `~/.compose/auth.json` | no |
 | i-have-adhd skill | required | adds the marketplace | yes |
 | Homebrew, uv, jev | default | installs Homebrew when missing, uv, and the `jev/` environment | no |
@@ -45,6 +48,8 @@ It exits 1 when the probe fails, and prints how to create the OpenRouter preset 
 
 With `--yes`, setup ends with `compose is ready`, or with `compose is installed but not ready:` and one line per missing required step.
 Then it tells you the next move: `compose` outside herdr, or `claude` in a pane and `/compose` inside it.
+With no Claude Code and Codex set up, setup still finishes and says `next: run codex in a pane and type $compose`.
+[harnesses.md](harnesses.md) has the rest about harnesses.
 
 ## herdr settings
 
