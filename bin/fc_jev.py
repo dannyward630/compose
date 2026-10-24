@@ -254,6 +254,7 @@ def jev_e2e(case, repo):
         fc_core.LEDGER.add("openrouter", u["text_in"], u["text_out"], None, calls=u["text_calls"])  # jev's text helper does not return $
     if a is not None:
         r["assert_exit"] = a.returncode
+        r["assert_failed"] = a.returncode != 0 and bool(ASSERT_FAILED_RE.search(a.stdout))  # read before the output is cut to its last 3000 characters
     # jev exits 0 only on a reached goal: then the assert decides; a run that did not reach it fails the case either way.
     code = a.returncode if a else 0
     r["exit"] = code if p.returncode == 0 else (code or p.returncode)
@@ -268,7 +269,10 @@ def jev_e2e(case, repo):
         r["screenshots"] = str(record)
     return r
 
-ASSERT_BROKE_RE = re.compile(r"Traceback \(most recent call last\)|ModuleNotFoundError|FileNotFoundError|No such file or directory|command not found|"
+# The assert's contract (docs/verify.md): a line starting ASSERT FAILED, with a non-zero exit, says the app was in the state the case
+# needs and the feature's part is absent. An assert that cannot tell (no login, a banner, no seed) exits non-zero without it.
+ASSERT_FAILED_RE = re.compile(r"^ASSERT FAILED\b", re.M)
+ASSERT_BROKE_RE =re.compile(r"Traceback \(most recent call last\)|ModuleNotFoundError|FileNotFoundError|No such file or directory|command not found|"
                              r"ECONNREFUSED|Connection refused|ENOENT|SyntaxError", re.I)
 LOAD_FAIL_RE = re.compile(r"ERR_[A-Z_]+|net::|chrome-error:|refused to connect|can.t be reached|ECONNREFUSED", re.I)
 LOGIN_PATH_RE = re.compile(r"/(?:log-?in|sign-?in|auth|sso|oauth)\b", re.I)

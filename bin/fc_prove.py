@@ -34,8 +34,6 @@ def flag_path_lint(cfg):
                         'or give the forcing case "url_override": "<why>"')
     return msgs
 
-ASSERT_FAILED_RE = re.compile(r"^ASSERT FAILED\b", re.M)
-
 def judge_failure(cfg, case, r):
     """(verdict, kind, why) from a model that reads a failed case's evidence: verdict is "feature_missing" only when the output
     shows the app loaded and was in the right state, up to the point where the feature should appear. Anything else, also a model
@@ -74,8 +72,8 @@ def prove_case(cfg, case, r):
     found = fc_jev.env_failure(case, r)
     if found:
         verdict, kind, why = "environment", *found
-    elif r.get("assert_exit") not in (None, 0) and ASSERT_FAILED_RE.search(r.get("stdout") or ""):  # the case's own check said no: a model's wording must not flip it
-        verdict, kind, why = "feature_missing", "feature", "the case's assert reported the failure itself (ASSERT FAILED)"
+    elif r.get("assert_failed"):  # the case's own assert said the feature is absent (docs/verify.md): a model's wording must not flip it
+        verdict, kind, why = "feature_missing", "feature", "the case's assert reported the missing feature itself (ASSERT FAILED)"
     else:
         verdict, kind, why = judge_failure(cfg, case, r)
     return {**row, "verdict": verdict, "kind": kind, "why": why}
