@@ -12,13 +12,13 @@ def cmd_quick(a):
     proj = fc_core.project_dir(a)
     repo = Path(a.repo).resolve()
     cache = fc_tasks.linear_cache(proj)
-    issues, tasks = cache.get("issues") or {}, cache["tasks"]
+    issues, tasks = cache.get("issues") or {}, fc_tasks.runnable(cache["tasks"])
     by_id = {t["id"]: t for t in tasks}
     by_linear = {t["linear"]: t for t in tasks}
     chosen = {}
     for i in a.ids:
         if i == cache["feature"].get("id"):
-            for t in fc_tasks.code_tasks(tasks):
+            for t in tasks:
                 chosen[t["id"]] = t
         elif i in by_linear:
             chosen[by_linear[i]["id"]] = by_linear[i]

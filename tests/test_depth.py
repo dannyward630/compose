@@ -48,6 +48,7 @@ class StackDepth(unittest.TestCase):
         self.assertEqual(fc_depth.stack_depth(proj, metas), ("FAST", "062"))
         self.assertEqual(fc_depth.stack_depth(proj, metas[:1]), ("STANDARD", None))
         self.assertEqual(fc_depth.stack_depth(proj, []), ("STANDARD", None))
+        self.assertEqual(fc_depth.stack_depth(proj, [dict(metas[1], kind="hand")]), ("STANDARD", None))  # a hand task has no route to count
 
 
 class DepthConfig(unittest.TestCase):

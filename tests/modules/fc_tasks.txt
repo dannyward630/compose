@@ -12,6 +12,7 @@ blocker_finished
 waiting
 linear_done
 code_tasks
+runnable
 FINISHED
 task_finished
 parse_criteria

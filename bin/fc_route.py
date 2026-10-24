@@ -58,7 +58,7 @@ def cmd_route(a):
     """Route the project's tasks: --only NNN[,NNN], --recalculate."""
     proj = fc_core.project_dir(a)
     repo = Path(a.repo).resolve()
-    tasks = fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True))
+    tasks = fc_tasks.runnable(fc_tasks.load_tasks(proj, required=True))
     if a.only:
         ids = {x.strip() for x in a.only.split(",") if x.strip()}
         tasks = [m for m in tasks if m["id"] in ids]

@@ -185,7 +185,7 @@ def spec_check(data, checks=()):
             else:
                 if not meta["files"] and not meta["delete"]:
                     gaps.append("empty `files:`")
-                if not meta["protected"]:
+                if not meta["protected"] and meta["kind"] != "hand":  # a hand task has no test to write
                     gaps.append("empty `protected:`")
             gaps += missing_after_text({meta["id"]: loose[meta["id"]]} if meta["id"] in loose else {})
             if " ".join(meta["test"].split()) in suite:

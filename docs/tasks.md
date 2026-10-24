@@ -80,6 +80,24 @@ Two design tasks never share a page.
 A design task never runs, stacks, or is judged from files.
 The builder saves the node tree as text under `results/`, and the judge reads it.
 
+## Hand tasks
+
+A change nobody can write a red test for (removing tests, a rename, a config edit) is built by hand on its own branch.
+Give its issue a compose block with `kind: hand`, and a `files:` line for what it touches.
+Its `test:` command is the check that shows the change holds, and it needs no `protected:` line.
+`run` and `quick` never dispatch it.
+It is stacked on the layer before it, `compose done` records it, and `verify` and the stack count it, so verify runs above its branch and reviews its diff.
+An issue labelled `Task` with no compose block stays a hand task the CLI does not know: it has no id, so it is never stacked or verified.
+
+````markdown
+```compose
+id: 009
+kind: hand
+files: tests/test_load.py
+test: python3 -m unittest tests.test_load
+```
+````
+
 ## Right-sized
 
 A task is ready when it meets all four of these:

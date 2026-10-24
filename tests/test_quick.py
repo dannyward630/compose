@@ -20,6 +20,7 @@ class Quick(unittest.TestCase):
         self.repo = Path(tempfile.mkdtemp()).resolve(); self.proj = self.repo / ".compose" / "p"; self.proj.mkdir(parents=True); (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
         issues = [{"id": "ENG-2", "title": "S", "description": "## Goal\ns", "status": "Todo", "blockedBy": [], "parentId": "ENG-1"}, task("ENG-3", "001"), task("ENG-4", "002", protected="tests/t2.py"), task("ENG-5", "003", "In Progress", protected="tests/t3.py"),
                   task("ENG-6", "004", files="bin/secret4.py"), task("ENG-7", "005", route="test-first")]
+        self.issues = issues
         fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": issues})
         self.live, self.calls, self.cache = {i["id"]: i["description"] for i in issues}, [], self.proj / "results" / "tasks.json"; self.addCleanup(mock.patch.stopall)
         def gql(q, v):
@@ -39,6 +40,13 @@ class Quick(unittest.TestCase):
         lines = self.quick("ENG-1", "005", "ENG-3", "ENG-2", "nope")
         self.assertEqual(["nope skipped: no such task" in lines] + [l for l in lines if l[:3].isdigit()], [True, "001 pinned check-only", "002 skipped: protected test tests/t2.py", "003 skipped: already dispatched (In Progress)",
                                                                   "004 skipped: policy Secrets applies", "005 pinned check-only"])
+
+    def test_a_hand_task_is_never_pinned_whether_named_or_reached_through_its_feature_or_story(self):
+        self.issues.append(task("ENG-8", "006", kind="hand"))
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": self.issues})
+        lines = self.quick("ENG-1", "ENG-2", "ENG-8", "006")
+        self.assertEqual([l for l in lines if l.startswith("006")], ["006 skipped: no such task"])
+        self.assertNotIn("ENG-8", [v["id"] for q, v in self.calls])
 
     def test_kept_tasks_are_pinned_on_linear_and_in_the_cache_then_routed_once(self):
         self.assertEqual(self.quick("ENG-4"), ["002 skipped: protected test tests/t2.py"])

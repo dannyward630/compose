@@ -166,6 +166,43 @@ class ScopedSyncNames(unittest.TestCase):
             self.assertEqual([w for w in ("save_issue", "get_issue", "list_issues", "Linear MCP") if w in src], [], name)
 
 
+class HandTasks(unittest.TestCase):
+    """A `kind: hand` task is built by hand: run and quick never dispatch it, and the stack, verify and `done` know it like any code task."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
+        self.proj.mkdir(parents=True)
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        self.tasks = fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            issue("ENG-2", "Remove tests", block(id="001", kind="hand", files="tests/a.py", test="python3 -m unittest tests.a")),
+            issue("ENG-3", "Store", block(id="002", files="a.go", protected="a_test.go", test="go test"))]})
+        self.by = {m["id"]: m for m in fc.fc_tasks.load_tasks(self.proj)}
+
+    def test_sync_keeps_a_hand_task_with_its_kind_and_the_code_filter_keeps_it_for_the_stack(self):
+        self.assertEqual((self.by["001"]["kind"], self.by["001"]["files"], self.by["001"]["protected"]), ("hand", ["tests/a.py"], []))
+        self.assertEqual([m["id"] for m in fc.fc_tasks.code_tasks(self.tasks)], ["001", "002"])
+        self.assertEqual([m["id"] for m in fc.fc_tasks.runnable(self.tasks)], ["002"])
+
+    def test_run_never_dispatches_a_hand_task_but_the_stack_has_its_branch(self):
+        (self.proj / "a_test.go").write_text("")
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_run, "run_tasks") as run, \
+                mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=1, stdout="")):
+            fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only=None, redo=False, no_stack=False))
+            with self.assertRaises(SystemExit) as e:
+                fc.fc_run.cmd_run(SimpleNamespace(repo=str(self.proj), project="p", only="001", redo=False, no_stack=False))
+        self.assertEqual([m["id"] for m in run.call_args.args[2]], ["002"])
+        self.assertIn("no tasks on Linear under this feature carry a compose block", str(e.exception))
+        with mock.patch.object(fc.fc_worktree, "task_branches", return_value={"compose/p-001": None, "compose/p-002": None}), \
+                mock.patch.object(fc.fc_worktree, "task_prefix", return_value="compose/p-"):
+            self.assertEqual(fc.fc_worktree.stack_order(Path("."), self.proj), ["compose/p-001", "compose/p-002"])
+
+    def test_done_finds_a_hand_task_by_its_id(self):
+        repo = self.proj.parent.parent
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc_ledger, "record_task", return_value=True), \
+                mock.patch.object(fc.fc_linear, "linear_event"), mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout="abc")):
+            fc.fc_status.cmd_done(SimpleNamespace(repo=str(repo), project="p", only="001", note="removed by hand"))
+        self.assertEqual(json.loads((self.proj / "results" / "001.json").read_text())["status"], "hand_done")
+
+
 class DesignTasks(unittest.TestCase):
     """A `kind: design` task is built in Figma: it never clones, stacks, or is judged from files."""
     def setUp(self):

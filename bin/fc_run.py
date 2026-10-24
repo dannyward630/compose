@@ -122,7 +122,7 @@ def cmd_run(a):
         sys.exit(f"run stopped before anything was cloned: {why}. Run `compose verify --project {proj.name} --prove` and fix every case it "
                  "names first; `--unproven` runs anyway.")
     require_committed(repo, not a.no_stack, getattr(a, "force", False))
-    tasks = [m for m in fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
+    tasks = [m for m in fc_tasks.runnable(fc_tasks.load_tasks(proj, required=True)) if not only or m["id"] in only]
     if not tasks:
         sys.exit("no tasks on Linear under this feature carry a compose block" + (f" with ids {a.only}" if only else ""))
     redo = bool(getattr(a, "redo", False))
