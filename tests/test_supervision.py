@@ -313,6 +313,13 @@ class WatchMemory(unittest.TestCase):
                         "hw-y": [{"at": at(0), "state": "working", "message": "half way"}]}
         return snap
 
+    def test_now_counts_a_teammate_whose_only_report_is_started_as_running(self):
+        snap = wsnap("pending")
+        snap["crew"] = {"hw-explore": [{"at": at(0), "state": "working", "message": "started"}]}
+        out = self.watch(snap, now=True)
+        self.assertIn("event crew=hw-explore state=working message='started'", out)
+        self.assertNotIn("event idle  nothing running", out)
+
     def test_watches_in_one_role_share_memory_whatever_their_from(self):
         self.watch(wsnap("running"), now=True, role="engineering-manager")
         self.watch(wsnap("running"), now=True, role="engineering-manager", from_="orchestrator")

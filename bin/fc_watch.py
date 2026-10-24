@@ -258,8 +258,9 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limi
 RUN_ENDED = {"crashed": "  CRASHED: the run process died without finishing; read results/run.log, fix the cause, then `compose resume`",
              "interrupted": "  INTERRUPTED: the run was stopped by Ctrl-C; `compose resume` continues it"}
 
-def watch_events(before, after):
-    """The actionable differences between two snapshots, one line each. Attempt counts, a task starting, and idle/done flaps are not events."""
+def watch_events(before, after, started=False):
+    """The actionable differences between two snapshots, one line each. Attempt counts, a task starting, and idle/done flaps are not events.
+    A teammate's `started` report wakes no one; `started` (for --now, which lists what is running) keeps it."""
     ev = []
     for tid, t in after["tasks"].items():
         b = before["tasks"].get(tid, {})
@@ -287,7 +288,7 @@ def watch_events(before, after):
         ev.append(f"event verify={'PASS' if after['verify'][1] else 'FAIL'}")
     for n, reports in after.get("crew", {}).items():
         for r in reports[len(before.get("crew", {}).get(n, [])):]:
-            if r["message"] != "started":
+            if started or r["message"] != "started":
                 ev.append(f"event crew={n} state={r['state']} message={r['message']!r}")
     for n, refusals in after.get("refused", {}).items():
         for r in refusals[len(before.get("refused", {}).get(n, [])):]:
@@ -401,7 +402,7 @@ def cmd_watch(a, rewake=False):
         cur = watch_snapshot(repo, proj)
         empty = {"tasks": {}, "agents": {}, "run": cur["run"] or cur.get("ended"), "verify": None, "halt": None,
                  "crew": {n: r[:-1] for n, r in cur["crew"].items()}}  # each teammate's latest report, once
-        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur), proj.name, sources, *watch_scope(proj, cur)))
+        lines = yolo_mark(proj, watch_filter(watch_events(empty, cur, started=True), proj.name, sources, *watch_scope(proj, cur)))
         if y := fc_tasks.yolo_state(proj):
             lines.insert(0, f"event {y['mode']}=on push={'yes' if y.get('push') else 'no'} since={y['since']!r} by={fc_tasks.yolo_by(y)!r} words={y.get('words', '')!r}")
         if cur["run"]:
