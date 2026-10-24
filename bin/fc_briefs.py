@@ -380,10 +380,10 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
 def cmd_testcrews(a):
     """Start one test-writing teammate per task that has a protected test, in parallel, each briefed with its task and the groundwork's shared contract.
     `--print` shows the briefs instead. `--redo` takes passed tasks too, as `run --redo` rebuilds them: a re-plan that changed
-    their briefs needs their tests rewritten first. `--parallel N` starts up to N writers now, Claude Code or not, over the config's caps."""
-    proj = fc_core.project_dir(a)
+    their briefs needs their tests rewritten first. `--parallel N` starts up to N writers now, Claude Code or not, over the config's caps. `--force`: as `crew start --force`."""
+    proj, force = fc_core.project_dir(a), bool(getattr(a, "force", False))
     if getattr(a, "collect", False):
-        return collect_tests(proj, a.only)
+        return collect_tests(proj, a.only, force)
     contract_file = Path(a.contract) if a.contract else proj / "results" / "contract.md"
     if not contract_file.exists():
         sys.exit(f"no contract at {contract_file}: the groundwork teammate writes it after the stubs (compose groundwork, phase C)")
@@ -440,7 +440,7 @@ def cmd_testcrews(a):
     def start(m):
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"tests-{m['id']}", title=f"tests {m['id']}",
-                                        brief=brief(m), force=False, cwd=str(wts[m["id"]]), leased=True, model=model))
+                                        brief=brief(m), force=force, cwd=str(wts[m["id"]]), leased=True, model=model))
         except (SystemExit, Exception) as e:  # noqa: BLE001  one teammate's failure must not stop the rest, and is never silent
             failed.append(m["id"])
             print(f"tests-{m['id']} not started: {e}")
@@ -534,11 +534,11 @@ def test_worktree(proj, tid):
     fc_worktree.ready_checkout(wt, path, install=fc_core.project_config(proj).get("install"))
     return path
 
-def collect_tests(proj, only=None):
+def collect_tests(proj, only=None, force=False):
     """Cherry-pick the own commits of every test-writing teammate that reported its test ready onto the project branch in task order,
     remove their worktrees and branches, then start the writers that waited for them. A writer not yet ready is skipped: returning
     its slot ends the session still in it. A conflict keeps that writer's branch and worktree for a look, the rest are still
-    collected, and the collect exits naming every conflict."""
+    collected, and the collect exits naming every conflict. `force` goes on to the writers it starts (a low battery)."""
     wt = fc_herdr.project_worktree(proj)
     want = {x.strip() for x in only.split(",")} if only else None
     by_id = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True) if not want or m["id"] in want}
@@ -591,7 +591,7 @@ def collect_tests(proj, only=None):
     try:
         for (contract, budget, redo), tids in groups.items():
             cmd_testcrews(argparse.Namespace(repo=str(wt), project=proj.name, contract=contract, only=",".join(tids), budget=budget, print_=False, collect=False,
-                                             redo=redo))
+                                             redo=redo, force=force))
     finally:  # slots kept for writers that did not start (still blocked, failed, or past the cap) go back to the pool
         for role, held in {k: v for k, v in fc_worktree.slots(proj).items() if k.startswith("spare-")}.items():
             if fc_worktree.release_slot(wt, held):
