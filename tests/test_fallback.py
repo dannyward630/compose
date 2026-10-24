@@ -110,7 +110,7 @@ class Fallback(unittest.TestCase):
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         me, real_sleep = threading.get_ident(), time.sleep
-        record = lambda s: slept.append(s) if threading.get_ident() == me else real_sleep(s)  # time is global: another thread's sleep is not the wait
+        record = lambda s: slept.append(s) if threading.get_ident() == me and s >= 1 else real_sleep(s)  # time is global: another thread's sleep is not the wait, nor is the 1 ms poll subprocess makes for a child it has not yet reaped
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", record), \
