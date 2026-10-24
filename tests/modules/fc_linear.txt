@@ -36,4 +36,5 @@ ready_line
 cmd_ready
 refresh_ready
 linear_feature_after
+refresh_tasks
 cmd_sync

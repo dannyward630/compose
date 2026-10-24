@@ -29,6 +29,16 @@ class SuiteAfterEachTask(unittest.TestCase):
             self.assertIsNone(fc.fc_run.suite_warning(cfg, n))
 
 
+class RunReadsTasksFresh(unittest.TestCase):
+    def test_run_refreshes_the_tasks_from_linear_before_it_reads_them(self):
+        order = []
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=Path("/p")), mock.patch.object(fc.fc_run, "require_committed"), \
+                mock.patch.object(fc.fc_linear, "refresh_tasks", side_effect=lambda proj: order.append("refresh")), \
+                mock.patch.object(fc.fc_tasks, "load_tasks", side_effect=lambda *a, **k: order.append("read") or []), self.assertRaises(SystemExit):
+            fc.fc_run.cmd_run(SimpleNamespace(repo="/r", project="p", only=None, unproven=True, no_stack=True))
+        self.assertEqual(order, ["refresh", "read"])
+
+
 class RunStartsOnTier(unittest.TestCase):
     def setUp(self):
         self.proj = Path(tempfile.mkdtemp()) / ".compose" / "p"

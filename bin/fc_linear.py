@@ -463,6 +463,20 @@ def linear_feature_after(repo, proj):
     fc_core.say(f"linear {feature} blocked by {other_feature}")
 
 
+def refresh_tasks(proj):
+    """Before a run: read the feature and its tasks from Linear again into results/tasks.json, so a task body edited since the last
+    sync reaches its implementer, and say each one that changed. Without a Linear key the stored tasks stand, and it says so."""
+    stored = proj / "results" / "tasks.json"
+    if not fc_config.LINEAR_KEY:
+        if stored.exists():
+            fc_core.say(f"no Linear key: run uses the tasks synced at {fc_tasks.linear_cache(proj).get('synced_at')}")
+        return
+    old = {t["id"]: t["body"] for t in fc_tasks.load_tasks(proj)} if stored.exists() else {}
+    for t in fc_tasks.sync_tasks(proj, linear_sync_payload(proj)):
+        if t["id"] in old and old[t["id"]] != t["body"]:
+            fc_core.say(f"{t['id']} body changed on Linear since the last sync: refreshed")
+
+
 def cmd_sync(a):
     """Store the feature and its tasks, read from Linear with the workspace key or piped in as JSON (--stdin), and list them."""
     proj = fc_core.project_dir(a)
