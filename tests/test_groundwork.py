@@ -779,12 +779,14 @@ class DesignCrews(unittest.TestCase):
             issue("001", nodes="Checkout/Cart, Checkout/Pay"), issue("002", kind="code", files="a.go"), issue("003", "Done", nodes="Home/Hero"),
             issue("004", "In Review", nodes="Home/Nav"), issue("005", nodes="Account/Profile")]})
 
-    def run_crews(self, only=None, print_=False, busy=(), max=None):
+    def run_crews(self, only=None, print_=False, busy=(), max=None, live=()):
         started, out = [], io.StringIO()
         def crew(ns):
             started.append(ns)
             if ns.role in busy: raise SystemExit("busy")
+        agents = [{"name": fc.fc_herdr.agent_name("p", role), "workspace_id": "w1"} for role in live]
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr_space") as space, \
+                mock.patch.object(fc.fc_herdr, "live_agents", return_value=agents), mock.patch.object(fc.fc_herdr, "herdr_project_space", return_value="w1"), \
                 mock.patch.object(fc.fc_crew, "cmd_crew", side_effect=crew), mock.patch("sys.stdout", out):
             fc.fc_figma.cmd_designcrews(SimpleNamespace(repo=".", project="p", only=only, print_=print_, max=max))
         return started, out.getvalue(), space
@@ -833,6 +835,23 @@ class DesignCrews(unittest.TestCase):
             self.assertIn(line, out)
         self.assertEqual((out.count("skipped"), out.count("=====")), (4, 1))
         self.assertNotIn("skipped", self.run_crews(only="005", print_=True)[1])
+
+    def test_a_task_whose_result_is_passed_or_hand_done_is_not_started_again_before_linear_catches_up(self):
+        for tid, status in (("001", "hand_done"), ("005", "passed")):
+            (self.proj / "results" / f"{tid}.json").write_text(json.dumps({"id": tid, "status": status}))
+        started, out, _ = self.run_crews(only="001,005")
+        self.assertEqual(started, [])
+        for line in ("001 skipped: its result is hand_done", "005 skipped: its result is passed"):
+            self.assertIn(line, out)
+        (self.proj / "results" / "005.json").write_text(json.dumps({"id": "005", "status": "failed"}))
+        self.assertEqual([ns.role for ns in self.run_crews()[0]], ["design-005"])
+
+    def test_a_builder_already_running_is_skipped_with_its_reason_not_reported_as_a_failure(self):
+        started, out, _ = self.run_crews(live=("design-001",))
+        self.assertEqual([ns.role for ns in started], ["design-005"])
+        self.assertIn("design-001 is already running", out)
+        self.assertNotIn("not started", out)
+        self.assertNotIn("start them again", out)
 
     def test_a_task_figma_line_names_its_own_file_else_the_stored_key(self):
         def issue(n, **kv):

@@ -122,13 +122,14 @@ def cmd_designcrews(a):
     proj = fc_core.project_dir(a)
     only = {x.strip() for x in a.only.split(",")} if a.only else None
     tasks = fc_tasks.load_tasks(proj, required=True)
-    metas = [m for m in tasks if m.get("kind") == "design" and m.get("linear_state") not in ("Done", "Canceled", "In Review")
-             and (not only or m["id"] in only)]
+    def finished(m):  # why a task needs no builder: Linear as of the last sync, else its own result (done by hand or passed before the next sync)
+        return "its state is In Review" if m.get("linear_state") == "In Review" else fc_tasks.task_finished(proj, m)
+    metas = [m for m in tasks if m.get("kind") == "design" and not finished(m) and (not only or m["id"] in only)]
     for tid in sorted(only or ()):  # a named id that is skipped says why
         if not any(m["id"] == tid for m in metas):
             m = next((m for m in tasks if m["id"] == tid), None)
             print(f"{tid} skipped: " + ("no such task" if not m else f"not a design task (kind {m.get('kind')})" if m.get("kind") != "design"
-                                       else f"its state is {m.get('linear_state')}"))
+                                       else finished(m)))
     figma = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
     if not figma and not all(m.get("figma") for m in metas):
         sys.exit("no Figma file: compose figma check --figma <url or key>")
@@ -149,6 +150,13 @@ def cmd_designcrews(a):
             print(f"===== design-{m['id']}\n{design_brief(m, figma, proj / 'results')}\n")
         return
     cfg = json.loads((proj / "verify.json").read_text()) if (proj / "verify.json").exists() else {}
+    space = fc_herdr.herdr_project_space(proj)
+    live = {ag.get("name") for ag in fc_herdr.live_agents() if ag.get("workspace_id") == space}
+    running = {m["id"]: fc_herdr.agent_name(proj.name, f"design-{m['id']}") for m in metas}
+    for m in metas:  # a running builder keeps its task: starting it again only fails, and would read as a failure to retry
+        if running[m["id"]] in live:
+            print(f"design-{m['id']} is already running; steer it with: herdr agent prompt {running[m['id']]} \"...\"")
+    metas = [m for m in metas if running[m["id"]] not in live]
     cap = a.max or cfg.get("design_concurrency") or DESIGN_CONCURRENCY  # never the config's `parallel`: Figma's per-minute write rate limit sets it
     # designcrews exits once the builders start, so nothing can start the rest later: the queued ids are printed with the command.
     metas, queued = metas[:cap], metas[cap:]
