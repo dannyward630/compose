@@ -295,6 +295,10 @@ CONFIRM = ("You are verifying whether a node tree VIOLATES one acceptance criter
            "and the criterion's words it contradicts. If you cannot show a concrete violation, answer confirmed=false. "
            f"{TREE_READING} "
            'Return JSON {"confirmed": bool, "evidence": str}.')
+SETTLE = ("You are checking whether a node tree SATISFIES every part of one acceptance criterion. For each part, quote the node that meets it. "
+          "If any part has no node that meets it, answer confirmed=false. "
+          f"{TREE_READING} "
+          'Return JSON {"confirmed": bool, "evidence": str}.')
 CONFIRM_PART = (" The tree shown is one part of a larger tree: a node the criterion names that this part does not hold may be in another part, "
                 "so its absence here is never a violation. Confirm only a node in this part that violates the criterion.")
 
@@ -503,6 +507,17 @@ def cmd_figma(a):
                 # no chunk's NOT_MET survived its confirm: those chunks showed no violation, so the chunks that show the
                 # criterion met decide it (MET when one does and none contradicts)
                 row["choice"] = combine_choices([x for x in per_chunk if x != "NOT_MET"])
+            if parted and row["choice"] == "UNCLEAR" and not row.get("judge_error") and len(text) <= CONFIRM_TREE_CHARS:
+                # no chunk holds every node the criterion names, so none can say MET: the whole tree, which fits one call, settles it
+                try:
+                    met, evidence = fc_models.confirm_call(env, SETTLE, f"CRITERION: {c}\n\nTREE:\n{text}")
+                    row["whole_tree"] = {"met": met, "evidence": evidence}
+                    if met:
+                        row["choice"] = "MET"
+                except fc_models.PaymentRequired:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
             choice = figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)

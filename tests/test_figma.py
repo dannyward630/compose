@@ -396,6 +396,27 @@ class FigmaJudge(unittest.TestCase):
         res = self.judge_big(lambda t: ("UNCLEAR", 0.0))
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
 
+    def test_a_criterion_whose_nodes_sit_in_different_chunks_is_settled_on_the_whole_tree(self):
+        """Issue 343: no chunk holds both 2:0 and 2:4, so each answers UNCLEAR and none can say MET. The whole tree fits one call,
+        which is asked once whether it meets every part; its yes passes the criterion, its no leaves the re-ask as before, and a
+        call that fails is a judge error."""
+        text, crit = big_tree(5), "The first and last variants have their Tint (2:0 and 2:4)"
+        self.assertGreater(len(fc.fc_figma.tree_chunks(text)), 2)
+        both = lambda user: '"id": "2:0"' in user and '"id": "2:4"' in user
+        for met, status, choice in ((True, "passed", "MET"), (False, "failed", "UNCLEAR")):
+            with self.subTest(met=met):
+                res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=text, criterion=crit,
+                                     confirm=lambda system, user: {"confirmed": met and both(user), "evidence": "2:0 and 2:4 each hold a Tint"})
+                row = res["criteria"][0]
+                self.assertEqual((res["status"], row["choice"], row["whole_tree"]["met"]), (status, choice, met))
+                system, user = self.confirm.call_args_list[0].args[1:3]
+                self.assertEqual((self.confirm.call_count, user.split("TREE:\n", 1)[1]), (1, text))
+                self.assertIn("SATISFIES", system)
+                self.assertEqual("reask" in row, not met)  # a yes needs no re-ask
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=text, criterion=crit, confirm=lambda system, user: {"no": "verdict"})
+        self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("blocked", "UNCLEAR"))
+        self.assertIn("confirm call failed", res["judge_errors"][0]["evidence"])
+
     def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
         def jev(env, cfg, state, q, label):
             if state.get("tree_part", "").startswith("2 of"):
