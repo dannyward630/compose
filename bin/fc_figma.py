@@ -522,6 +522,10 @@ def cmd_figma(a):
             sys.exit(f"unknown task {tid}")
         if meta.get("kind") != "design":
             sys.exit(f"{tid} is not a design task")
+        done_path = proj / "results" / f"{tid}.json"
+        if not getattr(a, "force", False) and done_path.exists() and json.loads(done_path.read_text()).get("status") == "hand_done":
+            print(f"{tid} skipped: accepted by hand (hand_done); pass --force to judge it anyway")
+            continue
         tree_path = proj / "results" / f"{tid}.tree.txt"
         if not tree_path.exists():
             sys.exit(f"no node tree at {tree_path}: `compose figma tree --project {proj.name} --only {tid} --node <ids>` saves it")
