@@ -45,6 +45,15 @@ class DoneEvidence(unittest.TestCase):
         done = lambda tid, sha: [(f"run-{tid}", sha, [tid], [f"{tid}.1:x"], "done", "done", "pass", None, "hand done: by hand")]
         self.assertEqual(self.recorded(), [("ENG-4", done("021", self.tip)), ("ENG-5", done("022", "")), (None, done("023", ""))])
 
+    def test_a_result_without_a_worktree_fetches_nothing(self):
+        """A design task's result has a figma: route for a branch and no worktree: the empty worktree read as the cwd, a git
+        checkout, and `git fetch . figma:KEY:figma:KEY` failed with an invalid refspec."""
+        (self.proj / "results" / "021.json").write_text('{"branch": "figma:wUa6g7vNP1il73eflFGXU0"}')
+        cwd = os.getcwd(); os.chdir(self.repo); self.addCleanup(os.chdir, cwd)
+        with mock.patch.object(fc.fc_core, "sh", wraps=fc.fc_core.sh) as sh:
+            self.assertNotIn("not brought in", self.done("021"))
+        self.assertEqual([c for c in sh.call_args_list if "fetch" in c.args[0]], [])
+
     def test_the_write_is_recorded_once_beside_the_hand_done_linear_event(self):
         self.done("021")
         names = [c[0] for c in self.calls.mock_calls if c[0] in ("linear_event", "record", "record_task")]
