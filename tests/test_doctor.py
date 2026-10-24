@@ -498,7 +498,8 @@ class Preflight(unittest.TestCase):
         os.environ["PATH"] += os.pathsep + str(Path(shutil.which("git", path=ORIGINAL_PATH)).parent)  # the real git, after the fake tools
         os.environ.pop("COMPOSE_NO_PREFLIGHT", None)  # hermetic sets it; restored with the rest of the environment
         for p in (mock.patch.object(fc.fc_config, "OPENROUTER_KEY", "or-key"), mock.patch.object(fc.fc_config, "LINEAR_KEY", "lin-key"),
-                  mock.patch.object(fc.fc_config, "WORKSPACE", "work"), mock.patch.object(fc_checks, "machine_warnings", return_value=[])):
+                  mock.patch.object(fc.fc_config, "WORKSPACE", "work"), mock.patch.object(fc_checks, "machine_warnings", return_value=[]),
+                  mock.patch.object(fc_checks, "battery_report", return_value="")):  # never the real battery: below 30% on battery it stops a start
             p.start(); self.addCleanup(p.stop)
         self.requests = []
 

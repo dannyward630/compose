@@ -29,6 +29,11 @@ The top layer runs every check and the `test` of the tasks it is the lowest laye
 A task is tested on the lowest layer that holds its code and every test commit written for it.
 That is the layer with its code, unless a test appended to a shared file had to follow an earlier test into a higher layer: then the task is tested there, where its test exists.
 A lower layer runs the `test` of the tasks it is the lowest layer for and the cheap checks, the ones that are not a whole test suite, so the full suite runs once, on the stack as a whole.
+A green result is kept by the git tree sha it ran on and its command, in `results/green/`: a check, the full suite or a task's `test`.
+When the same command is asked for on the same tree, verify, the run's pass gate and the layer gate take the result and print `<check> green on tree <sha12> at <time>, not rerun` without running it.
+A red or unknown result is never kept or reused, and a layer whose tree differs from every green one runs as before.
+`--fresh` on `verify` and `stack --submit` runs everything again.
+After a rebase or a stack rebuild, run one full suite on the top of the stack and the final verify, never one per layer.
 A failing test that fails on the stack's base too, in a test or module the stack does not change, was red before this work: the submit goes on and the test is listed as accepted.
 A test that passes on the base, or that the stack touches, refuses the submit, as does a failure that names no test or a base run that timed out.
 A base run that timed out or names no failing test is never taken for red: the refusal names the failing tests and says they cannot be told from new ones.

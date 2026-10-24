@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_crew, fc_hooks, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -217,6 +217,7 @@ def main():
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
             s.add_argument("--submit", action="store_true", help="also `gh stack submit --auto`: pushes the layers and opens a draft PR per layer as a GitHub stack")
             s.add_argument("--update", action="store_true", help="with --submit: push submitted layers that changed, with --force-with-lease on the PR head")
+            s.add_argument("--fresh", action="store_true", help="with --submit: run every layer's checks even where one is already green on that layer's tree")
         if name in ("reword", "land"):
             s.add_argument("--trunk", default=None, help="default: the branch you are on")
         if name == "reword":
@@ -338,6 +339,7 @@ def main():
         if name == "verify":
             s.add_argument("--skip-e2e", action="store_true")
             s.add_argument("--skip-review", action="store_true")
+            s.add_argument("--fresh", action="store_true", help="run every check even where it is already green on these very files")
             s.add_argument("--prove", action="store_true", help="before `run`: every e2e case against the project's base must fail because the feature is missing, never because of the environment")
             s.add_argument("--review-only", action="store_true", help="right after `run`: only the diff review and the acceptance questions, no checks, e2e, or fixes")
             s.add_argument("--prototype", action="store_true", help="after `run`: capture each verify.json `prototype` screen of the built app into results/prototype.md to compare with its reference")

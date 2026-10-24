@@ -31,9 +31,40 @@ class LayerChecks(Ship):
         out, code = self.submit()
         self.assertEqual(len(counter.read_text().splitlines()), 3)
         self.assertEqual(len([l for l in out if "unchanged since its checks passed" in l]), 3)
-        self.config(checks=[f"echo run >> {counter}", "true"])  # other checks: every layer is checked again
-        self.submit()
+        self.config(checks=[f"echo run >> {counter}", "true"])  # a new check runs on every layer; the one that was green on its tree is taken
+        out, code = self.submit()
+        self.assertEqual(len(counter.read_text().splitlines()), 3)
+        self.assertEqual(len([l for l in out if f"echo run >> {counter} green on tree" in l and "not rerun" in l]), 3)
+        self.submit_fresh()
         self.assertEqual(len(counter.read_text().splitlines()), 6)
+
+    def submit_fresh(self):
+        return self.run_cmd(fc.fc_ship.cmd_stack, submit=True, fresh=True)
+
+    def test_a_layer_whose_tree_has_a_recorded_green_is_not_run_and_the_others_still_are(self):
+        counter = Path(tempfile.mkdtemp()) / "runs"
+        cmd = f"echo run >> {counter}"
+        self.config(checks=[cmd])
+        self.run_cmd(fc.fc_ship.cmd_stack, submit=False)
+        top = fc.fc_green.tree_of(self.repo, "compose/p-layer-03")
+        fc.fc_green.record(self.proj, top, cmd, 0)  # what verify left on the top of the stack
+        out, code = self.submit()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(counter.read_text().splitlines()), 2)  # layers 1 and 2 hold other trees
+        taken = [l for l in out if "not rerun" in l]
+        self.assertEqual(len(taken), 1)
+        self.assertIn(f"{cmd} green on tree {top[:12]} at ", taken[0])
+        self.assertIn("compose/p-layer-03", taken[0])
+
+    def test_a_red_result_is_never_taken_and_a_green_one_is_forgotten_when_the_layer_goes_red(self):
+        counter = Path(tempfile.mkdtemp()) / "runs"
+        cmd = f"echo run >> {counter}; ! test -f 002.src"
+        self.config(checks=[cmd])
+        for _ in range(2):
+            out, code = self.submit()
+            self.assertEqual(code, 1)
+        self.assertEqual(len(counter.read_text().splitlines()), 3)  # layer 1 once, layer 2 on both submits
+        self.assertFalse(any("not rerun" in l for l in out))
 
     def test_a_layer_is_checked_on_its_own_tree_not_the_top(self):
         self.config(checks=["test -f 003.src"])  # only the top layer has it

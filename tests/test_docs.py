@@ -1725,5 +1725,29 @@ class TiersBudgetAndPartialStacks(unittest.TestCase):
             self.assertNotIn("\u2014", read(rel), rel)
 
 
+class OneSuiteAfterARebase(unittest.TestCase):
+    def test_the_lead_runs_one_full_suite_on_the_top_and_the_final_verify_never_one_per_layer(self):
+        six, four = read("sections/6.md"), read("sections/4.md")
+        for text in (six, four):
+            self.assertIn("After a rebase or a stack rebuild", text)
+            self.assertIn("one full suite on the top of the stack and the final verify, never a ", text)
+        self.assertIn("never a per-layer suite", six)
+        self.assertIn("never a suite per layer", four)
+        self.assertIn("never one per layer", read("docs/verify.md"))
+
+    def test_a_green_check_is_taken_by_tree_and_command_and_fresh_runs_it_again(self):
+        for rel in ("sections/4.md", "sections/6.md", "docs/verify.md"):
+            text = read(rel)
+            self.assertIn("<check> green on tree <sha12> at <time>, not rerun", text, rel)
+            self.assertIn("--fresh", text, rel)
+        self.assertIn("--fresh", read("docs/cli.md"))
+        self.assertIn("not rerun", read("docs/cli.md"))
+
+    def test_the_new_lines_have_no_em_dash_and_the_skill_stays_under_its_cap(self):
+        for rel in ("sections/4.md", "sections/6.md", "docs/verify.md", "docs/cli.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+        self.assertLess(len(read("SKILL.md").encode()), 30000)
+
+
 if __name__ == "__main__":
     unittest.main()
