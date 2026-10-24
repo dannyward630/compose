@@ -242,6 +242,12 @@ def scenario_gaps(desc):
     keys = ("id", "scenario", "given", "when", "then", "test_type", "oracle")
     gaps = [f"scenario {n} lacks {', '.join(k for k in keys if not sc.get(k))}"
             for n, sc in enumerate(scenarios, 1) if any(not sc.get(k) for k in keys)]
+    for line in fc_tasks.scenarios_block(desc).splitlines():  # parse_scenarios joins these onto the value above, so say so
+        m = re.match(r"^([A-Za-z][A-Za-z0-9_]*):", line)
+        if m and not re.match(r"^[a-z_]+:", line):
+            fix = m.group(1).lower()
+            gaps.append(f"scenario line `{line.strip()}` is read as more text of the key above it: a key is lowercase letters and _"
+                        + (f" (`{fix}:`)" if re.fullmatch(r"[a-z_]+", fix) else ""))
     ids = [sc.get("id") or "?" for sc in scenarios]
     k = len(fc_tasks.parse_criteria(desc))
     if ids != [str(n) for n in range(1, k + 1)]:

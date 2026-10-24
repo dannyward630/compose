@@ -470,6 +470,12 @@ class ScenarioGaps(unittest.TestCase):
         self.assertEqual(self.gaps((2, FULL), (1, FULL))[2], ["scenario ids 2, 1 do not match the 2 criteria (expected 1 to 2)"])
         self.assertEqual(self.gaps((1, FULL), crit="- a\n- b\n- c")[2], ["scenario ids 1 do not match the 3 criteria (expected 1 to 3)"])
 
+    def test_a_line_shaped_like_a_key_with_a_capital_or_a_digit_is_named_not_merged_silently(self):
+        ok, _, gaps = self.gaps((1, FULL + "\nGiven: also g\nstep2: run it\nnot a key: x"), (2, FULL))
+        self.assertEqual((ok, gaps), (False, [
+            "scenario line `Given: also g` is read as more text of the key above it: a key is lowercase letters and _ (`given:`)",
+            "scenario line `step2: run it` is read as more text of the key above it: a key is lowercase letters and _"]))
+
     def test_a_scenario_without_an_id_shows_a_question_mark_and_both_gaps_come_in_order(self):
         gaps = self.gaps((1, FULL), ("", "scenario: s"))[2]
         self.assertEqual(gaps[0], "scenario 2 lacks id, given, when, then, test_type, oracle")

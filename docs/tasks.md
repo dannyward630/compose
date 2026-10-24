@@ -54,10 +54,10 @@ oracle: the returned list
 
 - A line `id: <n>` starts a scenario, and the ids run from 1 to the number of criteria, in order.
 - The keys are `id`, `scenario`, `given`, `when`, `then`, `test_type` and `oracle`, all required, and `negative_cases`, optional.
-  A line that is not `key: value` joins the previous value after one space.
+  A key is lowercase letters and `_`, and a line that is not `key: value` joins the previous value after one space.
 - The test writer writes a case per scenario and per negative case, then adds holdout cases none of them lists.
   The regression writer's brief carries the block too.
-- `spec-check` fails a task whose scenario lacks a required key, or whose ids do not match its criteria.
+- `spec-check` fails a task whose scenario lacks a required key, whose ids do not match its criteria, or that has a line shaped like a key with a capital or a digit (`Given:`, `step2:`), which would join the value above it.
   A task without the block is read exactly as before.
 
 Three more rules apply to the block and the issue around it:
