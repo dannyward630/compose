@@ -63,6 +63,16 @@ class RedoMidChain(unittest.TestCase):
         self.assertEqual([self.git("rev-list", "--count", f"main..fast/p/{t}") for t in ("012", "005")], ["3", "4"])
         self.assertEqual(self.git("show", "fast/p/005:c.txt"), "new")
 
+    def test_a_commit_moved_by_hand_from_a_layer_to_the_one_above_it_survives_the_chain_rebase(self):
+        # 011's commit folded onto 012 by hand: 011 reset back to 010, so its reflog still holds the commit 012 now owns
+        self.git("branch", "-f", "fast/p/011", "fast/p/010")
+        self.git("checkout", "-q", "main"); (self.repo / "m.txt").write_text("moved\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "main moves")
+        chain = fc.fc_layers.linearize(self.repo, self.proj, "main", fc.fc_worktree.stack_worktree(self.repo, self.proj, "main"))
+        self.assertEqual(fc.fc_layers.STACK_STOP, "")
+        self.assertEqual(chain, [f"fast/p/{t}" for t in ("010", "011", "012", "005")])
+        self.assertEqual(self.git("log", "--format=%s", "main..fast/p/005"), "task 005\ntask 012\ntask 011\ntask 010")
+
     def test_a_layer_above_one_resolved_by_hand_between_runs_replays_only_its_own_commits(self):
         # 011 rewritten, then 012 rebased onto it by hand after a stopped run: 005 still carries the old 011 and the old 012
         self.git("checkout", "-q", "-B", "fast/p/011", "fast/p/010"); (self.repo / "c.txt").write_text("new\n")
