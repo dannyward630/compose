@@ -45,12 +45,29 @@ class Reason(unittest.TestCase):
         self.assertEqual(fc_routerec.route_reason(r, s), "fallback STANDARD test-first: Jev unavailable: timeout; "
                          "0 files (0 new), 0 criteria, 0 shared with other open tasks; Bug label, reproduction not documented, not confirmed")
 
-    def test_fallback_pinned_after_retry_without_dependencies(self):
+    def test_a_pinned_depth_that_fell_back_names_the_confidence_and_the_threshold(self):
         low = {"choice": "DEEP", "probabilities": {"DEEP": 0.4}, "confidence": 0.3}
-        r = route(workflow="fix-then-regression-test", decided_by="pin + fallback", confidence=0.3, answers={"depth": low}, retry={"unavailable": "trail missing"}, fallback="confidence below 0.6")
+        r = route(workflow="fix-then-regression-test", depth="STANDARD", decided_by="pin + fallback", confidence=0.3, answers={"depth": low},
+                  retry={"unavailable": "trail missing"}, fallback="confidence below 0.6", fell_back=["depth"])
         s = state([("tests/a.py", False), ("bin/b.py", True), ("tests/c.py", False)], 2, other=["bin/b.py", "tests/c.py", "z.py"], pin="fix-then-regression-test")
-        self.assertEqual(fc_routerec.route_reason(r, s), "fallback STANDARD fix-then-regression-test pinned: confidence below 0.6 after a retry, dependency analysis unavailable; "
-                         "3 files under tests, bin (2 new), 2 criteria, 2 shared with other open tasks; no Bug label")
+        self.assertEqual(fc_routerec.route_reason(r, s), "Jev: depth STANDARD fallback (confidence 0.30, below 0.6), workflow fix-then-regression-test pinned"
+                         " after a retry, dependency analysis unavailable; 3 files under tests, bin (2 new), 2 criteria, 2 shared with other open tasks; no Bug label")
+
+    def test_only_the_answer_that_fell_back_is_marked_and_a_missing_answer_says_so(self):
+        weak = {"choice": "IMPLEMENT_THEN_TEST", "probabilities": {"IMPLEMENT_THEN_TEST": 0.5}, "confidence": 0.2}
+        r = route(decided_by="jev + fallback", answers={"depth": DEPTH, "workflow": weak}, fallback="confidence below 0.6", fell_back=["workflow"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)),
+                         f"Jev: depth STANDARD (p 0.72, confidence 0.65), workflow test-first fallback (confidence 0.20, below 0.6); {REST}")
+        sure = {**weak, "confidence": 0.9}
+        r = route(workflow="implement-then-test", decided_by="jev + fallback", answers={"workflow": sure}, fallback="confidence below 0.6", fell_back=["depth"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)),
+                         f"Jev: depth STANDARD fallback (no answer, below 0.6), workflow implement-then-test (p 0.50, confidence 0.90); {REST}")
+
+    def test_a_workflow_decided_by_the_protected_test_says_so(self):
+        r = route(decided_by="rule + jev", answers={"depth": DEPTH})
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)), f"Jev: depth STANDARD (p 0.72, confidence 0.65), workflow test-first from its protected test; {REST}")
+        r = route(decided_by="rule + fallback", answers={"depth": DEPTH}, fallback="confidence below 0.6", fell_back=["depth"])
+        self.assertEqual(fc_routerec.route_reason(r, state(ONE, 1)), f"Jev: depth STANDARD fallback (confidence 0.65, below 0.6), workflow test-first from its protected test; {REST}")
 
 
 CHECK = {"choice": "CHECK_ONLY", "probabilities": {"CHECK_ONLY": 0.81, "TEST_FIRST": 0.19}, "confidence": 0.81}

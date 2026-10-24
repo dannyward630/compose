@@ -36,7 +36,7 @@ class Ask(unittest.TestCase):
         good = reply(depth=ans("STANDARD", 0.65), workflow=ans("FIX_THEN_REGRESSION_TEST", 0.6), policy0=ans("APPLIES", 0.9))
         route, ask, more = self.decide([good], plain=PLAIN[:1])
         self.assertEqual(route, {"workflow": "fix-then-regression-test", "depth": "DEEP", "decided_by": "jev", "confidence": 0.6,
-                                 "answers": good["answers"], "retry": None, "fallback": None, "floor": ["Secrets"], "checks": ["t"]})
+                                 "answers": good["answers"], "retry": None, "fallback": None, "fell_back": [], "floor": ["Secrets"], "checks": ["t"]})
         self.assertEqual((ask.call_args.args[2:], more.call_count), ((STATE, fc_routejev.route_questions(STATE, PLAIN[:1]), "Jev route"), 0))
         route, ask, _ = self.decide([reply(depth=ans("FAST", 0.9))], state={**STATE, "pin": "fix-then-regression-test"})
         self.assertEqual((ask.call_count, *pick(route, "workflow", "depth", "decided_by", "confidence")), (1, "fix-then-regression-test", "FAST", "pin + jev", 0.9))
@@ -47,17 +47,35 @@ class Ask(unittest.TestCase):
         self.assertEqual(ask.call_args_list[1].args[2:], ({**STATE, "dependencies": CALLERS}, ask.call_args_list[0].args[3], "Jev route retry"))
         self.assertEqual((more.call_count, *pick(route, "workflow", "depth", "decided_by", "retry", "answers")), (1, "implement-then-test", "DEEP", "jev after retry", CALLERS, second["answers"]))
 
-    def test_low_after_retry_falls_back_with_the_threshold(self):
-        last = reply(depth=ans("DEEP", 0.75), workflow={"choice": "TEST_FIRST", "probabilities": {}})
+    def test_each_unsure_answer_falls_back_on_its_own_with_the_threshold(self):
+        last = reply(depth=ans("DEEP", 0.75), workflow={"choice": "IMPLEMENT_THEN_TEST", "probabilities": {}})
         route, ask, _ = self.decide([reply(depth=ans("DEEP", 0.7), workflow=ans("TEST_FIRST", 0.9)), last], cfg={"route_threshold": 0.8})
-        self.assertEqual((ask.call_count, *pick(route, "depth", "workflow", "decided_by", "fallback", "confidence", "answers")), (2, "STANDARD", "test-first", "fallback", "confidence below 0.8", 0.75, last["answers"]))
+        self.assertEqual((ask.call_count, *pick(route, "depth", "workflow", "decided_by", "fallback", "fell_back", "confidence", "answers")),
+                         (2, "STANDARD", "test-first", "fallback", "confidence below 0.8", ["workflow", "depth"], 0.75, last["answers"]))
+        sure = reply(depth=ans("DEEP", 0.9), workflow=ans("IMPLEMENT_THEN_TEST", 0.2))
+        route, ask, _ = self.decide([sure, sure])
+        self.assertEqual((ask.call_count, *pick(route, "depth", "workflow", "decided_by", "fell_back")), (2, "DEEP", "test-first", "jev after retry + fallback", ["workflow"]))
+        sure = reply(depth=ans("FAST", 0.3), workflow=ans("IMPLEMENT_THEN_TEST", 0.9))
+        route, _, _ = self.decide([sure, sure])
+        self.assertEqual(pick(route, "depth", "workflow", "decided_by", "fell_back"), ("STANDARD", "implement-then-test", "jev after retry + fallback", ["depth"]))
         route, _, _ = self.decide([reply(depth=ans("DEEP", 0.5))] * 2, state={**STATE, "pin": "implement-then-test"})
         self.assertEqual(pick(route, "workflow", "depth", "decided_by", "fallback"), ("implement-then-test", "STANDARD", "pin + fallback", "confidence below 0.6"))
+
+    def test_a_protected_test_decides_test_first_without_a_workflow_question_unless_bug_or_pin(self):
+        test = {"protected": ["tests/test_x.py"], "command": "t"}
+        got = {"depth": ans("DEEP", 0.9), "policy0": ans("DOES_NOT_APPLY", 0.9)}
+        state = {**STATE, "test": test, "bug": {"label": False}}
+        route, ask, more = self.decide([reply(**got)], state=state, plain=PLAIN[:1])
+        self.assertEqual((set(ask.call_args.args[3]), more.call_count, *pick(route, "workflow", "depth", "decided_by", "fell_back")), ({"depth", "policy0"}, 0, "test-first", "DEEP", "rule + jev", []))
+        route, _, _ = self.decide([reply(depth=ans("FAST", 0.2))] * 2, state=state)
+        self.assertEqual(pick(route, "workflow", "depth", "decided_by", "fell_back"), ("test-first", "STANDARD", "rule + fallback", ["depth"]))
+        for other in ({"bug": {"label": True}}, {"pin": "implement-then-test"}):
+            self.assertEqual("workflow" in fc_routejev.route_questions({**state, **other}, []), "pin" not in other)
 
     def test_jev_raising_falls_back_at_once_and_payment_propagates(self):
         route, ask, more = self.decide(RuntimeError("no key"))
         self.assertEqual((route, ask.call_count, more.call_count), ({"workflow": "test-first", "depth": "STANDARD", "decided_by": "fallback", "confidence": None, "answers": {},
-                                 "retry": None, "fallback": "Jev unavailable: no key", "floor": [], "checks": []}, 1, 0))
+                                 "retry": None, "fallback": "Jev unavailable: no key", "fell_back": ["workflow", "depth"], "floor": [], "checks": []}, 1, 0))
         self.assertRaises(fc.fc_models.PaymentRequired, self.decide, fc.fc_models.PaymentRequired("typesafe", "top up"))
 
 
@@ -79,12 +97,11 @@ class Floor(unittest.TestCase):
         route, calls = self.decide([good], [GATE], TRIO)
         self.assertEqual((route, calls), ({**bare, "depth": "DEEP", "floor": ["Gate", "Docs"], "checks": ["v", "d"]}, 1))
 
-    def test_floor_reads_the_last_reply_and_overrides_the_fallback(self):
+    def test_floor_reads_the_last_reply_and_an_unsure_policy_floors_without_a_fallback(self):
         first = reply(**SURE, policy0=ans("APPLIES", 0.9), policy1=ans("DOES_NOT_APPLY", 0.4), policy2=ans("APPLIES", 0.9))
         last = reply(**SURE, policy0=ans("DOES_NOT_APPLY", 0.3), policy1=ans("DOES_NOT_APPLY", 0.9))
         route, calls = self.decide([first, last], [GATE], TRIO)
-        self.assertEqual((calls, *pick(route, "fallback", "depth", "floor", "checks")),
-                         (2, "confidence below 0.6", "DEEP", ["Gate", "Secrets", "Style"], ["v", "t"]))
+        self.assertEqual((calls, *pick(route, "fallback", "depth", "floor", "checks")), (2, None, "DEEP", ["Gate", "Secrets", "Style"], ["v", "t"]))
 
     def test_jev_unavailable_plain_policies_keep_checks_but_set_no_floor(self):
         route, _ = self.decide(RuntimeError("no key"), plain=TRIO)
