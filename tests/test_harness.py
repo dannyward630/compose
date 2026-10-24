@@ -1692,6 +1692,21 @@ class GuardRedirects(unittest.TestCase):
     def test_the_target_is_the_token_after_each_operator(self):
         self.assertEqual(self.targets('echo x > "a b.txt"; echo y >> c.txt && ls 2>&1'), [os.path.realpath(self.repo / n) for n in ("a b.txt", "c.txt")])
 
+    def test_a_variable_in_the_target_is_read_as_the_shell_would(self):
+        scratch = ".compose/shop/scratch/planner"
+        for cmd in (f"S={scratch}; echo hi > $S/plan.txt 2>&1", f"S={scratch} D=$S/x; echo hi >> ${{D}}/plan.txt", f"S={scratch}\necho hi > \"$S/plan.txt\""):
+            self.assertIsNone(self.denied(cmd), cmd)
+            self.assertEqual(self.targets(cmd), [os.path.realpath(self.repo / scratch / n) for n in (("x/plan.txt",) if "D=" in cmd else ("plan.txt",))], cmd)
+        self.assertIn("never edit code", self.denied("D=bin; echo x > $D/a.py") or "")
+        self.assertEqual(self.targets("D=bin; echo x > $D/a.py"), [os.path.realpath(self.repo / "bin/a.py")])
+        with mock.patch.dict(os.environ, {"FC_TEST_DIR": "bin"}):
+            self.assertEqual(self.targets("echo x > $FC_TEST_DIR/a.py"), [os.path.realpath(self.repo / "bin/a.py")])
+        self.assertEqual(self.targets("echo x > $FC_TEST_UNSET/a.py"), [os.path.realpath(self.repo / "$FC_TEST_UNSET/a.py")])
+
+    def test_a_home_target_is_not_a_path_in_the_repo(self):
+        self.assertEqual(self.targets("echo x > ~/notes.txt"), [os.path.realpath(Path.home() / "notes.txt")])
+        self.assertIsNone(self.denied("echo x > ~/notes.txt"))
+
     def test_stream_merges_scratch_and_commands_the_shell_cannot_split_are_allowed(self):
         for cmd in ("ls 2>&1", "echo hi > .compose/shop/scratch/x", "echo x > bin/a.py 'oops"):
             self.assertIsNone(self.denied(cmd), cmd)

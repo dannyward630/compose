@@ -90,6 +90,14 @@ def without_heredoc_bodies(cmd):
             end = m.group(2)
     return "\n".join(kept)
 
+ASSIGN = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
+
+def expand(word, assigned):
+    """`word` as the shell reads it: a leading ~, then each $NAME and ${NAME} from the command's own assignments, else the
+    environment. A name set nowhere stays as written."""
+    return VAR.sub(lambda m: assigned.get(n := m.group(1) or m.group(2), os.environ.get(n, m.group(0))), os.path.expanduser(word))
+
 def edit_paths(ev):
     """The paths a tool call writes, relative ones resolved against the event's cwd."""
     ti = ev.get("tool_input") or {}
@@ -104,7 +112,11 @@ def edit_paths(ev):
             words = list(lex)
         except ValueError:  # an unclosed quote: the shell does not run it either
             words = []
-        found += [words[i + 1] for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
+        assigned = {}
+        for w in words:
+            if m := ASSIGN.fullmatch(w):
+                assigned[m.group(1)] = expand(m.group(2), assigned)
+        found += [expand(words[i + 1], assigned) for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
     return [str(Path(ev.get("cwd") or ".") / p) for p in found if p]
 
 def cmd_guard(a):
