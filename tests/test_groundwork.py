@@ -1058,8 +1058,8 @@ class ScenarioPlannerLine(unittest.TestCase):
 
 
 class ScenarioTestBrief(unittest.TestCase):
-    LINE = ("The TASK BRIEF's `scenarios` block gives one scenario per criterion: write a case for each scenario and for each of its negative_cases, "
-            "then add holdout cases none of them lists, within the budget.\n")
+    LINE = ("The TASK BRIEF's `scenarios` block gives one scenario per criterion: write a case per scenario and per negative_case, "
+            "then holdouts none lists, within the budget.\n")
     F = "`" * 3
     CRIT = "## Acceptance criteria\n\n* a\n* b\n\n"
     COMPOSE = f"{F}compose\nfiles: bin/a.py\n{F}\n"
@@ -1073,7 +1073,7 @@ class ScenarioTestBrief(unittest.TestCase):
 
     def test_the_line_sits_between_the_cover_line_and_the_budget_line_once(self):
         brief = self.brief(self.WITH)
-        self.assertIn("test behavior only.\n" + self.LINE + "Budget: at most 60 lines", brief)
+        self.assertIn("config file contents.\n" + self.LINE + "Budget: at most 60 lines", brief)
         self.assertEqual(brief.count(self.LINE), 1)
 
     def test_with_the_line_removed_the_brief_is_the_plain_brief_for_the_same_body(self):
@@ -1081,14 +1081,14 @@ class ScenarioTestBrief(unittest.TestCase):
 
     def test_the_line_holds_for_a_rebuilt_brief_and_a_task_budget(self):
         brief = self.brief(self.WITH, budget=30, rebuilt=True)
-        self.assertIn("test behavior only.\n" + self.LINE + "Budget: at most 30 lines", brief)
+        self.assertIn("config file contents.\n" + self.LINE + "Budget: at most 30 lines", brief)
 
     def test_no_line_without_a_block(self):
         plain = self.brief(self.PLAIN)
         for brief in (fc.fc_briefs.test_brief({k: v for k, v in self.META.items()}, "C"), self.brief(""), plain,
                       self.brief(self.CRIT + f"{self.F}python\nid: 1\n{self.F}\n" + self.COMPOSE)):
             self.assertNotIn("`scenarios` block", brief)
-        self.assertIn("test behavior only.\nBudget: at most 60 lines", plain)
+        self.assertIn("config file contents.\nBudget: at most 60 lines", plain)
 
     def test_the_task_brief_part_carries_the_whole_body_block_included(self):
         self.assertIn(f"TASK BRIEF:\n{self.WITH}\n\nCONTRACT:\nC", self.brief(self.WITH))
@@ -1121,6 +1121,47 @@ class ContractSlice(unittest.TestCase):
         line = ("Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) "
                 "with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.")
         self.assertIn(line, fc.fc_briefs.GROUNDWORK_BRIEF.splitlines())
+
+
+class TerseTemplatesB(unittest.TestCase):
+    B = fc.fc_briefs
+    META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
+    SIZES = {"GROUNDWORK_BRIEF": 3000, "WAYFINDER_BRIEF": 4888, "CHANGE_BRIEF": 3782}
+    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "WAYFINDER_BRIEF": "feature name page slug wt",
+                    "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
+    LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
+              "npx -y lavish-axi {page}", "--reopen", "`yolo:`", "reminder:", "(yolo recommendation, unconfirmed, <date>)", "`away:`"]
+    KEPT = {"GROUNDWORK_BRIEF": ["`compose verify --project {slug} --prove`", '`working "stubs ready: <commit>; contract at {contract}"`',
+                                 '`blocked "<task>: brief lacks <what>"`', "`compose timed`", "`protected:`", "`test:`"],
+            "WAYFINDER_BRIEF": LAVISH + ["`compose linear update <id> --section \"## Decisions so far\" --file <path> --expect <hash>`"],
+            "CHANGE_BRIEF": LAVISH + ["`evidence`", "`compose linear get <id> --body`", "change {cid}: "]}
+
+    def text(self, name):
+        return " ".join(getattr(self.B, name).split())
+
+    def test_each_text_fits_its_size(self):
+        for name, limit in self.SIZES.items():
+            self.assertLessEqual(len(getattr(self.B, name)), limit, name)
+        self.assertLessEqual(len(self.B.test_brief(self.META, "")), 1340)
+
+    def test_each_constant_keeps_exactly_its_placeholders(self):
+        for name, fields in self.PLACEHOLDERS.items():
+            self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(self.B, name)) if f}, set(fields.split()), name)
+
+    def test_commands_report_forms_and_rules_are_kept_verbatim(self):
+        for name, tokens in self.KEPT.items():
+            for token in tokens:
+                self.assertIn(token, self.text(name), f"{name}: {token}")
+
+    def test_test_brief_keeps_its_report_form_and_ends_with_the_task_brief_and_contract(self):
+        brief = self.B.test_brief({**self.META, "body": "## Goal\nbody text"}, "contract text\n")
+        self.assertIn('`working "test ready: <commit>; holdouts: <what they cover>"`', brief)
+        self.assertIn("`done`", brief)
+        self.assertRegex(brief, r"TASK BRIEF:\n## Goal\nbody text\n+CONTRACT:\ncontract text\n\Z")
+        self.assertIn("Test file: tests/test_a.py.", brief)
+
+    def test_fc_briefs_stays_within_600_lines(self):
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
 
 
 if __name__ == "__main__":
