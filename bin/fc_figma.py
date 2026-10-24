@@ -76,7 +76,7 @@ target Figma file is {figma}.
 6. Start builders with `compose designcrews --project {slug}`; gate each with
    `compose figma tree --project {slug} --only NNN --node <ids>` then `compose figma judge --project {slug} --only NNN`;
    then run a `design-review` teammate that reads trees and images through Framelink, one image per story, never `get_screenshot`.
-   Hand-off to code pastes Framelink JSON (never `get_design_context`) into the code task.
+   Hand-off to code names each screen node on its code task's `figma_nodes:` line (never `get_design_context`, never pasted JSON).
 7. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
    visual.
 8. Before any screen story is built, write a visual direction for the surface as a Linear decision: anatomy, density and spacing
@@ -395,6 +395,31 @@ def figma_tree(a, proj):
     print(f"saved {out}")
     if absent:
         print(f"instances of {', '.join(absent)} show no hidden slots: their main components are not in the tree; add the local ones to --node")
+
+def code_nodes(proj, wt, meta):
+    """Write each of a code task's `figma_nodes:` into its clone as `.figma/<node>.json`, Framelink JSON made self-contained as
+    `figma tree` saves it, kept out of git, so a brief names a node instead of carrying it. Their absolute paths.
+    A failed fetch raises RuntimeError: the task never starts."""
+    if not meta.get("figma_nodes"):
+        return []
+    key = meta.get("figma") or (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("figma")
+    if not key:
+        raise RuntimeError("figma_nodes needs a Figma file: compose figma check --figma <url or key>")
+    docs = []
+    for node in meta["figma_nodes"]:
+        try:
+            docs.append(json.loads(framelink_fetch(key, node=node.replace("-", ":"))))
+        except ValueError:
+            raise RuntimeError(f"framelink fetch of node {node} is not JSON")
+    fc_figmanodes.self_contained(docs)
+    (wt / ".figma").mkdir()
+    (wt / ".git" / "info").mkdir(exist_ok=True)
+    with open(wt / ".git" / "info" / "exclude", "a") as f:
+        f.write("/.figma/\n")
+    paths = [wt.resolve() / ".figma" / f"{node.replace(':', '-')}.json" for node in meta["figma_nodes"]]
+    for path, doc in zip(paths, docs):
+        path.write_text(json.dumps(doc, indent=2))
+    return [str(p) for p in paths]
 
 def figma_capabilities(a, proj, pages_now):
     """The capability half of `figma check`: stores the plan's limits when --plan is given, prints them, and stops when the design is blocked."""
