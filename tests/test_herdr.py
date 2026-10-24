@@ -191,7 +191,7 @@ class SharedSpace(unittest.TestCase):
             self.spaces, self.tabs, self.calls = SharedSpace.spaces, {"w3:t1": "1"}, []
             self.assertEqual(self.space(caller), "w9")
             self.assertIn(("worktree", "open", "--workspace", "w3", "--path", str(wt), "--label", "shop", "--no-focus"), self.calls)
-            self.assertEqual({c[c.index("--workspace") + 1] for c in self.calls if c[:2] == ("tab", "create")}, {"w9"})
+            self.assertFalse([c for c in self.calls if c[:2] == ("tab", "create")])  # the worktree space comes with its shell tab: no status tab is added
             self.assertFalse(fc.fc_herdr.space_record(self.proj).exists())
             self.assertEqual(fc.fc_herdr.tab_label(self.proj, "implementers"), "implementers")
             self.calls = []
