@@ -163,6 +163,10 @@ class SpecCheck(unittest.TestCase):
         for body in ("see bin/fc_shrink_extra.py and old/bin/fc_shrink.py", "the shrink step", "fc_shrinker.run(x)"):  # a lookalike names nothing
             self.assertEqual(miss(shrink, dict(jev, body=body)), {}, body)
         self.assertEqual(miss(shrink, dict(jev, files=["bin/fc_shrink.py"])), {})  # the same file is the file clash's to report
+        for owner, body in (("app/src/lib/api.ts", "returns api.Identity and api.NewRouter"), ("server/api/api.go", "from api import x"), ("app/package.json", "imports from package X")):
+            self.assertEqual(miss(dict(shrink, files=[owner]), dict(jev, body=body)), {}, body)  # a bare stem names a module only in Python (stem.name, import stem) and JS/TS (require)
+        for owner, body in (("app/src/lib/api.ts", "require('./api')"), ("app/package.json", "see app/package.json")):
+            self.assertEqual(miss(dict(shrink, files=[owner]), dict(jev, body=body)), {"004": {"001": [owner]}}, body)
         self.assertEqual(miss(dict(shrink, files=["app/package-lock.json"]), dict(jev, body="app/package-lock.json")), {})  # generated
         self.assertEqual(miss(dict(shrink, kind="design"), jev), {})  # a design task builds a page, not code
         self.assertEqual(fc.fc_spec.missing_after_text(miss(shrink, jev)), ["004 names bin/fc_shrink.py, which 001 owns: add `after: 001`"])
