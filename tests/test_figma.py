@@ -300,6 +300,21 @@ class FigmaJudge(unittest.TestCase):
             self.assertIn(f'"id": "2:{i}"', joined)
         self.assertEqual(fc.fc_figma.tree_chunks("small tree\n"), ["small tree\n"])
 
+    def test_every_chunk_carries_the_write_results_binding_facts(self):
+        """Framelink shows a variable-bound fill as its hex, so the judge proves a binding only from the WRITE RESULT; a part that
+        holds the hex fills but not that section made it call bound fills raw hex."""
+        facts = "WRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n" + json.dumps({"bound": "color/bg"})
+        chunks = fc.fc_figma.tree_chunks(big_tree() + "\n" + facts + "\n")
+        self.assertGreater(len(chunks), 4)
+        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
+        self.assertTrue(all(c.count(facts) == 1 for c in chunks))
+        self.assertEqual("\n".join(chunks).count('"id": "2:14"'), 1)
+
+    def test_the_judge_is_told_a_bound_fill_reads_as_its_hex(self):
+        for rules in (fc.fc_figma.TREE_READING, fc.fc_figma.CONFIRM):
+            self.assertIn("resolved hex", rules)
+            self.assertIn("WRITE RESULT", rules)
+
     def test_a_node_with_no_children_or_a_plain_text_tree_is_still_covered(self):
         blob = "NODE 1:1\n" + "".join(f"line {i} " + "y" * 200 + "\n" for i in range(500))
         chunks = fc.fc_figma.tree_chunks(blob)
