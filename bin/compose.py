@@ -245,6 +245,7 @@ def main():
         if name == "designcrews":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--print", dest="print_", action="store_true", help="print the briefs instead of starting builders")
+            s.add_argument("--redo", action="store_true", help="with --only: reopen tasks finished by hand or passed, even In Review, for a new builder; their old result is kept as <id>.json.before-redo")
             s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
         if name == "wayfinder":
             s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
