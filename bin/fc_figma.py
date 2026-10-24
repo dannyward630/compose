@@ -205,11 +205,17 @@ def split_node(head, node, path, limit):
 def tree_chunks(text, limit=TREE_CHUNK_CHARS):
     """The saved tree as texts of at most `limit` characters that together hold all of it, cut along node boundaries: the tree file's
     sections (NODE ..., WRITE RESULT ...) stay apart, an oversized section becomes its context (metadata, styles) and then each node,
-    and a node too big for one part becomes its own fields and then each child. Adjacent small pieces share a chunk."""
+    and a node too big for one part becomes its own fields and then each child. Adjacent small pieces share a chunk.
+    The WRITE RESULT section (small: the only proof of a variable binding, which Framelink shows as plain hex) rides in every chunk."""
     if len(text) <= limit:
         return [text]
+    secs = re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n"))
+    facts = "\n\n".join(s for s in secs if s.startswith("WRITE RESULT"))
+    if facts and len(facts) <= limit // 2:
+        secs = [s for s in secs if not s.startswith("WRITE RESULT")]
+        return [c + "\n\n" + facts for c in tree_chunks("\n\n".join(secs), limit - len(facts) - 2)]
     pieces = []
-    for sec in re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n")):
+    for sec in secs:
         if len(sec) <= limit:
             pieces.append(sec)
             continue
@@ -239,7 +245,8 @@ TREE_READING = ("Every field on a node belongs to that node alone: its strokes a
                 "A node with \"visible\": false exists and is hidden. An instance's componentProperties hold its variant properties "
                 "(such as type and state) as well as its boolean and text ones. A node that has what the criterion requires satisfies that "
                 "part: a stroke, tint, or hidden slot the criterion asks for is never a violation; a violation is a node that contradicts "
-                "the criterion's words.")
+                "the criterion's words. Framelink cannot show variable bindings: a fill or stroke bound to a variable reads as its resolved hex, "
+                "so a hex on a node is never evidence of a raw or unbound colour; only the WRITE RESULT section states bindings, and it is taken as true.")
 
 TREE_CHOICES = {"MET": "The tree satisfies this criterion.", "NOT_MET": "The tree violates or omits this criterion.",
                 "UNCLEAR": "Cannot be decided from the tree shown."}
