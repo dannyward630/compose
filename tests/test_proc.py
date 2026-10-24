@@ -290,6 +290,21 @@ class TimedLoadWait(unittest.TestCase):
         self.assertIs(events[1][1], False)
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "ran"))
 
+    def test_a_held_machine_keeps_the_suite_from_starting_until_the_load_falls_below_low(self):
+        marker = Path(tempfile.mkdtemp()) / "started"; self.addCleanup(shutil.rmtree, marker.parent, True)
+        load, said, loads = Path.home() / ".compose" / "load.json", [], []
+        self.addCleanup(lambda: load.unlink(missing_ok=True)); load.unlink(missing_ok=True)
+        def avg():
+            loads.append(marker.exists())  # every read of the load: has the suite started yet
+            return (13.0 if len(loads) < 4 else 7.0,) * 3
+        env = {k: v for k, v in os.environ.items() if k not in ("COMPOSE_NO_LOAD", "COMPOSE_TEST_SLOT")}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(fc.fc_config, "LOAD", {"high": 12, "low": 8}), mock.patch.object(fc_load, "memory_level", return_value=None), \
+                mock.patch.object(fc_load, "WAIT_POLL", 0.01), mock.patch("os.getloadavg", avg), mock.patch.object(fc.fc_core, "say", said.append):
+            r = fc.fc_implement.timed(f"echo ran > {marker}; pytest -h >/dev/null 2>&1 || true", os.getcwd(), 10)
+        self.assertEqual((loads, marker.exists(), r.returncode), ([False] * 4, True, 0))  # four reads held or just released, none after the start
+        waits = [m for m in said if "waiting until" in m]
+        self.assertEqual(len(waits), 1); self.assertIn("is above 12.0: waiting until it falls below 8.0", waits[0])
+
     def test_a_quick_run_does_not_wait(self):
         for cmd in ("echo pytest -k foo", "echo hi"):
             r, events = self.run_timed(cmd)
