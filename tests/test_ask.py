@@ -65,6 +65,16 @@ class Ask(unittest.TestCase):
         self.assertEqual(ids("NEB-1: 3 cards C1-2 to C1-4 and Q5; rec"), ["C1-2", "C1-3", "C1-4", "Q5"])
         self.assertEqual(fc.fc_ask.cards_in("C1-8. Which?\nA. a - affects: x\nB. b - affects: y\nRecommendation: A\n").keys(), {"C1-8"})
 
+    def test_an_id_with_letters_a_hyphen_and_digits_is_one_id(self):
+        ids = fc.fc_ask.card_ids
+        self.assertEqual(ids("NEB-1: 2 cards REC-19, REC-20; rec"), ["REC-19", "REC-20"])
+        self.assertEqual(ids("NEB-1: 3 cards REC-19..REC-21; rec"), ["REC-19", "REC-20", "REC-21"])
+        self.assertEqual(ids("NEB-1: 3 cards REC-19 to REC-21 and Q5; rec"), ["REC-19", "REC-20", "REC-21", "Q5"])
+        self.assertEqual(ids("NEB-1: 3 cards UX22-UX24; rec"), ["UX22", "UX23", "UX24"])
+        card = "{}. Which?\nA. a - affects: x\nB. b - affects: y\nRecommendation: A\n"
+        for cid in ("REC-19", "Q1", "UX24", "C1-8"):
+            self.assertEqual(fc.fc_ask.cards_in(card.format(cid)).keys(), {cid})
+
     def test_a_working_link_goes_out_with_the_text_fallback(self):
         self.report(f"NEB-1: 2 cards V1-V2; recommendation accept; visual cards open in Lavish: {self.good}")
         (msg,) = self.sent()
