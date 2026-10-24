@@ -64,6 +64,11 @@ Three more rules apply to the block and the issue around it:
   `run` prints the unblocked ids with that proof in its first lines, and the blockers still held with the reason.
 - The `model:` field picks another implementer for one task.
   Leave it unset unless the product owner decided otherwise.
+- A task that removes or replaces tests has no test to write, so it leaves `protected:` empty.
+  It lists the files it removes under `delete:` (and the replacement test under `files:`), and its `test:` is the command that proves the result.
+  `run` removes the `delete:` paths even when `test:` passes before the change, so the task never ends `already_green` with nothing removed.
+  A task pinned `route: check-only` (`compose quick`) may also leave `protected:` empty: its check is the proof.
+  Any other code task with an empty `protected:` fails `spec-check`.
 - Only an issue with the block counts as a task.
   Stories, for example, have none.
 
