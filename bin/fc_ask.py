@@ -18,8 +18,8 @@ def url_problem(url):
     except (OSError, ValueError) as e:
         return str(e)[:100]
 
-CARD_ID = r"[A-Za-z]{0,3}\d+(?:-\d+)?"  # `Q1`, or `C1-8` (card 8 of change C1)
-ID_PARTS = re.compile(r"([A-Za-z]{0,3})(\d+)(?:-(\d+))?")
+CARD_ID = r"(?:[A-Za-z]{1,3}-?)?\d+(?:-\d+)?"  # `Q1`, `REC-19`, or `C1-8` (card 8 of change C1)
+ID_PARTS = re.compile(r"((?:[A-Za-z]{1,3}-?)?)(\d+)(?:-(\d+))?")
 
 def card_ids(message):
     """The card ids a `<n> cards <ids>` line names: `Q1-Q3, W5` is Q1, Q2, Q3, W5; `C1-8` is one id; `C1-2..C1-4` is C1-2, C1-3, C1-4.
@@ -27,7 +27,7 @@ def card_ids(message):
     m = re.search(r"\b\d+\s+cards?\s+([^;]+)", message, re.I)
     ids = []
     for tok in re.split(r"[,&\s]+|\band\b", re.sub(r"\s*(?:\.\.|\bto\b|\s-\s)\s*", "~", m.group(1))) if m else []:
-        tok = re.sub(r"^([A-Za-z]{1,3})(\d+)-\1(\d+)$", r"\1\2~\3", tok)  # `Q1-Q3`
+        tok = re.sub(r"^([A-Za-z]{1,3}-?)(\d+)-\1(\d+)$", r"\1\2~\3", tok)  # `Q1-Q3`
         lo, _, hi = tok.partition("~")
         a = ID_PARTS.fullmatch(lo)
         b = ID_PARTS.fullmatch(hi.removeprefix(a[1])) if a and hi else None  # the end may leave out the prefix: `Q1 to 3`
