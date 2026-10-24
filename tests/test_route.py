@@ -153,6 +153,18 @@ class Record(unittest.TestCase):
         self.assertEqual(out.splitlines(), ["001 STANDARD test-first  reused why", "002 STANDARD test-first  reused why"])
         self.assertEqual(routes["002"], {"workflow": "test-first", "depth": "STANDARD", "reason": "why", "hash": "h1"})
 
+    def test_a_recorded_whole_fallback_is_decided_again_and_a_route_jev_decided_is_reused(self):
+        self.route_reason.return_value = "fallback STANDARD test-first: confidence below 0.6 after a retry with dependency analysis"
+        self.route()
+        self.decide.reset_mock()
+        _, out = self.route()
+        self.assertEqual((self.decide.call_count, "reused" in out), (2, False))
+        self.route_reason.return_value = "Jev: depth STANDARD fallback (confidence 0.40), workflow test-first from its protected test"
+        self.route()
+        self.decide.reset_mock()
+        _, out = self.route()
+        self.assertEqual((self.decide.called, out.count("reused")), (False, 2))
+
     def test_recalculate_or_a_changed_hash_decides_and_records_again(self):
         self.route()
         for hash_, kw in (("h1", {"recalculate": True}), ("h2", {})):
