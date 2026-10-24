@@ -344,6 +344,9 @@ class PlanWritingRules(unittest.TestCase):
         "Before the cut the planner reads its own plan once as the implementer will: every acceptance criterion maps to a step, no step names a file the file map lacks, a type or signature means one thing in every step that uses it, the Review focus names a test or step that covers it, and the plan is no longer than the feature needs.",
     ]
 
+    def test_the_split_rules_put_a_removed_file_under_delete(self):
+        self.assertIn("A file the task removes goes under `delete:`, never `files:`", read("sections/2.md"))  # the planner reads sections/2.md, not docs/tasks.md
+
     def test_no_third_party_skill_is_read(self):
         text = read("sections/1.md")
         self.assertNotRegex(text, r"(?i)superpowers|writing-plans|plugins/cache")
