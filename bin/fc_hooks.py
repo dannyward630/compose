@@ -42,7 +42,8 @@ def guard_decision(tool, path, role):
     if fc_core.sh(["git", "rev-parse", "--is-inside-work-tree"], d, check=False).returncode != 0:
         return None  # scratch outside any repository, e.g. a brief in /tmp
     return (f"The team lead and the planner never edit code, tests, config, or docs ({p.name}). Hand it to a teammate: "
-            f"`compose crew start --role <job> --brief -`, or put it in a task issue for `run`.")
+            f"`compose crew start --role <job> --brief -`, or put it in a task issue for `run`."
+            + (" The path holds a variable the guard cannot resolve: write a scratch path literally." if "$" in str(p) else ""))
 
 def toplevel(path):
     """The worktree root `path` is in, or None."""
@@ -90,6 +91,13 @@ def without_heredoc_bodies(cmd):
             end = m.group(2)
     return "\n".join(kept)
 
+ASSIGN = re.compile(r"[A-Za-z_]\w*=")
+VAR = re.compile(r"\$(?:(\w+)|\{(\w+)\})")
+
+def expand_vars(word, known):
+    """`word` with each $NAME or ${NAME} the command assigned (`known`) or the hook's env defines filled in; any other stays as written."""
+    return VAR.sub(lambda m: known.get(m.group(1) or m.group(2), os.environ.get(m.group(1) or m.group(2), m.group(0))), word)
+
 def edit_paths(ev):
     """The paths a tool call writes, relative ones resolved against the event's cwd."""
     ti = ev.get("tool_input") or {}
@@ -104,7 +112,12 @@ def edit_paths(ev):
             words = list(lex)
         except ValueError:  # an unclosed quote: the shell does not run it either
             words = []
-        found += [words[i + 1] for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
+        known = {}
+        for w in words:  # a path built from a variable is judged by what it holds: `S=.compose/x/scratch; echo hi > $S/n.md`
+            if ASSIGN.match(w):
+                name, _, value = w.partition("=")
+                known[name] = expand_vars(value, known)
+        found += [expand_vars(words[i + 1], known) for i, w in enumerate(words[:-1]) if w in (">", ">>", ">|", "&>", "&>>")]
     return [str(Path(ev.get("cwd") or ".") / p) for p in found if p]
 
 def cmd_guard(a):

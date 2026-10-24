@@ -1689,6 +1689,21 @@ class GuardRedirects(unittest.TestCase):
             self.assertIn("never edit code", self.denied(cmd) or "", cmd)
             self.assertEqual(self.targets(cmd), [os.path.realpath(self.repo / "bin/a.py")], cmd)
 
+    def test_a_variable_in_a_target_is_expanded_from_the_command_or_the_env(self):
+        scratch = ".compose/shop/scratch"
+        self.assertEqual(self.targets(f"S={scratch}; echo hi > $S/n.md"), [os.path.realpath(self.repo / scratch / "n.md")])
+        self.assertEqual(self.targets(f'D=src E="$D/lib"; echo hi >> "${{E}}/n.md"'), [os.path.realpath(self.repo / "src/lib/n.md")])
+        for cmd in (f"S={scratch}; echo hi > $S/n.md", f'S={scratch} && echo hi > "$S/n.md"', f"export S={scratch}; echo hi > ${{S}}/n.md"):
+            self.assertIsNone(self.denied(cmd), cmd)
+        with mock.patch.dict(os.environ, {"S": scratch}):
+            self.assertEqual(self.targets("echo hi > $S/n.md"), [os.path.realpath(self.repo / scratch / "n.md")])
+
+    def test_a_variable_that_is_not_resolved_or_points_into_code_is_denied(self):
+        for cmd in ("echo hi > $UNSET_VAR_X/n.md", "S=bin; echo hi > $S/a.py"):
+            self.assertIn("never edit code", self.denied(cmd) or "", cmd)
+        self.assertIn("write a scratch path literally", self.denied("echo hi > $UNSET_VAR_X/n.md"))
+        self.assertNotIn("literally", self.denied("S=bin; echo hi > $S/a.py"))
+
     def test_the_target_is_the_token_after_each_operator(self):
         self.assertEqual(self.targets('echo x > "a b.txt"; echo y >> c.txt && ls 2>&1'), [os.path.realpath(self.repo / n) for n in ("a b.txt", "c.txt")])
 

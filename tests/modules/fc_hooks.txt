@@ -1,9 +1,16 @@
 GUARDED_TOOLS
 GUARDED_ROLES
 CLI_FILE
+env_role
+restore_crew_env
 guard_decision
 toplevel
 switch_decision
+HEREDOC
+without_heredoc_bodies
+ASSIGN
+VAR
+expand_vars
 edit_paths
 cmd_guard
 SKILL_DIR
