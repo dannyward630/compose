@@ -108,7 +108,7 @@ class Crew(unittest.TestCase):
             with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                     mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                     mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                    mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
+                    mock.patch.object(fc.fc_crew.fc_crewpick, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch.dict(os.environ, clean, clear=True), mock.patch("builtins.print"):
                 fc.fc_crew.cmd_crew(a)
             self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["reports_to"], up)
             self.assertEqual(fc.fc_crew.crew_record(self.proj, f"shop-{role}")["started_by"], "w1:p2")  # the starting session's herdr pane: two engineering managers are told apart
@@ -757,7 +757,7 @@ class ToolBug(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "toolsmith", "title": "toolsmith", "brief": "Fix it.", "work_repo": str(repo), "cwd": cwd})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), \
                 mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
-                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), \
+                mock.patch.object(fc.fc_crew.fc_crewpick, "crew_pick_full", return_value=("claude", None, "test", [])), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", lambda p: Path(p).resolve() == wt), mock.patch("builtins.print"):
             try:
                 fc.fc_crew.cmd_crew(a)
@@ -1092,7 +1092,7 @@ class RestrictedStart(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
                 mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc.fc_crew, "crew_workdir", return_value=(str(proj), None)), \
+                mock.patch.object(fc.fc_crew.fc_crewpick, "crew_pick_full", return_value=(model, effort, "", [])), mock.patch.object(fc.fc_crew, "crew_workdir", return_value=(str(proj), None)), \
                 mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: self.P), mock.patch.object(fc.fc_herdr, "PI_HERDR_EXT", proj / "missing"), mock.patch("builtins.print"), \
                 mock.patch("pathlib.Path.home", return_value=home):
             fc.fc_crew.cmd_crew(a)
@@ -1450,7 +1450,7 @@ class CrewLoadWait(unittest.TestCase):
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "herdr", self.herdr), mock.patch.object(fc_load, "wait", wait) as w, \
                 mock.patch.object(fc.fc_crew.fc_checks, "battery_stop", return_value=battery), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), \
                 mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), \
-                mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch("builtins.print"), contextlib.suppress(SystemExit):
+                mock.patch.object(fc.fc_crew.fc_crewpick, "crew_pick_full", return_value=("claude", None, "test", [])), mock.patch("builtins.print"), contextlib.suppress(SystemExit):
             fc.fc_crew.cmd_crew(a)
         return w
 
@@ -1484,7 +1484,7 @@ class CrewRecorded(unittest.TestCase):
         a = type("A", (), {"action": "start", "role": "planner", "title": "planner", "brief": "Go."})
         with mock.patch.object(fc.fc_core, "project_dir", return_value=proj), mock.patch.object(fc.fc_herdr, "herdr", herdr), mock.patch.object(fc.fc_herdr, "herdr_env", return_value=True), \
                 mock.patch.object(fc.fc_herdr, "herdr_space", return_value="w9"), mock.patch.object(fc.fc_herdr, "herdr_find_space", return_value="w9"), \
-                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_crew, "crew_pick_full", return_value=(model, None, "test", [])), \
+                mock.patch.object(fc.fc_claude, "claude_trusted", return_value=True), mock.patch.object(fc.fc_crew.fc_crewpick, "crew_pick_full", return_value=(model, None, "test", [])), \
                 mock.patch.object(fc.fc_herdr, "herdr_start_crew", side_effect=RuntimeError("no start") if fail else None), mock.patch.object(fc.fc_herdr, "pane_launching", return_value=False), \
                 mock.patch.object(fc.fc_herdr, "agent_pids", return_value=pids) as ap, mock.patch.object(fc_started, "record") as rec, mock.patch("builtins.print"), contextlib.suppress(SystemExit):
             fc.fc_crew.cmd_crew(a)

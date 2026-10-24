@@ -14,6 +14,7 @@ reflect
 cmd_hold
 CHANGE_SYNC_MAX
 CHANGE_CONTENT
+issue_content
 load_change
 write_change
 change_ids

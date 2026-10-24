@@ -1,7 +1,7 @@
 import argparse, fcntl, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_toolbug, fc_testred
+import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_crewpick, fc_toolbug, fc_testred
 
 
 # ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
@@ -400,7 +400,7 @@ def cmd_testcrews(a):
     metas = [m for m in metas if m["id"] not in blocked]
     model = "tests" if "tests" in fc_config.CREW_MODELS else "groundwork" if "groundwork" in fc_config.CREW_MODELS else None
     cap = getattr(a, "parallel", None) or fc_config.PARALLEL  # unset: every writer starts at once
-    key, chain = fc_crew.crew_chain("tests", model)
+    key, chain = fc_crewpick.crew_chain("tests", model)
     if not getattr(a, "parallel", None) and (key is None or fc_claude.is_claude(chain[0][0])):  # Claude Code writers are heavy: they stay within claude_parallel whatever `parallel` is, unless --parallel says otherwise
         cap = min(cap or fc_config.CLAUDE_PARALLEL, fc_config.CLAUDE_PARALLEL)
     metas, queued = cap_split(proj, tasks, metas, cap)

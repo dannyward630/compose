@@ -860,14 +860,14 @@ class CodexStart(unittest.TestCase):
 
     def test_crew_pick_full_accepts_codex_and_refuses_the_rest_exactly(self):
         with mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")):
-            for m in ("codex", "codex:x"): self.assertEqual(fc.fc_crew.crew_pick_full("tester", m)[0], m)
+            for m in ("codex", "codex:x"): self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick_full("tester", m)[0], m)
         def refusal(label, where): return (f"{label} is 'codex/x', but teammate sessions run in Claude Code, pi, or Codex: use claude:<model-id> (e.g. claude:claude-sonnet-5-5), "
                                            f"pi:<provider/model> (e.g. pi:openai/gpt-6-astra), or codex:<model> (e.g. codex:gpt-6.1-sol){where}; OpenCode ids are for implementers only")
-        with self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester", "codex/x")
+        with self.assertRaises(SystemExit) as e: fc.fc_crew.fc_crewpick.crew_pick_full("tester", "codex/x")
         self.assertEqual(str(e.exception), refusal("--model", ""))
-        with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.crew_pick_full("tester")
+        with mock.patch.object(fc.fc_config, "CREW_MODELS", {"tester": "codex/x"}), self.assertRaises(SystemExit) as e: fc.fc_crew.fc_crewpick.crew_pick_full("tester")
         self.assertEqual(str(e.exception), refusal("models.crew.tester", f" in {fc.fc_config.CONFIG_PATH}"))
-        with self.assertRaises(SystemExit): fc.fc_crew.crew_pick_full("tester", "grok:x")
+        with self.assertRaises(SystemExit): fc.fc_crew.fc_crewpick.crew_pick_full("tester", "grok:x")
 
 
 class SignInCheck(unittest.TestCase):

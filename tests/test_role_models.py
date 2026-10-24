@@ -35,31 +35,31 @@ class RoleModels(unittest.TestCase):
     def test_an_entry_can_carry_an_effort(self):
         self.config({**CREW, "orchestrator": {"model": "claude:claude-sonnet-5-5", "effort": "high"}})
         self.addCleanup(setattr, fc.fc_config, "CREW_EFFORT", {})
-        self.assertEqual(fc.fc_crew.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
-        self.assertEqual(fc.fc_crew.crew_effort("orchestrator"), "high")
-        self.assertIsNone(fc.fc_crew.crew_effort("groundwork"))  # a plain string keeps Claude Code's default effort
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_effort("orchestrator"), "high")
+        self.assertIsNone(fc.fc_crew.fc_crewpick.crew_effort("groundwork"))  # a plain string keeps Claude Code's default effort
 
     def test_role_then_default_then_small_then_explicit(self):
         self.config(CREW)
-        self.assertEqual(fc.fc_crew.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
-        self.assertEqual(fc.fc_crew.crew_model("q-neb-12"), "claude:claude-sonnet-5-5")  # no entry: default
-        self.assertEqual(fc.fc_crew.crew_model("revert", "small"), "claude:claude-haiku-5-5")
-        self.assertEqual(fc.fc_crew.crew_model("orchestrator", "claude:claude-x"), "claude:claude-x")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("orchestrator"), "claude:claude-sonnet-5-5")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("q-neb-12"), "claude:claude-sonnet-5-5")  # no entry: default
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("revert", "small"), "claude:claude-haiku-5-5")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("orchestrator", "claude:claude-x"), "claude:claude-x")
 
     def test_no_crew_config_keeps_claude_default(self):
         self.config({})
-        self.assertEqual(fc.fc_crew.crew_model("groundwork"), "claude")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("groundwork"), "claude")
         self.assertIsNone(fc.fc_claude.claude_id("claude"))
 
     def test_an_opencode_id_for_a_crew_is_refused_naming_the_key(self):
         self.config({"tests": "openai/gpt-x"})
         with self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_model("tests")
+            fc.fc_crew.fc_crewpick.crew_model("tests")
         self.assertIn("models.crew.tests", str(e.exception))
         with self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_model("tests", "openai/gpt-x")
+            fc.fc_crew.fc_crewpick.crew_model("tests", "openai/gpt-x")
         self.assertIn("--model", str(e.exception))
-        self.assertEqual(fc.fc_crew.crew_model("tests", "pi:openai/gpt-6-astra"), "pi:openai/gpt-6-astra")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("tests", "pi:openai/gpt-6-astra"), "pi:openai/gpt-6-astra")
 
     def test_crew_start_passes_the_model_to_claude_code(self):
         self.config(CREW)
@@ -120,15 +120,15 @@ class PlannerChain(unittest.TestCase):
 
     def test_planning_roles_use_the_planner_and_others_do_not(self):
         with self.probe(True):
-            self.assertEqual(fc.fc_crew.crew_pick("architect")[:2], ("claude:claude-fable-5-1", None))
-            self.assertEqual(fc.fc_crew.crew_pick("orchestrator")[:2], ("claude:claude-sonnet-5-5", None))  # the team lead delegates, it does not plan
-            self.assertEqual(fc.fc_crew.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
-            self.assertEqual(fc.fc_crew.crew_pick("groundwork")[:2], ("claude:claude-sonnet-5-5", None))
-            self.assertEqual(fc.fc_crew.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("architect")[:2], ("claude:claude-fable-5-1", None))
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("orchestrator")[:2], ("claude:claude-sonnet-5-5", None))  # the team lead delegates, it does not plan
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("q-neb-12")[:2], ("claude:claude-sonnet-5-5", None))  # no per-question agents any more
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("groundwork")[:2], ("claude:claude-sonnet-5-5", None))
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("helper")[:2], ("claude:claude-sonnet-5-5", None))
 
     def test_fallback_when_the_planner_model_is_unavailable(self):
         with self.probe(False):
-            model, effort, note = fc.fc_crew.crew_pick("architect")
+            model, effort, note = fc.fc_crew.fc_crewpick.crew_pick("architect")
         self.assertEqual((model, effort), ("claude:claude-opus-5-5", "high"))
         self.assertIn("unavailable", note); self.assertIn("model not found", note)
 
@@ -141,16 +141,16 @@ class PlannerChain(unittest.TestCase):
         for up, want in (({fable, astra}, astra), ({fable}, fable), ({opus}, opus)):  # a pi session has the Linear MCP too, so astra is probed first
             fc.fc_models._PROBED.clear()
             with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (m in up, "down")):
-                model, effort, note = fc.fc_crew.crew_pick("architect")
+                model, effort, note = fc.fc_crew.fc_crewpick.crew_pick("architect")
             self.assertEqual(model, want)
         self.assertEqual(effort, "high")
         with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (False, "down")), self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_pick("architect")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
+            fc.fc_crew.fc_crewpick.crew_pick("architect")  # the last of the chain is probed too: nothing runs, so it fails naming each model and why
         self.assertIn(f"{fable} unavailable (down)", str(e.exception)); self.assertIn(f"{opus} unavailable (down)", str(e.exception))
         self.assertIn("models.crew.planner", str(e.exception))
         self.assertIn(f"{astra} unavailable (down), {fable} unavailable (down), using its fallback", note)
         with mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")):  # a role with no Linear need still takes the pi model
-            self.assertEqual(fc.fc_crew.crew_pick("helper", "planner")[0], astra)
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("helper", "planner")[0], astra)
 
     def test_a_pi_model_is_probed_with_pi_and_judged_by_its_events(self):
         ok = subprocess.CompletedProcess([], 0, json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}), "")
@@ -174,7 +174,7 @@ class PlannerChain(unittest.TestCase):
         self.assertIn("models.crew.default", str(e.exception))
         self.assertEqual(calls, [])
         with self.probe(False, down=("claude-sonnet-5-5",)), self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (a failure is never cached)
+            fc.fc_crew.fc_crewpick.crew_pick("explore", "claude:claude-sonnet-5-5")  # an explicit --model is probed too (a failure is never cached)
         self.assertIn("--model", str(e.exception))
 
     def test_headless_claude_runs_carry_no_compose_or_anthropic_env(self):
@@ -218,11 +218,11 @@ class PlannerChain(unittest.TestCase):
 
     def test_the_probe_runs_once_a_day(self):
         with self.probe(True) as run:
-            fc.fc_crew.crew_pick("architect"); fc.fc_crew.crew_pick("architect")
+            fc.fc_crew.fc_crewpick.crew_pick("architect"); fc.fc_crew.fc_crewpick.crew_pick("architect")
             self.assertEqual(run.call_count, 1)
         fc.fc_models._PROBED.clear()  # a new CLI process the same day reads the cache file
         with self.probe(False) as run:
-            self.assertEqual(fc.fc_crew.crew_pick("architect")[0], "claude:claude-fable-5-1")
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("architect")[0], "claude:claude-fable-5-1")
             run.assert_not_called()
         self.assertIn("claude-fable-5-1", json.loads(self.probe_cache.read_text()))
 
@@ -266,15 +266,15 @@ class DesignerModels(unittest.TestCase):
     def test_design_roles_use_the_design_entry_else_default(self):
         self.config({**CREW, "design": {"model": "claude:claude-opus-5-5", "effort": "high"}})
         for role in ("design-003", "design-review"):
-            self.assertEqual(fc.fc_crew.crew_pick(role)[:2], ("claude:claude-opus-5-5", "high"))
-        self.assertEqual(fc.fc_crew.crew_pick("designs-003")[:2], ("claude:claude-sonnet-5-5", None))  # first word is designs
-        self.config(CREW); self.assertEqual(fc.fc_crew.crew_pick("design-003")[:2], ("claude:claude-sonnet-5-5", None))
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick(role)[:2], ("claude:claude-opus-5-5", "high"))
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("designs-003")[:2], ("claude:claude-sonnet-5-5", None))  # first word is designs
+        self.config(CREW); self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("design-003")[:2], ("claude:claude-sonnet-5-5", None))
 
     def test_the_designer_defaults_to_opus_high_unless_configured(self):
         for crew in ({}, {**CREW, "design": "claude:claude-haiku-5-5"}):
             self.config(crew)
-            self.assertEqual(fc.fc_crew.crew_pick("designer"), ("claude:claude-opus-5-5", "high", "models.crew.designer default"))
-        self.config({**CREW, "designer": "claude:claude-sonnet-5-5"}); self.assertEqual(fc.fc_crew.crew_pick("designer"), ("claude:claude-sonnet-5-5", None, "models.crew.designer"))
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("designer"), ("claude:claude-opus-5-5", "high", "models.crew.designer default"))
+        self.config({**CREW, "designer": "claude:claude-sonnet-5-5"}); self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("designer"), ("claude:claude-sonnet-5-5", None, "models.crew.designer"))
 
 
 class PiKeepsLinear(unittest.TestCase):
@@ -293,7 +293,7 @@ class PiKeepsLinear(unittest.TestCase):
         for role in ("architect", "planner", "designer", "planner-2"):
             self.chain(role.split("-")[0])
             with mock.patch.object(fc.fc_models, "model_available", return_value=(True, "")) as probe:
-                model, _, note, skipped = fc.fc_crew.crew_pick_full(role)
+                model, _, note, skipped = fc.fc_crew.fc_crewpick.crew_pick_full(role)
             self.assertEqual((model, skipped), (self.astra, []), role)
             self.assertNotIn("Linear", note)
             self.assertEqual(probe.call_args_list[0].args, (self.astra,))  # probed, not filtered out
@@ -302,12 +302,12 @@ class PiKeepsLinear(unittest.TestCase):
         for role in ("architect", "planner", "designer"):
             self.chain(role)
             with mock.patch.object(fc.fc_models, "model_available", side_effect=lambda m: (m != self.astra, "model not found")):
-                model, _, note, skipped = fc.fc_crew.crew_pick_full(role)
+                model, _, note, skipped = fc.fc_crew.fc_crewpick.crew_pick_full(role)
             self.assertEqual(model, self.sonnet)
             self.assertEqual(skipped, [f"{self.astra} unavailable (model not found)"])
             self.assertNotIn("a pi session has no Linear tools", note)
         with mock.patch.object(fc.fc_models, "model_available", return_value=(False, "down")), self.assertRaises(SystemExit) as e:
-            fc.fc_crew.crew_pick_full("designer")  # nothing runs: still exits naming each probe error
+            fc.fc_crew.fc_crewpick.crew_pick_full("designer")  # nothing runs: still exits naming each probe error
         self.assertIn(f"{self.astra} unavailable (down)", str(e.exception))
 
 
@@ -463,18 +463,18 @@ class TestCrewTiers(unittest.TestCase):
         return json.loads(next((proj / "results" / "crew").glob("*.json")).read_text())["model"]
 
     def test_each_role_starts_on_its_tier(self):
-        got = {r: fc.fc_crew.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "architect")}
+        got = {r: fc.fc_crew.fc_crewpick.crew_model(r) for r in ("orchestrator", "groundwork", "explore", "tests", "planner", "architect")}
         sonnet, haiku, opus, fable = (f"claude:claude-{m}" for m in ("sonnet-5-5", "haiku-5-5", "opus-5-5", "fable-5-1"))
         self.assertEqual(got, {"orchestrator": sonnet, "groundwork": sonnet, "explore": sonnet, "tests": sonnet, "planner": opus, "architect": fable})
 
     def test_a_raw_model_starts_unchanged_for_any_role(self):
         for role in ("tests", "orchestrator", "explore"):
-            self.assertEqual(fc.fc_crew.crew_model(role, "claude:claude-opus-5-5"), "claude:claude-opus-5-5")
-            self.assertEqual(fc.fc_crew.crew_pick(role, "claude:claude-opus-5-5", "cheap")[0], "claude:claude-opus-5-5")
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_model(role, "claude:claude-opus-5-5"), "claude:claude-opus-5-5")
+            self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick(role, "claude:claude-opus-5-5", "cheap")[0], "claude:claude-opus-5-5")
 
     def test_a_pin_lowers_the_start(self):
-        self.assertEqual(fc.fc_crew.crew_pick("planner", None, "no-frontier")[0], "claude:claude-sonnet-5-5")
-        self.assertEqual(fc.fc_crew.crew_pick("orchestrator", None, "cheap")[0], "claude:claude-haiku-5-5")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("planner", None, "no-frontier")[0], "claude:claude-sonnet-5-5")
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("orchestrator", None, "cheap")[0], "claude:claude-haiku-5-5")
 
     def test_frontier_starts_run_at_standard_over_the_limit_and_raw_models_do_not(self):
         self.assertEqual(self.start("planner", spend=25.0), "claude:claude-sonnet-5-5")

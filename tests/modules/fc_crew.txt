@@ -12,12 +12,8 @@ PARALLEL_NONE
 PARALLEL_FORM
 parallel_gap
 crew_preamble
-crew_pick
-crew_chain
-crew_pick_full
 crew_fallback
-crew_model
-crew_effort
+release_ended_slots
 crew_workdir
 cmd_crew
 write_report

@@ -50,6 +50,7 @@ fc_decide
 fc_hooks
 fc_pin
 fc_reports
+fc_crewpick
 fc_crew
 fc_shed
 fc_toolbug
