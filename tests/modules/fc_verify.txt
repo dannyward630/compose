@@ -13,6 +13,7 @@ at_root
 cmd_verify
 fix_strays
 wrong_layer
+cut_top_task
 fix_answers
 fix_message
 changed_files

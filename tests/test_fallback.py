@@ -447,7 +447,9 @@ class FixScope(unittest.TestCase):
     def test_a_fix_round_commits_only_to_the_layer_that_owns_the_changed_file(self):
         tasks = [{"id": "003", "files": ["a.go"], "protected": [], "test": "t3"}, {"id": "007", "files": ["b.go"], "protected": [], "test": "t7"}]
         code, repo, res = self.verify({"a.go": "fixed\n"}, tasks=tasks, top="007")
-        self.assertEqual((code, res["rejected_fixes"]), (1, [{"round": 1, "files": ["a.go"], "why": "changed a file of layer 003, not the top layer 007: a.go"}]))
+        nxt = "cut a new top task (id above 007) whose files: lists a.go, run it, then verify again"
+        self.assertEqual((code, res["rejected_fixes"]), (1, [{"round": 1, "files": ["a.go"], "why": "changed a file of layer 003, not the top layer 007: a.go", "next": nxt}]))
+        self.assertIn("fix    next  " + nxt, self.said)
         self.assertEqual(((repo / "a.go").read_text(), self.committed(repo)[0]), ("b\n", ["a.go"]))  # reverted, nothing committed
         code, _, res = self.verify({"a.go": "fixed\n"}, tasks=tasks, top="003")
         self.assertEqual((code, res["rejected_fixes"]), (0, []))
