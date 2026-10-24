@@ -545,6 +545,21 @@ class FixScope(unittest.TestCase):
         for proof, tests_pass in (("", True), ("test_not_in_the_code", True), ("test_a_floor_turns_check_only_into_deep", False)):
             self.assertEqual(len(review(proof, tests_pass)["confirmed"]), 1, (proof, tests_pass))  # no passing proof: the claim stands
 
+    def test_a_review_where_no_perspective_answered_is_an_error_never_ok(self):
+        def review(answers):
+            def fj(env, system, user, **kw):
+                if any(PERSPECTIVES[name] in system for name in answers):
+                    return {"issues": []}
+                raise RuntimeError("openrouter (Mercury review): HTTP 429 Too Many Requests")
+            with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
+                return fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness", "security"]}, "diff", "plan", "", True)
+        PERSPECTIVES = fc.fc_verify.fc_review.PERSPECTIVES
+        rv = review(())
+        self.assertFalse(rv["pass"])
+        self.assertTrue(rv["error"].startswith("no review perspective returned a result (2 of 2 failed): RuntimeError: openrouter (Mercury review): HTTP 429"), rv["error"])
+        rv = review(("security",))  # one answered: the other's gap is a low note, as before
+        self.assertEqual((rv["pass"], "error" in rv), (True, False))
+
     def test_a_review_cut_off_at_its_token_budget_is_asked_again_with_a_bigger_one(self):
         full = json.dumps({"issues": [{"file": "a.go", "severity": "low", "note": "n"}]})
         for need, found in ((3000, "n"), (10 ** 6, "did not return usable findings")):  # tokens the whole reply needs

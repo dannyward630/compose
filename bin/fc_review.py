@@ -39,7 +39,7 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     user = (f"PLAN AND CRITERIA:\n{plan[:15000]}\n\nDIFF OR FILES (may be cut off at the end; a file that ends mid-line "
             f"is truncated by this pack, which is never a finding):\n{diff[:150000]}")
     def one(name):
-        """(well-formed findings, how many other entries the reply held)."""
+        """(well-formed findings, how many other entries the reply held, why the call failed or None)."""
         try:
             out = fc_models.fast_json_whole(env, f"You are a strict code reviewer. Perspective: {PERSPECTIVES[name]} {schema}",
                             user + (f"\n\nDOCS:\n{docs_text[:20000]}" if name == "docs" else ""))
@@ -47,18 +47,22 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
             issues = out.get("issues", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
             issues = issues if isinstance(issues, list) else []
             kept = [i for i in issues if well_formed(i)]
-            malformed = len(issues) - len(kept)
+            malformed, failed = len(issues) - len(kept), None
         except fc_models.PaymentRequired:
             raise
         except Exception as e:  # noqa: BLE001
             # A reviewer that fails to answer is a coverage gap to report, not a defect in the code under review.
-            kept, malformed = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}], 0
+            kept, malformed, failed = [{"file": "-", "severity": "low", "note": f"{name} review did not return usable findings this round ({type(e).__name__}: {str(e)[:80]})", "confirmed": False}], 0, f"{type(e).__name__}: {str(e)[:200]}"
         for i in kept:
             i["perspective"] = name
-        return kept, malformed
+        return kept, malformed, failed
     with ThreadPoolExecutor(max_workers=len(wanted)) as ex:
         batches = list(ex.map(one, wanted))
-    raw, malformed = [i for kept, _ in batches for i in kept], sum(n for _, n in batches)
+    raw, malformed = [i for kept, _, _ in batches for i in kept], sum(n for _, n, _ in batches)
+    failed = [why for _, _, why in batches if why]
+    if wanted and len(failed) == len(wanted):  # nothing was reviewed (every call rate-limited, say): never a pass
+        return {"pass": False, "issues": raw, "confirmed": [], "malformed": malformed,
+                "error": f"no review perspective returned a result ({len(failed)} of {len(wanted)} failed): {failed[0]}"}
     # Confirmation pass: an independent call must name the line that breaks a requirement and how it must read, or the claim is dropped.
     flat = lambda s: " ".join(str(s).split())
     def confirm(i):
