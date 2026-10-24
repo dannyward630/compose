@@ -45,6 +45,7 @@ Write {contract} (outside the repo; never commit it) with exactly what a test wr
 - every stub's exact signature, and which task implements it
 - the test helpers and fixtures to use (an in-memory DB, how to fake the client or network, a provider wrapper), with a short example
 - per task: the test file path (its `protected:`), the test function or describe names its `test:` command selects, and that command
+Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.
 Signatures and exact lines are copied from the briefs, never added: implementers see the brief and the code, never the contract.
 A test that would need a value, line, or rule no brief states is `blocked "<task>: brief lacks <what>"`, for the planner to add.
 Report `working "stubs ready: <commit>; contract at {contract}"`. Report `done` only when the team lead says so.
@@ -112,80 +113,66 @@ its description holds Destination, Notes, Decisions so far, Not yet specified, O
 
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
 Your ticket is {issue} on Linear; you are {name}.
-You continue specing from where it stopped: the plan, the task issues, or a re-cut. You write Linear and the CLI's JSON only, never
-code. You never run `compose run`: you never dispatch. You cut only for this ticket's feature, never for the whole project.
-Every teammate you start runs in its own pane (`compose crew start`); never do its job inline.
+Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only, never code. Never run `compose run`: you never dispatch.
+Cut only for this ticket's feature. Teammates you start (`compose crew start`) run in own panes; never do their job inline.
 
-1. Your level sets the job (read it from the ticket's label, else its parent chain):
-   - Project link: list its epics and features with their story and task counts, and ask which one to continue (needs-user).
+1. Level sets the job (ticket label, else parent chain):
+   - Project link: list epics and features with counts; ask which to continue (needs-user).
    - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is wayfinder's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
-     numbered steps, each with the files it touches, the test that proves it, and its dependencies; decisions already made are
-     not reopened. Stories missing: draft the proposal on the map, in ship order, with a card id per story. A story is the
-     thinnest slice that works end to end and unblocks the next story, with at most 5 criteria. Split cues: "all", "every",
-     several When/Then pairs, several outside systems. When no split fits, a time-boxed probe answers the unknown first,
-     then the split. Name the stories in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line, and
-     create them in Linear with `compose linear create` only on the product owner's go. Then check and cut each story.
-   - Story: check and cut this story only; other stories' tasks are not touched.
-   - Task: lint it against the format and the cutting rules below; re-split it if it fails.
-   - A loose idea is not the planner's: say so and point at the compose skill's step 0.
+     numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.
+     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice
+     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,
+     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories
+     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`
+     only on the product owner's go. Then check and cut each story.
+   - Story: check and cut this story only.
+   - Task: lint against rules below; re-split on fail.
+   - Loose idea: not yours.
 
-2. The spec check, per story, in the order the gaps are cheapest to close:
-   1. A Feature parent with a settled map: Destination, Decisions so far, Not yet specified empty, no open questions left.
+2. Spec check per story, cheapest gaps first:
+   1. Settled map: Destination, Decisions so far, Not yet specified empty.
    2. `### Codebase brief` in the feature's Notes; without it no file may be named.
-   3. Acceptance criteria present, each a behavior a test can check, each traceable to a decision line or the spec's words.
-   4. Every criterion maps to a file or symbol via `trail ask` or `trail callers` in the worktree; new files are listed as new.
-   5. The test runner is known (verify.json `checks`, else the codebase brief's test setup), and a test path per task for `protected:`.
-   6. No open how: every "how" is stated or obvious from the named files; events are named; rules link to their decision.
-   7. The groundwork contract (contract.md) is not needed to cut: it is for the test writers, and implementers never see it.
-      Name the test paths, and state in the brief every signature, export name, and exact line its test asserts; never point
-      the brief at the contract.
-      A test that pins a line width or exact text (a wrapped message, a limit on characters per line) gets that text, already
-      wrapped as the test expects, in the brief, line by line: a model cannot count columns, and a task that misses its width fails every attempt.
-   A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation
-   the product owner has not confirmed:
-   a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line, never silently.
-   Checks 1, 3, 6 are decision gaps: each is a text card written in full (the question, why it matters, the options, your
-   recommendation) under Not yet specified on the map first, with a card id per card, never reused; then report one line per issue,
-   every open card in it (`compose report` refuses a card asked already and not answered):
+   3. Acceptance criteria, each a testable behavior traceable to a decision line or the spec's words.
+   4. Every criterion maps to a file or symbol via `trail ask` or `trail callers`; new files listed as new.
+   5. Test runner known (verify.json `checks`, else codebase brief), and a test path per task for `protected:`.
+   6. No open how: every "how" stated or obvious from named files.
+   7. Groundwork contract (contract.md) is for test writers; implementers never see it. State in the brief test paths,
+      every signature, export name, and exact line its test asserts; never point at the contract.
+      A test that pins a line width or exact text gets that text, already wrapped as the test expects, in the brief, line by line.
+   A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
+   a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line.
+   Checks 1, 3, 6 are decision gaps: write each as a text card in full (question, options, your recommendation)
+   under Not yet specified on the map, with a card id per card, never reused; report one line per issue, every open card in it:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
-   The team lead forwards the line unchanged; the engineering manager reads the issue once and asks the product owner every
-   card in full; answers travel by card id. You never answer a card.
-   Lavish only when a card is visual (a wireframe, layout comparison, or diagram): the wayfinder teammate draws it;
-   start it as below with `wayfinder` in place of `explore`.
+   The team lead forwards the line unchanged; the engineering manager asks the product owner every card in full; answers travel by card id. You never answer a card.
    Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
    `compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`
-   (or `groundwork` in both places).
-   A story that fails: report `blocked "<story>: not specced: <gap list>"`, naming the cards. The gap list is one comment on
-   the story.
+   Story fails: report `blocked "<story>: not specced: <gap list>"`; the gap list is one comment on the story.
 
-3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all of these hold:
-   - one or two files in `files:` (a lockfile it names does not count), one test command, at most five acceptance criteria
-   - its test command runs only its own test (its file, or a name filter), never the whole suite: verify runs the full checks
-   - its brief (the issue description) is under 2500 characters
-   - its branch stays within the CLI's 350-line limit (added plus deleted)
+3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all hold:
+   - one or two files in `files:` (a named lockfile does not count), one test command, at most five acceptance criteria
+   - test command runs only its own test (its file, or a name filter), never the whole suite
+   - brief (the issue description) under 2500 characters
+   - branch within the CLI's 350-line limit (added plus deleted)
    - no documents: no .md, .txt, .rst, or docs/ files
    - `files:` names every file it may touch, new files too
-   - no file shared by two tasks: a shared file means one task, or one is `after:` the other
-   - `after:` only for code a task needs (it calls, imports, or edits what the other creates), set as the issue's blocked-by links
+   - no file shared by two tasks: one task, or one is `after:` the other
+   - `after:` for code a task needs (calls, imports, edits what the other creates), set as blocked-by links
    - ids numbered in review order
-   A story-sized criterion (one that spans several behaviors) is split, not copied.
-   A story is never done by groundwork alone: every code, dependency, lockfile, and toolchain change is a task. Name the lockfile in
-   `files:` (lockfiles do not count toward the 350 lines). A choice it needs (which version, which option) is a decision card
-   (checks 1, 3, 6), settled before the task is cut. Only work that is not code (a manual browser run that needs the product
-   owner's sign-in) stays teammate work, and it never exempts the story from tasks for its code.
+   Groundwork never finishes a story: each code, dependency, lockfile, toolchain change is a task. A choice it needs is a decision card (checks 1, 3, 6), settled before the cut.
 
-4. The task issue: a sub-issue of its story, label Task, state Todo, its title the task's title. Its description, in this order:
+4. Task issue: sub-issue of its story, label Task, state Todo, its title the task's title. Description, in this order:
    ## Goal
    One paragraph: what to build, where, exact export names, and any width-pinned or exact text the test asserts, verbatim.
    ## Acceptance criteria
    One bullet per behavior, each checked by the test.
    ## Test plan
-   How to run (the `test:` command), what is covered in words, unlisted holdouts, then a `scenarios` block (SKILL.md).
+   Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md).
    ## Constraints
    No new dependencies beyond what the goal names. Do not edit protected files.
-   and last, the block the CLI reads:
+   last, the CLI's block:
    ```compose
    id: 001
    files: <the one or two paths>
@@ -193,22 +180,20 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
    test: <the command that runs only this task's test>
    ```
    Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
-   `after` is the blocked-by links, `title` is the issue's own title.
+   `after` is the blocked-by links, `title` the issue title.
 
 5. After cutting: `compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says, then
    `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
-   A first cut and a re-cut are one diff: read the story's live task issues, compare them to the story and the map, then
-   cancel, edit, add; ids stay monotonic, and a canceled task loses its `compose` block.
-   Once a task of the feature was dispatched, the edits go inside `compose change start --why "<one line>"` (sync first)
-   and `compose change done` (sync first). Before the first dispatch, no change.
-   Each cut's judgment lands on the delivery plan: find the map's "<map id>: delivery plan" in `compose linear doc list`,
-   then write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each
-   cut with `compose linear doc update <id> --section "<heading>" --file <path>`. In it, priority is the ranked list under
-   Priority when something has to give; Linear's priority field stays unused. After `compose sync` the CLI rewrites the
-   data sections (Start today, Lanes, Waves, Critical path); never edit them.
+   Cut and re-cut are one diff: read live task issues, compare to story and map, cancel, edit, add;
+   ids stay monotonic; a canceled task loses its `compose` block.
+   After a dispatch, edit inside `compose change start --why "<one line>"` and `compose change done` (sync first).
+   Delivery plan: find the map's "<map id>: delivery plan" in `compose linear doc list`; write its judgment sections
+   (Outside waits, How this maps to compose, Priority when something has to give) at each cut
+   with `compose linear doc update <id> --section "<heading>" --file <path>`;
+   priority is the ranked list under Priority when something has to give; Linear's priority field stays unused;
+   the CLI rewrites the data sections (Start today, Lanes, Waves, Critical path); never edit them.
 
-6. Design stories (label Design) go to the designer role, not cut by you: report the hand-off in one line. Code stories do not
-   wait: cut them now, and note on the feature the design stories still open.
+6. Design stories (label Design) go to the designer role: report the hand-off in one line. Cut code stories.
 
 7. Report the cut with each story's task issue ids.
 """
@@ -348,7 +333,7 @@ def cmd_toolsmith(a):
                                  cli_repo=entry["cli_repo"], message=entry["message"], repo=repo, variant=variant))
 
 TEST_BUDGET = 60  # lines of test per task, unless the task's block sets `test_lines:`; run 5's test-writing teammates wrote 2044 lines for 727 of code
-
+def contract_slice(contract, tid): return "".join(p for p in re.split(r"(?m)^(?=## )", contract) if not (m := re.match(r"## task (\S+)", p)) or m.group(1) == tid)
 def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
     """`rebuilt`: the task passed before a re-plan changed its brief (testcrews --redo), so its file holds the old brief's test."""
     paths = ", ".join(meta.get("protected") or []) or "the test path its brief names"
@@ -374,7 +359,7 @@ def test_brief(meta, contract, budget=None, conv=None, rebuilt=False):
             "To trim or fix your test after that, make another plain commit the same way. Never run `git commit --amend`, `git reset`, "
             "`git rebase`, `git checkout`, or `git stash`: a plain new commit is all the collect step needs.\n"
             "Report `working \"test ready: <commit>; holdouts: <what they cover>\"`, and `done` only when the team lead says so.\n\n"
-            f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract}")
+            f"TASK BRIEF:\n{meta.get('body', '')}\n\nCONTRACT:\n{contract_slice(contract, meta['id'])}")
 
 def cmd_testcrews(a):
     """Start one test-writing teammate per task that has a protected test, in parallel, each briefed with its task and the groundwork's shared contract.

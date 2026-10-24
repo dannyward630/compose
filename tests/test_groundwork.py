@@ -602,10 +602,10 @@ class LeanPlannerBrief(unittest.TestCase):
 
     def test_the_stories_missing_step_states_the_lean_story_rule(self):
         step = self.step()
-        for phrase in ("A story is the thinnest slice that works end to end and unblocks the next story, with at most 5 criteria.",
+        for phrase in ("Each story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria.",
                        'Split cues: "all", "every", several When/Then pairs, several outside systems.',
-                       "When no split fits, a time-boxed probe answers the unknown first, then the split.",
-                       "in ship order"):
+                       "No split fits: a time-boxed probe answers the unknown first, then the split.",
+                       "in ship order, with a card id per story"):
             self.assertIn(phrase, step)
         self.assertNotIn("one per user-visible slice", self.brief)
 
@@ -635,6 +635,29 @@ class LeanPlannerBrief(unittest.TestCase):
         for banned in ("—", "Product-Manager-Skills", "deanpeters"):
             self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
             self.assertNotIn(banned, self.brief)
+
+
+class TersePlannerBrief(unittest.TestCase):
+    """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
+    FEATURE = (
+        "     No plan: write `## Plan` in the feature description with `compose linear update <id> --section \"## Plan\" --file <path>`:",
+        "     numbered steps, each with files touched, the test that proves it, and dependencies; settled decisions are not reopened.",
+        "     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice",
+        '     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,',
+        "     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories",
+        '     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`',
+        "     only on the product owner's go. Then check and cut each story.",
+    )
+
+    def test_the_brief_and_the_module_fit_their_caps(self):
+        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 7142)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 585)
+
+    def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
+        lines = fc.fc_briefs.PLANNER_BRIEF.splitlines()
+        first = next(n for n, l in enumerate(lines) if l.lstrip().startswith("- Feature: "))
+        self.assertTrue(lines[first].endswith("and it has a `## Plan`."), lines[first])
+        self.assertEqual(tuple(lines[first + 1:first + 1 + len(self.FEATURE)]), self.FEATURE)
 
 
 class PlanJudgmentBrief(unittest.TestCase):
@@ -1013,7 +1036,7 @@ class NoTestToWrite(unittest.TestCase):
 
 
 class ScenarioPlannerLine(unittest.TestCase):
-    NEW = "   How to run (the `test:` command), what is covered in words, unlisted holdouts, then a `scenarios` block (SKILL.md)."
+    NEW = "   Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md)."
     OLD = "   How to run (the `test:` command), what is covered in words, and that the test has holdout cases not listed."
     BRIEF = fc.fc_briefs.PLANNER_BRIEF
 
@@ -1069,6 +1092,35 @@ class ScenarioTestBrief(unittest.TestCase):
 
     def test_the_task_brief_part_carries_the_whole_body_block_included(self):
         self.assertIn(f"TASK BRIEF:\n{self.WITH}\n\nCONTRACT:\nC", self.brief(self.WITH))
+
+
+class ContractSlice(unittest.TestCase):
+    CONTRACT = "pre\n## types\nT\n### sub\ns\n## task 001\nA\n### a-sub\nx\n## task 002\nB\n### b-sub\ny\n## helpers\nH\n### task 009\nnot a section\n## task 10\nC\n"
+
+    def test_keeps_shared_parts_and_its_own_section_in_contract_order(self):
+        self.assertEqual(fc.fc_briefs.contract_slice(self.CONTRACT, "001"),
+                         "pre\n## types\nT\n### sub\ns\n## task 001\nA\n### a-sub\nx\n## helpers\nH\n### task 009\nnot a section\n")
+        self.assertEqual(fc.fc_briefs.contract_slice(self.CONTRACT, "002"),
+                         "pre\n## types\nT\n### sub\ns\n## task 002\nB\n### b-sub\ny\n## helpers\nH\n### task 009\nnot a section\n")
+
+    def test_the_id_must_equal_the_heading_id(self):
+        sliced = fc.fc_briefs.contract_slice(self.CONTRACT, "10")
+        self.assertIn("## task 10\nC\n", sliced)
+        self.assertNotIn("## task 001", sliced); self.assertNotIn("## task 002", sliced)
+
+    def test_a_contract_without_task_sections_comes_back_unchanged(self):
+        for text in ("", "plain text", "pre\n## types\nT\n### sub\ns\n", "## a\nb\n## c\nd"):
+            self.assertEqual(fc.fc_briefs.contract_slice(text, "001"), text)
+
+    def test_test_brief_ends_with_the_slice(self):
+        brief = fc.fc_briefs.test_brief({"id": "002", "protected": ["tests/test_a.py"], "test": "true"}, self.CONTRACT)
+        self.assertEqual(brief.split("CONTRACT:\n", 1)[1], fc.fc_briefs.contract_slice(self.CONTRACT, "002"))
+        self.assertNotIn("## task 001", brief)
+
+    def test_groundwork_brief_holds_the_format_line(self):
+        line = ("Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) "
+                "with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.")
+        self.assertIn(line, fc.fc_briefs.GROUNDWORK_BRIEF.splitlines())
 
 
 if __name__ == "__main__":

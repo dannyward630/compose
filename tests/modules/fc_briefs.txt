@@ -11,6 +11,7 @@ cmd_wayfinder
 cmd_planner
 cmd_toolsmith
 TEST_BUDGET
+contract_slice
 test_brief
 cmd_testcrews
 cap_split
