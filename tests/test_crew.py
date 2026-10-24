@@ -1272,6 +1272,45 @@ class CardsById(unittest.TestCase):
             self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
 
 
+LINEAR_TEXT_LINE = "Linear text: concise, readable English. Lead with the action, one idea per line, no preamble or recap."
+
+
+class TersePreamble(unittest.TestCase):
+    """The crew preamble is terse: one Linear-text rule, at most 3500 characters, every report form and the orchestrator's parallel form kept."""
+
+    def setUp(self):
+        self.wt = Path(tempfile.mkdtemp())
+        self.proj = self.wt / ".compose" / "hw"
+        self.proj.mkdir(parents=True)
+
+    def pre(self, name, title, up=None):
+        with mock.patch.dict(os.environ, {"COMPOSE_TEST_SLOTS": "4"}):  # the preamble prints the slot count; a fixed digit keeps the size stable
+            return fc.fc_crew.crew_preamble(self.proj, name, title, up)
+
+    def test_linear_text_line_is_there_once_on_a_line_of_its_own(self):
+        for name, title, up in (("hw-planner", "planner", "manager"), ("hw-orchestrator", "orchestrator", None), ("hw-tests-001", "tests 001", "orchestrator")):
+            with self.subTest(name):
+                pre = self.pre(name, title, up)
+                self.assertEqual(pre.count(LINEAR_TEXT_LINE), 1)
+                self.assertIn("\n" + LINEAR_TEXT_LINE + "\n", pre)
+
+    def test_planner_preamble_is_at_most_3500_characters_without_the_worktree(self):
+        text = self.pre("hw-planner", "planner", "manager").replace(str(self.wt.resolve()), "").replace(str(self.wt), "")
+        self.assertLessEqual(len(text), 3500)
+
+    def test_every_report_state_keeps_its_compose_report_form(self):
+        report = f"compose report --repo {self.wt.resolve()} --project hw --as hw-planner"
+        pre = self.pre("hw-planner", "planner", "manager")
+        for state in ("needs-user", "blocked", "working", "done", "tool-bug", "contradiction"):
+            with self.subTest(state):
+                self.assertIn(f"{report} {state}", pre)
+
+    def test_only_the_orchestrator_gets_the_parallel_form(self):
+        self.assertIn(fc.fc_crew.PARALLEL_FORM, self.pre("hw-orchestrator", "orchestrator"))
+        for name, title, up in (("hw-planner", "planner", "manager"), ("hw-tests-001", "tests 001", "orchestrator")):
+            self.assertNotIn(fc.fc_crew.PARALLEL_FORM, self.pre(name, title, up))
+
+
 class PreambleNamesComposeLinear(unittest.TestCase):
     """Every teammate's preamble sends Linear reads and writes through `compose linear`, never a Linear MCP tool."""
 
@@ -1392,3 +1431,46 @@ class CrewRecorded(unittest.TestCase):
         for model, pids, fail in (("claude", [412], True), ("pi:x/y", [412], True), ("claude", [], False), ("pi:x/y", [], False)):
             with self.subTest(model=model, pids=pids, fail=fail):
                 self.assertEqual(self.start(model, pids, fail)[4], 0)
+
+
+class TerseTemplatesA(unittest.TestCase):
+    """The explore and toolsmith briefs are terse: inside their sizes, same placeholders, every command, report form, heading and step marker kept."""
+
+    def flat(self, name):
+        return " ".join(getattr(fc.fc_briefs, name).split())
+
+    def test_sizes_and_placeholders(self):
+        import string
+        want = {"EXPLORE_BRIEF": (976, {"feature", "slug", "wt"}),
+                "TOOLSMITH_BRIEF": (610, {"at", "cli_commit", "cli_repo", "message", "project", "repo", "reporter", "variant"})}
+        for name, (limit, fields) in want.items():
+            with self.subTest(name):
+                self.assertLessEqual(len(getattr(fc.fc_briefs, name)), limit)
+                self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(fc.fc_briefs, name)) if f}, fields)
+
+    def test_explore_and_toolsmith_keep_their_commands_and_steps(self):
+        for token in ("`trail map`", "`trail ask \"<question>\" --source`", "`trail callers <symbol>`", "`trail skeleton <file>`", "`compose linear get <id> --body`",
+                      "`compose linear update <id> --section \"## Notes\" --file <path> --expect <hash>`", "`### Codebase brief`", "`done \"<one-line summary>\"`"):
+            self.assertIn(token, self.flat("EXPLORE_BRIEF"))
+        for token in ("`# <command>: <symptom>`", "`gh issue view 1 --repo {repo}`", "`--comment <n>`", "`--new`",
+                      "`compose tool-bug file --project {project} --entry \"{at}\" --body <file>`", "{variant}"):
+            self.assertIn(token, self.flat("TOOLSMITH_BRIEF"))
+        for n in (1, 2, 3):
+            self.assertRegex(fc.fc_briefs.TOOLSMITH_BRIEF, rf"(?m)^{n}\. ")
+
+    def test_toolsmith_variants_keep_their_flags_phrases_and_steps(self):
+        from types import SimpleNamespace
+        log = Path(tempfile.mkdtemp()) / "tool-bugs.jsonl"
+        log.write_text(json.dumps({"at": "2026-10-17 15:30:00", "project": "shop", "reporter": "shop-tests", "message": "m", "cli_commit": "abc1234", "cli_repo": "/r"}) + "\n")
+        want = {"maintainer": ("`compose tool-bug pr --project shop --entry \"2026-10-17 15:30:00\"", "You never merge", "your own worktree", "Fixes #", "\n6. "),
+                "reporter": ("`--approved`", "never edit or commit", "run the same filing command with `--approved`"),
+                "no-gh": ("`--approved`", "never edit or commit", "gh auth login")}
+        for state, tokens in want.items():
+            with self.subTest(state), mock.patch.object(fc.fc_crew, "TOOL_BUGS", log), mock.patch.object(fc.fc_core, "project_dir", return_value=Path("/x/shop")), \
+                    mock.patch.object(fc.fc_toolbug, "gh_status", return_value=(state, "alice9")), mock.patch("sys.stdout", io.StringIO()) as out:
+                fc.fc_briefs.cmd_toolsmith(SimpleNamespace(repo=".", project="shop"))
+                brief = out.getvalue()
+                for token in tokens + ("\n4. ", "\n5. "):
+                    self.assertIn(token, brief)
+                self.assertEqual("\n6. " in brief, state == "maintainer")
+                self.assertNotIn("sections/", brief)

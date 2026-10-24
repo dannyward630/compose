@@ -213,14 +213,14 @@ Every teammate you start runs in its own pane (`compose crew start`); never do i
 7. Report the cut with each story's task issue ids.
 """
 
-TOOLSMITH_BRIEF = """You are the toolsmith teammate for project {project}: compose itself failed there, and the newest entry in the
-tool-bug log is your assignment: {reporter} at {at}, compose {cli_commit} in {cli_repo}:
+TOOLSMITH_BRIEF = """You are toolsmith for project {project}: compose failed there. Newest tool-bug log entry is your assignment:
+{reporter} at {at}, compose {cli_commit} in {cli_repo}:
   {message}
-Read that repo's SKILL.md first; it is the only skill file to read, never another.
-1. Reproduce the bug from the report in your worktree, then find its root cause in the code.
-2. Write the body file: line 1 is `# <command>: <symptom>`, then the sections issue #1 has (`gh issue view 1 --repo {repo}`).
-3. File it: `compose tool-bug file --project {project} --entry "{at}" --body <file>`. Exit 2 means the search found an open issue already:
-   `--comment <n>` comments there when it is the same bug, `--new` creates a new one when it is not.
+Read that repo's SKILL.md first; no other skill file.
+1. Reproduce bug in your worktree, find root cause.
+2. Write body file: line 1 `# <command>: <symptom>`, then sections of issue #1 (`gh issue view 1 --repo {repo}`).
+3. File: `compose tool-bug file --project {project} --entry "{at}" --body <file>`. Exit 2: open issue exists;
+   `--comment <n>` if same bug, `--new` if not.
 {variant}"""
 
 CHANGE_BRIEF = """You are the wayfinder teammate for change of course {cid} on project {slug}. Worktree: {wt}. The map is the feature issue
@@ -266,17 +266,17 @@ The screen that raised it: {reflect}
    Do not touch tasks, stories, or the plan: the team lead re-plans from your answers.
 """
 
-EXPLORE_BRIEF = """You are the explore teammate for project {slug}. Worktree: {wt}. The feature issue is {feature} on Linear.
-Map the existing code for this feature fast, through trail only: `trail map`, `trail ask "<question>" --source`, `trail callers <symbol>`,
-`trail skeleton <file>`. Open a source file only at the exact file:line a node points to, and only when the node lacks a needed detail.
-Time box: under 3 minutes. Write no code and change no file.
-Write a codebase brief of at most 40 lines:
-- structure and entry points (server, client, how they start)
-- where this feature plugs in: files and symbols with file:line
-- existing patterns and helpers to reuse instead of rewriting
-- test setup: frameworks, where tests live, the exact commands
-- risks and unknowns the plan must settle
-Read the Notes section with `compose linear get <id> --body`, then write the whole section back, its lines plus the brief as `### Codebase brief`, with `compose linear update <id> --section "## Notes" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if it says the section changed since you read it, read it again and keep what changed; never a whole-description write. Then report `done "<one-line summary>"`.
+EXPLORE_BRIEF = """You are explore teammate for project {slug}. Worktree: {wt}. Feature issue: {feature} on Linear.
+Map existing code fast, through trail only: `trail map`, `trail ask "<question>" --source`, `trail callers <symbol>`, `trail skeleton <file>`.
+Open source file only at exact file:line a node points to, when node lacks detail.
+Time box: under 3 minutes. Write no code, change no file.
+Brief of at most 40 lines:
+- structure, entry points
+- where feature plugs in: files, symbols, file:line
+- patterns, helpers to reuse
+- tests: frameworks, locations, exact commands
+- risks, unknowns
+Read Notes with `compose linear get <id> --body`, then write the whole section back, its lines plus brief as `### Codebase brief`, with `compose linear update <id> --section "## Notes" --file <path> --expect <hash>` (hash from `get --body`); if section changed, reread, keep changes; never a whole-description write. Then report `done "<one-line summary>"`.
 """
 
 def cmd_explore(a):
@@ -329,22 +329,21 @@ def cmd_toolsmith(a):
         sys.exit(f"no tool-bug entry for project {proj.name}")
     repo, state = fc_toolbug.REPO, fc_toolbug.gh_status()[0]
     if state == "maintainer":
-        variant = f"""4. You are a maintainer on {repo}: file or comment first, then fix the root cause on your own branch in your own worktree of
-   the compose repo, with a test that fails without the fix and passes with it, and run only the test files of what you changed, never the whole suite.
-   Never commit on main of any checkout, in ~/.compose/src, or in the project worktree: the tool refuses there.
-5. Commit the fix with a plain message and no `Fixes #` in it, then run
-   `compose tool-bug pr --project {proj.name} --entry "{entry['at']}" --worktree <your worktree>`: it pushes your branch and opens the PR,
-   which closes the issue when the product owner merges it. You never merge.
+        variant = f"""4. Maintainer on {repo}: file or comment first, then fix root cause on own branch in your own worktree of compose repo,
+   with test failing without fix, passing with it; run only test files of what you changed, never whole suite.
+   Never commit on main of any checkout, in ~/.compose/src, or in project worktree: tool refuses.
+5. Commit with plain message, no `Fixes #`, then run
+   `compose tool-bug pr --project {proj.name} --entry "{entry['at']}" --worktree <your worktree>`: pushes branch, opens PR,
+   closing issue when product owner merges. You never merge.
 6. Report `done` with the PR's URL.
 """
     else:
-        variant = f"""4. You are not a maintainer on {repo}: you reproduce, diagnose, and file only, so never edit or commit anything; this
-   overrides the worktree line `crew start` puts first.
-5. Without `--approved` the filing saves a draft instead of posting: report `needs-user` with the saved path and your
-   diagnosis, and wait. On the go, run the same filing command with `--approved`, then report `done` with the issue's URL.
+        variant = f"""4. Not maintainer on {repo}: reproduce, diagnose, file only; never edit or commit; this
+   overrides worktree line `crew start` puts first.
+5. Without `--approved` filing saves draft: report `needs-user` with saved path, diagnosis; wait. On the go, run the same filing command with `--approved`, then report `done` with issue's URL.
 """
         if state == "no-gh":
-            variant += "   gh does not work here: if the filing prints a `gh auth login` hint, put that in your needs-user line too.\n"
+            variant += "   gh fails here: if filing prints `gh auth login` hint, put it in needs-user line too.\n"
     print(TOOLSMITH_BRIEF.format(project=proj.name, reporter=entry["reporter"], at=entry["at"], cli_commit=entry["cli_commit"],
                                  cli_repo=entry["cli_repo"], message=entry["message"], repo=repo, variant=variant))
 
