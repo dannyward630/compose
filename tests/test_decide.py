@@ -123,6 +123,11 @@ class Decide(unittest.TestCase):
             self.assertIn(want, str(e.exception.code))
         self.assertEqual(self.linear.writes, [])
 
+    def test_a_hyphenated_card_id_is_answered_like_any_other(self):
+        self.linear.body = "## Not yet specified\n\nC1-8. Which?\nA. one - affects: x\nB. two - affects: y\nRecommendation: A\n"
+        self.decide("C1-8: B", quote="two")
+        self.assertIn(f"- C1-8: B. two (product owner, {TODAY}", self.linear.body)
+
     def test_accept_all_records_every_recommendation_and_a_given_answer_wins(self):
         out = self.decide("Q2: C", quote="accept all except the db, Mongo", accept_all=True)
         self.assertIn(f"- Q1: A. Clerk (product owner, {TODAY}", self.linear.body)

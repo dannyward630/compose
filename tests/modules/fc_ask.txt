@@ -2,6 +2,8 @@ SESSION_URL
 ASK_FALLBACK
 ASK_HEAD
 url_problem
+CARD_ID
+ID_PARTS
 card_ids
 map_bodies
 decided_cards

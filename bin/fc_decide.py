@@ -8,7 +8,7 @@ import fc_core, fc_tasks, fc_linear, fc_linear_cmd, fc_plan, fc_herdr, fc_change
 OPEN, DECIDED = "Not yet specified", "Decisions so far"
 UNCONFIRMED = "({mode} recommendation, unconfirmed, {date})"  # the tag on a line the engineering manager decided for the product owner
 CONFIRMED = '(product owner, {date}; said: "{quote}")'       # the tag on a line the product owner decided, their words attached
-ANSWER = re.compile(r"^\s*([A-Za-z]{0,3}\d+)\s*[:=.]\s*(.+?)\s*$")  # `Q1: A`, `Q2: B, but keep the old route`
+ANSWER = re.compile(rf"^\s*({fc_ask.CARD_ID})\s*[:=.]\s*(.+?)\s*$")  # `Q1: A`, `Q2: B, but keep the old route`
 KEEP = re.compile(r"^keep\b", re.I)  # a change-of-course option that leaves the superseded line standing
 
 def map_issue(proj, a):

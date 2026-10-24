@@ -54,8 +54,16 @@ class Ask(unittest.TestCase):
         self.assertEqual(ids("NEB-1: 7 cards W1-W7; recommendation accept"), [f"W{n}" for n in range(1, 8)])
         self.assertEqual(ids("NEB-1: 4 cards Q1-Q2, Q5 and Q7; rec"), ["Q1", "Q2", "Q5", "Q7"])
         self.assertEqual(ids("NEB-1: 3 cards Q1 to Q3"), ["Q1", "Q2", "Q3"])
+        self.assertEqual(ids("NEB-1: 2 cards Q1..Q2 and Q4"), ["Q1", "Q2", "Q4"])
         self.assertEqual(ids("which fixture? I recommend A"), [])
         self.assertEqual(ids("NEB-1: 2 cards"), [])
+
+    def test_a_hyphenated_card_id_is_one_id_and_ranges_over_it_expand(self):
+        ids = fc.fc_ask.card_ids
+        self.assertEqual(ids("NEB-1: 2 cards C1-8, C1-9; rec"), ["C1-8", "C1-9"])
+        self.assertEqual(ids("NEB-1: 3 cards C1-2..C1-4; rec"), ["C1-2", "C1-3", "C1-4"])
+        self.assertEqual(ids("NEB-1: 3 cards C1-2 to C1-4 and Q5; rec"), ["C1-2", "C1-3", "C1-4", "Q5"])
+        self.assertEqual(fc.fc_ask.cards_in("C1-8. Which?\nA. a - affects: x\nB. b - affects: y\nRecommendation: A\n").keys(), {"C1-8"})
 
     def test_a_working_link_goes_out_with_the_text_fallback(self):
         self.report(f"NEB-1: 2 cards V1-V2; recommendation accept; visual cards open in Lavish: {self.good}")

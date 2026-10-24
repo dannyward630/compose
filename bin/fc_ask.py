@@ -18,15 +18,28 @@ def url_problem(url):
     except (OSError, ValueError) as e:
         return str(e)[:100]
 
+CARD_ID = r"[A-Za-z]{0,3}\d+(?:-\d+)?"  # `Q1`, or `C1-8` (card 8 of change C1)
+ID_PARTS = re.compile(r"([A-Za-z]{0,3})(\d+)(?:-(\d+))?")
+
 def card_ids(message):
-    """The card ids a `<n> cards <ids>` line names: `Q1-Q3, W5` is Q1, Q2, Q3, W5. Empty when the line names none."""
+    """The card ids a `<n> cards <ids>` line names: `Q1-Q3, W5` is Q1, Q2, Q3, W5; `C1-8` is one id; `C1-2..C1-4` is C1-2, C1-3, C1-4.
+    A range is `Q1-Q3`, `Q1..Q3`, or `Q1 to Q3`. Empty when the line names none."""
     m = re.search(r"\b\d+\s+cards?\s+([^;]+)", message, re.I)
     ids = []
-    for tok in re.split(r"[,&\s]+|\band\b", re.sub(r"\s*(?:\.\.|\bto\b|-)\s*", "-", m.group(1))) if m else []:
-        r = re.fullmatch(r"([A-Za-z]{0,3})(\d+)-(?:\1)?(\d+)", tok)
-        if r and 0 <= int(r[3]) - int(r[2]) < 100:
-            ids += [f"{r[1]}{n}" for n in range(int(r[2]), int(r[3]) + 1)]
-        elif re.fullmatch(r"[A-Za-z]{0,3}\d+", tok):
+    for tok in re.split(r"[,&\s]+|\band\b", re.sub(r"\s*(?:\.\.|\bto\b|\s-\s)\s*", "~", m.group(1))) if m else []:
+        tok = re.sub(r"^([A-Za-z]{1,3})(\d+)-\1(\d+)$", r"\1\2~\3", tok)  # `Q1-Q3`
+        lo, _, hi = tok.partition("~")
+        a = ID_PARTS.fullmatch(lo)
+        b = ID_PARTS.fullmatch(hi.removeprefix(a[1])) if a and hi else None  # the end may leave out the prefix: `Q1 to 3`
+        if a and b and a[3] is None and b[3] is None:
+            first, last, name = int(a[2]), int(b[2]), lambda n: f"{a[1]}{n}"
+        elif a and b and a[3] and b[3] and a[2] == b[2]:  # `C1-2..C1-4` runs within one change
+            first, last, name = int(a[3]), int(b[3]), lambda n: f"{a[1]}{a[2]}-{n}"
+        else:
+            first, last = 0, -1
+        if 0 <= last - first < 100:
+            ids += [name(n) for n in range(first, last + 1)]
+        elif a and not hi:
             ids.append(tok)
     return list(dict.fromkeys(ids))
 
@@ -52,7 +65,7 @@ def decided_cards(bodies, ids):
 # ---------- the card format: a question, why it matters, options A-D with what each affects, and a recommendation ----------
 CARD_FORMAT = ("`Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same, "
                "two options at least) / `Recommendation: <letter> - <why>`")
-CARD_HEAD = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+)?[*_`]*([A-Za-z]{0,3}\d+)[*_`]*[.:)][*_`]*\s*(.*)")  # `Q1. question`, `- **Q1**: question`
+CARD_HEAD = re.compile(rf"^\s*(?:[-*]\s+|\d+[.)]\s+)?[*_`]*({CARD_ID})[*_`]*[.:)][*_`]*\s*(.*)")  # `Q1. question`, `- **Q1**: question`
 OPTION = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*([A-D])[*_`]*[.):][*_`]*\s+(.*\S)")
 AFFECTS = re.compile(r"\baffects?\b[*_`]*\s*[:\-]?\s*(\S.*)", re.I)
 WHY = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*why\b[^:]*:\s*(\S.*)", re.I)
