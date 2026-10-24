@@ -155,7 +155,8 @@ class Crew(unittest.TestCase):
         awake.assert_called_once_with(4242)  # the Mac stays awake for as long as the teammate's session lives
         frame0.assert_not_called()  # Frame0 is opt-in with --frame0
         verbs = [c[:2] for c in calls]
-        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("pane", "rename"), ("agent", "start"), ("agent", "get"),  # the brief waits for Claude's input box
+        self.assertEqual(verbs, [("agent", "list"), ("tab", "create"), ("pane", "rename"), ("agent", "start"),
+                                 ("pane", "process-info"), ("pane", "process-info"), ("agent", "get"),  # the start's renice and the record read the pane's processes; the brief waits for Claude's input box
                                  ("agent", "prompt"), ("pane", "report-metadata"), ("agent", "get"), ("pane", "process-info")])
         self.assertEqual(calls[2], ("pane", "rename", "w9:p7", "Payment provider"))  # the pane carries its tab's label
         self.assertIn("COMPOSE_ROLE=crew", calls[1])  # only the team lead's tab is marked for the guard
@@ -167,8 +168,8 @@ class Crew(unittest.TestCase):
         self.assertIn("claude", start)
         self.assertEqual(json.loads(start[start.index("--settings") + 1])["attribution"], {"commit": "", "pr": ""})  # no co-author trailer on a crew commit
         self.assertFalse(any("brief.md" in str(x) for x in start))  # a session launched on a prompt works on it at once and never shows herdr the idle box its start waits for
-        self.assertEqual(calls[5][2], "shop-q-neb-12")
-        self.assertIn("brief.md", calls[5][3])  # the brief goes in once the session is idle and its box is on screen
+        self.assertEqual(calls[7][2], "shop-q-neb-12")
+        self.assertIn("brief.md", calls[7][3])  # the brief goes in once the session is idle and its box is on screen
         prompt = (self.proj / "results" / "crew" / "shop-q-neb-12.brief.md").read_text()
         self.assertIn("compose report", prompt)
         self.assertIn("shop-orchestrator, your team lead", prompt)
