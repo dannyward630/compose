@@ -88,6 +88,7 @@ Each case must fail, and only because the feature is missing.
 A failure is classified from jev's stop reason, last steps, and final page: rules first (the page did not load, the user landed on a login page, jev skipped the password field, the assert script crashed, the harness failed), then a fast model that reads the rest and must find the app working up to the point the feature should appear.
 A case that fails for the environment (page did not load, login failed, a blocking overlay such as a cookie banner or tour, seed missing, wrong path), one the model cannot tell apart from that, and one that already passes all fail the step with the reason.
 Prove refuses once the stack holds the feature.
+After a re-plan, `--prove --only <ids>` (the tasks to redo) runs the cases on the stack cut below the first of those tasks: the layers under them are the app, and the redone work is what the cases must find missing.
 It records `results/prove.json`.
 
 Prove also lints the cases for the real flag path.

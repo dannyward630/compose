@@ -1,7 +1,7 @@
 import hashlib, json, os, re, sys, time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
-import fc_core, fc_config, fc_models, fc_worktree, fc_jev, fc_verify, fc_ledger
+import fc_core, fc_config, fc_models, fc_tasks, fc_worktree, fc_layers, fc_jev, fc_verify, fc_ledger
 
 
 # A query or fragment key that forces a flag or experiment variant for whoever opens the URL, which no real user's page carries.
@@ -113,25 +113,57 @@ def unproven(repo, proj, cfg):
            else "its e2e cases or their setup changed since the last prove" if last.get("e2e_digest") != e2e_digest(cfg) else None)
     return None if why is None or fc_worktree.stack_order(repo, proj) else why
 
+def prove_root(repo, proj, cfg, only):
+    """(where the cases run, their config there, the stack worktree to free or None). Before `run` that is the project checkout.
+    Once the stack holds layers it is the stack cut below the first of the tasks `only` names (a re-plan's redo tasks): the layers
+    under them are the app those cases run on, and their own work is what is missing. Without `only` a stack holds the whole feature."""
+    layers = fc_worktree.stack_order(repo, proj)
+    if not layers:
+        return repo, cfg, None
+    if not only:
+        sys.exit("prove runs before `run`: the stack already holds the feature, so its cases would pass. After a re-plan, name the tasks to redo: "
+                 "`compose verify --prove --only <ids>` proves the cases on the stack below the first of them.")
+    order = fc_worktree.layer_order(fc_tasks.code_tasks(fc_tasks.load_tasks(proj, required=True)))
+    ids = [t.strip() for t in only.split(",")]
+    if [t for t in ids if t not in order]:
+        sys.exit(f"prove --only: no task {', '.join(t for t in ids if t not in order)} in the plan")
+    below = order[:min(order.index(t) for t in ids)]
+    prefix = fc_worktree.task_prefix(repo, proj)
+    through = [b for b in layers if b.removeprefix(prefix) in below]
+    if not through:
+        return repo, cfg, None  # nothing is built under the first task to redo: the cases run on the project checkout
+    trunk = fc_core.current_branch(repo)
+    wt = fc_worktree.stack_worktree(repo, proj, trunk)
+    chain = fc_layers.linearize(repo, proj, trunk, wt, through)
+    if fc_layers.STACK_STOP:
+        sys.exit(f"prove FAIL  nothing proved or recorded: {fc_layers.STACK_STOP}")
+    fc_core.sh(["git", "checkout", "-q", chain[-1]], wt)
+    fc_worktree.ready_checkout(repo, wt, install=cfg.get("install"))
+    fc_core.say(f"prove  at    {chain[-1]}, the stack below {ids[0]} ({len(chain)} layer(s) on {trunk})")
+    olds = (repo, fc_core.worktrees(repo)[0])
+    return wt, {**cfg, **{k: fc_verify.at_root(cfg[k], olds, wt) for k in ("checks", "e2e", "e2e_setup", "e2e_env") if k in cfg}, "main_repo": repo}, wt
+
 def cmd_prove(a):
     repo, proj, cfg = verify_config(a)
     if not cfg.get("e2e"):
         fc_core.say("prove  nothing to prove: verify.json has no e2e cases")
         sys.exit(0)
-    if fc_worktree.stack_order(repo, proj):
-        sys.exit("prove runs before `run`: the stack already holds the feature, so its cases would pass. Prove the cases on the project branch as it was before `run`.")
+    root, rooted, wt = prove_root(repo, proj, cfg, getattr(a, "only", None))
     t0 = time.time()
     fc_core.say(f"prove  start project={proj.name} cases={len(cfg['e2e'])}")
     try:
-        rows, lint, ok = prove(repo, proj, cfg)
+        rows, lint, ok = prove(root, proj, rooted)
     except fc_models.PaymentRequired as e:
         sys.exit(f"prove stopped, nothing recorded: {e}")
+    finally:
+        if wt is not None:
+            fc_core.sh(["git", "checkout", "-q", "--detach", fc_core.current_branch(repo)], wt, check=False)  # free the top branch again
     (proj / "results").mkdir(exist_ok=True)
     fc_core.atomic_write(proj / "results" / "prove.json", json.dumps({"passed": ok, "cases": rows, "lint": lint, "e2e_digest": e2e_digest(cfg),
                                                                    "seconds": round(time.time() - t0, 1)}, indent=2))
     linear = proj / "linear.json"
     feature = json.loads(linear.read_text()).get("feature") if linear.exists() else None
-    sha = fc_core.sh(["git", "rev-parse", "HEAD"], repo, check=False).stdout.strip()
+    sha = fc_core.sh(["git", "rev-parse", "HEAD"], root, check=False).stdout.strip()
     events = [fc_ledger.event("", sha, [], [], "case", "prove",
                               *{"feature_missing": ("fail_expected", True), "passes": ("pass", False)}.get(row["verdict"], ("error", None)),
                               f"{row['name']}: {row['why']}") for row in rows]

@@ -355,6 +355,7 @@ def main():
             s.add_argument("--skip-review", action="store_true")
             s.add_argument("--fresh", action="store_true", help="run every check even where it is already green on these very files")
             s.add_argument("--prove", action="store_true", help="before `run`: every e2e case against the project's base must fail because the feature is missing, never because of the environment")
+            s.add_argument("--only", help="with --prove, after a re-plan: comma-separated ids of the tasks to redo; the cases run on the stack below the first of them")
             s.add_argument("--review-only", action="store_true", help="right after `run`: only the diff review and the acceptance questions, no checks, e2e, or fixes")
             s.add_argument("--prototype", action="store_true", help="after `run`: capture each verify.json `prototype` screen of the built app into results/prototype.md to compare with its reference")
             s.add_argument("--fix", type=int, default=2, help="auto-fix rounds with the fast model before escalating (0 = report only)")
