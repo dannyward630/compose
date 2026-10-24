@@ -321,17 +321,17 @@ class CallerEnv(unittest.TestCase):
         d = Path(tempfile.mkdtemp()); (d / "bin").mkdir()
         herdr = d / "bin" / "herdr"
         herdr.write_text(FAKE_HERDR.format(py=sys.executable, state=str(d / "panes.json"), server_home=str(d / "real-home")))
-        me = d / "compose"  # stands in for the CLI the status pane runs: records the env it got
+        me = d / "compose"  # stands in for the CLI a pane runs: records the env it got
         me.write_text(f"#!{sys.executable}\nimport json, os\nopen({str(d / 'seen.json')!r}, 'w').write(json.dumps([os.environ.get('COMPOSE_CONFIG'), os.environ['HOME']]))\n")
         herdr.chmod(0o755); me.chmod(0o755)
         caller = {"PATH": f"{d / 'bin'}{os.pathsep}{os.environ['PATH']}", "HERDR_ENV": "1", "HERDR_SOCKET_PATH": str(d / "sock"),
                   "COMPOSE_CONFIG": str(d / "scratch" / "config.json"), "HOME": str(d / "scratch-home")}
         with mock.patch.dict(os.environ, caller), mock.patch.object(sys, "argv", [str(me)]):
-            fc.fc_herdr.herdr_status_tab("w1", d, "demo")
+            fc.fc_herdr.herdr("pane", "run", fc.fc_herdr.herdr_tab("w1", "shell", d)["root_pane"]["pane_id"], str(me))
             fc.fc_herdr.herdr_implementer_pane("w1", d, {"K": "v"})
             fc.fc_herdr.herdr("workspace", "create", "--cwd", str(d), "--label", "demo")
         self.assertEqual(json.loads((d / "seen.json").read_text()), [caller["COMPOSE_CONFIG"], caller["HOME"]])
-        for env in json.loads((d / "panes.json").read_text()).values():  # the status tab, an implementer pane (crew tabs too), a space's shell
+        for env in json.loads((d / "panes.json").read_text()).values():  # a tab, an implementer pane (crew tabs too), a space's shell
             self.assertEqual((env["COMPOSE_CONFIG"], env["HOME"]), (caller["COMPOSE_CONFIG"], caller["HOME"]))
 
     def test_the_pane_id_stays_right_after_pane_split(self):
