@@ -283,7 +283,8 @@ def cmd_init(a):
     if a.branch and a.here:
         sys.exit("--branch names the project's own worktree branch; it does not combine with --here")
     other = fc_core.all_projects(here).get(a.after) if a.after else None
-    after = fc_core.project_branch(other[1]) if other else (prefix + a.after if a.after else None)
+    top = (fc_layers.layer_branches(here, other[1]) or [None])[-1] if other else None  # a project's code sits on its layers, not on its branch, once they exist
+    after = top or fc_core.project_branch(other[1]) if other else (prefix + a.after if a.after else None)
     if after and a.here:
         sys.exit("--after builds a project on another project's branch in its own worktree; it does not combine with --here")
     if after and fc_core.sh(["git", "rev-parse", "--verify", "-q", after], here, check=False).returncode != 0:

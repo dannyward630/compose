@@ -40,6 +40,22 @@ class InitAfter(unittest.TestCase):
         self.assertNotIn("(after", [l for l in listing.splitlines() if l.startswith("a ")][0])
         self.assertIn("trunk compose/b (after a)", self.fc("status", "--project", "b").stdout)
 
+    def test_dependent_project_starts_from_the_other_projects_top_layer_when_it_has_layers(self):
+        self.fc("init", "--project", "a")
+        a_wt, b_wt = self.repo.parent / "compose-a", self.repo.parent / "compose-b"
+        git = lambda *args: subprocess.run(["git", *args], cwd=a_wt, check=True, capture_output=True, text=True, env=ENV).stdout
+        for n in ("01", "02"):  # a's trunk stays as it was; its code sits on the layers above it
+            git("checkout", "-q", "-b", f"compose/a-layer-{n}")
+            (a_wt / f"layer_{n}.txt").write_text(n)
+            git("add", "-A"); git("commit", "-qm", f"layer {n}")
+        git("checkout", "-q", "compose/a")
+        self.fc("init", "--project", "b", "--after", "a")
+        self.assertTrue((b_wt / "layer_02.txt").exists())
+        cfg = json.loads((b_wt / ".compose" / "b" / "verify.json").read_text())
+        self.assertEqual((cfg["review_base"], cfg["after"]), ("compose/a-layer-02", "a"))
+        self.fc("init", "--project", "b", "--after", "a")  # again: nothing moves
+        self.assertEqual(json.loads((b_wt / ".compose" / "b" / "verify.json").read_text()), cfg)
+
     def test_clean_counts_a_merge_into_the_base_project(self):
         self.fc("init", "--project", "a")
         self.fc("init", "--project", "b", "--after", "a")

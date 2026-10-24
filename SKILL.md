@@ -68,7 +68,7 @@ Then:
     Once every feature can be named, take the settled path.
   - **Settled** (features exist as sub-issues, or can be named from the map): create one project per feature and start a team lead for each (0h), all at once.
     Each team lead runs its own wayfinder (0b) with groundwork (0g) feeding it; the engineering manager relays every open card set across the epic to the product owner at once (Rules: ask once).
-    A feature starts from trunk unless it truly needs another feature's code (it calls, imports, or edits what that feature builds), the same rule as a task's `after:`: then `compose init --project <slug> --after <other-slug>` starts its branch from that feature's project branch, so its stack sits on top.
+    A feature starts from trunk unless it truly needs another feature's code (it calls, imports, or edits what that feature builds), the same rule as a task's `after:`: then `compose init --project <slug> --after <other-slug>` starts its branch from that feature's top layer (its project branch while it has none), so its stack sits on top.
 - **feature**: if its map is not clear, wayfinder it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list (one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship) and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story.
 - **story**: its feature is the parent; use or create that project.
   The planner teammate writes this story's tasks only.
