@@ -109,10 +109,13 @@ class Board(unittest.TestCase):
         (self.proj / "results" / "hold.json").write_text(json.dumps({"003": {"reason": "plan changes", "at": "x"}}))
         self.assertEqual(self.states(fc.fc_status.board(self.repo, self.proj))["003"], "held")
 
-    def test_task_branches_runs_one_git_call(self):
+    def test_task_branches_runs_one_listing_and_looks_up_the_common_dir_once(self):
         with self.counting() as sh:
             self.assertEqual(fc.fc_worktree.task_branches(self.repo, self.proj), {"compose/p-002": None})
-            self.assertEqual(sh.call_count, 1, [c.args[0] for c in sh.call_args_list])
+            self.assertEqual([c.args[0][1] for c in sh.call_args_list], ["rev-parse", "for-each-ref"], [c.args[0] for c in sh.call_args_list])  # the prefix cache's refs stamp needs the common dir
+            sh.reset_mock()
+            fc.fc_worktree.task_branches(self.repo, self.proj)
+            self.assertEqual([c.args[0][1] for c in sh.call_args_list], ["for-each-ref"])
 
     def test_watch_snapshot_costs_no_process_while_nothing_changed(self):
         with mock.patch.object(fc.fc_herdr, "herdr", return_value=None), self.counting() as sh:
