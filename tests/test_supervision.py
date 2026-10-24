@@ -984,6 +984,9 @@ class OwnerDigest(unittest.TestCase):
         r = {"checks": [{"exit": 0}], "e2e": [], "review": {"pass": False, "confirmed": ["a", "b"]}}
         self.assertEqual(why({"rounds": [r, r], "rejected_fixes": ["x"]}),
                          "review 2 confirmed, a fix touched files outside the stack after 1 fix round(s)")
+        r2 = {"round": 1, "files": ["a.go"], "why": "w", "next": "cut a new top task"}
+        self.assertEqual(why({"rounds": [r, r], "rejected_fixes": [r2]}),
+                         "review 2 confirmed, a fix needs a lower layer's file: cut a new top task after 1 fix round(s)")
 
     def test_the_digest_is_one_honest_line(self):
         rows = [{"id": "001", "state": "merged"}, {"id": "002", "state": "failed"}, {"id": "003", "state": "pending"}]

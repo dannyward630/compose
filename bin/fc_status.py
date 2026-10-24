@@ -137,7 +137,8 @@ def verify_why(vd):
         why.append(f"review {len(rv.get('confirmed') or [])} confirmed")
         failed += 1
     if vd.get("rejected_fixes"):
-        why.append("a fix touched files outside the stack")
+        nxt = next((r["next"] for r in vd["rejected_fixes"] if isinstance(r, dict) and r.get("next")), None)
+        why.append(f"a fix needs a lower layer's file: {nxt}" if nxt else "a fix touched files outside the stack")
     text = ", ".join(why) + (" - tool errors, not the code" if failed and tool == failed else "")
     return text + (f" after {len(rounds) - 1} fix round(s)" if text and len(rounds) > 1 else "")
 

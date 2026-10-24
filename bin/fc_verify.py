@@ -382,6 +382,10 @@ def wrong_layer(tasks, files, top):
     owners = {f: sorted(t["id"] for t in code if f in t["files"]) for f in files}
     return {f: o for f, o in owners.items() if o and top not in o} if top else {}
 
+def cut_top_task(foreign, top):
+    """What to do about a fix that belongs to a lower layer: only a task above the stack can change those files."""
+    return f"cut a new top task (id above {top}) whose files: lists {', '.join(sorted(foreign))}, run it, then verify again"
+
 def fix_answers(repo, fixed, report, install=None):
     """Whether a fix round answers something reproduced: it removes the line a confirmed review finding quotes, an e2e case
     failed (the next round reruns it), a check that failed passes when run again, or it changes the file a confirmed finding
@@ -529,8 +533,10 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
                 fc_core.sh(["git", "--literal-pathspecs", "checkout", "-q", "HEAD", "--", *sorted(set(fixed) - added)], repo)
             for f in added & set(fixed):
                 (repo / f).unlink()
-            rejected.append({"round": rnd + 1, "files": stray or sorted(foreign) or fixed, **({} if stray else {"why": why})})
+            rejected.append({"round": rnd + 1, "files": stray or sorted(foreign) or fixed, **({} if stray else {"why": why}), **({"next": cut_top_task(foreign, top)} if foreign else {})})
             fc_core.say(f"fix    REJECTED round {rnd + 1}: {why}; reverted the round")
+            if foreign:
+                fc_core.say(f"fix    next  {rejected[-1]['next']}")
             break
         fc_core.say(f"fix    done  {fc_core.fmt(time.time() - t1):>8}  tools={tools} changed={'yes' if fixed else 'no'}  ${usage['cost']:.4f}")
         if fixed:
