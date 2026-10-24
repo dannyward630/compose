@@ -143,6 +143,35 @@ class Sync(unittest.TestCase):
         self.assertIn("sync: stdin is not JSON", str(e.exception))
 
 
+class RefreshBeforeRun(unittest.TestCase):
+    """`run` reads the tasks again from Linear, so an edit made since the last sync reaches the implementer."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()) / "feat"
+        self.proj.mkdir()
+        (self.proj / "linear.json").write_text('{"feature": "ENG-1"}')
+        self.payload = lambda body: {"feature": {"id": "ENG-1", "title": "F", "description": ""},
+                                     "issues": [issue("ENG-3", "One", block(id="001", files="a.go", test="t").replace("Do it.", body)), issue("ENG-4", "Two", block(id="002", files="b.go", test="t"))]}
+        fc.fc_tasks.sync_tasks(self.proj, self.payload("Old goal."))
+
+    def refresh(self, key="lin_test", body="New goal."):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc.fc_linear, "linear_sync_payload", return_value=self.payload(body)) as read, \
+                mock.patch("sys.stdout", io.StringIO()) as out:
+            fc.fc_linear.refresh_tasks(self.proj)
+        return read, out.getvalue()
+
+    def test_a_body_edited_on_linear_since_the_sync_replaces_the_stored_one_and_is_said(self):
+        read, out = self.refresh()
+        self.assertIn("New goal.", fc.fc_tasks.load_tasks(self.proj)[0]["body"])
+        self.assertIn("001 body changed on Linear since the last sync: refreshed", out)
+        self.assertNotIn("002 body", out)
+
+    def test_without_a_linear_key_the_stored_tasks_stand_and_the_run_says_so(self):
+        read, out = self.refresh(key=None)
+        self.assertFalse(read.called)
+        self.assertIn("Old goal.", fc.fc_tasks.load_tasks(self.proj)[0]["body"])
+        self.assertIn("no Linear key: run uses the tasks synced at", out)
+
+
 class ScopedSyncNames(unittest.TestCase):
     """A story-scoped sync missing parentId, and the sync and change code, name no Linear MCP tool."""
     def test_missing_parent_names_the_field_and_ids(self):
