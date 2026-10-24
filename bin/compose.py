@@ -335,6 +335,7 @@ def main():
             s.add_argument("--body", help="file: the file holding the raw report")
             s.add_argument("--worktree", help="pr: your own worktree of the compose repo, on the fix's branch")
             s.add_argument("--title", help="pr: the PR title, default the branch's first commit subject")
+            s.add_argument("--issue", type=int, help="pr: the number of the issue the PR fixes, default the one the entry links (the first filed on it)")
             s.add_argument("--entry", help="the `at` of the tool-bugs.jsonl entry the posted URL is recorded on")
         if name == "workspace":
             s.add_argument("name", nargs="?", help="workspace to make active, or add | key | remove")

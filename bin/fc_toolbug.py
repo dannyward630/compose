@@ -185,7 +185,7 @@ def record_issue(project, url, at, field="issue"):
 
 def cmd_tool_bug_pr(a):
     """`tool-bug pr --worktree <path>`: push the toolsmith's branch from its own worktree of the compose repo and open a PR on REPO that
-    fixes the entry's issue, recorded on the entry as `pr`. Refused off the maintainer's machine, for a worktree that is the installed
+    fixes `--issue`, else the entry's issue, recorded on the entry as `pr`. Refused off the maintainer's machine, for a worktree that is the installed
     copy, a main checkout, or on main or master, and for a branch with nothing to propose; never merges."""
     import json, subprocess, sys
     wt = Path(a.worktree).resolve()
@@ -221,11 +221,11 @@ def cmd_tool_bug_pr(a):
             entry = d
     if at is not None and (same := entries_at(project, split_ordinal(at)[0])):
         entry = same[-1 if split_ordinal(at)[1] is None else split_ordinal(at)[1] - 1][1]
-    n = re.search(r"/issues/(\d+)$", entry.get("issue", ""))
+    n = a.issue or (m.group(1) if (m := re.search(r"/issues/(\d+)$", entry.get("issue", ""))) else None)  # an entry keeps the first issue filed on it: --issue names the one this fix closes
     pushed = fc_core.sh(["git", "push", "-q", "-u", "origin", branch], wt, check=False)
     if pushed.returncode:
         sys.exit(f"git push of {branch} failed: {' '.join((pushed.stdout + pushed.stderr).split())}")
-    title, body = scrub(a.title or subjects[0], login), scrub("\n".join(f"- {s}" for s in subjects) + (f"\n\nFixes #{n.group(1)}" if n else ""), login)
+    title, body = scrub(a.title or subjects[0], login), scrub("\n".join(f"- {s}" for s in subjects) + (f"\n\nFixes #{n}" if n else ""), login)
     p = subprocess.run(["gh", "pr", "create", "--repo", REPO, "--base", base, "--head", branch, "--title", title, "--body", body],
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     out = [l.strip() for l in p.stdout.splitlines() if l.strip()]
