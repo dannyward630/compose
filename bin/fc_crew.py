@@ -423,10 +423,11 @@ def desktop_notify(title, body):
     """The product owner's desktop alert, sent by the CLI itself and never through `herdr notification show`: that command follows
     herdr's `[ui.toast] delivery`, the same setting behind herdr's own toast for every agent that finishes or needs input, so the one
     value that silences those (`off`) would silence this too. macOS gets osascript with the title and body as arguments after `--`
-    (never spliced into the script, so nothing in a report message can run); elsewhere notify-send when installed. Returns whether
-    a notifier ran."""
+    (never spliced into the script, so nothing in a report message can run), run through `launchctl asuser` in the user's GUI
+    session: herdr panes live in launchd's Background session, where Notification Center silently drops every notification.
+    Elsewhere notify-send when installed. Returns whether a notifier ran."""
     if sys.platform == "darwin":
-        cmd = ["/usr/bin/osascript", "-e", "on run argv",
+        cmd = ["/bin/launchctl", "asuser", str(os.getuid()), "/usr/bin/osascript", "-e", "on run argv",
                "-e", 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"', "-e", "end run", "--", title, body]
     elif shutil.which("notify-send"):
         cmd = ["notify-send", "--", title, body]

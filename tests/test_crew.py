@@ -582,9 +582,17 @@ class Attention(unittest.TestCase):
                 fc.fc_crew.manager_attention(self.proj, ev)
         self.assertEqual(self.calls, [])  # nothing goes through herdr
         self.assertEqual(len(runs), 1)
-        self.assertEqual(runs[0][0], "/usr/bin/osascript")
+        self.assertEqual(runs[0][:4], ["/bin/launchctl", "asuser", str(os.getuid()), "/usr/bin/osascript"])
         self.assertEqual(runs[0][-3:], ["--", "shop: the engineering manager needs you", "Stripe or Adyen? I recommend Stripe  (from shop-orchestrator)"])
         self.assertIn("sound name", " ".join(runs[0][:-3]))
+
+    def test_desktop_notify_runs_in_the_gui_session_on_macos(self):
+        """herdr panes run in launchd's Background session, where Notification Center drops notifications without an error, so
+        osascript goes through `launchctl asuser` into the user's GUI session."""
+        runs = []
+        with mock.patch.object(sys, "platform", "darwin"), mock.patch.object(subprocess, "run", lambda cmd, **kw: runs.append(cmd)):
+            self.assertTrue(fc.fc_crew.desktop_notify("t", "b"))
+        self.assertEqual(runs[0][:4], ["/bin/launchctl", "asuser", str(os.getuid()), "/usr/bin/osascript"])
 
     def test_desktop_notify_passes_the_message_as_an_argument_never_in_the_script(self):
         """A report message is data: quotes, backticks, and a leading dash land verbatim in one argv item after `--`, and no
