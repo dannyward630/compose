@@ -480,6 +480,18 @@ class Crew(unittest.TestCase):
                 fc.fc_crew.cmd_report(type("A", (), {"as_": who, "state": "working", "message": msg.split()}))
             self.assertEqual(any("parallel:" in str(c) for c in out.call_args_list[:-1]), warned, (who, msg))
 
+    def test_every_brief_carries_the_macos_and_zsh_rules(self):
+        pre = fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests")
+        report = f"compose report --repo {fc.fc_herdr.project_worktree(self.proj)} --project shop --as shop-tests"
+        self.assertIn(f"call `{report}` written out in full, never from a shell variable or alias", pre)
+        self.assertIn("not word-split", pre)
+        self.assertIn("BSD sed is `sed -i '' <expr> <file>`.", pre)
+        self.assertIn("Write and edit files with the Write and Edit tools, never inline `node -e` or `python3 -c`.", pre)
+        self.assertIn(f"Every `cd` names the exact absolute path; your worktree is {fc.fc_herdr.project_worktree(self.proj)}.", pre)
+        self.assertIn("`trail note` learnings go in the commit only in a repo that tracks `.trail/`", pre)
+        self.assertIn("never `git add -f`", pre)
+        self.assertNotIn("define a function.", pre)
+
     def test_every_brief_carries_the_commit_and_simplicity_rules(self):
         pre = fc.fc_crew.crew_preamble(self.proj, "shop-tests", "tests")
         self.assertIn("never mention compose", pre)
@@ -1296,7 +1308,7 @@ LINEAR_TEXT_LINE = "Linear text: concise, readable English. Lead with the action
 
 
 class TersePreamble(unittest.TestCase):
-    """The crew preamble is terse: one Linear-text rule, at most 3500 characters, every report form and the orchestrator's parallel form kept."""
+    """The crew preamble is terse: one Linear-text rule, at most 4000 characters (the macOS and zsh rules took it past 3500), every report form and the orchestrator's parallel form kept."""
 
     def setUp(self):
         self.wt = Path(tempfile.mkdtemp())
@@ -1314,9 +1326,9 @@ class TersePreamble(unittest.TestCase):
                 self.assertEqual(pre.count(LINEAR_TEXT_LINE), 1)
                 self.assertIn("\n" + LINEAR_TEXT_LINE + "\n", pre)
 
-    def test_planner_preamble_is_at_most_3500_characters_without_the_worktree(self):
+    def test_planner_preamble_is_at_most_4000_characters_without_the_worktree(self):
         text = self.pre("hw-planner", "planner", "manager").replace(str(self.wt.resolve()), "").replace(str(self.wt), "")
-        self.assertLessEqual(len(text), 3500)
+        self.assertLessEqual(len(text), 4000)
 
     def test_every_report_state_keeps_its_compose_report_form(self):
         report = f"compose report --repo {self.wt.resolve()} --project hw --as hw-planner"
