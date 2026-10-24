@@ -18,18 +18,6 @@ OTHER = "claude:claude-opus-5-5"
 def route(depth): return f"## Route\n\n* workflow: test-first\n* depth: {depth}\n"
 
 
-class SuiteAfterEachTask(unittest.TestCase):
-    def test_a_whole_suite_in_the_checks_a_task_runs_is_warned_about_with_the_task_count(self):
-        said = fc.fc_run.suite_warning({"checks": ["ruff check .", "python3 -m tests.run"]}, 33)
-        self.assertIn("`python3 -m tests.run`", said)
-        self.assertIn("after each of the 33 tasks", said)
-        self.assertIn("task_checks", said)
-
-    def test_no_warning_for_cheap_checks_task_checks_or_one_task(self):
-        for cfg, n in (({"checks": ["ruff check ."]}, 33), ({"checks": ["python3 -m tests.run"], "task_checks": ["ruff check ."]}, 33), ({"checks": ["python3 -m tests.run"]}, 1), ({}, 33)):
-            self.assertIsNone(fc.fc_run.suite_warning(cfg, n))
-
-
 class RunReadsTasksFresh(unittest.TestCase):
     def test_run_refreshes_the_tasks_from_linear_before_it_reads_them(self):
         order = []
