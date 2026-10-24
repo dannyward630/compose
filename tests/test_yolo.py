@@ -145,10 +145,10 @@ class Yolo(unittest.TestCase):
         out = self.yolo("off")
         self.assertEqual(out.split("To confirm", 1)[1].split("Waiting on you", 1)[0].split(), ["-", "none"])
 
-    def test_decided_prints_the_yolo_form_that_tags_the_map_line(self):
+    def test_decided_points_at_compose_decide_which_tags_the_map_line(self):
         self.yolo("go")
         out = self.yolo("decided", "which db?: postgres")
-        self.assertIn("`yolo: <card id>: <answer>`", out)
+        self.assertIn('`compose decide --project hw "<card id>: <answer>"` (no --quote under yolo)', out)
         self.assertIn(f"(yolo recommendation, unconfirmed, {time.strftime('%Y-%m-%d')})", out)
         self.assertIn("never as the product owner's", out)
 
@@ -381,7 +381,7 @@ class PostureEntry(unittest.TestCase):
         for p in ("away", "yolo"):
             self.put(p)
             out = self.run_as(p, "decided", "which db?: postgres")
-            self.assertIn(f"`{p}: <card id>: <answer>`", out)
+            self.assertIn(f'`compose decide --project hw "<card id>: <answer>"` (no --quote under {p})', out)
             self.assertIn(f"({p} recommendation, unconfirmed, {time.strftime('%Y-%m-%d')})", out)
             confirm = self.run_as(p, "off").split("To confirm", 1)[1].split("Waiting on you", 1)[0]
             self.assertIn(f"({p} recommendation, unconfirmed, <date>)", confirm)

@@ -56,11 +56,11 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 In a repo that already has code, an explore teammate maps it through trail first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, one wayfinder teammate writes every open decision as a card, each with its options and a recommendation.
-Text cards reach you through the engineering manager in one message.
-A card you would understand better by seeing it (a wireframe, a layout comparison, a diagram) goes on one Lavish page instead.
+Next, one wayfinder teammate writes every open decision as a card on the feature issue: the question, why it matters, the options with what each affects, and a recommendation.
+The engineering manager names the open cards in one line, and you read them on one page per project with `compose decisions`.
+A card you would understand better by seeing it (a wireframe, a layout comparison, a diagram) goes on a Lavish page as well.
 You answer them all at once, or accept every recommendation with one word.
-Your answers go to the feature issue's "Decisions so far".
+Your answers go to the feature issue's "Decisions so far" through `compose decide`, with your words attached, so no decision is recorded that you did not make.
 
 A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown on its card.
 Each project has its own Frame0 app on `.compose/<project>/design.f0`, so parallel sessions never draw into each other's window.

@@ -3,6 +3,17 @@ ASK_FALLBACK
 ASK_HEAD
 url_problem
 card_ids
+map_bodies
 decided_cards
+CARD_FORMAT
+CARD_HEAD
+OPTION
+AFFECTS
+WHY
+RECOMMENDATION
+SUPERSEDES
+cards_in
+card_problems
+format_problems
 Refused
 ask_gate

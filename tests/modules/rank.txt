@@ -46,6 +46,7 @@ fc_change
 fc_frame0
 fc_f0pages
 fc_ask
+fc_decide
 fc_hooks
 fc_pin
 fc_reports

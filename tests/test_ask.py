@@ -10,6 +10,9 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 _spec.loader.exec_module(fc)
 
 
+CARD = "Q2. Which auth?\nWhy: every screen signs in.\nA. Clerk - affects: billing, vendor\nB. Own JWT - affects: two tasks of work\nRecommendation: A - less to build\n"
+
+
 class Page(http.server.BaseHTTPRequestHandler):
     """Answers like lavish-axi's server: its real session answers, a made-up one is a 404."""
     def do_GET(self):
@@ -128,7 +131,8 @@ class Ask(unittest.TestCase):
 
     def test_cards_already_decided_on_the_map_are_never_asked(self):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
-        desc = "## Decisions so far\n- Q1: Stripe (product owner, 2026-10-20)\n- ~~Q2: old~~\n- Q3: no (yolo recommendation, unconfirmed, 2026-10-20)\n\n## Not yet specified\n- Q2: ?\n"
+        desc = ("## Decisions so far\n- Q1: Stripe (product owner, 2026-10-20)\n- ~~Q2: old~~\n- Q3: no (yolo recommendation, unconfirmed, 2026-10-20)\n\n"
+                "## Not yet specified\n" + CARD)
         gql = mock.Mock(return_value={"issue": {"description": desc}})
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"), mock.patch.object(fc.fc_linear, "linear_gql", gql):
             out = self.report("NEB-1: 2 cards Q1, Q3; recommendation a")
@@ -137,6 +141,43 @@ class Ask(unittest.TestCase):
             self.report("NEB-1: 3 cards Q1-Q3; recommendation a")
         self.assertEqual(len(self.sent()), 1)
         self.assertEqual(sorted(json.loads((self.proj / "results" / "asked.json").read_text())), ["/NEB-1/Q2"])
+
+    def ask_on_map(self, body, msg="NEB-1: 1 cards Q2; recommendation A"):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
+        gql = mock.Mock(return_value={"issue": {"description": body}})
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"), mock.patch.object(fc.fc_linear, "linear_gql", gql):
+            return self.report(msg)
+
+    def test_a_card_in_the_card_format_goes_out(self):
+        self.ask_on_map("## Not yet specified\n" + CARD)
+        self.assertEqual(len(self.sent()), 1)
+        self.assertFalse((self.proj / "results" / "crew" / "shop-wayfinder.refused").exists())
+
+    def test_a_card_not_written_on_the_map_is_refused(self):
+        out = self.ask_on_map("## Not yet specified\n- Q9: something else\n")
+        self.assertIn("Q2 is not written under Not yet specified on NEB-1", out)
+        self.assertIn("`Q1. <question>`", out)
+        self.assertIn("compose decisions", out)
+        self.assertEqual(self.sent(), [])
+        self.assertTrue((self.proj / "results" / "crew" / "shop-wayfinder.refused").exists())
+
+    def test_a_card_short_of_options_affects_or_a_recommendation_is_refused(self):
+        out = self.ask_on_map("## Not yet specified\nQ2. Which auth?\nA. Clerk - affects: billing\n")
+        self.assertIn("Q2: options are A; write them as A., B. (C., D.) in order, two at least", out)
+        self.assertIn("Q2: no `Recommendation: <letter>` line", out)
+        out = self.ask_on_map("## Not yet specified\nQ2. Which auth?\nA. Clerk - affects: billing\nB. Own JWT\nRecommendation: C\n")
+        self.assertIn("Q2: option B says nothing about what it affects", out)
+        self.assertIn("Q2: the recommendation names option C, which the card has not", out)
+        self.assertEqual(self.sent(), [])
+        self.assertFalse((self.proj / "results" / "asked.json").exists(), "a refused card is not marked asked")
+
+    def test_the_format_check_reads_every_card_shape_the_wayfinder_may_write(self):
+        cards = fc.fc_ask.cards_in("1. **Q1**: Which db?\n   - Why: hosting hangs on it\n   - **A.** Postgres (affects: schema)\n   - B) SQLite - affects deploy only\n"
+                                   "   - Recommended: B, the smaller one\n- Q2. Colors?\n  A. warm, affects: tokens\n  B. cool, affects: tokens\n  Recommendation: A\n")
+        self.assertEqual(sorted(cards), ["Q1", "Q2"])
+        self.assertEqual(cards["Q1"]["options"], {"A": ("Postgres", "schema"), "B": ("SQLite", "deploy only")})
+        self.assertEqual((cards["Q1"]["why"], cards["Q1"]["recommendation"], cards["Q1"]["span"]), ("hosting hangs on it", "B", (0, 5)))
+        self.assertEqual(fc.fc_ask.card_problems("Q1", cards["Q1"]) + fc.fc_ask.card_problems("Q2", cards["Q2"]), [])
 
     def test_a_linear_outage_does_not_stop_an_ask(self):
         with mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"), mock.patch.object(fc.fc_linear, "linear_gql", side_effect=OSError("down")):
@@ -157,10 +198,10 @@ class Briefs(unittest.TestCase):
 class BriefsNameBothPostures(unittest.TestCase):
     AWAY, YOLO = "(away recommendation, unconfirmed, <date>)", "(yolo recommendation, unconfirmed, <date>)"
     WAYFINDER = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer: "
-                 f"end its line `{AWAY}` or `{YOLO}`, the one its prefix names, and change that tag to `(product owner, <date>)` only when they confirm it.")
+                 f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names, and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it.")
     PLANNER = f"A Decisions line ending `{AWAY}` or `{YOLO}` is a recommendation the product owner has not confirmed:"
     CHANGE = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's: "
-              f"end its line `{AWAY}` or `{YOLO}`, the one its prefix names.")
+              f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names.")
 
     def flat(self, name):
         return " ".join(getattr(fc.fc_briefs, name).split())
@@ -172,6 +213,17 @@ class BriefsNameBothPostures(unittest.TestCase):
     def test_planner_sentence_still_leads_into_the_built_on_rule(self):
         flat = self.flat("PLANNER_BRIEF")
         self.assertLess(flat.index(self.PLANNER), flat.index("Built on unconfirmed: <card ids>"))
+
+    def test_no_brief_writes_decisions_by_hand(self):
+        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+            flat = self.flat(name)
+            self.assertNotIn('--section "## Decisions so far"', flat, name)
+            self.assertIn("never write a Decisions so far line" if name == "PLANNER_BRIEF" else "You never write a Decisions so far line", flat, name)
+            self.assertIn("compose decisions", flat, name)
+        self.assertIn("`compose decide --change {cid}`", self.flat("CHANGE_BRIEF"))
+        self.assertIn("`Supersedes: <the line as recorded>`", self.flat("CHANGE_BRIEF"))
+        for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF"):
+            self.assertIn("`compose report` refuses", self.flat(name), name)
 
     def test_no_brief_keeps_a_yolo_only_rule_or_an_em_dash(self):
         for name in ("WAYFINDER_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):

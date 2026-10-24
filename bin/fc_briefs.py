@@ -65,22 +65,25 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
    Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
    A decision found there is settled: do not ask again.
 2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
-   open question as a card: question, why it matters, options with one line each, your recommended option marked.
+   open question as a card in the card format, one block per card under Not yet specified:
+   `Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same: two
+   options at least, four at most) / `Recommendation: <letter> - <why>`. `compose report` refuses a card short of any of these.
    Never choose for the product owner: every card carries a recommendation.
    Channel per card, one test: are options pictures, or words? Words are text (the default). Pictures are visual.
-   A visual card is never asked as text, and a text card is never put on the page. Visual cards go on one page: {page}
+   A visual card is never asked as text. Visual cards go on the map like every card, and on one page as well: {page}
    For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first. Set data-lavish-annotate="off"
    on <html>. Each card is a form with data-lavish-question, recommended option preselected, free-text box, one answer button;
    page top has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text
    "<question>: <answer>" and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
-3. Write every text card in full under Not yet specified on the map first, with a card id per card, never reusing an id;
-   visual cards go on the page instead. Then ask once, all open cards in one line: open the page if any
+3. Write every card in full under Not yet specified on the map first, visual ones too, with a card id per card, never reusing
+   an id; visual cards go on the page as well. Then ask once, all open cards in one line: open the page if any
    (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step says, one line:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
    cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed, copied,
-   never retyped. `compose report` refuses a page without that link, a dead link, and a card asked already and not answered
-   The team lead forwards the line unchanged; the engineering manager asks the
-   product owner every card in full; answers travel by card id.
+   never retyped. `compose report` refuses a page without that link, a dead link, a card asked already and not answered,
+   and a card that is not on the map in the card format. The team lead forwards the line unchanged; the engineering manager
+   names each card in one line and opens the project's page, `compose decisions --project {slug}`, for the product owner,
+   never the cards pasted in full; answers travel by card id.
 4. Wait. Text answers arrive as a prompt in this pane, which a Bash call blocked in a poll cannot receive: poll in rounds,
    `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground, Bash timeout 180000 ms; when a round ends
    with nothing run it again at once, so a forwarded text answer reaches you within three minutes. Never background it,
@@ -90,10 +93,12 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
    When answers arrive, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`.
    If a poll returns `browser_disconnected`, run `npx -y lavish-axi {page}` once for its `url:`, report once
    `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"`, and poll again.
-5. Record each answer in the map's Decisions so far as it arrives: one line each, starting with its card id and ending `(product owner, <date>)`.
+5. You never write a Decisions so far line. Answers land on the map through `compose decide`, run by the engineering manager with the
+   product owner's words attached: each card moves from Not yet specified to one line, `<card id>: <answer> (product owner, <date>; said: "<their words>")`.
    An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
-   end its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
-   and change that tag to `(product owner, <date>)` only when they confirm it. Read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if the section changed since you read it, read again and keep what changed; never a whole-description write.
+   `compose decide` ends its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
+   and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it. When the team lead says a decision landed, read the map once
+   (`compose linear get <id> --body`) and go on from it; an answer that reaches you any other way goes back to the team lead for `compose decide`, never onto the map by your hand.
 6. New questions the answers open, and groundwork toolchain findings the team lead forwards, are asked the same way: text cards in a new needs-user; visual cards on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered and Not yet specified is empty: `npx -y lavish-axi end {page}` if the page was opened, then report
@@ -132,10 +137,12 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
       A test that pins a line width or exact text gets that text, already wrapped as the test expects, in the brief, line by line.
    A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
    a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line.
-   Checks 1, 3, 6 are decision gaps: write each as a text card in full (question, options, your recommendation)
-   under Not yet specified on the map, with a card id per card, never reused; report one line per issue, every open card in it:
+   Checks 1, 3, 6 are decision gaps: write each as a card in the card format (`Q1. <question>` / `Why:` / `A. <option> - affects: <what>`,
+   two to four options / `Recommendation: <letter>`; `compose report` refuses less) under Not yet specified on the map, with a card id per card,
+   never reused; report one line per issue, every open card in it:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
-   The team lead forwards the line unchanged; the engineering manager asks the product owner every card in full; answers travel by card id. You never answer a card.
+   The team lead forwards the line unchanged; the engineering manager opens the project's page (`compose decisions`) for the product owner
+   and records their answers with `compose decide`; answers travel by card id. You never answer a card and never write a Decisions so far line.
    Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
    `compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`
    Story fails: report `blocked "<story>: not specced: <gap list>"`; the gap list is one comment on the story.
@@ -202,30 +209,30 @@ CHANGE_BRIEF = """You are wayfinder teammate for change of course {cid} on proje
 Screen that raised it: {reflect}
 1. Read the map, the evidence (screen file above, its `evidence` field, team lead's notes below),
    and the code it cites (`trail ask "<question>" --source`).
-2. Write one card per decision line the evidence questions: the line as recorded, evidence quoted verbatim with
-   its source, options with one line each ("keep it as is" always among them), your recommended option marked. Never
+2. Write one card per decision line the evidence questions, in the card format: `W1. <question>` / `Supersedes: <the line as recorded>` /
+   `Why: <the evidence, quoted verbatim, with its source>` / `A. keep it as is - affects: nothing` (always among them) / `B. <option> - affects: <what>`
+   (two to four options) / `Recommendation: <letter> - <why>`. `compose report` refuses a card short of any of these. Never
    choose for the product owner. Text by default; visual only when options are pictures, and then never asked as text. Visual cards go on one Lavish page, never the wayfinder's earlier page: {page}
    Build it as the wayfinder does: same reads, card forms, accept-all button, and prompts.
-3. Write every text card in full under Not yet specified on the map first, with a card id per card, never reusing an id;
-   visual cards go on the page instead. Then ask once, all open cards in one line: open the page if any
+3. Write every card in full under Not yet specified on the map first, visual ones too, with a card id per card, never reusing an id;
+   visual cards go on the page as well. Then ask once, all open cards in one line: open the page if any
    (`npx -y lavish-axi {page}`), and report, before any poll, one line:
    `compose report --project {slug} --as {name} needs-user "change {cid}: <issue>: <n> cards <ids>; recommendation <one
    line>; 'visual cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed,
-   copied, never retyped. The team lead forwards the line unchanged; the engineering manager asks the product owner every card in full;
-   answers travel by card id.
+   copied, never retyped. The team lead forwards the line unchanged; the engineering manager opens the project's page
+   (`compose decisions --project {slug}`) for the product owner, never the cards pasted in full; answers travel by card id.
 4. Wait as the wayfinder does: poll in rounds (`npx -y lavish-axi poll {page} --owner {name} --takeover`, Bash timeout
    180000 ms, run again at once when a round ends with nothing); acknowledge answers on the page with
    `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`; on `browser_disconnected` run
    `npx -y lavish-axi {page}` once for its `url:` and report once `needs-user "reminder: change {cid}: ..."` with it, then poll again.
    Never loop or poll `compose linear` while you wait (shared hourly Linear budget): read the issue once, the herdr prompt brings the answer.
    Never `end` or `--reopen` a session the product owner ended. Answers arrive in the poll's `text` column, not as a data field.
-5. Record each answer as it arrives: read the section with `compose linear get <id> --body`, then write the whole section back, its lines plus the new one, with `compose linear update <id> --section "## Decisions so far" --file <path> --expect <hash>`, the hash `get --body` listed for that section; if the section changed since you read it, read again and keep what changed; never a whole-description write. A line that changes is struck through
-   and tagged, new line right after:
-   - ~~<old line>~~ ({cid})
-   - <new line> ({cid}: <why, naming the evidence's source>)
-   "keep it as is" changes nothing in the map.
+5. You never write a Decisions so far line. Answers land through `compose decide --change {cid}`, run by the engineering manager with
+   the product owner's words attached: each card moves to a line `<card id>: <answer> ({cid}; product owner, <date>; said: "<their words>")`,
+   and the line the card supersedes is struck through, `~~<old line>~~ ({cid})`; "keep it as is" strikes nothing.
    An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's:
-   end its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names.
+   `compose decide` ends its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names.
+   When the team lead says a decision landed, read the map once (`compose linear get <id> --body`) and go on from it.
 6. Evidence the team lead forwards while {cid} is open becomes new cards, asked the same way; visual ones on the same page, then
    `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
 7. When every card is answered: `npx -y lavish-axi end {page}` if the page was opened, then report `done` with each answer in one line.

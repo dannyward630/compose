@@ -38,6 +38,8 @@ hold
 away
 yolo
 change
+decisions
+decide
 crew
 report
 tool-bug

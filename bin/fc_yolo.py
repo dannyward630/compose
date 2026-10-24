@@ -1,6 +1,6 @@
 import json, os, sys, time
 from pathlib import Path
-import fc_cost, fc_core, fc_tasks, fc_worktree, fc_watch
+import fc_cost, fc_core, fc_tasks, fc_worktree, fc_decide, fc_watch
 
 
 # ---------- `away` and `yolo`: the product owner is away; the engineering manager answers with the recommendation and logs it ----------
@@ -8,7 +8,7 @@ YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are nev
               "anything that costs money beyond the configured models (a model or provider switch, keys), the payment halt, "
               "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
-YOLO_TAG = "({mode} recommendation, unconfirmed, {date})"  # what the map's Decisions so far shows after a decision taken for the product owner
+YOLO_TAG = fc_decide.UNCONFIRMED  # what the map's Decisions so far shows after a decision taken for the product owner
 def yolo_digest(repo, proj, y, verb="off"):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
@@ -81,8 +81,8 @@ def cmd_yolo(a):
         y["decisions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": " ".join(words[1:])})
         fc_core.atomic_write(path, json.dumps(y, indent=2))
         print(f"logged for the product owner's return: {' '.join(words[1:])}")
-        print(f"send the answer to the teammate as `{P}: <card id>: <answer>`: it writes the map line "
-              f"\"<card id>: <answer> {YOLO_TAG.format(mode=P, date=time.strftime('%Y-%m-%d'))}\", never as the product owner's")
+        print(f"a card answer goes on the map with `compose decide --project {proj.name} \"<card id>: <answer>\"` (no --quote under {P}): it writes "
+              f"the line \"<card id>: <answer> {YOLO_TAG.format(mode=P, date=time.strftime('%Y-%m-%d'))}\" and logs it here, never as the product owner's")
         return
     # A shell variable holding a whole command reaches here as one word (zsh never splits an unquoted one): refuse it, never store it.
     if any(w.startswith(("--repo", "--project")) for w in words) or " decided " in f" {' '.join(words)} ":

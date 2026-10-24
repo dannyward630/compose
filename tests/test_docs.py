@@ -496,11 +496,21 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("unchanged", line)
         self.assertRegex(line.lower(), r"never re-?sen")
 
-    def test_manager_asks_in_full_and_answers_travel_by_card_id(self):
+    def test_manager_points_at_the_page_and_records_with_the_quote(self):
         relay = "\n".join(self.relay)
         self.assertRegex(relay, r"engineering manager reads the issue once")
-        self.assertRegex(relay, r"every card in full")
-        self.assertIn('herdr agent prompt <slug>-wayfinder "<card id>: <answer>', relay)
+        self.assertRegex(relay, r"never every card in full")
+        self.assertIn("`compose decisions --project <slug>`", relay)
+        self.assertIn('`compose decide --project <slug> --quote "<their words>" "<card id>: <answer>"`', relay)
+        self.assertIn("by card id", relay)
+        self.assertNotIn('herdr agent prompt <slug>-wayfinder "<card id>: <answer>', relay)
+
+    def test_manager_refuses_a_paraphrase_and_answers_on_a_rhythm(self):
+        relay = "\n".join(self.relay)
+        self.assertIn("`compose decide` refuses to record without `--quote` unless away or yolo is on", relay)
+        self.assertIn("Take decisions in batches", relay)
+        self.assertIn("every 30 minutes or so", relay)
+        self.assertIn('"here\'s where we are" line per project', relay)
 
     def test_lead_report_carries_the_line_not_the_cards(self):
         line = self.lines[self.report]
@@ -551,6 +561,21 @@ class CardsOnTheMap(unittest.TestCase):
         self.assertRegex(step, r"\bfirst\b")
         self.assertIn("recommended option", step, "the card still carries its recommendation")
 
+    def test_step_2_names_the_card_format_the_report_enforces(self):
+        step = " ".join(self.step(2))
+        for want in ("`Q1. <question>`", "`Why: <why it matters>`", "`A. <option> - affects: <what choosing it changes>`",
+                     "two options at least, four at most", "`Recommendation: <letter> - <why>`", "`compose report` refuses a card short of any of these"):
+            self.assertIn(want, step)
+        self.assertIn("Visual cards are on the map like every card", step)
+
+    def test_step_5_records_through_compose_decide_only(self):
+        step = " ".join(self.step(5))
+        self.assertIn("The wayfinder never writes a Decisions so far line", step)
+        self.assertIn("`compose decide`", step)
+        self.assertIn("(product owner, <date>; said: \"<their words>\")", step)
+        self.assertIn("`compose decide --change <cid>`", step)
+        self.assertNotIn('--section "## Decisions so far"', self.text)
+
     def test_step_3_reports_one_line_and_keeps_the_lavish_file(self):
         step = " ".join(self.step(3))
         self.assertIn(self.FORM, step)
@@ -579,6 +604,8 @@ class CardsOnTheMap(unittest.TestCase):
         self.assertRegex(both, r"engineering manager[^.]*reads the issue once")
         self.assertRegex(both, r"by card id")
         self.assertIn("herdr agent prompt", " ".join(self.step(3)))
+        self.assertIn("`compose decisions --project <slug>`", " ".join(self.step(3)))
+        self.assertIn("`compose decide --project <slug> --quote", " ".join(self.step(3)))
 
     def test_step_6_uses_the_one_line_form(self):
         step = " ".join(self.step(6))
@@ -1652,7 +1679,7 @@ class ManagerProseNamesPostures(unittest.TestCase):
         "**Yolo: the engineering manager answers until an explicit off** (`/compose:yolo [--push] [words]`, `compose yolo`).",
         "Yolo follows every Away rule above, with the `yolo:` prefix, the `(yolo recommendation, unconfirmed, <date>)` tag, and `compose yolo` in place of `compose away`; only the exit differs.",
         "Only an explicit off ends it: the message `yolo:off` (or `yolo off`), `/compose:yolo off`, or `compose yolo off --project <slug>`; then run `compose yolo off --project <slug>` (every project of an epic), relay the digest, and ask its \"To confirm\" decisions in one ask.",
-        "Every other message is a steer: act on it at once (a change of plans goes to the team lead; an answer to a card goes to the teammate as the product owner's, and the wayfinder rewrites a tagged line as theirs), reply with what changed, and yolo stays on; \"To confirm\" waits for the off.",
+        "Every other message is a steer: act on it at once (a change of plans goes to the team lead; an answer to a card is recorded with `compose decide --quote \"<their words>\"`, which rewrites a tagged line as theirs and wakes the team lead), reply with what changed, and yolo stays on; \"To confirm\" waits for the off.",
         "`compose away digest --project <slug>` or `compose yolo digest --project <slug>` prints the digest and leaves the posture on.",
     ]
     NEVER = [
@@ -1669,8 +1696,8 @@ class ManagerProseNamesPostures(unittest.TestCase):
         start, end = self.lines.index(self.AWAY), self.lines.index(self.YOLO[0])
         self.assertLess(self.lines.index(self.BIAS), end)
         away = "\n".join(self.lines[start:end])
-        for want in ["compose away off --project <slug>", "away: <card ids>: accept-all",
-                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>"]:
+        for want in ["compose away off --project <slug>", "away: <card ids>: accept-all", "compose decide --project <slug> --accept-all",
+                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>", "compose decide --quote"]:
             self.assertIn(want, away)
         for gone in ["compose yolo", "yolo:", "/compose:yolo", "(yolo recommendation"]:
             self.assertNotIn(gone, away)

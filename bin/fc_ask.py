@@ -30,16 +30,83 @@ def card_ids(message):
             ids.append(tok)
     return list(dict.fromkeys(ids))
 
-def decided_cards(issues, ids):
-    """Which of `ids` already head a live line of those issues' Decisions so far (best effort: Linear down means none known)."""
-    out = set()
+def map_bodies(issues):
+    """issue -> description, for the issues Linear answers (best effort: no key or Linear down means none known)."""
+    out = {}
     for issue in dict.fromkeys(issues if fc_config.LINEAR_KEY else []):
         try:
-            desc = (fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": issue})["issue"] or {}).get("description")
+            out[issue] = (fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": issue})["issue"] or {}).get("description") or ""
         except Exception:  # noqa: BLE001  a Linear outage must not stop an ask
             continue
+    return out
+
+def decided_cards(bodies, ids):
+    """Which of `ids` already head a live line of those maps' Decisions so far."""
+    out = set()
+    for desc in bodies.values():
         lines = fc_change.decision_lines(desc)
         out |= {i for i in ids if any(re.match(rf"[\s*_`(\[]*{re.escape(i)}(?!\w)", l) for l in lines)}
+    return out
+
+
+# ---------- the card format: a question, why it matters, options A-D with what each affects, and a recommendation ----------
+CARD_FORMAT = ("`Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same, "
+               "two options at least) / `Recommendation: <letter> - <why>`")
+CARD_HEAD = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+)?[*_`]*([A-Za-z]{0,3}\d+)[*_`]*[.:)][*_`]*\s*(.*)")  # `Q1. question`, `- **Q1**: question`
+OPTION = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*([A-D])[*_`]*[.):][*_`]*\s+(.*\S)")
+AFFECTS = re.compile(r"\baffects?\b[*_`]*\s*[:\-]?\s*(\S.*)", re.I)
+WHY = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*why\b[^:]*:\s*(\S.*)", re.I)
+RECOMMENDATION = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*recommend(?:ation|ed)?[*_`]*\s*[:\-]\s*[*_`]*([A-D])\b(.*)", re.I)
+SUPERSEDES = re.compile(r"^\s*(?:[-*]\s+)?[*_`]*(?:supersedes|replaces)[*_`]*\s*:\s*(\S.*)", re.I)  # a change-of-course card names the line it questions
+
+def cards_in(section):
+    """The cards written in a map's Not yet specified, by id: question, why, options {letter: (text, affects)}, recommendation (letter),
+    supersedes (the decision line a change-of-course card questions), and span, the (start, end) of the card's lines in the section.
+    A card runs from its `<id>.` line to the next card's."""
+    lines = section.splitlines()
+    heads = [(i, m) for i, m in ((i, CARD_HEAD.match(l)) for i, l in enumerate(lines)) if m and not OPTION.match(lines[i])]
+    cards = {}
+    for n, (i, m) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        card = {"question": m.group(2).strip(), "why": "", "options": {}, "recommendation": "", "supersedes": "", "span": (i, end)}
+        for l in lines[i + 1:end]:
+            if o := OPTION.match(l):
+                text, aff = o.group(2), AFFECTS.search(o.group(2))
+                card["options"][o.group(1)] = (text[:aff.start()].rstrip(" -:;(") if aff else text, aff.group(1).strip(" )") if aff else "")
+            elif r := RECOMMENDATION.match(l):
+                card["recommendation"] = r.group(1).upper()
+            elif w := WHY.match(l):
+                card["why"] = w.group(1).strip()
+            elif sup := SUPERSEDES.match(l):
+                card["supersedes"] = sup.group(1).strip()
+        cards.setdefault(m.group(1), card)
+    return cards
+
+def card_problems(cid, card):
+    """What the card lacks of the format: options A-D in order (two at least), what each affects, and a recommendation among them."""
+    letters = "".join(sorted(card["options"]))
+    out = []
+    if len(letters) < 2 or letters != "ABCD"[:len(letters)]:
+        out.append(f"{cid}: options are {', '.join(letters) or 'missing'}; write them as A., B. (C., D.) in order, two at least")
+    out += [f"{cid}: option {k} says nothing about what it affects" for k, (_, aff) in sorted(card["options"].items()) if not aff]
+    if not card["recommendation"]:
+        out.append(f"{cid}: no `Recommendation: <letter>` line")
+    elif card["recommendation"] not in card["options"]:
+        out.append(f"{cid}: the recommendation names option {card['recommendation']}, which the card has not")
+    return out
+
+def format_problems(bodies, ids):
+    """Why the asked cards cannot go out as written on the maps: a card missing from every Not yet specified, or short of the format.
+    Nothing when no map was read (Linear down): the format is checked where it can be."""
+    if not bodies:
+        return []
+    cards = {}
+    for desc in bodies.values():
+        for cid, card in cards_in(fc_change.map_section(desc, "Not yet specified")).items():
+            cards.setdefault(cid, card)
+    out = []
+    for i in ids:
+        out += card_problems(i, cards[i]) if i in cards else [f"{i} is not written under Not yet specified on {', '.join(bodies)}"]
     return out
 
 class Refused(Exception):
@@ -47,7 +114,7 @@ class Refused(Exception):
 
 def ask_gate(proj, message, hop=""):
     """What `report needs-user` sends: the message (a verified link and the text fallback added, repeats marked). Exits with the reason
-    when a page link is missing, doubled, or does not answer; raises Refused when the card is decided or asked already. A card is asked once per `hop`
+    when a page link is missing, doubled, or does not answer; raises Refused when a card is decided or asked already, or is not on the map in the card format. A card is asked once per `hop`
     (whom the reporter reports to): a teammate's ask to its team lead does not use up the team lead's ask to the engineering manager."""
     urls = list(dict.fromkeys(SESSION_URL.findall(message)))
     if re.search(r"open in Lavish", message, re.I) and not urls:
@@ -66,9 +133,13 @@ def ask_gate(proj, message, hop=""):
     head = ASK_HEAD.match(message)
     scope = (f"{hop}@" if hop else "") + (f"{head[1] or ''}/{head[2]}" if head else "?")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature")
-    open_ids = [i for i in ids if i not in decided_cards([x for x in (head[2] if head else None, feature) if x], ids)]
+    bodies = map_bodies([x for x in (head[2] if head else None, feature) if x])
+    open_ids = [i for i in ids if i not in decided_cards(bodies, ids)]
     if not open_ids:
         raise Refused(f"not reported: {', '.join(ids)} already in the map's Decisions so far. Build on the decisions; nothing is open.")
+    if problems := format_problems(bodies, open_ids):
+        raise Refused(f"not reported: the cards are not in the card format on the map: {'; '.join(problems)}. Write each card under "
+                      f"Not yet specified as {CARD_FORMAT}, then report again; the product owner reads them with `compose decisions`.")
     path = proj / "results" / "asked.json"
     asked = json.loads(path.read_text()) if path.exists() else {}
     key = lambda i: f"{scope}/{i}"

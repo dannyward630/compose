@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -123,6 +123,8 @@ def main():
                             ("away", fc_yolo.cmd_yolo, "the product owner is away until their first message: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("yolo", fc_yolo.cmd_yolo, "the engineering manager answers until an explicit off, and the product owner may steer: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
+                            ("decisions", fc_decide.cmd_decisions, "print the project's pending-decisions page: every open card in full, when it was asked, and the decisions so far; --issue picks another map"),
+                            ("decide", fc_decide.cmd_decide, "record the product owner's answers on the map (`\"Q1: A\" ...` or --accept-all) with their words attached: --quote \"<what they said>\"; without it, only under away or yolo, as unconfirmed"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the wayfinder, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
@@ -272,6 +274,13 @@ def main():
             s.add_argument("--push", action="store_true", help="permission, given in advance, to submit the project's verified stack")
             s.add_argument("--clear-words", action="store_true", help="empty the words, keeping since, push, and the decisions")
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`")
+        if name in ("decisions", "decide"):
+            s.add_argument("--issue", help="the map to read (default: the project's feature issue)")
+        if name == "decide":
+            s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"')
+            s.add_argument("--quote", help="the product owner's words, verbatim: the decision is recorded only with them")
+            s.add_argument("--accept-all", action="store_true", help="record every open card's recommendation (answers given win)")
+            s.add_argument("--change", help="the open change of course these cards belong to, e.g. C2: the line each card supersedes is struck through")
         if name == "change":
             s.add_argument("action", choices=("start", "done", "undo"))
             s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
