@@ -28,6 +28,14 @@ def restore_crew_env(proj):
             os.environ.update(COMPOSE_ROLE=env_role(c["role"]), COMPOSE_TEAMMATE=c["name"], COMPOSE_PROJECT=Path(proj).name, COMPOSE_REPO=str(Path(proj).resolve().parents[1]))
             return
 
+def restore_pane_env(cwd):
+    """restore_crew_env for a hook: the project is found by the hook's cwd, over every worktree of its repo."""
+    if os.environ.get("HERDR_PANE_ID") and not os.environ.get("COMPOSE_ROLE"):
+        for _, proj in fc_core.all_projects(cwd or ".").values():
+            restore_crew_env(proj)
+            if os.environ.get("COMPOSE_ROLE"):
+                break
+
 def guard_decision(tool, path, role):
     """None to allow, else why not. The team lead writes Linear, the CLI's JSON, and the layers' PR text; code, tests, and docs
     are teammate work. The toolsmith edits in its own worktree of the compose repo, never in a shared checkout of it."""
@@ -127,11 +135,7 @@ def cmd_guard(a):
     except json.JSONDecodeError:
         return
     ti = ev.get("tool_input") or {}
-    if os.environ.get("HERDR_PANE_ID") and not os.environ.get("COMPOSE_ROLE"):  # a restored pane has lost its env (compose.py does the same for commands)
-        for _, proj in fc_core.all_projects(ev.get("cwd") or ".").values():
-            restore_crew_env(proj)
-            if os.environ.get("COMPOSE_ROLE"):
-                break
+    restore_pane_env(ev.get("cwd"))  # a restored pane has lost its env (compose.py does the same for commands)
     role = os.environ.get("COMPOSE_ROLE")
     why = (switch_decision(ti.get("command"), ev.get("cwd"), role, os.environ.get("COMPOSE_REPO")) if ev.get("tool_name") == "Bash" else None)
     why = why or next(filter(None, (guard_decision(ev.get("tool_name"), p, role) for p in edit_paths(ev))), None)
