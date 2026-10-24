@@ -584,7 +584,7 @@ class FigmaPublish(unittest.TestCase):
         with mock.patch.object(fc.fc_figma.fc_figmaplan, "figma_api", side_effect=RuntimeError("figma api /files/x/components failed: HTTP 403 (the token needs the library_content:read scope)")), \
              mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
             with self.assertRaises(SystemExit) as e:
-                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="publish", library=self.LIB, keys=None))
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="publish", library=self.LIB, keys=None, withdraw=False))
         self.assertTrue(str(e.exception).startswith("publish: unknown\n"))
         self.assertIn("library_content:read", str(e.exception))
         self.assertIn("do not ask", str(e.exception))
