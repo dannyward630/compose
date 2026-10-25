@@ -325,6 +325,14 @@ class PlanChange(unittest.TestCase):
         a = ft.fingerprint("## Decisions so far\n\n- D1: Google only (away, 2026-10-26)\n- keep one store (away, 2026-10-26)\n", "s")
         b = ft.fingerprint("## Decisions so far\n\n- D1: Google only (product owner)\n- keep one store (product owner)\n", "s")
         self.assertEqual(ft.changed_refs(a, b, "NEB-10"), [])
+        away = ft.fingerprint("## Decisions so far\n\n- Q1: A. Google only (away recommendation, unconfirmed, 2026-10-26)\n", "s")
+        said = ft.fingerprint('## Decisions so far\n\n- Q1: A. Google only (product owner, 2026-10-27; said: "yes (Google only)")\n', "s")
+        self.assertEqual(ft.changed_refs(away, said, "NEB-10"), [])  # a parenthesis in their words is still the tag
+
+    def test_a_changed_rider_before_the_tag_is_a_change(self):
+        a = ft.fingerprint("## Decisions so far\n\n- Q1: A. Google only (no Apple) (away recommendation, unconfirmed, 2026-10-26)\n", "s")
+        b = ft.fingerprint('## Decisions so far\n\n- Q1: A. Google only (Apple later) (product owner, 2026-10-27; said: "yes")\n', "s")
+        self.assertEqual(ft.changed_refs(a, b, "NEB-10"), ["Q1"])
 
     def test_hold_changed_holds_what_rests_on_the_refs_or_says_nothing_does(self):
         self.rests_on.return_value = {"002": "cites D1", "003": "under NEB-10"}
@@ -532,6 +540,15 @@ class Turn(unittest.TestCase):
             lines = ft.turn(self.repo, self.state, 100.0)
         self.assertEqual(lines, ["event factory=dispatched story=NEB-10",
                                  'event factory=turn-failed why="TypeError: bad record"  (the next turn tries again)'])
+
+    def test_the_same_crash_is_said_once_until_a_turn_goes_through(self):
+        crash = 'event factory=turn-failed why="TypeError: bad record"  (the next turn tries again)'
+        with unittest.mock.patch("traceback.print_exc"), unittest.mock.patch.object(ft, "_turn", side_effect=TypeError("bad record")):
+            self.assertEqual([ft.turn(self.repo, self.state, now) for now in (100.0, 200.0)], [[crash], []])
+        ft.turn(self.repo, self.state, 300.0)
+        self.assertNotIn("turn-crash", self.state["said"])
+        with unittest.mock.patch("traceback.print_exc"), unittest.mock.patch.object(ft, "_turn", side_effect=TypeError("bad record")):
+            self.assertEqual(ft.turn(self.repo, self.state, 400.0), [crash])
 
     def test_a_failing_dispatch_backs_off_and_the_rest_still_start(self):
         self.leads["sign-in"] = "sign-in-orchestrator"

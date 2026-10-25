@@ -30,7 +30,7 @@ _add_story
 _new_project
 dispatch
 DECISION_ID
-TAGS
+TAG
 OPEN_QUESTIONS
 fingerprint
 _decisions

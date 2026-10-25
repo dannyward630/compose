@@ -219,7 +219,7 @@ def dispatch(repo, plan, entry, kind, state, now):
             f"(its team lead builds it; relay it: compose watch --project {slug} --from orchestrator)")
 
 DECISION_ID = re.compile(r"^([A-Z]+)(\d+):")
-TAGS = re.compile(r"(\s*\([^()]*\))+\s*$")  # who or when said it: "(product owner)", "(away, 2026-10-26)", "(C1)"
+TAG = re.compile(r'\s*\((?:product owner[^()"]*; said: ".*"|[^()]*)\)\s*$')  # the one tag saying who or when: '(product owner, <date>; said: "<their words>")', "(away, 2026-10-26)", "(C1)"
 OPEN_QUESTIONS = re.compile(r"^#+[ \t]*Open questions[^\n]*$.*?(?=^#|\Z)", re.M | re.S)
 
 def fingerprint(feature_desc, story_desc):
@@ -231,7 +231,7 @@ def _decisions(lines):
     """({id: (sort key, text without tags)}, {text without tags of the lines with no id})."""
     ids, bare = {}, set()
     for line in lines:
-        text = TAGS.sub("", line).strip()
+        text = TAG.sub("", line).strip()
         m = DECISION_ID.match(text.lstrip("*_ "))
         if m:
             ids[m.group(1) + m.group(2)] = ((m.group(1), int(m.group(2))), text)
@@ -383,13 +383,15 @@ def _expire(plan, state):
 def turn(repo, state, now, stopping=None, saved=None):
     """One pass of the build loop: follow the roadmap, start ready stories, pause work whose ground changed, offer what to shape next.
     stopping() says a stop came while the turn runs; saved(story, record) persists each dispatch as it happens. Returns the event lines:
-    whatever goes wrong ends the turn with a turn-failed line after the lines it already made."""
+    whatever goes wrong ends the turn with a turn-failed line after the lines it already made, said once until a turn goes through."""
     out = []
     try:
         _turn(repo, state, now, stopping, saved, out)
     except Exception as ex:
         traceback.print_exc()
-        out.append(fc_factorystate.turn_failed(f"{type(ex).__name__}: {ex}"))
+        fc_factorystate.say_once(state, "turn-crash", fc_factorystate.turn_failed(f"{type(ex).__name__}: {ex}"), out)
+    else:
+        state["said"].pop("turn-crash", None)
     return out
 
 def _turn(repo, state, now, stopping, saved, out):
