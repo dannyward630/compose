@@ -336,13 +336,21 @@ class PlanWritingRules(unittest.TestCase):
         SKILLS_OFF,
     ]
     SHAPE = [
-        "The plan opens with a header: Goal (one or two sentences), Architecture (how the pieces fit, one paragraph), Global constraints (what every task must respect: the simplicity bar, no new dependencies, naming, the test runner), and Review focus (where a reviewer should look hardest, and why).",
+        "The plan opens with a header: Goal (one or two sentences), Architecture (how the pieces fit, one paragraph), Global constraints (what every task must respect: the simplicity bar, no new dependencies, naming, the test runner), and Review focus (the five inputs or conditions the design implies but no test yet exercises that are most likely to bite a user, most likely first, each one then pinned by a test in the task that owns its code).",
         "Then a file map: every file the feature creates or changes, one line each with its responsibility, before any step.",
         "Then numbered steps, each with the files it touches, the exact signature or export it adds, the test that proves it, and the steps it depends on.",
         "A step holds code only where the implementer could not derive it: an algorithm the spec leaves open, exact copy, a fixed data shape; everywhere else one line of description beats a pasted function body.",
-        "An unknown the plan cannot settle (does the library support it, how slow is the query) becomes a spike: a probe task whose deliverable is the answer, written to the map's Notes, never a code task that guesses.",
+        "An unknown the plan cannot settle (does the library support it, how slow is the query) becomes a spike: a probe task whose deliverable is the answer, written to the issue's Notes, never a code task that guesses.",
         "Before the cut the planner reads its own plan once as the implementer will: every acceptance criterion maps to a step, no step names a file the file map lacks, a type or signature means one thing in every step that uses it, the Review focus names a test or step that covers it, and the plan is no longer than the feature needs.",
     ]
+
+    def test_the_engineering_manager_plays_stories_back_and_records_the_go(self):
+        text = read("sections/0h.md")
+        self.assertIn("plays it back to the product owner as one chunk of 200 to 300 words ending with what is wrong or missing, never as a card list", text)
+        self.assertIn('compose decide --project <slug> --new "stories <ids> approved" --quote', text)
+
+    def test_a_task_is_sized_by_its_own_test_and_review(self):
+        self.assertEqual(read("sections/1.md").count("A task is the smallest unit that carries its own test and is worth its own review: setup, configuration, and docs fold into the task whose deliverable needs them."), 1)
 
     def test_the_split_rules_put_a_removed_file_under_delete(self):
         self.assertIn("A file the task removes goes under `delete:`, never `files:`", read("sections/2.md"))  # the planner reads sections/2.md, not docs/tasks.md

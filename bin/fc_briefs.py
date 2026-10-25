@@ -118,14 +118,15 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
    - Epic: one planner per feature, in parallel. An epic whose features cannot be named yet goes back to shaping (0b): report needs-user and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the design is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
-     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,
-     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where
-     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.
-     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice
-     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,
-     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories
-     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`
-     only on the product owner's go. Then check and cut each story.
+     a header (Goal, Architecture, Global constraints, Review focus: the five inputs most likely to bite a user, each
+     pinned by a test), a file map, then numbered steps, each with files touched, the exact signature it adds, the test
+     that proves it, and dependencies; settled decisions are not reopened. Code only where the implementer cannot derive
+     it; an unknown the plan cannot settle is a spike task whose answer goes on the issue's Notes. Stories missing:
+     draft the proposal on the issue, in ship order. Each story is the thinnest slice that works end to end and unblocks
+     the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs, several outside systems. No
+     split fits: a time-boxed probe answers the unknown first, then the split. Then `report needs-user "stories <issue>:
+     <n> drafted on the issue"`; the engineering manager plays it back; create the stories only on the product owner's
+     go. Then check and cut each story.
    - Story: check and cut this story only.
    A story or epic labeled `deep-dive`: read its `<issue id>: tech doc` before cutting, and
    fold what the tech doc decides into each task brief: implementers never read Linear. None yet: needs-user, stop.
@@ -133,7 +134,7 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
    - Loose idea: not yours.
 
 2. Spec check per story, cheapest gaps first:
-   1. Settled map: Destination, Decisions so far, Not yet specified empty.
+   1. Settled design: Destination, Decisions so far, Not yet specified empty.
    2. `### Codebase brief` in the feature's Notes; without it no file may be named.
    3. Acceptance criteria, each a testable behavior traceable to a decision line or the spec's words.
    4. Every criterion maps to a file or symbol via `trail ask` or `trail callers`; new files listed as new.
@@ -145,14 +146,14 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
    A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
    a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line.
    Checks 1, 3, 6 are decision gaps: write each as a card in the card format (`Q1. <question>` / `Why:` / `A. <option> - affects: <what>`,
-   two to four options / `Recommendation: <letter>`; `compose report` refuses less) under Not yet specified on the map, with a card id per card,
+   two to four options / `Recommendation: <letter>`; `compose report` refuses less) under Not yet specified on the issue, with a card id per card,
    never reused; report one line per issue, every open card in it:
    `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
    The team lead forwards the line unchanged; the engineering manager opens the project's page (`compose decisions`) for the product owner
    and records their answers with `compose decide`; answers travel by card id. You never answer a card and never write a Decisions so far line.
    Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
    `compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`
-   Story fails: report `blocked "<story>: not specced: <gap list>"`; the gap list is one comment on the story.
+   Story fails: report `blocked "<story>: not specced: <gap list>"`; gaps go in one story comment.
 
 3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all hold:
    - one or two files in `files:` (a named lockfile does not count), one test command, at most five acceptance criteria
@@ -165,9 +166,9 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
    - `after:` for code a task needs (calls, imports, edits what the other creates), set as blocked-by links
    - ids numbered in review order
    - split where a reviewer could reject one half while approving the other; setup and scaffolding fold into the task that needs them
-   Groundwork never finishes a story: each code, dependency, lockfile, toolchain change is a task. A choice it needs is a decision card (checks 1, 3, 6), settled before the cut.
+   Groundwork never finishes a story: each code, dependency, lockfile, toolchain change is a task. A choice it needs is a card (checks 1, 3, 6), settled before the cut.
 
-4. Task issue: sub-issue of its story, label Task, state Todo, its title the task's title. Description, in this order:
+4. Task issue: sub-issue of its story, label Task, state Todo, its title the task's title. Description in this order:
    ## Goal
    One paragraph: what to build, where, exact export names, and any width-pinned or exact text the test asserts, verbatim.
    ## Acceptance criteria
@@ -185,17 +186,17 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
    protected: <the test path>
    test: <the command that runs only this task's test>
    ```
-   Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
+   Its keys are id, files, protected, test; leave `model:` unset. `after` and `title` are not block keys:
    `after` is the blocked-by links, `title` the issue title.
 
 5. After cutting, read the plan and the task issues once as the implementer will: every criterion has a step and a task,
    every named file is in the file map, one meaning per signature, the Review focus is covered by a test. Then `compose sync`
    (it reads the feature and every issue under it from Linear) as sections/2.md says, then
    `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
-   Cut and re-cut are one diff: read live task issues, compare to story and map, cancel, edit, add;
+   Cut and re-cut are one diff: read live task issues, compare to story and design, cancel, edit, add;
    ids stay monotonic; a canceled task loses its `compose` block.
-   After a dispatch, edit inside `compose change start --why "<one line>"` and `compose change done` (sync first).
-   Delivery plan: find the map's "<map id>: delivery plan" in `compose linear doc list`; write its judgment sections
+   After dispatch, edit inside `compose change start --why "<one line>"` and `compose change done` (sync first).
+   Delivery plan: find the "<map id>: delivery plan" in `compose linear doc list`; write its judgment sections
    (Outside waits, How this maps to compose, Priority when something has to give) at each cut
    with `compose linear doc update <id> --section "<heading>" --file <path>`;
    priority is the ranked list under Priority when something has to give; Linear's priority field stays unused;

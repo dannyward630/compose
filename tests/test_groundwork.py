@@ -624,15 +624,15 @@ class LeanPlannerBrief(unittest.TestCase):
         for phrase in ("Each story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria.",
                        'Split cues: "all", "every", several When/Then pairs, several outside systems.',
                        "No split fits: a time-boxed probe answers the unknown first, then the split.",
-                       "in ship order, with a card id per story"):
+                       "in ship order."):
             self.assertIn(phrase, step)
         self.assertNotIn("one per user-visible slice", self.brief)
 
     def test_the_step_keeps_its_anchors_in_order(self):
         flat = " ".join(self.brief.split())
         at = -1
-        for kw in ("Stories missing", "draft the proposal on the map", "in ship order", "with a card id per story",
-                   '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`', "Then check and cut each story"):
+        for kw in ("Stories missing", "draft the proposal on the issue", "in ship order",
+                   'report needs-user "stories <issue>: <n> drafted on the issue"', "Then check and cut each story"):
             i = flat.find(kw, at + 1)
             self.assertGreater(i, at, f"{kw} missing or out of order")
             at = i
@@ -659,15 +659,16 @@ class LeanPlannerBrief(unittest.TestCase):
 class TersePlannerBrief(unittest.TestCase):
     """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
     FEATURE = (
-        "     No plan: write `## Plan` in the feature description with `compose linear update <id> --section \"## Plan\" --file <path>`:",
-        "     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,",
-        "     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where",
-        "     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.",
-        "     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice",
-        '     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,',
-        "     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories",
-        '     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`',
-        "     only on the product owner's go. Then check and cut each story.",
+        '     No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:',
+        '     a header (Goal, Architecture, Global constraints, Review focus: the five inputs most likely to bite a user, each',
+        '     pinned by a test), a file map, then numbered steps, each with files touched, the exact signature it adds, the test',
+        '     that proves it, and dependencies; settled decisions are not reopened. Code only where the implementer cannot derive',
+        "     it; an unknown the plan cannot settle is a spike task whose answer goes on the issue's Notes. Stories missing:",
+        '     draft the proposal on the issue, in ship order. Each story is the thinnest slice that works end to end and unblocks',
+        '     the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs, several outside systems. No',
+        '     split fits: a time-boxed probe answers the unknown first, then the split. Then `report needs-user "stories <issue>:',
+        "     <n> drafted on the issue\"`; the engineering manager plays it back; create the stories only on the product owner's",
+        '     go. Then check and cut each story.',
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
@@ -684,7 +685,7 @@ class TersePlannerBrief(unittest.TestCase):
 class PlanJudgmentBrief(unittest.TestCase):
     """Step 5 of the planner brief tells the planner to write the delivery plan's judgment sections at each cut."""
     PHRASES = (
-        'find the map\'s "<map id>: delivery plan" in `compose linear doc list`',
+        'find the "<map id>: delivery plan" in `compose linear doc list`',
         "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut"
         ' with `compose linear doc update <id> --section "<heading>" --file <path>`',
         "priority is the ranked list under Priority when something has to give; Linear's priority field stays unused",

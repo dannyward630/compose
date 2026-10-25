@@ -1314,7 +1314,7 @@ class CardsById(unittest.TestCase):
             self.assertIn("cards", line)
             self.assertIn("recommendation", line)
         stories = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
-        self.assertIn("map", stories)  # stories are drafted on the map ...
+        self.assertIn("drafted on the issue", stories)  # stories are drafted on the issue ...
         self.assertIn("needs-user", stories)  # ... and named in one line
 
     def test_planner_cuts_a_width_pinned_test_with_its_exact_wrapped_text_in_the_brief(self):
