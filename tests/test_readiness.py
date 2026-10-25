@@ -8,8 +8,11 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
-import fc_readiness  # noqa: E402
+import fc_core, fc_linear, fc_linear_cmd, fc_readiness  # noqa: E402
+import tempfile, time  # noqa: E402
+from unittest import mock  # noqa: E402
 
+TODAY = time.strftime("%Y-%m-%d")
 FEATURE = '## Intent\n\nA shop.\n\n## Decisions so far\n\n- D1: the design on ENG-1 is approved (product owner, 2026-10-20; said: "yes")\n'
 STORY = "## Intent\n\nPay by card.\n\n## Acceptance criteria\n\n- a card payment succeeds\n"
 
@@ -78,8 +81,7 @@ class Gates(unittest.TestCase):
 
 
 import json  # noqa: E402
-import fc_claude, fc_core, fc_models  # noqa: E402
-from unittest import mock  # noqa: E402
+import fc_claude, fc_models  # noqa: E402
 
 STATE = {"story": {"id": "ENG-7", "title": "Pay", "description": STORY}, "feature": FEATURE, "epic": "", "tech_docs": []}
 
@@ -165,6 +167,93 @@ class ClaudeJson(unittest.TestCase):
             self.assertEqual("--effort" in cmd, want)
             if want:
                 self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
+
+
+class StoryReadiness(unittest.TestCase):
+    def setUp(self):
+        self.tree, self.updates = tree(), []
+        self.verdict = {"technical": False, "judge": "jev", "missing": []}
+        self.repo = Path(tempfile.mkdtemp())
+
+        def gql(query, variables):
+            if "issueUpdate" in query:
+                self.updates.append(variables)
+                return {"issueUpdate": {"success": True}}
+            return {"issue": self.tree}
+        self.judge = mock.Mock(side_effect=lambda *a, **k: dict(self.verdict))
+        for p in (mock.patch.object(fc_linear, "linear_gql", gql), mock.patch.object(fc_linear_cmd, "await_write"),
+                  mock.patch.object(fc_linear_cmd, "drop_get_cache"), mock.patch.object(fc_core, "repo_link", return_value=self.repo / ".compose" / "linear.json"),
+                  mock.patch.object(fc_readiness, "judge", self.judge)):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_specced_unblocked_todo_story_is_ready_without_tasks(self):
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual({k: r[k] for k in ("ready", "specced", "unblocked", "has_tasks", "judge", "missing", "cached", "error")},
+                         {"ready": True, "specced": True, "unblocked": True, "has_tasks": False, "judge": "jev", "missing": [], "cached": False, "error": None})
+        self.assertEqual(self.updates, [])
+
+    def test_missing_items_become_tagged_open_questions_and_their_own_lines_stay(self):
+        self.tree = tree(story=STORY + "\n## Open questions\n\n* Which card brands?\n* Old one? (readiness check, 2026-10-01)\n")
+        self.verdict["missing"] = [{"item": "scope", "issue": "ENG-7", "question": "Where does ENG-7 stop: what is in it and what is left out?"}]
+        with mock.patch.object(fc_readiness, "gates", return_value=[]):  # the product owner's line alone would stop it at the gates
+            r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        body = self.updates[0]["in"]["description"]
+        self.assertIn(f"## Open questions\n\n* Which card brands?\n- Where does ENG-7 stop: what is in it and what is left out? (readiness check, {TODAY})", body)
+        self.assertNotIn("Old one?", body)
+        self.assertFalse(r["ready"])
+
+    def test_the_second_check_is_cached_and_a_human_edit_judges_again(self):
+        self.verdict["missing"] = [{"item": "intent", "issue": "ENG-7", "question": "What is ENG-7 for, and who is it for?"}]
+        fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.tree = tree(story=self.updates[-1]["in"]["description"].replace("- ", "* "))  # Linear serves it back with * bullets
+        again = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertTrue(again["cached"])
+        self.assertEqual((self.judge.call_count, len(self.updates)), (1, 1))
+        self.tree = tree(story=STORY.replace("Pay by card.", "Pay by card, for returning buyers."))
+        fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual(self.judge.call_count, 2)
+
+    def test_a_judge_error_is_not_ready_writes_nothing_and_caches_nothing(self):
+        self.judge.side_effect = RuntimeError("typesafe (Jev readiness): HTTP 503")
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual((r["ready"], r["specced"], r["error"]), (False, None, "typesafe (Jev readiness): HTTP 503"))
+        self.assertEqual(self.updates, [])
+        self.assertFalse(fc_readiness.cache_path(self.repo).exists())
+
+    def test_a_closed_story_is_not_judged(self):
+        for state in ("Done", "In Progress", "Canceled"):
+            self.tree = tree(state=state)
+            self.assertEqual(tuple(fc_readiness.story_readiness(self.repo, "ENG-7")[k] for k in ("ready", "specced", "state")), (False, None, state))
+        self.judge.assert_not_called()
+
+    def test_a_blocked_story_is_specced_but_not_ready(self):
+        blocker = {"type": "blocks", "issue": {"identifier": "ENG-3", "state": {"name": "In Progress"}, "labels": labels([])}}
+        self.tree = tree(blockers=[blocker])
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual((r["ready"], r["specced"], r["unblocked"], r["blocked_by"]), (False, True, False, ["ENG-3"]))
+
+    def test_gate_gaps_skip_the_model_and_only_the_storys_own_are_written(self):
+        self.tree = tree(story="## Intent\n\nPay.\n", feature="## Intent\n\nA shop.\n")
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.judge.assert_not_called()
+        self.assertEqual([m["item"] for m in r["missing"]], ["design", "criteria"])
+        body = self.updates[0]["in"]["description"]
+        self.assertIn("no acceptance criteria (readiness check,", body)
+        self.assertNotIn("design is not approved", body)
+
+    def test_write_false_never_writes(self):
+        self.verdict["missing"] = [{"item": "intent", "issue": "ENG-7", "question": "What is ENG-7 for, and who is it for?"}]
+        fc_readiness.story_readiness(self.repo, "ENG-7", write=False)
+        self.assertEqual(self.updates, [])
+
+    def test_refresh_judges_again_although_cached(self):
+        fc_readiness.story_readiness(self.repo, "ENG-7")
+        fc_readiness.story_readiness(self.repo, "ENG-7", refresh=True)
+        self.assertEqual(self.judge.call_count, 2)
+
+    def test_with_questions_removes_the_section_when_nothing_is_left(self):
+        body = STORY + "\n## Open questions\n\n- Old? (readiness check, 2026-10-01)\n"
+        self.assertNotIn("Open questions", fc_readiness.with_questions(body, [], TODAY))
 
 
 if __name__ == "__main__":

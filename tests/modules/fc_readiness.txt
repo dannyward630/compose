@@ -17,3 +17,10 @@ STRONG_SYSTEM
 _without_open_questions
 judge_state
 judge
+CHECK_VERSION
+cache_path
+cache_key
+with_questions
+_asked
+_result
+story_readiness

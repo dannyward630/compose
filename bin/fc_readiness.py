@@ -1,5 +1,7 @@
-import json, re
-import fc_core, fc_tasks, fc_linear, fc_change, fc_models, fc_claude, fc_config
+import hashlib, json, os, re, time
+from pathlib import Path
+from types import SimpleNamespace
+import fc_core, fc_tasks, fc_linear, fc_linear_cmd, fc_plan, fc_change, fc_models, fc_claude, fc_config
 
 DEEP_DIVE = "deep-dive"
 MAX_CRITERIA = 5
@@ -155,3 +157,90 @@ def judge(state, story, deep_dive):
     out = [{"item": k, "issue": story, "question": str(verdicts[k].get("missing") or "").strip() or question(k)}
            for k in items if verdicts[k].get("ready") is not True]
     return {"technical": True, "judge": model, "missing": out}
+
+
+CHECK_VERSION = 1
+
+
+def cache_path(repo):
+    return fc_core.repo_link(repo).parent / "readiness.json"
+
+
+def cache_key(state, deep_dive):
+    """The same story text, deep-dive flag, judge model and Jev version give the same verdict, so they give the same key.
+    Linear serves a body back with `*` bullets, so the bullet character is not part of the text."""
+    norm = lambda v: re.sub(r"(?m)^([ \t]*)[*+] ", r"\1- ", v) if isinstance(v, str) else [norm(x) for x in v] if isinstance(v, list) \
+        else {k: norm(x) for k, x in v.items()} if isinstance(v, dict) else v
+    return hashlib.sha256(json.dumps({"v": CHECK_VERSION, "state": norm(state), "deep_dive": deep_dive, "model": fc_config.READINESS_MODEL,
+                                      "jev": os.environ.get("TYPESAFE_MODEL", "jev-latest")}, sort_keys=True).encode()).hexdigest()
+
+
+def with_questions(description, missing, today):
+    """The description with its readiness-check lines under ## Open questions replaced by one tagged line per item of `missing`;
+    the product owner's own lines stay first. The section goes when nothing is left in it and appears when it was missing."""
+    body = description or ""
+    m = re.search(r"^#+[ \t]*Open questions[^\n]*$(.*?)(?=^#|\Z)", body, re.M | re.S)
+    kept = [l for l in (m.group(1) if m else "").splitlines() if l.strip() and not TAG_RE.search(l)]
+    lines = kept + [f"- {x['question'].rstrip('.')} (readiness check, {today})" for x in missing]
+    if not lines and not m:
+        return body
+    return fc_plan.replace_section(body, "## Open questions", "\n".join(lines))
+
+
+def _asked(description):
+    return [TAG_RE.sub("", q).strip() for q in fc_linear.open_questions(description) if TAG_RE.search(q)]
+
+
+def _result(story, **kw):
+    out = {"id": story["identifier"], "title": story.get("title") or "", "state": story["state"]["name"], "ready": False, "specced": None,
+           "unblocked": None, "blocked_by": [], "has_tasks": False, "technical": False, "judge": None, "missing": [], "cached": False, "error": None}
+    return {**out, **kw}
+
+
+def story_readiness(repo, story, refresh=False, write=True):
+    """Whether a story can be built now: specced (no gate gap, and the judge finds nothing missing) and unblocked. The verdict is
+    kept per version of the story text; what the story lacks is written on it as tagged open questions."""
+    tree = fc_linear.linear_gql(READINESS_TREE, {"id": story})["issue"]
+    chain = story_chain(tree)
+    node = chain["story"]
+    out = _result(node, has_tasks=bool(chain["tasks"]))
+    if (node["state"]["name"] or "").lower() not in ("todo", "backlog"):
+        return out
+    holds = [r["issue"]["identifier"] for r in node["inverseRelations"]["nodes"]
+             if r["type"] == "blocks" and not fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])]
+    out.update(unblocked=bool(fc_linear.ready_ids([node])), blocked_by=holds)
+    gaps = gates(chain)
+    deep = any(DEEP_DIVE in _labels(i) for i in (node, chain["feature"], chain["epic"]))
+    missing = gaps
+    if not gaps:
+        state, path = judge_state(chain), cache_path(repo)
+        key = cache_key(state, deep)
+        try:
+            cache = json.loads(path.read_text())
+        except (OSError, ValueError):
+            cache = {}
+        hit = cache.get(story) if isinstance(cache.get(story), dict) else None
+        if hit and hit.get("key") == key and not refresh:
+            verdict, out["cached"] = hit, True
+        else:
+            try:
+                verdict = judge(state, node["identifier"], deep)
+            except RuntimeError as e:
+                return {**out, "error": str(e)}
+            verdict, hit = {**verdict, "key": key, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}, None
+        missing = verdict["missing"]
+        out.update(technical=bool(verdict.get("technical")), judge=verdict.get("judge"))
+    own = [x for x in missing if x["issue"] == node["identifier"]]
+    out.update(specced=not missing, missing=missing)
+    out["ready"] = out["specced"] and out["unblocked"]
+    description = node.get("description") or ""
+    new = with_questions(description, own, time.strftime("%Y-%m-%d"))
+    if write and new.strip() != description.strip() and _asked(description) != [x["question"].rstrip(".") for x in own]:
+        fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": node["id"], "in": {"description": new}})
+        fc_linear_cmd.await_write(lambda: fc_linear.linear_gql(READINESS_TREE, {"id": story})["issue"].get("description"), description, new)
+        fc_linear_cmd.drop_get_cache(SimpleNamespace(repo=str(repo)))
+    if not gaps and not out["cached"]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cache[story] = {"key": key, "at": verdict["at"], "specced": out["specced"], "technical": out["technical"], "judge": out["judge"], "missing": missing}
+        fc_core.atomic_write(path, json.dumps(cache, indent=1))
+    return out
