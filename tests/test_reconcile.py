@@ -22,7 +22,7 @@ def node(i):
     return {"identifier": i["id"], "title": i["title"], "state": {"name": i["state"]}, "labels": {"nodes": [{"name": l} for l in i["labels"]]}, "parent": {"identifier": i["parent"]} if i["parent"] else None}
 
 
-def sheet(keep=(), verify=(), drop=None, cancel_subtree=None, tickets=(), reasons=None, new=()):
+def sheet(keep=(), verify=(), cancel_subtree=None, tickets=(), reasons=None, new=()):
     t = list(tickets) + ([{"id": cancel_subtree, "sort": "cancel", "reason": "appux", "subtree": True}] if cancel_subtree else [])
     return {"keep": list(keep), "verify": list(verify), "tickets": t, "reasons": {"appux": "App UI and UX was a mistake.", "dup": "A duplicate."} if reasons is None else reasons, "new": list(new)}
 
@@ -95,7 +95,8 @@ class Reconcile(unittest.TestCase):
                   tickets=[{"id": "NEB-4", "sort": "merge", "into": "NEB-3", "reason": "dup"}], cancel_subtree="NEB-2",
                   new=[{"key": "N1", "title": "So far: the draft report and its evidence", "parent": "NEB-1", "label": "Feature", "body": "Body.", "deep_dive": False}])
         s["tickets"].append({"id": "NEB-3", "sort": "keep", "title": "RS1. Chat with the Guide", "drop_ready": True, "reason": "dup", "deep_dive": True})
-        s["verify"] = []
+        s["verify"] = ["NEB-6"]
+        self.issues = self.issues + [issue("NEB-6", parent="NEB-1")]
         return {**s, "issues": self.issues}
 
     def test_list_prints_every_open_ticket_as_a_tree_from_every_page(self):
@@ -110,13 +111,27 @@ class Reconcile(unittest.TestCase):
         self.assertEqual((stored["reasons"]["appux"], stored["applied"], stored["go"], stored["project"]["name"]), ("App UI and UX was a mistake.", {}, [], "Shop"))
 
     def test_every_open_ticket_is_sorted_exactly_once(self):
-        problems = fc.fc_reconcile.check_sheet(sheet(keep=["NEB-1", "NEB-1"], drop="NEB-4"), self.issues)
+        problems = fc.fc_reconcile.check_sheet(sheet(keep=["NEB-1", "NEB-1"]), self.issues)
         self.assertIn("NEB-1 is sorted twice", problems)
         self.assertIn("NEB-4 is open and not sorted", problems)
 
-    def test_a_subtree_cancel_reaches_descendants_not_sorted_on_their_own(self):
+    def test_a_subtree_cancel_stops_at_a_descendant_sorted_on_its_own(self):
         got = fc.fc_reconcile.expand(sheet(cancel_subtree="NEB-2", verify=["NEB-3"]), self.issues)
         self.assertEqual((got["NEB-3"]["sort"], got["NEB-5"]["sort"], got["NEB-5"]["under"]), ("verify", "cancel", "NEB-2"))
+
+    def test_a_subtree_cancel_does_not_walk_past_a_kept_or_verified_ticket(self):
+        issues = self.issues + [issue("NEB-6", parent="NEB-3"), issue("NEB-7", parent="NEB-4")]
+        s = sheet(keep=["NEB-1", "NEB-3"], verify=["NEB-4"], cancel_subtree="NEB-2")
+        got = fc.fc_reconcile.expand(s, issues)
+        self.assertEqual((got["NEB-5"]["sort"], "NEB-6" in got, "NEB-7" in got), ("cancel", False, False))
+        problems = fc.fc_reconcile.check_sheet(s, issues)
+        self.assertIn("NEB-6 is open and not sorted", problems)
+        self.assertIn("NEB-7 is open and not sorted", problems)
+
+    def test_a_sheet_that_is_not_json_or_has_an_entry_without_an_id_exits_with_a_message(self):
+        self.assertEqual(self.fails("check", file=self.write("bad.json", "{nope")), (1, f"sheet {self.tmp / 'bad.json'}: not valid JSON (Expecting property name enclosed in double quotes: line 1 column 2 (char 1))"))
+        raw = {"tickets": [{"sort": "keep"}]}
+        self.assertEqual(self.fails("check", file=self.write("noid.json", json.dumps(raw))), (1, "sheet: a tickets entry has no id: {'sort': 'keep'}"))
 
     def test_check_refuses_bad_entries_and_stores_nothing(self):
         bad = {"tickets": [{"id": "NEB-9", "sort": "keep"}, {"id": "NEB-4", "sort": "merge", "into": "NEB-2", "reason": "dup"},
@@ -155,8 +170,8 @@ class Reconcile(unittest.TestCase):
         text = fc.fc_reconcile.render_proposal(self.stored(in_progress="NEB-5"))
         self.assertEqual([l for l in text.splitlines() if l.startswith("## ")],
                          ["## Cancel", "## Merge", "## Running work this stops", "## Rename", "## Ready removed (needs shaping)",
-                          "## Label deep-dive", "## New tickets", "## Keep"])
-        self.assertTrue(text.startswith("5 open tickets: 2 kept, 0 left for you to verify, 2 canceled, 1 merged; 1 new.\n"))
+                          "## Label deep-dive", "## New tickets", "## Left for you to verify", "## Keep"])
+        self.assertTrue(text.startswith("6 open tickets: 2 kept, 1 left for you to verify, 2 canceled, 1 merged; 1 new.\n"))
         self.assertIn("App UI and UX was a mistake.\n\n- NEB-2 NEB-2 title, and the 1 open ticket under it", text)
         self.assertIn("- NEB-4 NEB-4 title, into NEB-3 NEB-3 title", text)
         self.assertIn("- NEB-5 NEB-5 title (In Progress)", text)

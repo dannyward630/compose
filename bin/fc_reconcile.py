@@ -48,7 +48,16 @@ def read_text_file(what, path):
 
 def load_sheet(path):
     """The sheet normalized, with every reason and body path read into its text."""
-    raw = json.loads(read_text_file("sheet", path))
+    try:
+        raw = json.loads(read_text_file("sheet", path))
+    except ValueError as e:
+        sys.exit(f"sheet {path}: not valid JSON ({e})")
+    if not isinstance(raw, dict):
+        sys.exit(f"sheet {path}: expected a JSON object")
+    for key in ("keep", "verify", "tickets"):
+        for entry in raw.get(key) or []:
+            if (key == "tickets" and not (isinstance(entry, dict) and entry.get("id"))) or (key != "tickets" and not isinstance(entry, str)):
+                sys.exit(f"sheet: a {key} entry has no id: {entry}")
     return {"keep": list(raw.get("keep") or []), "verify": list(raw.get("verify") or []), "tickets": [dict(t) for t in raw.get("tickets") or []],
             "reasons": {k: read_text_file(f"reason {k}", p) for k, p in (raw.get("reasons") or {}).items()},
             "new": [{**n, "body": read_text_file(f"new ticket {n.get('key')} body", n["body"]) if n.get("body") else ""} for n in raw.get("new") or []]}
@@ -58,7 +67,7 @@ def explicit(sheet):
     return [{"id": i, "sort": "keep"} for i in sheet["keep"]] + [{"id": i, "sort": "verify"} for i in sheet["verify"]] + list(sheet["tickets"])
 
 def expand(sheet, issues):
-    """id to its effective entry; a subtree cancel reaches each open descendant not sorted on its own, marked with the root it came from."""
+    """id to its effective entry; a subtree cancel reaches each open descendant reachable without passing a ticket sorted on its own, marked with the root it came from."""
     out = {}
     for e in explicit(sheet):
         out.setdefault(e["id"], e)
@@ -70,9 +79,9 @@ def expand(sheet, issues):
             todo = list(kids.get(e["id"], []))
             while todo:
                 c = todo.pop(0)
-                if c not in out:
+                if c not in out:  # a ticket sorted on its own, and everything under it, is not this cancel's to take
                     out[c] = {"id": c, "sort": "cancel", "reason": e.get("reason"), "under": e["id"]}
-                todo += kids.get(c, [])
+                    todo += kids.get(c, [])
     return out
 
 def entry_problems(e, by_id, got, sheet):
