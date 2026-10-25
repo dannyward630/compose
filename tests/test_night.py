@@ -124,5 +124,52 @@ class OneLevel(unittest.TestCase):
         self.assertNotIn("day", ft.ORDER_FILTER)
 
 
+class UsageWaits(unittest.TestCase):
+    def setUp(self):
+        self.panes, self.prompted = {}, []
+        self.read = lambda name: self.panes.get(name, "")
+        self.prompt = lambda name, text: self.prompted.append((name, text)) or True
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+
+    def test_reset_times_parse_to_the_next_occurrence_plus_a_minute(self):
+        at = time.mktime((2026, 10, 27, 1, 10, 0, 0, 0, -1))
+        self.assertEqual(time.localtime(ns.reset_at("5-hour limit reached \u2219 resets 3am", at))[3:5], (3, 1))
+        self.assertEqual(time.localtime(ns.reset_at("usage limit reached, try again at 1:30 PM", at))[3:5], (13, 31))
+        self.assertEqual(ns.reset_at("rate limited, resets in 2h 15m", at), at + 2 * 3600 + 15 * 60 + 60)
+        self.assertIsNone(ns.reset_at("usage limit reached", at))
+        self.assertEqual([ns.fallback_wait(n) for n in (1, 2, 3, 6, 9)], [60, 120, 240, 1800, 1800])
+
+    def test_a_limited_lead_starts_a_wait_and_the_reset_prompts_it_to_continue(self):
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.panes["sign-in-orchestrator"] = "...\nYou've hit your usage limit \u00b7 resets in 30m\n"
+        lines = ns.usage_step(night, {"sign-in": "sign-in-orchestrator"}, 1000.0, self.read, self.prompt)
+        self.assertEqual(night["wait"]["until"], 1000.0 + 1800 + 60)
+        self.assertTrue(lines[0].startswith("event factory=usage-wait until="))
+        self.assertEqual(ns.usage_step(night, {"sign-in": "sign-in-orchestrator"}, 2000.0, self.read, self.prompt), [])
+        self.panes["sign-in-orchestrator"] = "done thinking\n"
+        lines = ns.usage_step(night, {"sign-in": "sign-in-orchestrator"}, 2861.0, self.read, self.prompt)
+        self.assertEqual(self.prompted, [("sign-in-orchestrator", ns.CONTINUE)]); self.assertIsNone(night["wait"])
+        self.assertEqual((night["waits"], night["waited"]), (1, 1861.0))
+        self.assertTrue(lines[0].startswith("event factory=usage-resumed agents=sign-in-orchestrator"))
+
+    def test_no_reset_time_escalates_and_a_billing_line_ends_the_night(self):
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.panes["a-orchestrator"] = "usage limit reached\n"
+        ns.usage_step(night, {"a": "a-orchestrator"}, 0.0, self.read, self.prompt); self.assertEqual(night["wait"]["until"], 60.0)
+        ns.usage_step(night, {"a": "a-orchestrator"}, 61.0, self.read, self.prompt); self.assertEqual(night["wait"]["until"], 181.0)
+        self.panes["a-orchestrator"] = "Error: 402 Payment Required - credit balance too low\n"; night["wait"] = None
+        lines = ns.usage_step(night, {"a": "a-orchestrator"}, 300.0, self.read, self.prompt)
+        self.assertEqual(night["ended"]["state"], "no-credit"); self.assertIn("factory=night-ended state=no-credit", lines[0])
+
+    def test_a_payment_halt_since_the_night_began_is_no_credit(self):
+        proj = self.repo / ".compose" / "sign-in"
+        (proj / "results").mkdir(parents=True); (proj / "verify.json").write_text("{}")
+        path = proj / "results" / "resume.json"
+        path.write_text(json.dumps({"provider": "openrouter"})); os.utime(path, (100.0, 100.0))
+        self.assertEqual(ns.no_credit(self.repo, 0.0), "sign-in: payment halt (openrouter)")
+        self.assertIsNone(ns.no_credit(self.repo, 200.0))
+
+
 if __name__ == "__main__":
     unittest.main()

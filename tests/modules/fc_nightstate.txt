@@ -11,3 +11,15 @@ spawn_once
 unmerged_depth
 one_level
 fc_factoryturn
+RESUME_BUFFER
+MIN_WAIT
+MAX_FALLBACK
+CONTINUE
+IN_HOURS
+IN_MINUTES
+AT_AMPM
+AT_CLOCK
+reset_at
+fallback_wait
+no_credit
+usage_step
