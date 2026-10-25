@@ -779,6 +779,31 @@ class SettlePaused(unittest.TestCase):
             fc.fc_change.settle(self.proj, "007", "keep")
         self.assertNotIn("settled", fc.fc_change.load_change(self.proj, "C1"))
 
+    def test_a_task_an_earlier_change_settled_does_not_block_a_later_one(self):
+        every = {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}
+        change(self.proj, self.repo, "start", why="D2 changed")
+        for t in ("004", "005", "006"):
+            fc.fc_change.settle(self.proj, t, "discard")
+        synced(self.proj, MAP, every, ahead=2)
+        change(self.proj, self.repo, "done")
+        change(self.proj, self.repo, "start", why="unrelated")
+        synced(self.proj, MAP, every, ahead=4)
+        self.assertIn("C2:", change(self.proj, self.repo, "done"))
+
+    def test_undo_leaves_a_task_that_paused_again_under_a_later_change(self):
+        every = {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}
+        change(self.proj, self.repo, "start", why="D2 changed")
+        for t in ("004", "005", "006"):
+            fc.fc_change.settle(self.proj, t, "discard")
+        synced(self.proj, MAP, every, ahead=2)
+        change(self.proj, self.repo, "done")
+        again = {"ref": "refs/compose/hw/paused/004", "base": "new", "files": ["a.txt"], "change": "C7"}
+        self.write("004", {"id": "004", "status": "paused", "paused": again})
+        synced(self.proj, MAP, every, ahead=3)
+        out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertEqual(self.result("004")["paused"], again)
+        self.assertIn("004 ran since C1", out)
+
     def test_undo_puts_the_paused_records_back_unsettled(self):
         change(self.proj, self.repo, "start", why="D2 changed")
         for t in ("004", "005", "006"):

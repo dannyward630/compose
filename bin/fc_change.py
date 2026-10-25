@@ -95,7 +95,7 @@ def reflect(proj, trigger, evidence, against=()):
     while True:  # claim the name: another process screening in the same second never overwrites this one
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
         try:
-            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
             fc_core.atomic_write(tmp, fc_core.scrub(json.dumps(rec, indent=2)))
             try:
                 os.link(tmp, path)  # whole or absent, and the name claimed: another process in the same second never overwrites this one
@@ -173,7 +173,7 @@ def steer_teammate(proj, tid, text):
 
 def save_hold(proj, hold):
     """hold.json, written whole: a run re-reading mid-write never sees a torn file, and two holds never share a temp name."""
-    tmp = proj / "results" / f"hold.json.{os.getpid()}.tmp"
+    tmp = proj / "results" / f"hold.json.{os.getpid()}.{threading.get_ident()}.tmp"
     fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
     os.replace(tmp, proj / "results" / "hold.json")
 
@@ -331,7 +331,8 @@ def change_done(a, proj, repo):
     if not cid:
         sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
     rec, cache = load_change(proj, cid), fc_tasks.linear_cache(proj)
-    open_ids = sorted(set(paused_tasks(proj)) - set(rec.get("settled", {})))
+    # a block that already carries a choice was settled by an earlier change: it waits for its next run, not for this change
+    open_ids = sorted(t for t, b in paused_tasks(proj).items() if not b.get("choice") and t not in rec.get("settled", {}))
     if open_ids:
         sys.exit(f"paused and not settled: {', '.join(open_ids)}: compose change keep|part|discard <id>")
     if (cache.get("synced_at") or "") <= rec["started_at"]:
@@ -462,17 +463,16 @@ def settle(proj, tid, choice, files=()):
                                    "discard": f"its work stays on {block['ref']} until clean"}[choice]
 
 def unsettle(proj, rec, undone):
-    """Put the paused blocks a change settled back as they were, in a result still paused (or released and running on them);
-    a task that has run since keeps its result, and the line says its work stays on the ref."""
+    """Put the paused blocks a change settled back as they were, in a result still paused under that change; a task that
+    has run or paused again since keeps its result, and the line says its work stays on the ref."""
     for tid, s in sorted(rec.get("settled", {}).items()):
         res = proj / "results" / f"{tid}.json"
         try:
             data = json.loads(res.read_text())
         except (OSError, ValueError):
             data = {}
-        field = "paused" if data.get("status") == "paused" else "kept_from" if data.get("status") == "running" and data.get("kept_from") else None
-        if field:
-            data[field] = dict(s["paused"])
+        if data.get("status") == "paused" and (data.get("paused") or {}).get("change") == undone:
+            data["paused"] = dict(s["paused"])
             fc_core.atomic_write(res, json.dumps(data, indent=2))
         else:
             print(f"{tid} ran since {undone}; its paused work stays on {s['paused']['ref']}")
