@@ -11,6 +11,7 @@ _spec.loader.exec_module(fc)
 import fc_factorystate as st, fc_factoryturn as ft, fc_factory as f
 import fc_config, fc_delivery, fc_plan, fc_readiness, fc_claude, fc_change, fc_reconcile
 import fc_nightstate as ns
+import fc_answer as fa, fc_core, fc_proc
 
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -250,6 +251,107 @@ class UsageWaits(unittest.TestCase):
         (proj / "results").mkdir(parents=True); (proj / "verify.json").write_text("{}")
         (proj / "results" / "resume.json").write_text("[1]")
         self.assertEqual(ns.no_credit(self.repo, 0.0), "x: payment halt (unknown)")
+
+
+class Answerer(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.proj = self.repo / ".compose" / "sign-in"
+        (self.proj / "results" / "crew").mkdir(parents=True)
+        (self.proj / "verify.json").write_text("{}")
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "night"}))
+        self.state = {"night": ns.new_night(fc_core.report_time("2026-10-26 22:00:00"), 0.0, 10.0, None)}
+        self.gone, self.events, self.pids = set(), [], iter(range(5000, 5100))
+        def cli(args, stdin=None, pane=None):
+            return json.dumps({"identifier": args[2], "title": "t", "description": "d"}) if args[:2] == ["linear", "get"] else ""
+        patches = [unittest.mock.patch.object(fa.fc_nightstate, "spawn_once", side_effect=lambda *a: next(self.pids)),
+                   unittest.mock.patch.object(fa.fc_claude, "claude_once"),
+                   unittest.mock.patch.object(fa.fc_factoryturn, "compose_cli", side_effect=cli),
+                   unittest.mock.patch.object(fa.fc_factoryturn, "prompt_lead", return_value=True),
+                   unittest.mock.patch.object(fa.fc_factorystate, "add_event", side_effect=lambda repo, line: self.events.append(line)),
+                   unittest.mock.patch.object(fa.fc_delivery, "product_plan", return_value={"doc": {"content": "PLAN"}}),
+                   unittest.mock.patch.object(fa.os, "kill", side_effect=self.kill)]
+        self.spawn, self.claude, self.cli, self.prompt = (p.start() for p in patches[:4])
+        for p in patches[4:]:
+            p.start()
+        self.addCleanup(unittest.mock.patch.stopall)
+
+    def kill(self, pid, sig):
+        if pid in self.gone:
+            raise ProcessLookupError
+
+    def dead(self, pid):
+        self.gone.add(pid)
+
+    def report(self, state, message, at):
+        with open(self.proj / "results" / "crew" / "sign-in-orchestrator.status", "a") as f:
+            f.write(json.dumps({"at": at, "state": state, "message": message, "why": ""}) + "\n")
+
+    def test_planning_questions_wait_for_the_morning_and_the_rest_get_one_answerer_each(self):
+        self.report("needs-user", "shape NEB-12: no design yet", "2026-10-27 01:00:00")
+        self.report("needs-user", "NEB-10: 2 cards Q1,Q2; recommendation Q1 A, Q2 B", "2026-10-27 01:05:00")
+        lines = fa.answer_step(self.repo, self.state, 100.0)
+        self.assertEqual(lines, ['event factory=for-morning project=sign-in question="shape NEB-12: no design yet"  '
+                                 "(planning waits for the product owner: it is listed under Ready to plan)"])
+        self.spawn.assert_called_once_with(self.repo, ["factory", "answer", "--repo", str(self.repo), "--project", "sign-in",
+                                                       "--at", "2026-10-27 01:05:00"], "night-answer.log")
+        self.assertEqual(fa.answer_step(self.repo, self.state, 160.0), [])  # neither is asked twice
+
+    def test_at_most_two_answerers_run_and_a_dead_one_without_a_record_is_said_once(self):
+        for i in range(3):
+            self.report("needs-user", f"NEB-1{i}: question {i}", f"2026-10-27 01:0{i}:00")
+        fa.answer_step(self.repo, self.state, 100.0)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.dead(self.state["night"]["asked"]["sign-in@2026-10-27 01:00:00"]["pid"])
+        lines = fa.answer_step(self.repo, self.state, 200.0)
+        self.assertIn('event factory=answer-failed project=sign-in question="NEB-10: question 0"  (the answerer ended without an answer: it waits for the product owner)', lines)
+        self.assertEqual(self.spawn.call_count, 3)
+        self.assertNotIn("answer-failed", "".join(fa.answer_step(self.repo, self.state, 260.0)))
+
+    def test_the_worker_records_cards_through_decide_and_the_rest_through_the_team_lead(self):
+        self.report("needs-user", "NEB-10: 1 card Q1; recommendation A", "2026-10-27 01:05:00")
+        self.claude.return_value = (None, '{"never_set": false, "answer": "Q1 A", "reasoning": "D2 says one store", "cards": {"Q1": "A"}}', 3, {})
+        fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.assertEqual(self.cli.call_args_list[-1].args[0], ["decide", "--repo", str(self.repo), "--project", "sign-in", "Q1: A"])
+        comment = next(c for c in self.cli.call_args_list if c.args[0][:2] == ["linear", "comment"])
+        self.assertEqual(comment.args[0][2], "NEB-10"); self.assertIn("Answered while you were away", comment.kwargs["stdin"])
+        self.prompt.assert_not_called()
+        self.assertEqual(json.loads(fa.answers_path(self.repo).read_text().splitlines()[-1])["answer"], "Q1 A")
+        self.assertEqual(self.claude.call_args.kwargs["tools"], "Read,Grep,Glob"); self.assertEqual(self.claude.call_args.kwargs["effort"], "high")
+        self.claude.return_value = (None, '{"never_set": false, "answer": "keep 30 day sessions", "reasoning": "r", "cards": {}}', 3, {})
+        fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.prompt.assert_called_once_with("sign-in-orchestrator", "night: keep 30 day sessions")
+
+    def test_a_never_set_question_is_never_answered(self):
+        self.report("needs-user", "NEB-10: force-push the rebased branch?", "2026-10-27 01:05:00")
+        self.claude.return_value = (None, '{"never_set": true, "why_wait": "force-push", "answer": "", "reasoning": "", "cards": {}}', 1, {})
+        rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.assertTrue(rec["never_set"]); self.prompt.assert_not_called()
+        self.assertFalse(any(c.args[0][0] == "decide" for c in self.cli.call_args_list))
+        self.assertTrue(self.events[-1].startswith('event factory=waiting project=sign-in question="NEB-10: force-push the rebased branch?"'))
+
+    def test_an_unparsable_reply_records_the_error_and_says_answer_failed(self):
+        self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
+        self.claude.return_value = (None, "no json here", 1, {})
+        rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.assertTrue(rec["error"]); self.assertTrue(self.events[-1].startswith("event factory=answer-failed project=sign-in"))
+        self.prompt.assert_not_called()
+
+    def test_reports_before_the_night_are_not_questions(self):
+        self.report("needs-user", "NEB-10: old", "2026-10-26 20:00:00")
+        self.assertEqual(fa.new_questions(self.repo, self.state["night"]), [])
+
+    def test_claude_once_passes_effort_and_keeps_the_tail_it_is_asked_for(self):
+        unittest.mock.patch.stopall()
+        run = unittest.mock.Mock(return_value=unittest.mock.Mock(stdout=json.dumps({"result": "x" * 5000}), returncode=0))
+        with unittest.mock.patch.object(fc_proc, "run", run):
+            reply = fc_claude.claude_once(self.repo, "p", effort="high", keep=4000)[1]
+            self.assertEqual(len(reply), 4000)
+            self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--effort") + 1], "high")
+            self.assertEqual(len(fc_claude.claude_once(self.repo, "p")[1]), 1500)
+            self.assertNotIn("--effort", run.call_args.args[0])
 
 
 if __name__ == "__main__":
