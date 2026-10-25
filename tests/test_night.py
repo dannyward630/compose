@@ -397,14 +397,14 @@ class Answerer(unittest.TestCase):
         (self.proj / "results" / "crew" / "sign-in-orchestrator.status").write_text("{torn\n")
         self.assertEqual(fa.new_questions(self.repo, self.state["night"]), [])
 
-    def test_round2_d_ids_are_never_cards(self):
+    def test_d_ids_are_never_cards(self):
         self.report("needs-user", "NEB-10: should D2 change? cards Q1", "2026-10-27 01:05:00")
         self.reply(cards={"D2": "x", "Q1": "A"})
         fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
         decides = [c.args[0] for c in self.cli.call_args_list if c.args[0][0] == "decide"]
         self.assertEqual(decides, [["decide", "--repo", str(self.repo), "--project", "sign-in", "Q1: A"]])
 
-    def test_round2_in_flight_repeats_are_silent_and_answered_repeats_go_to_the_morning_once(self):
+    def test_in_flight_repeats_are_silent_and_answered_repeats_go_to_the_morning_once(self):
         self.report("needs-user", "NEB-10: same", "2026-10-27 01:00:00")
         fa.answer_step(self.repo, self.state, 100.0)
         self.report("needs-user", "NEB-10: same", "2026-10-27 01:02:00")
@@ -415,13 +415,13 @@ class Answerer(unittest.TestCase):
         self.assertEqual(fa.answer_step(self.repo, self.state, 200.0), want)
         self.assertEqual(fa.answer_step(self.repo, self.state, 260.0), []); self.assertEqual(self.spawn.call_count, 1)
 
-    def test_round2_the_guard_is_about_actions_not_topics(self):
+    def test_the_guard_is_about_actions_not_topics(self):
         for text in ("should the auth provider return a client secret field?", "which OAuth provider first?"):
             self.assertEqual(fa.never_hits(text), [], text)
         for text in ("should I force-push the rebased branch?", "add a new API key for Stripe?", "switch the model to opus?"):
             self.assertTrue(fa.never_hits(text), text)
 
-    def test_round2_the_guard_reads_card_values_and_reasoning(self):
+    def test_the_guard_reads_card_values_and_reasoning(self):
         self.report("needs-user", "NEB-10: 1 card Q1", "2026-10-27 01:05:00")
         self.reply(answer="", cards={"Q1": "B. purchase the Pro plan"})
         self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["never_set"])
@@ -429,14 +429,14 @@ class Answerer(unittest.TestCase):
         self.reply(reasoning="we must wipe the database first")
         self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["never_set"])
 
-    def test_round2_a_timeout_is_a_recorded_failure(self):
+    def test_a_timeout_is_a_recorded_failure(self):
         self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
         self.claude.side_effect = subprocess.TimeoutExpired("claude", 1800)
         self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["error"])
         self.assertEqual(len(fa.answers_path(self.repo).read_text().splitlines()), 1)
         self.assertIn("answer-failed", self.events[-1])
 
-    def test_round2_a_recorded_key_is_not_asked_again_after_lost_state(self):
+    def test_a_recorded_key_is_not_asked_again_after_lost_state(self):
         self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
         self.reply(); fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
         self.assertEqual(fa.answer_step(self.repo, self.state, 100.0), []); self.spawn.assert_not_called()
