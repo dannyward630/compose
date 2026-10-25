@@ -457,5 +457,139 @@ class Turn(unittest.TestCase):
         self.dispatch.assert_called()
 
 
+class Verbs(unittest.TestCase):
+    def setUp(self):
+        import argparse, fcntl, time
+        from unittest import mock
+        self.mock, self.fcntl, self.time, self.argparse = mock, fcntl, time, argparse
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        self.repo = Path(d.name).resolve()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(self.sleeper.wait); self.addCleanup(self.sleeper.kill)
+        self.proj = self.repo / "wt" / "sign-in"
+        self.rests_on, self.hold = mock.Mock(return_value={}), mock.Mock(return_value=[])
+        for mod, name, m in ((fc.fc_factory.fc_change, "rests_on", self.rests_on), (fc.fc_factory.fc_change, "hold_tasks", self.hold),
+                             (fc.fc_factory.fc_factoryturn, "project_for", lambda repo, feature: ("sign-in", self.repo / "wt", self.proj) if feature == "NEB-9" else None),
+                             (fc.fc_factory.fc_config, "LINEAR_KEY", "k")):
+            pa = mock.patch.object(mod, name, m); pa.start(); self.addCleanup(pa.stop)
+        pa = mock.patch.dict(fc.fc_factory.fc_config.FACTORY, {"turn_seconds": 0}); pa.start(); self.addCleanup(pa.stop)  # no sleeping between turns
+        pa = mock.patch.object(fc.fc_factory.fc_watch, "watch_key", return_value="t"); pa.start(); self.addCleanup(pa.stop)
+
+    def save(self, **kv):
+        s = st.load_state(self.repo); s.update(kv); st.save_state(self.repo, s)
+
+    def verb(self, action, target=None, hold=None, done=False, timeout=None, expect_exit=0):
+        import contextlib, io
+        a = self.argparse.Namespace(action=action, target=target, hold=hold, done=done, timeout=timeout, json=False, repo=str(self.repo))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            if expect_exit:
+                with self.assertRaises(SystemExit) as e:
+                    fc.fc_factory.cmd_factory(a)
+                self.assertEqual(e.exception.code, expect_exit)
+            else:
+                fc.fc_factory.cmd_factory(a)
+        return out.getvalue()
+
+    def test_start_refuses_outside_herdr_and_while_a_loop_runs(self):
+        mock = self.mock
+        with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), self.assertRaises(SystemExit) as e:
+            self.verb("start")
+        self.assertEqual(e.exception.code, "factory: start it inside herdr: the team leads it starts live there (sections/0h.md)")
+        self.save(pid=os.getpid())
+        with mock.patch.dict(os.environ, {"HERDR_ENV": "1"}), mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), self.assertRaises(SystemExit) as e:
+            self.verb("start")
+        self.assertEqual(e.exception.code, f"factory: already running (pid {os.getpid()}); compose factory status shows it")
+
+    def test_start_spawns_the_loop_and_says_so(self):
+        mock = self.mock
+        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", return_value=4242):
+            out = self.verb("start")
+        self.assertEqual(out, "factory: started (pid 4242), day pace 2 tickets at once; compose factory watch wakes you on its events\n")
+        self.assertEqual(st.load_state(self.repo)["pid"], 4242)
+
+    def test_one_loop_per_repo_appends_each_turns_lines(self):
+        mock, fcntl = self.mock, self.fcntl
+        with open(fc.fc_factory.lock_path(self.repo), "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            with self.assertRaises(SystemExit):
+                fc.fc_factory.run_loop(self.repo, turns=1)
+        with mock.patch.object(fc.fc_factoryturn, "turn", return_value=["event factory=x"]):
+            fc.fc_factory.run_loop(self.repo, turns=2)
+        self.assertEqual([e["line"] for e in st.events_since(self.repo, 0)], ["event factory=x"] * 2)
+        self.assertEqual(st.load_state(self.repo)["pid"], os.getpid())
+
+    def test_a_turn_that_raises_is_one_event_and_the_loop_goes_on(self):
+        mock = self.mock
+        with mock.patch.object(fc.fc_factoryturn, "turn", side_effect=[ValueError("boom"), ["event factory=x"]]), mock.patch("traceback.print_exc"), \
+             mock.patch.object(fc.fc_factory.time, "sleep"):
+            fc.fc_factory.run_loop(self.repo, turns=2)
+        self.assertEqual([e["line"] for e in st.events_since(self.repo, 0)],
+                         ['event factory=turn-failed why="ValueError: boom"  (the next turn tries again)', "event factory=x"])
+
+    def test_alive(self):
+        self.assertFalse(fc.fc_factory.alive(None))
+        self.assertTrue(fc.fc_factory.alive(self.sleeper.pid))
+        self.assertFalse(fc.fc_factory.alive(999999))
+
+    def test_stop_lets_work_finish_and_hold_pauses_it(self):
+        self.save(pid=self.sleeper.pid, dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0},
+                                                    "NEB-11": {"feature": "NEB-8", "project": "gone", "kind": "build", "at": 1.0}})
+        self.rests_on.return_value = {"002": "under NEB-10"}
+        out = self.verb("stop", hold="the product owner is reworking sign-in")
+        self.hold.assert_called_once_with(self.proj, ["002"], "factory stopped: the product owner is reworking sign-in")
+        self.assertEqual(out, "factory: stopped; held 1 tasks\n")
+        self.assertIsNotNone(st.load_state(self.repo)["stopped"])
+        self.sleeper.wait(timeout=5)
+
+    def test_stop_without_hold_holds_nothing(self):
+        self.save(pid=self.sleeper.pid)
+        self.assertEqual(self.verb("stop"), "factory: stopped; running work finishes\n")
+        self.hold.assert_not_called()
+        self.sleeper.wait(timeout=5)
+
+    def test_watch_prints_new_events_and_says_when_the_loop_is_gone(self):
+        self.save(pid=999999)  # no such process, never stopped
+        st.add_event(self.repo, "event factory=offer ticket=NEB-10")
+        out = self.verb("watch", timeout=5).splitlines()
+        self.assertTrue(out[0].endswith("event factory=offer ticket=NEB-10"))
+        self.assertTrue(out[1].endswith("event factory=loop-lost  (the loop is not running: compose factory start runs it again; its state is on disk)"))
+        self.assertTrue(self.verb("watch", timeout=1, expect_exit=2).strip().endswith("event timeout"))
+
+    def test_pace_sets_the_cap_and_decline_snoozes_offers(self):
+        self.assertEqual(self.verb("pace", "3"), "factory: day pace 3 tickets at once (was 2); nothing running is stopped\n")
+        self.assertEqual(st.load_state(self.repo)["day_tickets"], 3)
+        for bad in ("0", "x"):
+            with self.assertRaises(SystemExit) as e:
+                self.verb("pace", bad)
+            self.assertEqual(e.exception.code, f"factory pace takes a whole number of 1 or more, not {bad}")
+        self.save(said={"offer": "x"})
+        out = self.verb("decline")
+        until = st.load_state(self.repo)["declined_until"]
+        self.assertAlmostEqual(until, self.time.time() + 3600, delta=30)
+        self.assertEqual(out, f"factory: no planning offers until {self.time.strftime('%H:%M', self.time.localtime(until))}; ready work keeps building\n")
+        self.assertNotIn("offer", st.load_state(self.repo)["said"])
+
+    def test_plan_marks_out_of_order_unless_it_is_the_offer(self):
+        self.save(offer={"id": "NEB-10", "layer": "story", "at": 1.0})
+        self.assertIn("(out of order: once it is specced you are asked whether to move it up)", self.verb("plan", "NEB-30"))
+        s = st.load_state(self.repo)
+        self.assertEqual((s["planning"]["id"], s["out_of_order"]), ("NEB-30", ["NEB-30"]))
+        self.verb("plan", "NEB-30")
+        self.assertEqual(st.load_state(self.repo)["out_of_order"], ["NEB-30"])
+        self.verb("plan", done=True)
+        self.assertIsNone(st.load_state(self.repo)["planning"])
+        self.assertEqual(self.verb("plan", "NEB-10"), "factory: planning NEB-10\n")
+        self.assertEqual(st.load_state(self.repo)["out_of_order"], ["NEB-30"])
+
+    def test_status_names_the_pace_what_is_in_flight_and_the_offer(self):
+        started = self.time.mktime(self.time.strptime(self.time.strftime("%Y-%m-%d") + " 09:00:00", "%Y-%m-%d %H:%M:%S"))
+        self.save(pid=self.sleeper.pid, started=started, offer={"id": "NEB-12", "layer": "stories", "at": 1.0},
+                  dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}})
+        self.assertEqual(self.verb("status").splitlines(), [f"factory: running (pid {self.sleeper.pid}, since 09:00:00), day pace 2 tickets at once",
+                                                            "  dispatched: NEB-10 (sign-in, build)", "  last offer: NEB-12 (stories)"])
+
+
 if __name__ == "__main__":
     unittest.main()

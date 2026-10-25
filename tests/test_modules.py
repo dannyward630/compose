@@ -133,6 +133,10 @@ class FcFactoryturn(ModuleChecks, unittest.TestCase):
     module = "fc_factoryturn"
 
 
+class FcFactory(ModuleChecks, unittest.TestCase):
+    module = "fc_factory"
+
+
 class FcInit(ModuleChecks, unittest.TestCase):
     module = "fc_init"
 
