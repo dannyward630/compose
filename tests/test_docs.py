@@ -488,7 +488,8 @@ class LinearCommands(unittest.TestCase):
     def test_docs_describe_the_verbs(self):
         cli = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `linear <verb>`")]
         self.assertEqual(len(cli), 1)
-        for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project"):
+        for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project",
+                     "cancel <id> --file <reason> [--into <id>]", "--add-label", "--drop-label"):
             self.assertIn(word, cli[0])
 
 
@@ -1272,7 +1273,7 @@ class TellWhatCanStart(unittest.TestCase):
 
 
 class ReadyEventDocs(unittest.TestCase):
-    PROJECTS = ["setup", "update", "doctor", "init", "projects", "status", "clean", "trail"]
+    PROJECTS = ["setup", "update", "doctor", "init", "projects", "status", "clean", "trail", "reconcile"]
 
     def rows(self, start, end):
         sec = read("docs/cli.md").split(start + "\n", 1)[1].split(end, 1)[0]
@@ -2312,6 +2313,21 @@ class ReconcileFlow(unittest.TestCase):
                 self.assertNotIn("\u2014", line)
                 if not line.startswith(("#", "---", "description:", "argument-hint:", "allowed-tools:", "- ", "  ")):
                     self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
+class ReconcileUserDocs(unittest.TestCase):
+    def test_user_docs_describe_the_reconcile(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `reconcile` |")]
+        self.assertEqual(len(rows), 1)
+        for word in ("list", "check --file", "show", "apply --go", "notices", "~/.compose/reconcile/"):
+            self.assertIn(word, rows[0])
+        ready = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `ready`")]
+        self.assertEqual(len(ready), 1)
+        self.assertIn("needs-shaping", ready[0])
+        self.assertIn("- `/compose:reconcile <Linear project link>` sorts every open ticket of a messy project into keep, cancel, or verify with you, and changes Linear only on your go.", read("README.md").splitlines())
+        how = read("docs/how-it-works.md")
+        self.assertIn("## Cleaning up an existing project", how.splitlines())
+        self.assertIn("A reconcile never deletes a ticket: every cancel carries its reason as a comment.", how.splitlines())
 
 
 if __name__ == "__main__":

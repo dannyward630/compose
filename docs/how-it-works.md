@@ -149,6 +149,17 @@ You can hand `compose` a link to any of these levels, and it creates the missing
 It asks for the repo's Linear project link once and keeps it in `.compose/linear.json` in the repo's main checkout, which every worktree of the repo reads.
 Each task moves to In Progress when it is dispatched, In Review when its layer passes, and Done when its PR merges.
 
+## Cleaning up an existing project
+
+Run `/compose:reconcile <Linear project link>` on a project whose tickets have piled up.
+It researches the project, then sorts every open ticket into keep, cancel, or verify with you.
+Nothing in Linear changes until you give your go in your own words.
+A reconcile never deletes a ticket: every cancel carries its reason as a comment.
+A cancel that merges a ticket into another also relates the two as duplicates.
+A ticket that needs more shaping gets the `needs-shaping` label, and the ready check skips it.
+When it is applied, each affected project's team lead hears what changed.
+It never touches the order of tickets or what blocks what.
+
 ## Changing course
 
 When the plan turns out to be wrong, the fleet notices and changes it in the open.
