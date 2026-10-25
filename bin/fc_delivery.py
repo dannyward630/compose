@@ -69,13 +69,29 @@ def entry_line(n, e):
     waits = f"; waits on {', '.join(e['waits_on'])}" if e["waits_on"] else ""
     return f"{n}. {e['id']} {e['title']} ({e['state']}; {'feature ' + e['feature'] if e['kind'] == 'story' else 'feature'}, track {e['track']}, wave {e['wave']}{waits})"
 
+def unusable(plan):
+    """{id: why} for the track ids that get no blocks: unknown to Linear, Canceled, or not a feature."""
+    out = {}
+    for ident in dict.fromkeys(i for t in plan["tracks"] for i in t["items"]):
+        f = plan["features"].get(ident)
+        if f is None:
+            out[ident] = "was not found in Linear: fix the id or drop it from the track"
+        elif f["state"].lower() in fc_tasks.CANCELED:
+            out[ident] = "is Canceled: drop it from the track, or reopen it"
+        elif not any(l.lower() == "feature" for l in f["labels"]):
+            out[ident] = "is not a feature: name its feature instead, or label it Feature"
+    return out
+
+def report_unusable(plan):
+    for ident, why in unusable(plan).items():
+        print(f"{ident} is in a track but {why}", file=sys.stderr)
+
 def verb_order(a):
     plan = product_plan(a.repo)
     if not plan:
         sys.exit(NO_PLAN)
     entries = fc_plan.order_entries(plan["tracks"], plan["features"])
-    for ident in dict.fromkeys(i for t in plan["tracks"] for i in t["items"] if i not in plan["features"]):
-        print(f"{ident} is in a track but was not found in Linear: fix the id or drop it from the track", file=sys.stderr)
+    report_unusable(plan)
     print(json.dumps(entries, indent=2) if a.json else "\n".join(entry_line(n, e) for n, e in enumerate(entries, 1)))
 
 def verb_seed(a):
@@ -113,7 +129,10 @@ def reconcile(repo, dry_run=False):
     fc_plan.track_waves(tracks)
     plan_ids = {i for t in tracks for i in t["items"]}
     current = {i: [b["id"] for b in f["blockers"]] for i, f in features.items()}
-    added, removed = fc_plan.blocks_diff(fc_plan.derived_blocks(tracks), current, plan_ids)
+    skip = unusable(plan)
+    report_unusable(plan)
+    derived = {p for p in fc_plan.derived_blocks(tracks) if not skip.keys() & set(p)}
+    added, removed = fc_plan.blocks_diff(derived, current, plan_ids - skip.keys())
     proposals = fc_plan.product_proposals(tracks, features)
     result = {"added": [list(p) for p in added], "removed": [list(p) for p in removed], "ready": [], "proposed": proposals, "doc": plan["doc"]["url"]}
     if dry_run:
@@ -138,7 +157,7 @@ def reconcile(repo, dry_run=False):
 
 def summary(r, dry_run=False):
     head = f"product delivery plan{' (dry run, nothing written)' if dry_run else ''}: {len(r['added'])} blocks added, {len(r['removed'])} removed, " \
-           f"{len(r['ready'])} ready, {len(r['proposed'])} proposed"
+           f"{'ready not checked' if dry_run else str(len(r['ready'])) + ' ready'}, {len(r['proposed'])} proposed"
     return "\n".join([head, *(f"  + {a} blocks {b}" for a, b in r["added"]), *(f"  - {a} no longer blocks {b}" for a, b in r["removed"]),
                       *([f"  ready: {', '.join(r['ready'])}"] if r["ready"] else []), *(f"  proposed: {p}" for p in r["proposed"])])
 
@@ -155,7 +174,8 @@ def verb_tracks(a):
     if not a.quote:
         sys.exit('delivery tracks needs --quote "<the product owner\'s words>": the order across features is theirs to set')
     body = fc_linear_cmd.read_body(a)
-    tracks = fc_plan.parse_tracks(_tracks_text(body) if "## Tracks" in body else body)
+    text = _tracks_text(body) if "## Tracks" in body else body.strip()
+    tracks = fc_plan.parse_tracks(text)
     fc_plan.track_waves(tracks)
     product = read_product(a.repo, tracks)
     unknown = [i for i in dict.fromkeys(i for t in tracks for i in t["items"]) if i not in product["features"]]
@@ -165,9 +185,10 @@ def verb_tracks(a):
     if not doc:
         doc = fc_linear.linear_gql(DOC_CREATE, {"title": PRODUCT_TITLE, "content": fc_plan.product_skeleton(), "projectId": product["project"]["id"]})["documentCreate"]["document"]
     words = " ".join(a.quote.split())
-    content = fc_plan.replace_section(doc["content"] or "", "## Tracks", "## Tracks\n\n" + "\n".join(l.strip() for l in body.strip().splitlines() if l.strip() and not l.startswith("## ")))
-    content = fc_plan.with_history(content, f'- {time.strftime("%Y-%m-%d")}: tracks set; the product owner said: "{words}"')
-    fc_linear.linear_gql(DOC_UPDATE, {"id": doc["id"], "content": content})
+    if _tracks_text(doc["content"] or "") != text:  # the same tracks again: nothing to write, no new History line
+        content = fc_plan.replace_section(doc["content"] or "", "## Tracks", "## Tracks\n\n" + text)
+        content = fc_plan.with_history(content, f'- {time.strftime("%Y-%m-%d")}: tracks set; the product owner said: "{words}"')
+        fc_linear.linear_gql(DOC_UPDATE, {"id": doc["id"], "content": content})
     r = _reconciled(a.repo)
     print(f"tracks set on {r['doc']}\n{summary(r)}")
 

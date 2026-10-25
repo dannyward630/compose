@@ -169,7 +169,7 @@ class Reconcile(Fake):
 
     def test_dry_run_prints_what_it_would_do_and_writes_nothing(self):
         out = self.run_verb("reconcile", dry_run=True).splitlines()
-        self.assertEqual(out[:3], ["product delivery plan (dry run, nothing written): 1 blocks added, 1 removed, 0 ready, 1 proposed",
+        self.assertEqual(out[:3], ["product delivery plan (dry run, nothing written): 1 blocks added, 1 removed, ready not checked, 1 proposed",
                                    "  + NEB-9 blocks NEB-12", "  - NEB-5 no longer blocks NEB-12"])
         self.assertEqual(self.mutations(), []); self.mark.assert_not_called(); self.blocked_by.assert_not_called()
         self.assertFalse(fc.fc_delivery.state_path(self.repo).exists())
@@ -191,6 +191,44 @@ class Reconcile(Fake):
         with self.assertRaises(SystemExit) as e:
             self.run_verb("reconcile")
         self.assertEqual(e.exception.code, "delivery reconcile: boom; run it again: it only writes what is still out of step")
+
+
+    def test_an_unknown_id_as_blocked_or_blocker_writes_no_relation_and_is_proposed(self):
+        for text in ("1. A: NEB-7, NEB-311\n", "1. A: NEB-311, NEB-12\n"):
+            with self.subTest(text):
+                self.content = "## Tracks\n\n" + text
+                self.blocked_by.reset_mock()
+                with redirect_stderr(io.StringIO()) as err:
+                    out = self.run_verb("reconcile", dry_run=True)
+                self.assertNotIn("NEB-311 blocks", out)
+                self.assertNotIn("blocks NEB-311", out)
+                self.assertIn("NEB-311 is in a track but was not found in Linear", err.getvalue())
+                self.assertIn("proposed: NEB-311 is in track A but Linear has no issue NEB-311", out)
+                with redirect_stderr(io.StringIO()):
+                    r = fc.fc_delivery.reconcile(self.repo)
+                self.assertFalse([p for p in r["added"] + r["removed"] if "NEB-311" in p])
+                for call in self.blocked_by.call_args_list:
+                    self.assertNotIn("NEB-311", call.args[1])
+
+    def test_a_second_run_with_an_unknown_id_writes_nothing(self):
+        self.content = "## Tracks\n\n1. A: NEB-311, NEB-12\n"
+        with redirect_stderr(io.StringIO()):
+            fc.fc_delivery.reconcile(self.repo)
+            self.apply_writes()
+            before = len(self.mutations()); self.blocked_by.reset_mock(); self.comments.clear()
+            fc.fc_delivery.reconcile(self.repo)
+        self.assertEqual((self.mutations()[before:], self.blocked_by.call_count, self.comments), ([], 0, []))
+
+    def test_a_canceled_feature_or_a_story_gets_no_relations_and_is_reported(self):
+        story = node("NEB-50", "Todo"); story["labels"] = {"nodes": [{"name": "Story"}]}
+        self.nodes += [node("NEB-60", "Canceled"), story]
+        self.content = "## Tracks\n\n1. A: NEB-60, NEB-12, NEB-50\n"
+        with redirect_stderr(io.StringIO()) as err:
+            r = fc.fc_delivery.reconcile(self.repo)
+        self.assertFalse([p for p in r["added"] if {"NEB-60", "NEB-50"} & set(p)])
+        self.assertIn("NEB-60 is in a track but is Canceled", err.getvalue())
+        self.assertIn("NEB-50 is in a track but is not a feature", err.getvalue())
+        self.assertTrue([p for p in r["proposed"] if p.startswith("NEB-60") or p.startswith("NEB-50")])
 
 
 class Tracks(Fake):
@@ -236,3 +274,18 @@ class Tracks(Fake):
                 self.run_verb("tracks", file=self.tracks_file, quote="x")
             self.assertTrue(e.exception.code.startswith(msg))
         self.assertEqual(self.mutations(), [])
+
+    def test_a_file_with_other_sections_writes_only_the_tracks_section(self):
+        self.tracks_file.write_text(TRACKS + "\n## Why this order\n\nAuth first because x.\n")
+        self.run_verb("tracks", file=self.tracks_file, quote="x")
+        self.assertNotIn("Auth first because x.", self.doc_writes[0])
+        self.assertIn("## Tracks\n\n1. Sign-in: NEB-7, NEB-9\n2. Onboarding: NEB-12 (after Sign-in)\n", self.doc_writes[0])
+        fc_plan.parse_tracks(fc.fc_delivery._tracks_text(self.doc_writes[0]))
+
+    def test_the_same_tracks_again_write_nothing_and_add_no_history(self):
+        self.content = PLAN
+        self.run_verb("tracks", file=self.tracks_file, quote="x")
+        before = len(self.doc_writes)
+        self.run_verb("tracks", file=self.tracks_file, quote="y")
+        self.assertEqual(len(self.doc_writes), before)
+        self.assertEqual(self.content.count("tracks set;"), 1)

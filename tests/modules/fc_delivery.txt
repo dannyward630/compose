@@ -11,6 +11,8 @@ read_product
 product_plan
 delivery_order
 entry_line
+unusable
+report_unusable
 verb_order
 verb_seed
 DOC_UPDATE
