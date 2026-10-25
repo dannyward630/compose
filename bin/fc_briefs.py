@@ -110,8 +110,8 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
 
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
 Your ticket is {issue} on Linear; you are {name}.
-Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only. Never run `compose run`.
-Cut only this ticket's feature. Teammates you start (`compose crew start`) run in own panes.
+Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only, never code. Never run `compose run`.
+Cut only this ticket's feature. Teammates you start run in own panes; never do their job inline.
 
 1. Level sets the job (ticket label, else parent chain):
    - Project link: list epics and features with counts; ask which to continue (needs-user).
@@ -127,7 +127,7 @@ Cut only this ticket's feature. Teammates you start (`compose crew start`) run i
      in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`
      only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only.
-   Labeled `deep-dive`: read its `<issue id>: tech doc` (`compose linear doc`) before cutting, and
+   A story or epic labeled `deep-dive`: read its `<issue id>: tech doc` before cutting, and
    fold what the tech doc decides into each task brief: implementers never read Linear. None yet: needs-user, stop.
    - Task: lint against rules below; re-split on fail.
    - Loose idea: not yours.
