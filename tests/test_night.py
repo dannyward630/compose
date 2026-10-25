@@ -94,5 +94,35 @@ class Limits(unittest.TestCase):
         self.assertTrue(p.call_args[1]["start_new_session"])
 
 
+class OneLevel(unittest.TestCase):
+    @staticmethod
+    def feature(ident, state, blockers=()):
+        return {"id": ident, "state": state, "stories": [], "blockers": [{"id": i, "state": st, "labels": []} for i, st in blockers]}
+
+    @staticmethod
+    def entry(ident, feature):
+        return {"id": ident, "title": ident, "state": "Todo", "kind": "story", "feature": feature, "track": "t", "wave": 1, "waits_on": []}
+
+    def chain_plan(self):
+        feature = self.feature
+        plan = {"features": {"NEB-5": feature("NEB-5", "In Review"), "NEB-9": feature("NEB-9", "Todo", [("NEB-5", "In Review")]),
+                             "NEB-12": feature("NEB-12", "In Review", [("NEB-5", "In Review")]),
+                             "NEB-20": feature("NEB-20", "Todo", [("NEB-12", "In Review")]), "NEB-30": feature("NEB-30", "Todo", [("NEB-2", "Done")])}}
+        plan["features"]["NEB-20"]["stories"] = [{"id": "NEB-22", "state": "Todo"}]
+        return plan
+
+    def test_depth_counts_chains_of_verified_unmerged_blockers(self):
+        plan = self.chain_plan()
+        self.assertEqual([ns.unmerged_depth(plan, f) for f in ("NEB-5", "NEB-9", "NEB-20", "NEB-30")], [0, 1, 2, 0])
+
+    def test_one_level_drops_deeper_entries_unless_in_flight_and_day_keeps_them(self):
+        plan, entry = self.chain_plan(), self.entry
+        entries = [entry("NEB-10", "NEB-9"), entry("NEB-21", "NEB-20"), entry("NEB-22", "NEB-20")]
+        state = {"mode": "night", "dispatched": {"NEB-22": {"feature": "NEB-20"}}}
+        self.assertEqual([e["id"] for e in ns.one_level(plan, entries, state)], ["NEB-10", "NEB-22"])
+        self.assertEqual(ft.ORDER_FILTER["night"], ns.one_level)
+        self.assertNotIn("day", ft.ORDER_FILTER)
+
+
 if __name__ == "__main__":
     unittest.main()

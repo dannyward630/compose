@@ -261,6 +261,7 @@ def offer_day(repo, state, offer, now, out):
     fc_factorystate.say_once(state, "offer", f'event factory=offer ticket={offer["id"]} layer={offer["layer"]} why="{offer["why"]}"  '
                              "(offer to plan it with the product owner (sections/0f.md); they may pick another ticket or decline)", out)
 
+ORDER_FILTER = {}  # mode -> fn(plan, entries, state) -> entries: a mode's say over which ordered stories may start
 IDLE = {"day": offer_day}
 
 def _settle(repo, plan, state, out):
@@ -413,6 +414,7 @@ def _turn(repo, state, now, stopping, saved, out):
         if plan is None:
             raise RuntimeError("the product delivery plan went away during the turn")
         entries = fc_plan.order_entries(plan["tracks"], plan["features"])
+        entries = ORDER_FILTER.get(state["mode"], lambda plan, entries, state: entries)(plan, entries, state)
         _settle(repo, plan, state, out)
         _watch(repo, plan, entries, state, out)
     except (SystemExit, RuntimeError, OSError, ValueError, KeyError) as ex:

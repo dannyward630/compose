@@ -8,3 +8,6 @@ notes_path
 add_note
 notes_tail
 spawn_once
+unmerged_depth
+one_level
+fc_factoryturn

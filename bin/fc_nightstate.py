@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, math, subprocess, sys, time
 from pathlib import Path
 
-import fc_core, fc_config, fc_factorystate
+import fc_core, fc_config, fc_factorystate, fc_factoryturn, fc_plan, fc_tasks
 
 def until_epoch(hhmm: str, now: float) -> float:
     """The next local HH:MM after `now`: today's if it is still ahead, else tomorrow's."""
@@ -69,3 +69,17 @@ def spawn_once(repo, args: list[str], log: str) -> int:
         p = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "compose.py"), *args],
                              start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
     return p.pid
+
+def unmerged_depth(plan, feature, seen=()) -> int:
+    """How many verified-but-unmerged (In Review) levels the feature sits on: 0 with none, else 1 plus the deepest such blocker's own depth."""
+    seen = {*seen, feature}
+    deeper = [b for b in (plan["features"].get(feature) or {}).get("blockers") or []
+              if fc_plan.base_built(b["state"], b.get("labels") or []) and not fc_tasks.blocker_finished(b["state"], b.get("labels") or [])]
+    return 1 + max((unmerged_depth(plan, b["id"], seen) for b in deeper if b["id"] not in seen), default=0) if deeper else 0
+
+def one_level(plan, entries, state) -> list:
+    """At night, only stories at most one unmerged level deep, plus those already in flight."""
+    live = set(fc_factoryturn.in_flight(plan, state))
+    return [e for e in entries if e["id"] in live or unmerged_depth(plan, e["feature"]) <= 1]
+
+fc_factoryturn.ORDER_FILTER["night"] = one_level
