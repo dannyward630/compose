@@ -1,7 +1,7 @@
 import itertools, json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load, fc_trailpack
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load, fc_trailpack, fc_update
 
 CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
@@ -339,6 +339,7 @@ def at_root(value, olds, root):
 
 def cmd_verify(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
+    fc_update.refuse_while_building(proj, repo)
     fc_init.start_checks(repo, stack=False, tree=False, force=getattr(a, "force", False), proj=proj)  # keys and machine only: verify tolerates a dirty tree
     fc_proc.keep_awake()  # a display that sleeps fails every e2e check, and a verify takes long enough for the Mac to sleep
     cfg_path = proj / "verify.json"

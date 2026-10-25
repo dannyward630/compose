@@ -48,6 +48,13 @@ def refuse_while_verifying(proj, repo):
         sys.exit(f"STOP  verify is running on {w['project']} (pid {w['pid']}, since {w['since']}) and holds the stack top in the CLI worktree: "
                  "this would check other branches out under it. Wait for it to end, then re-run")
 
+def refuse_while_building(proj, repo):
+    """Exit when another process is running `run` or `resume` on this project: it links and registers the stack in the CLI worktree
+    until it exits, even after its last log line, so a verify standing at the stack top there would be moved off it."""
+    for w in live_on(proj, repo, ("run", "resume")):
+        sys.exit(f"STOP  {w['kind']} is running on {w['project']} (pid {w['pid']}, since {w['since']}) and checks the stack's branches out in the CLI worktree "
+                 "verify stands on: its checks would judge other code. Wait for it to end (it exits after it registers the stack), then re-run")
+
 SHARED_STATE = {"run": ("run", "resume"), "resume": ("run", "resume"), "verify": ("verify",)}  # who writes the same results/ files as `cmd`
 
 def refuse_while_running(cmd, proj, repo):

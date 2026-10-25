@@ -1,7 +1,7 @@
 import argparse, json, os, signal, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_harness, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit, fc_load
+import fc_core, fc_config, fc_tasks, fc_blockers, fc_linear, fc_ledger, fc_claude, fc_models, fc_proc, fc_herdr, fc_harness, fc_pi, fc_worktree, fc_layers, fc_stack, fc_change, fc_crew, fc_briefs, fc_implement, fc_init, fc_verify, fc_prove, fc_providers, fc_reroute, fc_route, fc_costevent, fc_fast, fc_regress, fc_unproven, fc_tierpin, fc_history, fc_credit, fc_load, fc_update
 
 
 TRIAGE_BAR = ("Flag the layer only for: a change outside its listed files; hardening, flags, helpers, or abstractions the brief "
@@ -215,6 +215,7 @@ def run_tasks(repo, proj, tasks, a):
     for m in tasks: m["model"] = fc_tierpin.start_model(proj, m)  # each implementer starts on its tier
     if joins_live_run(a):
         return queue_tasks(proj, tasks)
+    fc_update.refuse_while_verifying(proj, repo)  # the run links the stack in the CLI worktree a verify stands on
     fc_proc.keep_awake()  # a run lasts hours; a sleeping Mac stops every agent and fails every check that waits on a timeout
     if why := fc_credit.check(repo, tasks, getattr(a, "parallel", None) or RUN_PARALLEL, getattr(a, "force", False)):
         sys.exit("preflight stopped; nothing was cloned or run. " + why)
