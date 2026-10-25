@@ -206,6 +206,7 @@ def cmd_designcrews(a):
 
 
 CONFIRM_TREE_CHARS = 120000  # a tree up to this size goes to the confirm call whole, so it sees a node any chunk holds; a larger one goes chunk by chunk
+SETTLE_TREE_CHARS = 300000  # a criterion no chunk can decide goes to one call on the whole tree up to this size (186304 characters worked; larger is not verified)
 
 TREE_READING = ("Every field on a node belongs to that node alone: its strokes and strokeWeight are its own outline, never a neighbour's. "
                 "A node with \"visible\": false exists and is hidden. An instance's componentProperties hold its variant properties "
@@ -488,7 +489,7 @@ def cmd_figma(a):
                 # no chunk's NOT_MET survived its confirm: those chunks showed no violation, so the chunks that show the
                 # criterion met decide it (MET when one does and none contradicts)
                 row["choice"] = combine_choices([x for x in per_chunk if x != "NOT_MET"])
-            if parted and row["choice"] == "UNCLEAR" and not row.get("judge_error") and len(text) <= CONFIRM_TREE_CHARS:
+            if parted and row["choice"] == "UNCLEAR" and not row.get("judge_error") and len(text) <= SETTLE_TREE_CHARS:
                 # no chunk holds every node the criterion names, so none can say MET: the whole tree, which fits one call, settles it
                 try:
                     met, evidence = fc_models.confirm_call(env, SETTLE, f"CRITERION: {c}\n\nTREE:\n{text}")
