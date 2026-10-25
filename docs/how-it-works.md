@@ -56,13 +56,11 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 In a repo that already has code, an explore teammate maps it through trail first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, the engineering manager shapes each feature with you.
 The engineering manager shapes each feature with you in one conversation, one question at a time, and writes the design to the feature issue.
 It starts with one open question about a real moment, and every message after it ends with one question that follows from your last answer.
 As each part is understood it plays that part back, with its guesses marked, and you correct it.
 A choice it makes for you is written under "My calls", never as something you agreed to.
 Every decision you make is recorded at once with your words through `compose decide`, as a numbered line under the feature issue's "Decisions so far", so no decision is recorded that you did not make.
-Before you see the design, a builder check reads it cold, as a builder with no one to ask.
 A builder check reads the design before you do.
 It reports once, and the engineering manager brings you the few questions only you can answer in one message.
 The design is approved only when you say so, and the plan starts after that.

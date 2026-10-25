@@ -349,6 +349,22 @@ class PlanWritingRules(unittest.TestCase):
         self.assertIn("plays it back to the product owner as one chunk of 200 to 300 words ending with what is wrong or missing, never as a card list", text)
         self.assertIn('compose decide --project <slug> --new "stories <issue> approved" --quote', text)
 
+    DEEP_DIVE = ("When the planner reports `needs-user \"deep-dive <story>: no tech doc\"`, the engineering manager runs that deep dive with the product owner here (0b), "
+                 "records `compose decide --project <slug> --issue <story> --new \"the tech doc on <story> is approved\" --quote \"<their words>\"`, "
+                 "then sends `herdr agent prompt <slug>-orchestrator \"shaped <story>\"`.")
+    PLAYBACK = ("The proposal sits under the issue's `## Proposed stories`, and the playback names the stories the engineering manager proposes for `deep-dive`; "
+                "the planner applies that label when it runs `compose linear create`.")
+    AWAY = ("Under away a brainstorm (0b) or a stories playback is never answered by recommendation: it waits for the product owner and is listed in the digest, "
+            "and no stories approval is recorded without `--quote`; under yolo the engineering manager answers it as 0b says.")
+
+    def test_0h_routes_a_missing_tech_doc_and_names_the_draft(self):
+        lines = read("sections/0h.md").splitlines()
+        for line in (self.DEEP_DIVE, self.PLAYBACK, self.AWAY):
+            self.assertEqual(lines.count(line), 1, line)
+        at = lines.index
+        self.assertEqual(at(self.DEEP_DIVE), at(ShapingIsTheManagersBrainstorm.HANDOFF) + 1)
+        self.assertLess(at(next(l for l in lines if l.startswith("The team lead forwards a planner's `needs-user \"stories"))), at(self.PLAYBACK))
+
     def test_a_task_is_sized_by_its_own_test_and_review(self):
         self.assertEqual(read("sections/1.md").count("A task is the smallest unit that carries its own test and is worth its own review: setup, configuration, and docs fold into the task whose deliverable needs them."), 1)
 
@@ -575,18 +591,22 @@ class BrainstormShape(unittest.TestCase):
         "Open questions come first; a short menu of options only when the product owner is stuck, and a concrete proposal when they say \"just guess\" or \"what do you think?\".",
         "As soon as one part is understood, describe it back in 200 to 300 words, mark every guess as a guess, and ask what is wrong or missing.",
         "Before any question, look for its answer in Linear first:",
-        "Every decision the product owner makes is recorded at once with their words: `compose decide --project <slug> --new \"<decision>\" --quote \"<their words>\"`.",
+        "Every decision the product owner makes is recorded at once with their words: `compose decide --project <slug> --new \"<decision>\" --quote \"<their words>\"` (`--issue <id>` when it is not the project's feature).",
         "The design is written to the feature issue's description: Intent, Goals, Non-goals, Anti-goals, Constraints, Decided by the product owner, My calls, and Left to the builder.",
         "Before the product owner sees the design, a builder check reads it cold: `compose buildercheck --project <slug> --issue <id> | compose crew start --project <slug> --role builder-check --title \"builder check\" --brief -`.",
         "Sort what the builder check asks into three piles: answered already (put the answer in the design), minor (settle it and mark it as your call), and theirs (only the product owner can answer it, and the answer changes what gets built).",
         "Bring the theirs pile in one message, most important first; that is the only round of questions the check produces.",
         "Under away, a brainstorm waits for the product owner and is listed in the digest; under yolo, the engineering manager takes its own recommendation per question, tagged unconfirmed.",
-        "The approved design is the map: the planner (step 1) starts only after the product owner approves it.",
+        "The planner (step 1) starts only after the product owner approves the design.",
         "Before the product owner approves the design, a changed decision is recorded with `compose decide --project <slug> --new \"<decision>\" --replaces D<n> --quote \"<their words>\"`, which strikes the old line and adds the new D id.",
-        "After approval, a decision changes only through a change of course (step 8).",
+        "After approval, a decision changes only through a change of course (step 8); `--replaces` refuses once stories exist.",
         "A story or epic that needs a technical deep dive carries the Linear label `deep-dive`; propose it when a story's how is not obvious, and the product owner may add or remove it.",
         "A deep dive is a brainstorm on the technical side, and its artifact is a Linear document titled `<issue id>: tech doc`, linked from the issue under `## Tech doc`, read by a builder check like any design.",
         "Without the label, a story goes straight to the planner.",
+        "Think wide privately: before proposing anything, come up with several approaches and drop the weak ones, including any that fight what they said about why.",
+        "Before writing the design, bring the two or three approaches that survived, each with what it changes and costs, and the one you recommend with why, as one question; the choice goes under Decided by the product owner, or under My calls when they hand it to you, and a change small enough to approve in chat skips this.",
+        "Outside herdr, give the printed brief to a fresh harness subagent with no conversation context and read its one report.",
+        "The product owner approves the tech doc, and that is recorded the same way: `compose decide --project <slug> --issue <id> --new \"the tech doc on <id> is approved\" --quote \"<their words>\"`.",
     ]
     LOOKUP = [
         "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
@@ -615,6 +635,16 @@ class BrainstormShape(unittest.TestCase):
         order = [at(self.ONCE[0]), at(self.ONCE[2]), at(self.ONCE[5]), at(self.ONCE[6]), at(self.ONCE[7]), at(self.ONCE[8]), at(self.ONCE[10])]
         self.assertEqual(order, sorted(order))
         self.assertEqual(self.lines[-1] if self.lines[-1] else self.lines[-2], self.ONCE[10], "the hand-off to step 1 closes the section")
+
+    def test_new_lines_sit_in_their_paragraphs(self):
+        at = self.lines.index
+        self.assertLess(at("**How it gets made.**"), at(self.ONCE[17]))
+        self.assertLess(at(self.ONCE[17]), at("**Play it back.**"))
+        self.assertLess(at(self.ONCE[6]), at(self.ONCE[18]))
+        self.assertLess(at(self.ONCE[18]), at("Hand nothing over until it is back."))
+        self.assertLess(at(self.ONCE[14]), at(self.ONCE[19]))
+        self.assertLess(at(self.ONCE[19]), at(self.ONCE[15]))
+        self.assertEqual(self.text.count("(`--issue <id>` when it is not the project's feature)"), 1)
 
     def test_the_card_flow_is_gone(self):
         for old in self.GONE:
@@ -689,6 +719,11 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
 
     def test_planner_command_shapes_an_unshaped_ticket_here_first(self):
         text = read("commands/planner.md")
+        self.assertEqual(text.splitlines().count("Accept an issue id or URL, or a project link; a loose idea becomes a new feature issue first (0a), then is shaped like any unshaped ticket."), 1)
+        self.assertNotIn("A loose idea becomes", text)
+        self.assertEqual(text.splitlines().count(
+            "For `stories <issue>`, play the proposal back as one chunk, record `compose decide --project <slug> --new \"stories <issue> approved\" --quote \"<their words>\"`, "
+            "then `herdr agent prompt <slug>-planner \"stories approved: create them\"`."), 1)
         self.assertIn("When the ticket has no approved design (a feature or epic), or is a story labeled `deep-dive` with no tech doc, brainstorm it here first as sections/0b.md says, then start the planner.", text)
         self.assertNotIn("Refuse a loose idea", text)
         self.assertIn("In this session, never plan, write stories, or cut tasks.", text)
@@ -2210,10 +2245,17 @@ class UserDocsShaping(unittest.TestCase):
             "A builder check reads the design before you do.",
         ):
             self.assertIn(line + "\n", how)
-        rows = [l for l in read("docs/cli.md").splitlines()]
+            self.assertEqual(how.count(line), 1, line)
+        for gone in ("Next, the engineering manager shapes each feature with you.", "Before you see the design, a builder check reads it cold"):
+            self.assertNotIn(gone, how)
+        rows = read("docs/cli.md").splitlines()
         decide = [l for l in rows if l.startswith("| `decide`")]
         self.assertEqual(len(decide), 1)
         self.assertIn("--new", decide[0])
+        self.assertIn("--replaces", decide[0])
+        architect = [l for l in rows if l.startswith("| `architect")]
+        self.assertEqual(len(architect), 1)
+        self.assertIn("--change", architect[0])
         self.assertEqual(len([l for l in rows if l.startswith("| `buildercheck`")]), 1)
         for rel in ("docs/how-it-works.md", "README.md", "docs/herdr.md", "docs/tasks.md", "docs/requirements.md", "docs/workspaces.md"):
             text = read(rel).lower()
