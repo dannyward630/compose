@@ -190,6 +190,15 @@ class Reflect(unittest.TestCase):
         self.assertIn("Store drafts in localStorage", out.getvalue())
         self.assertIn("flagged 1 of 3", out.getvalue())
 
+    def test_a_flagged_decision_prints_the_tasks_that_rest_on_it(self):
+        proj = project(MAP.replace("1. Show a toast on save\n", "1. Show a toast on save\n- D3: one plan\n"))
+        with_tasks(proj, [{**task("003"), "body": "## Goal\nFollow D3."}])
+        rec = {"verdicts": [{"line": "D3: one plan", "choice": "BROKEN", "p_broken": 0.9, "p_unclear": 0.0}], "flagged": [{"line": "D3: one plan"}]}
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/r.json"), rec)), redirect_stdout(out):
+            fc.fc_change.cmd_reflect(SimpleNamespace(evidence="x", dismiss=None, against=None))
+        self.assertIn("rests on D3: 003 (cites D3)", out.getvalue())
+
 
 class WatchReflect(unittest.TestCase):
     def snap(self, reflects):
@@ -314,7 +323,7 @@ class Holds(unittest.TestCase):
     def hold(self, **kw):
         out = io.StringIO()
         with redirect_stdout(out):
-            fc.fc_change.cmd_hold(SimpleNamespace(**{"only": None, "reason": None, "release": None, **kw}))
+            fc.fc_change.cmd_hold(SimpleNamespace(**{"only": None, "rests_on": None, "reason": None, "release": None, **kw}))
         return out.getvalue()
 
     def test_hold_and_release_write_the_file_and_comment_on_linear(self):

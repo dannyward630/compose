@@ -118,7 +118,7 @@ def main():
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
                             ("triage", fc_run.cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", fc_change.cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
-                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
+                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids|--rests-on refs --reason why; --release ids|all"),
                             ("away", fc_yolo.cmd_yolo, "the product owner is away until their first message: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("yolo", fc_yolo.cmd_yolo, "the engineering manager answers until an explicit off, and the product owner may steer: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
@@ -268,6 +268,7 @@ def main():
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
         if name == "hold":
             s.add_argument("--only", help="comma-separated task ids to hold")
+            s.add_argument("--rests-on", dest="rests_on", help="comma-separated refs: an issue id, a tech doc title, a decision id (D3), or reflect; holds every unfinished task resting on them")
             s.add_argument("--reason", help="one line: why they wait")
             s.add_argument("--release", help="comma-separated task ids, or all")
         if name in ("away", "yolo"):

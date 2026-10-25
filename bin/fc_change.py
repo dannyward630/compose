@@ -1,6 +1,6 @@
 import json, os, re, sys, threading, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_worktree, fc_linear, fc_models, fc_stack
+import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree, fc_linear, fc_models, fc_stack
 
 
 # ---------- changing course: reflect, hold, change ----------
@@ -101,42 +101,113 @@ def reflect(proj, trigger, evidence, against=()):
         except FileExistsError:
             n += 1
 
+TECH_DOC_RE = re.compile(r"^(\S+): tech doc$")
+DECISION_ID = re.compile(r"[A-Z]{1,3}-?\d+\b")
+
+def rests_on(proj, refs):
+    """{unfinished task id: why} for the tasks that rest on a changed story, tech doc, decision or the newest reflect: an issue id
+    (the task is it, or sits under it), a tech doc title (its story), the feature (every task), a decision id (the briefs citing it,
+    every task when none does), `reflect` (the decision ids its newest file flagged). A task after an affected one is affected too."""
+    cache = fc_tasks.linear_cache(proj)
+    tasks, issues, feature = cache["tasks"], cache.get("issues", {}), (cache.get("feature") or {}).get("id")
+    live = [m.group(0) for l in decision_lines((cache.get("feature") or {}).get("description")) if (m := DECISION_ID.match(l.lstrip("*_ ")))]
+    flagged = []
+    for path in sorted((proj / "results").glob("reflect-*.json"))[-1:]:
+        for v in json.loads(path.read_text()).get("flagged", []):
+            if m := DECISION_ID.match((v.get("line") if isinstance(v, dict) else v).lstrip("*_ ")):
+                flagged.append(m.group(0))
+    found = {}
+    def add(m, why):
+        found.setdefault(m["id"], why)
+    def parents(issue_id):
+        while issue_id:
+            yield issue_id
+            issue_id = (issues.get(issue_id) or {}).get("parentId")
+    for ref in [d for r in refs for d in (flagged if r == "reflect" else [r])]:
+        ref = (TECH_DOC_RE.match(ref) or [None, ref])[1]
+        if ref == feature:
+            for m in tasks:
+                add(m, f"under {ref}")
+        elif ref in issues:
+            for m in tasks:
+                if m.get("linear") == ref:
+                    add(m, f"is {ref}")
+                elif ref in parents((issues.get(m.get("linear")) or {}).get("parentId")):
+                    add(m, f"under {ref}")
+        elif ref in live or ref in flagged:
+            cited = [m for m in tasks if re.search(rf"(?<![\w-]){re.escape(ref)}(?![\w-])", m.get("body", ""))]
+            for m in cited or tasks:
+                add(m, f"cites {ref}" if cited else f"{ref} cited by no brief")
+    for _ in tasks:  # a task after an affected task is affected
+        for m in tasks:
+            for dep in filter(None, m.get("after", "").split(",")):
+                if dep in found:
+                    add(m, f"after {dep}")
+    done = lambda m: (proj / "results" / f"{m['id']}.json").exists() and json.loads((proj / "results" / f"{m['id']}.json").read_text()).get("status") in fc_tasks.FINISHED
+    return {m["id"]: found[m["id"]] for m in tasks if m["id"] in found and not done(m) and (m.get("linear_state") or "").lower() not in fc_tasks.CANCELED}
+
+TEAMMATE_PAUSE = "Paused: {reason}. Stop now, keep what you wrote, and wait for the next prompt."
+TEAMMATE_RELEASE = "Released: carry on. Read your brief again first, it may have changed: compose linear get {issue} --body."
+
+def steer_teammate(proj, tid, text):
+    """Interrupt the task's live test teammate and send it `text`; False when there is none (or outside herdr)."""
+    agent = fc_herdr.agent_name(proj.name, f"tests-{tid}")
+    if fc_herdr.herdr("agent", "get", agent) is None:
+        return False
+    fc_herdr.herdr("agent", "send-keys", agent, "esc")
+    fc_herdr.herdr("agent", "prompt", agent, text)
+    return True
+
+def hold_tasks(proj, ids, reason):
+    """Hold the tasks, pausing a running one and its live test teammate; returns the lines to print."""
+    tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
+    hold, placed, lines = fc_tasks.held(proj), [], []
+    for tid in ids:
+        if tid not in tasks:
+            lines.append(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
+            continue
+        hold[tid] = {"reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        placed.append(tid)
+    tmp = proj / "results" / "hold.json.tmp"
+    fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
+    os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file; before reading `running`, as run_task writes `running` before it reads the holds
+    for tid in placed:
+        res = proj / "results" / f"{tid}.json"
+        running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
+        late = "; it is running now: the run pauses it within seconds and keeps its work" if running else ""
+        late += "; its test teammate is paused" if steer_teammate(proj, tid, TEAMMATE_PAUSE.format(reason=reason)) else ""
+        lines.append(f"{tid} held  {reason}{late}")
+        fc_linear.linear_note(tasks[tid], f"Held: {reason}{late}")
+    return lines
+
 def cmd_hold(a):
     """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task is paused
-    (its work kept on a ref) and goes back to pending; one the run is still preparing goes back to pending before its first turn (fc_implement.run_task)."""
+    (its work kept on a ref) and goes back to pending; one the run is still preparing goes back to pending before its first turn (fc_implement.run_task).
+    A live test teammate is paused too. `--rests-on` holds what rests on a changed story, tech doc, decision or the newest reflect."""
     proj = fc_core.project_dir(a)
-    tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
-    hold = fc_tasks.held(proj)
-    def save():
-        tmp = proj / "results" / "hold.json.tmp"
-        fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
-        os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
     if a.release:
+        tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
+        hold = fc_tasks.held(proj)
         for tid in (list(hold) if a.release == "all" else [x.strip() for x in a.release.split(",") if x.strip()]):
             if hold.pop(tid, None) is None:
                 print(f"{tid} was not held")
                 continue
             print(f"{tid} released")
+            steer_teammate(proj, tid, TEAMMATE_RELEASE.format(issue=(tasks.get(tid) or {}).get("linear", tid)))
             fc_linear.linear_note(tasks.get(tid), "Released")
-        save()
-    else:
-        if not a.only or not a.reason:
-            sys.exit('hold needs --only <ids> and --reason "<one line>", or --release <ids|all>')
-        placed = []
-        for tid in [x.strip() for x in a.only.split(",") if x.strip()]:
-            if tid not in tasks:
-                print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
-                continue
-            hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-            placed.append(tid)
-        save()  # before reading `running`: run_task writes `running` before it reads the holds, so one of the two sees the other
-        for tid in placed:
-            res = proj / "results" / f"{tid}.json"
-            running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
-            late = "; it is running now: the run pauses it within seconds and keeps its work" if running else ""
-            print(f"{tid} held  {a.reason}{late}")
-            fc_linear.linear_note(tasks[tid], f"Held: {a.reason}{late}")
-
+        tmp = proj / "results" / "hold.json.tmp"
+        fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
+        os.replace(tmp, proj / "results" / "hold.json")
+        return
+    if not (a.only or a.rests_on) or not a.reason:
+        sys.exit('hold needs --only <ids> or --rests-on <refs>, with --reason "<one line>", or --release <ids|all>')
+    ids = [x.strip() for x in (a.only or "").split(",") if x.strip()]
+    for ref in [x.strip() for x in (a.rests_on or "").split(",") if x.strip()]:
+        found = rests_on(proj, [ref])
+        print(f"rests on {ref}: " + ", ".join(f"{t} ({w})" for t, w in found.items()) if found else f"rests on nothing: {ref}")
+        ids += [t for t in found if t not in ids]
+    for line in hold_tasks(proj, ids, a.reason):
+        print(line)
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
 CHANGE_CONTENT = ("title", "description", "blockedBy")  # what a change of course edits; status moves are the run's own
@@ -355,6 +426,11 @@ def cmd_reflect(a):
     for v in rec["verdicts"]:
         print(f"  {v['choice'] or '?':8} broken {v['p_broken']:.2f} unclear {v['p_unclear']:.2f}  {v['line']}")
     print(f"reflect {path}  " + (f"error: {rec['error']}" if rec.get("error") else f"flagged {len(rec['flagged'])} of {len(rec['verdicts'])}"))
+    for v in rec["flagged"]:  # what each flagged decision's change would hold: the team lead confirms, then `compose hold --rests-on`
+        if m := DECISION_ID.match(v["line"].lstrip("*_ ")):
+            found = rests_on(proj, [m.group(0)])
+            if found:
+                print(f"rests on {m.group(0)}: " + ", ".join(f"{t} ({w})" for t, w in found.items()))
 
 def reflect_counts(rec):
     """(broken, unclear) among a screen's flagged lines; BROKEN wins when both pass the threshold."""

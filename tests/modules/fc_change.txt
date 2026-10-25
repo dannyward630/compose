@@ -11,6 +11,13 @@ last_change_done
 evidence_cut
 evidence_since
 reflect
+TECH_DOC_RE
+DECISION_ID
+rests_on
+TEAMMATE_PAUSE
+TEAMMATE_RELEASE
+steer_teammate
+hold_tasks
 cmd_hold
 CHANGE_SYNC_MAX
 CHANGE_CONTENT

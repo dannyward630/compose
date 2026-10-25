@@ -1,9 +1,11 @@
 import hermetic  # first: no test sees the real home
-import json, os, subprocess, sys, tempfile, threading, time, unittest
+import io, json, os, subprocess, sys, tempfile, threading, time, unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_reflect import fc, project, task, with_tasks, run_all  # the loaded compose and the run-loop helpers
+from test_reflect import fc, project, task, with_tasks, run_all, synced, issue, BLOCK, MAP  # the loaded compose and the run-loop helpers
 os.environ["HERDR_ENV"] = ""
 
 ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -278,6 +280,92 @@ class CarryOver(unittest.TestCase):
         self.assertEqual(seen[0], "moved\n")
         self.assertFalse(any(l[:2] in ("UU", "AA", "DU", "UD") for l in wts[0].splitlines()))
         self.assertNotIn("a.txt", wts[0])
+
+
+RESTS_MAP = MAP.replace("1. Show a toast on save\n", "1. Show a toast on save\n- D3: one plan\n- D9: another plan\n")
+
+
+class HoldCase(unittest.TestCase):
+    """A project for the hold command with its say, project_dir and Linear note faked."""
+    def hold(self, **kw):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fc.fc_change.cmd_hold(SimpleNamespace(**{"only": None, "rests_on": None, "reason": None, "release": None, **kw}))
+        return out.getvalue()
+
+    def fake(self):
+        fc.fc_tasks._hold_warned.clear()
+        for mod, name, value in ((fc.fc_core, "say", lambda m, *a, **k: None), (fc.fc_core, "project_dir", lambda a: self.proj),
+                                 (fc.fc_linear, "linear_note", lambda meta, body: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+
+class RestsOn(HoldCase):
+    def setUp(self):
+        self.proj = project(RESTS_MAP)
+        def tissue(tid, goal, parent, status="Todo", blocked=()):
+            return {**issue(tid, goal, status, blocked), "parentId": parent}
+        synced(self.proj, RESTS_MAP, {"ENG-2": {"title": "ENG-2 story", "description": "", "status": "Todo", "parentId": "ENG-1"},
+                                      "ENG-3": {"title": "ENG-3 story", "description": "", "status": "Todo", "parentId": "ENG-1"},
+                                      "ENG-11": tissue("001", "Write it.", "ENG-2"),
+                                      "ENG-12": tissue("002", "Read it.", "ENG-2", blocked=["ENG-11"]),
+                                      "ENG-13": tissue("003", "Follow D3.", "ENG-3"),
+                                      "ENG-14": tissue("004", "Done already.", "ENG-3")})
+        (self.proj / "results" / "004.json").write_text(json.dumps({"id": "004", "status": "passed"}))
+        self.fake()
+
+    def write_reflect(self, flagged):
+        (self.proj / "results" / "reflect-20260101-000000-01.json").write_text(json.dumps({"flagged": [{"line": l} for l in flagged]}))
+
+    def test_an_issue_a_tech_doc_or_the_feature_rests_its_tasks_and_what_they_block(self):
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["ENG-2"]), {"001": "under ENG-2", "002": "under ENG-2"})
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["ENG-11"]), {"001": "is ENG-11", "002": "after 001"})
+        self.assertEqual(set(fc.fc_change.rests_on(self.proj, ["ENG-2: tech doc"])), {"001", "002"})
+        self.assertEqual(set(fc.fc_change.rests_on(self.proj, ["ENG-1"])), {"001", "002", "003"})
+
+    def test_a_decision_or_the_newest_reflect_rests_the_briefs_that_cite_it_and_an_uncited_one_rests_everything(self):
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["D3"]), {"003": "cites D3"})
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["D9"]), {t: "D9 cited by no brief" for t in ("001", "002", "003")})
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["D42"]), {})
+        self.write_reflect(flagged=["D3: one plan"])
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["reflect"]), {"003": "cites D3"})
+
+    def test_hold_rests_on_holds_them_and_a_ref_that_matches_nothing_is_said(self):
+        out = self.hold(rests_on="ENG-2,NOPE-9", reason="story ENG-2 changed")
+        self.assertIn("rests on ENG-2: 001 (under ENG-2), 002 (under ENG-2)", out)
+        self.assertIn("rests on nothing: NOPE-9", out)
+        self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"001", "002"})
+
+    def test_only_and_rests_on_are_unioned_and_a_reason_is_required(self):
+        self.hold(only="003", rests_on="ENG-11", reason="x")
+        self.assertEqual(set(fc.fc_tasks.held(self.proj)), {"001", "002", "003"})
+        with self.assertRaises(SystemExit):
+            self.hold(rests_on="ENG-2")
+
+
+class TeammateSteer(HoldCase):
+    def setUp(self):
+        self.proj = project()
+        with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002")])
+        self.fake()
+        self.calls, self.live = [], set()
+        def herdr(*args, **kw):
+            if args[:2] == ("agent", "get"):
+                return {} if args[2] in self.live else None
+            self.calls.append(args)
+            return {}
+        p = mock.patch.object(fc.fc_herdr, "herdr", herdr); p.start(); self.addCleanup(p.stop)
+
+    def test_a_hold_pauses_a_live_test_teammate_and_a_release_sends_it_back_to_its_brief(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
+        self.live = {agent}
+        out = self.hold(only="002,003", reason="D2 changed")
+        self.assertEqual(self.calls[:2], [("agent", "send-keys", agent, "esc"),
+                                          ("agent", "prompt", agent, "Paused: D2 changed. Stop now, keep what you wrote, and wait for the next prompt.")])
+        self.assertIn("002 held  D2 changed; its test teammate is paused", out)
+        self.assertIn("003 held  D2 changed\n", out)
+        self.hold(release="002")
+        self.assertIn("compose linear get ENG-2 --body", self.calls[-1][3])
 
 
 if __name__ == "__main__":
